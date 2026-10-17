@@ -3,8 +3,8 @@ module algorithms_test;
 @imports
     :: root::containers::algorithms
     :: root::containers::array
-    :: root::tests::testing
-    :: root::tests::asserts;
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
 
 test index_of_finds_the_first_match(&testing::UnitTest t) {
     [5]i32 values = [10, 20, 30, 20, 40];
