@@ -17,16 +17,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Require a version tag on master
+      - name: Require a version tag on release
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Release tag must use the form vX.Y.Z" >&2
             exit 1
           fi
-          git fetch origin master
-          if ! git merge-base --is-ancestor HEAD origin/master; then
-            echo "Release tag must point to a commit on master" >&2
+          git fetch origin release
+          tag_commit="$(git rev-parse 'HEAD^{commit}')"
+          release_commit="$(git rev-parse 'origin/release^{commit}')"
+          if [[ "$tag_commit" != "$release_commit" ]]; then
+            echo "Release tag must point to the current release head" >&2
+            echo "tag:     $tag_commit" >&2
+            echo "release: $release_commit" >&2
             exit 1
           fi
 

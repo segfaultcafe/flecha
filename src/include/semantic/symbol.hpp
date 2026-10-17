@@ -145,6 +145,7 @@ struct StructureType final {
     const FunctionSymbol* tear = nullptr;
     bool hasCustomInit = false;
     bool zeroIsGenerated = false;
+    bool zeroIsTrivial = false;
     bool validLayout = false;
 };
 
