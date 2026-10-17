@@ -46,6 +46,18 @@ error Array<T>::set(&self, usize index, T value) {
     }
 }
 
+[]const T Array<T>::view(&const self) <-self {
+    unsafe {
+        return self->inner.view();
+    }
+}
+
+[]T Array<T>::view_ref(&self) <-self {
+    unsafe {
+        return self->inner.view_ref();
+    }
+}
+
 void Array<T>::clear(&self) {
     self->inner.clear();
 }
