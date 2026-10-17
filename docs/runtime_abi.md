@@ -14,9 +14,14 @@ and an exact byte length. A terminating null byte is neither required nor
 included in the length.
 
 The compiler emits one typed output call for each supported Flecha scalar
-type. `stdoutln` emits the same typed call followed by
-`flecha_runtime_v1_stdout_newline`. Formatting policy therefore belongs to the
-runtime rather than LLVM lowering.
+value. `stdout` and `stdoutln` accept zero or more printable values and emit
+them in argument order; `stdoutln` then emits
+`flecha_runtime_v1_stdout_newline` once. `stdoutf` parses its string-literal
+format at compile time and lowers literal segments and substituted values to
+the same typed calls. It supports `%d` for numeric values, `%s` for `string`,
+`stringv`, or `char`, `%b` for `bool` or `u8`, and `%%` for a literal percent
+sign. `stdoutf` does not append a newline. No variadic C ABI is exposed by
+these language-level facilities.
 
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the

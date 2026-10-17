@@ -137,7 +137,7 @@ inner field automatically; it does not free the buffer separately. Both types
 remain noncopyable but are movable as complete values. Initialization,
 assignment, by-value arguments and returns, and discard transfer the buffer
 cleanup responsibility and invalidate the source until it is reassigned. A
-live borrow from `view()` or `view_ref()` prevents moving, replacing, or
+live borrow from `view()` or `viewRef()` prevents moving, replacing, or
 destroying its container. The language's unsafe-tear immovability rule is
 unchanged.
 

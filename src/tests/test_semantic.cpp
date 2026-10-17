@@ -308,21 +308,64 @@ TEST(SemanticBuiltInTests, ProvidesTypedStandardOutput) {
 
 TEST(SemanticBuiltInTests, ValidatesStandardOutputArguments) {
     Analysis valid = Analyze(
-        "void Main() { stdout(42); stdoutln(false); stdout('x'); "
-        "stdout(1.5); }");
+        "void Main() { stdout(); stdout(42, false, 'x', 1.5); "
+        "stdoutln(); stdoutln(\"answer: \", 42); }");
     EXPECT_FALSE(valid.diagnostics.HasErrors());
 
     Analysis wrongType = Analyze("void Main() { stdout(null); }");
     EXPECT_NE(FindDiagnostic(wrongType, DiagnosticCode::IncompatibleArgument),
               nullptr);
 
-    Analysis wrongCount = Analyze("void Main() { stdout(); }");
-    EXPECT_NE(FindDiagnostic(wrongCount, DiagnosticCode::WrongArgumentCount),
-              nullptr);
-
     Analysis lineWrongType = Analyze("void Main() { stdoutln(none); }");
     EXPECT_NE(
         FindDiagnostic(lineWrongType, DiagnosticCode::IncompatibleArgument),
+        nullptr);
+}
+
+TEST(SemanticBuiltInTests, ValidatesFormattedStandardOutput) {
+    Analysis unsupported = Analyze(
+        "void Main() { stdoutf(\"expected: %d, text: %s%c\", 42, "
+        "\"flecha\", '!', true); }");
+    EXPECT_NE(FindDiagnostic(unsupported, DiagnosticCode::InvalidFormat),
+              nullptr);
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidFormat),
+              "FLECHA-S0060");
+
+    Analysis supported = Analyze(
+        "void Main() { stdoutf(\"expected: %d, text: %s%s, ok: %b/%b, "
+        "percent: %%\", 42, \"flecha\", '!', true, 1 as u8); }");
+    EXPECT_FALSE(supported.diagnostics.HasErrors());
+
+    Analysis missingFormat = Analyze("void Main() { stdoutf(); }");
+    EXPECT_NE(FindDiagnostic(missingFormat, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+
+    Analysis nonLiteral = Analyze(
+        "void Main() { stringv format = \"%d\"; stdoutf(format, 42); }");
+    EXPECT_NE(FindDiagnostic(nonLiteral, DiagnosticCode::InvalidFormat),
+              nullptr);
+
+    Analysis incomplete = Analyze("void Main() { stdoutf(\"value: %\", 1); }");
+    EXPECT_NE(FindDiagnostic(incomplete, DiagnosticCode::InvalidFormat),
+              nullptr);
+
+    Analysis wrongCount = Analyze("void Main() { stdoutf(\"%d %s\", 1); }");
+    EXPECT_NE(FindDiagnostic(wrongCount, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+
+    Analysis wrongDecimal = Analyze("void Main() { stdoutf(\"%d\", false); }");
+    EXPECT_NE(
+        FindDiagnostic(wrongDecimal, DiagnosticCode::IncompatibleArgument),
+        nullptr);
+
+    Analysis wrongString = Analyze("void Main() { stdoutf(\"%s\", 42); }");
+    EXPECT_NE(FindDiagnostic(wrongString, DiagnosticCode::IncompatibleArgument),
+              nullptr);
+
+    Analysis wrongBoolean =
+        Analyze("void Main() { stdoutf(\"%b\", 1 as u16); }");
+    EXPECT_NE(
+        FindDiagnostic(wrongBoolean, DiagnosticCode::IncompatibleArgument),
         nullptr);
 }
 
@@ -444,9 +487,59 @@ TEST(SemanticStringTests, RejectsViewsThatEscapeLocalOwners) {
               nullptr);
 
     Analysis safe = Analyze(
-        "stringv Identity(stringv value) { return value; } "
+        "stringv Identity(stringv value) <- value { return value; } "
         "stringv Literal() { return \"static\"; }");
     EXPECT_FALSE(safe.diagnostics.HasErrors());
+}
+
+TEST(SemanticStringTests, TracksBorrowedStringViewResultContracts) {
+    const std::string declaration =
+        "structure Label { string text; }; "
+        "Label Label::init(stringv text) override { return build Label { "
+        "self.text = text.string(); }; } "
+        "stringv Label::view(&const self) <- self { return "
+        "self->text.view(); } ";
+
+    Analysis valid =
+        Analyze(declaration +
+                "u32 read() { Label label = Label::init(\"flecha\"); "
+                "view := label.view(); return view.len(); }");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis ownerMutation = Analyze(
+        declaration +
+        "void mutate() { Label label = Label::init(\"flecha\"); "
+        "view := label.view(); label.text = \"arrow\"; stdout(view); }");
+    EXPECT_NE(FindDiagnostic(ownerMutation, DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    Analysis escape =
+        Analyze(declaration +
+                "stringv escape() { Label label = Label::init(\"flecha\"); "
+                "return label.view(); }");
+    EXPECT_NE(FindDiagnostic(escape, DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+
+    Analysis wrongSource = Analyze(
+        "structure Label { string text; }; "
+        "stringv Label::wrong(&const self) <- self { "
+        "string local = \"temporary\"; return local.view(); }");
+    EXPECT_NE(
+        FindDiagnostic(wrongSource, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis missingContract =
+        Analyze("stringv identity(stringv value) { return value; }");
+    EXPECT_NE(
+        FindDiagnostic(missingContract, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis directOwnerMutation = Analyze(
+        "void mutate() { string owner = \"flecha\"; "
+        "view := owner.view(); owner = \"arrow\"; stdout(view); }");
+    EXPECT_NE(
+        FindDiagnostic(directOwnerMutation, DiagnosticCode::BorrowConflict),
+        nullptr);
 }
 
 TEST(SemanticDeclarationTests, BindsEveryNameToItsResolvedSymbol) {
@@ -661,7 +754,7 @@ TEST(SemanticCastTests, CentralizesExtensibleExplicitCastPolicy) {
 
 TEST(SemanticStringViewTests, SupportsExplicitAndInferredViews) {
     Analysis analysis = Analyze(
-        "stringv Identity(stringv value) { return value; } "
+        "stringv Identity(stringv value) <- value { return value; } "
         "i32 main() { stringv explicitValue = \"Flecha\"; "
         "inferred := Identity(explicitValue); "
         "if inferred == \"Flecha\" { return 42; } return 0; }");

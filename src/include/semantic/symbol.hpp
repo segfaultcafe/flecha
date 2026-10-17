@@ -21,7 +21,15 @@ enum class SymbolKind {
     StructureType
 };
 
-enum class BuiltInFunction { None, Stdout, StdoutLine, New, Free, Take };
+enum class BuiltInFunction {
+    None,
+    Stdout,
+    StdoutLine,
+    StdoutFormat,
+    New,
+    Free,
+    Take
+};
 
 class Symbol {
    public:

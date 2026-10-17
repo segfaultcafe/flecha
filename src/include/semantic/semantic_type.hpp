@@ -109,6 +109,9 @@ class SemanticType final {
         return _kind == SemanticTypeKind::Reference ||
                _kind == SemanticTypeKind::Slice;
     }
+    [[nodiscard]] bool HasBorrowedLifetime() const {
+        return IsBorrowed() || _kind == SemanticTypeKind::StringView;
+    }
     [[nodiscard]] bool IsSequence() const {
         return _kind == SemanticTypeKind::Array ||
                _kind == SemanticTypeKind::Slice;

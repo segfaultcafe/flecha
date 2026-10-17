@@ -6,4 +6,6 @@ module std;
     :: root::containers::errors
     :: root::containers::algorithms
     :: root::io::filesystem
-    :: root::io::errors;
+    :: root::io::errors
+    :: root::tests::testing
+    :: root::tests::asserts;

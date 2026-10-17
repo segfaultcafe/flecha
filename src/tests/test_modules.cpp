@@ -148,7 +148,8 @@ TEST_F(ModuleTests, ImportedOwnershipContractsRejectReuseAndReportSourceFiles) {
 TEST_F(ModuleTests, BorrowedResultContractsCrossModuleBoundaries) {
     Write("access.fl",
           "module access; export &const i32 view(&const i32 value) <- value "
-          "{ return value; }");
+          "{ return value; } export stringv text(stringv value) <- value { "
+          "return value; }");
     Write("main.fl",
           "module main; @imports :: root::access; i32 main() { i32 value = "
           "42; result := access::view(&value); return *result; }");
@@ -157,6 +158,12 @@ TEST_F(ModuleTests, BorrowedResultContractsCrossModuleBoundaries) {
     Write("main.fl",
           "module main; @imports :: root::access; i32 main() { i32 value = "
           "42; result := access::view(&value); value = 0; return *result; }");
+    EXPECT_NE(Check().find("conflicts with live reference"), std::string::npos);
+
+    Write("main.fl",
+          "module main; @imports :: root::access; void main() { string value "
+          "= \"flecha\"; result := access::text(value.view()); value = "
+          "\"arrow\"; stdout(result); }");
     EXPECT_NE(Check().find("conflicts with live reference"), std::string::npos);
 }
 TEST_F(ModuleTests, RequiresImportsBeforeDeclarationsAndRejectsWrongDirective) {

@@ -56,11 +56,11 @@ bool Array<T>::contains(&const self, T value) {
 }
 
 void Array<T>::reverse(&self) {
-    algorithms::reverse<T>(self->view_ref());
+    algorithms::reverse<T>(self->viewRef());
 }
 
 void Array<T>::fill(&self, T value) {
-    algorithms::fill<T>(self->view_ref(), value);
+    algorithms::fill<T>(self->viewRef(), value);
 }
 
 error Array<T>::append(&self, []const T source) {
@@ -181,9 +181,9 @@ error Array<T>::set(&self, usize index, T value) {
     }
 }
 
-[]T Array<T>::view_ref(&self) <-self {
+[]T Array<T>::viewRef(&self) <-self {
     unsafe {
-        return self->inner.view_ref();
+        return self->inner.viewRef();
     }
 }
 

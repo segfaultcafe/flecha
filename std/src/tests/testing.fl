@@ -1,0 +1,64 @@
+module testing;
+
+export structure UnitTest {
+    private {
+        string testName;
+        usize assertionsRecorded;
+        usize failuresRecorded;
+        bool verboseEnabled;
+    }
+};
+
+UnitTest UnitTest::init(stringv name, bool verbose) override {
+    return build UnitTest {
+        self.testName = name.string();
+        self.assertionsRecorded = 0;
+        self.failuresRecorded = 0;
+        self.verboseEnabled = verbose;
+    };
+}
+
+stringv UnitTest::name(&const self) <-self {
+    return self->testName.view();
+}
+
+usize UnitTest::assertionCount(&const self) {
+    return self->assertionsRecorded;
+}
+
+usize UnitTest::failureCount(&const self) {
+    return self->failuresRecorded;
+}
+
+bool UnitTest::failed(&const self) {
+    return self->failuresRecorded != 0;
+}
+
+void UnitTest::fail(&self) {
+    self->failuresRecorded++;
+}
+
+void UnitTest::reportError(&self, stringv message) {
+    self->fail();
+    self->log(message);
+}
+
+void UnitTest::recordAssertion(&self, bool passed, stringv assertion, stringv message) {
+    self->assertionsRecorded++;
+
+    if !passed {
+        string output = "FAIL " + message + ". Assertion: " + assertion;
+        self->reportError(output.view());
+        return;
+    }
+
+    if self->verboseEnabled {
+        string output = "ok " + message + ". Assertion: " + assertion;
+        self->log(output.view());
+    }
+}
+
+void UnitTest::log(&const self, stringv message) {
+    string output = "[" + self->testName + "] " + message;
+    stdoutln(output);
+}
