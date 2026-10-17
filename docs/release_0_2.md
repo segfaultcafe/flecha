@@ -22,38 +22,82 @@ and native function pointers remain to be designed.
 Both the compiler and Longbow will provide a test command:
 
 ```text
-flecha test ...
-longbow test
+flecha test ... [--verbose]
+longbow test [--verbose]
 ```
 
-Test source files use the `<filename>_test.fl` convention. Every such file is a
-test-only module. Test declarations must not be treated as runtime declarations
-by ordinary build and run commands.
+### Test modules
 
-A test module imports the standard testing package and declares tests with the
-`test` introducer:
+A test source file is named `<filename>_test.fl` and declares
+`module <filename>_test;`. It pairs with exactly one production module: the
+sibling `<filename>.fl` file in the same directory. The production module must
+exist. Neither a same-named module in another directory nor another module in
+the same package can become the pair.
+
+For example, these files form one pair:
+
+```text
+src/math.fl
+src/math_test.fl
+```
+
+Every `_test.fl` file is a test-only module. Test modules are loaded by the test
+command and are not lowered or linked by ordinary build and run commands. A
+runtime module cannot import a test module. Directly supplying a test module to
+a non-test compiler command produces a diagnostic directing the user to the
+test command.
+
+Pairing grants visibility but does not create an implicit import. The test
+module must explicitly import both its production module and the standard
+testing module, and it uses ordinary qualified names:
 
 ```flecha
-@imports :: lib::std::testing;
+module math_test;
 
-test <fn_name>(t testing::UnitTest, ...) {
-    // Test happens here.
+@imports
+    :: root::math
+    :: lib::std::tests::testing;
+
+test addition(&testing::UnitTest t) {
+    result := math::add(20, 22);
 }
 ```
 
-The test command discovers and runs declarations beginning with `test`. The
-runner supplies the `testing::UnitTest` context. The meaning and permitted
-sources of any additional parameters remain to be designed.
+The standard testing API lives in the `std::tests::testing` module, imported as
+`:: lib::std::tests::testing`. Its test context type is the exported
+`testing::UnitTest` structure.
+
+### Test declarations
+
+The initial declaration form is:
+
+```text
+test name(&testing::UnitTest parameterName) {
+    body
+}
+```
+
+The `test` keyword identifies the declaration, so the test name itself does not
+need to start with `test`. A test declaration:
+
+- appears only at module scope in a `_test.fl` module;
+- has exactly one parameter, whose type is mutable
+  `&testing::UnitTest`;
+- has no explicit return type and behaves as a `void` function;
+- is not generic and has no function modifiers; and
+- cannot be a structure member.
+
+The runner supplies the mutable `testing::UnitTest` reference and discovers
+every valid `test` declaration in a loaded test module. Ordinary helper functions may also
+be declared in the test module, but the runner does not discover or invoke
+them. Additional injected parameters are postponed beyond the initial design.
 
 ## Test visibility
 
-White-box tests need access to private implementation details, but package-wide
-unrestricted access would weaken module boundaries and make unrelated tests
-depend on each other's internals.
-
 Test visibility is paired by basename and directory. A `<filename>_test.fl`
-module may access all declarations and members, including private ones, from
-the sibling `<filename>.fl` module in the same directory. For example:
+module and all helpers declared within it may access all declarations and
+members, including private ones, from the sibling `<filename>.fl` module. For
+example:
 
 ```text
 math.fl       <- private declarations
@@ -63,4 +107,24 @@ math_test.fl  <- privileged access to math.fl only
 The privilege does not extend to modules in another directory, unrelated
 modules in the same package, or dependency packages. Those retain normal
 visibility. Tests that exercise a package through its public API use ordinary
-imports and visibility rules.
+imports and visibility rules. Privileged access cannot be re-exported or passed
+through another module, and the production module receives no corresponding
+access to declarations in its test module.
+
+The compiler diagnoses:
+
+- a `test` declaration outside a `_test.fl` module;
+- a test filename and module-name mismatch;
+- a test module without its same-directory production sibling;
+- an invalid test signature;
+- a runtime import of a test module; and
+- private access outside the exact paired-module relationship.
+
+`flecha test <file>` runs one test file, and `longbow test` discovers `_test.fl`
+files recursively under the project's `src` directory. By default each file
+prints one dot-leader `ok` or `fail` line. `--verbose` prints each test's status
+while assertion failures print their assertion, message, and the test
+declaration's `file:line:column` beneath the failed status line. Exact assertion
+call-site injection and production-code stack traces remain later work. Each
+run ends with an `OK [passed/total]` or `FAIL [passed/total]` summary. Filtering
+and parallel execution remain later runner work.

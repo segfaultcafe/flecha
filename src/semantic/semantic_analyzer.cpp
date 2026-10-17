@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/output_format.hpp"
 #include "core/token_type.hpp"
 #include "semantic/allocation_checker.hpp"
 #include "semantic/borrow_checker.hpp"
@@ -92,10 +93,17 @@ bool HasOwnershipContract(const core::TypeNode& type) {
 }
 
 bool HasBorrowedResult(SemanticType type) {
-    if (type.IsBorrowed()) return true;
+    if (type.HasBorrowedLifetime()) return true;
     if (type.Kind() != SemanticTypeKind::Tuple) return false;
     return std::any_of(type.Elements().begin(), type.Elements().end(),
                        HasBorrowedResult);
+}
+
+bool RequiresBorrowSource(SemanticType type) {
+    if (type.IsBorrowed()) return true;
+    if (type.Kind() != SemanticTypeKind::Tuple) return false;
+    return std::any_of(type.Elements().begin(), type.Elements().end(),
+                       RequiresBorrowSource);
 }
 
 // Keep byte and bit layout arithmetic representable by the native target and
@@ -320,23 +328,37 @@ Scope& SemanticAnalyzer::AddScope(const Scope* parent) {
 }
 
 void SemanticAnalyzer::SetModule(const std::string& id) {
+    _currentModule = id;
     const auto found = _moduleScopes.find(id);
     if (found != _moduleScopes.end()) _currentScope = found->second;
 }
+
+bool SemanticAnalyzer::CanAccessPrivateOf(const std::string& id) const {
+    const auto pair = _testPairs.find(_currentModule);
+    return pair != _testPairs.end() && pair->second == id;
+}
+
 std::string SemanticAnalyzer::TopName(const core::Declaration& declaration,
                                       const std::string& name) const {
-    if (name == "main" && _entryModules.contains(declaration.moduleId) &&
-        declaration.Kind() == core::AstNodeKind::FunctionDeclaration)
-        return name;
+    if (declaration.Kind() == core::AstNodeKind::FunctionDeclaration) {
+        const auto& function =
+            static_cast<const core::FunctionDeclaration&>(declaration);
+        if (function.IsTestHarness()) return "main";
+        if (name == "main" && !function.IsTest() &&
+            _entryModules.contains(declaration.moduleId))
+            return name;
+    }
     return declaration.moduleId + name;
 }
 void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
     for (const auto& module : unit.modules) {
         auto* scope = _moduleScopes.at(module.id);
         for (const auto& import : module.imports) {
+            const bool privileged =
+                module.test && module.testPair == import.resolvedModule;
             for (const auto& declaration : unit.Declarations()) {
                 if (declaration->moduleId != import.resolvedModule ||
-                    !declaration->exported)
+                    (!declaration->exported && !privileged))
                     continue;
                 const Symbol* symbol = _model.DeclaredSymbol(*declaration);
                 if (!symbol) continue;
@@ -374,6 +396,12 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
     // Template API visibility is checked before substitution. A caller may
     // instantiate a public generic method with its own private argument type.
     std::unordered_set<const Symbol*> specializedFunctions;
+    for (const auto& declaration : unit.Declarations())
+        if (_testModules.contains(declaration->moduleId) &&
+            declaration->exported)
+            Report(diagnostics::DiagnosticCode::PrivateAccess,
+                   declaration->Range(),
+                   "test modules cannot export declarations");
     for (const auto& declaration : unit.Declarations())
         if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration &&
             !declaration->instantiationOrigins.empty())
@@ -579,7 +607,7 @@ void SemanticAnalyzer::ValidateTupleType(SemanticType type,
                  element.Kind() != SemanticTypeKind::Char &&
                  element.Kind() != SemanticTypeKind::Pointer &&
                  element.Kind() != SemanticTypeKind::String &&
-                 !(allowBorrowed && element.IsBorrowed()))
+                 !(allowBorrowed && element.HasBorrowedLifetime()))
             Report(diagnostics::DiagnosticCode::InvalidTuple, range,
                    "tuple elements must be owned values: scalars, enums, error "
                    "values, raw "
@@ -747,6 +775,7 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     };
     registerOutput("stdout", BuiltInFunction::Stdout);
     registerOutput("stdoutln", BuiltInFunction::StdoutLine);
+    registerOutput("stdoutf", BuiltInFunction::StdoutFormat);
     for (const auto& [name, intrinsic] :
          {std::pair{"new", BuiltInFunction::New},
           std::pair{"free", BuiltInFunction::Free}}) {
@@ -1013,7 +1042,26 @@ void SemanticAnalyzer::RegisterFunction(
         parameterContracts.push_back(parameter->Type().Contract());
     }
     const SemanticType returnType = ResolveType(function.ReturnType(), true);
+    if (function.IsTest()) {
+        bool valid =
+            _testModules.contains(function.moduleId) && !function.exported &&
+            function.Owner().empty() && function.genericParameters.empty() &&
+            function.Parameters().size() == 1 && parameterTypes.size() == 1 &&
+            parameterTypes[0].Kind() == SemanticTypeKind::Reference &&
+            !parameterTypes[0].Target()->IsConst();
+        if (valid) {
+            const SemanticType context = *parameterTypes[0].Target();
+            valid = context.Kind() == SemanticTypeKind::Structure &&
+                    context.Structure()->syntax->moduleId == _testingModule &&
+                    context.Structure()->syntax->Name() == "UnitTest";
+        }
+        if (!valid)
+            Report(diagnostics::DiagnosticCode::InvalidMember, function.Range(),
+                   "a test must be declared in a '_test.fl' module and take "
+                   "exactly one mutable '&testing::UnitTest' parameter");
+    }
     const bool hasBorrowedResult = HasBorrowedResult(returnType);
+    const bool requiresBorrowSource = RequiresBorrowSource(returnType);
     std::optional<std::size_t> borrowSourceIndex;
     if (returnType.Kind() == SemanticTypeKind::Tuple &&
         std::any_of(returnType.Elements().begin(), returnType.Elements().end(),
@@ -1024,7 +1072,7 @@ void SemanticAnalyzer::RegisterFunction(
         Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                function.ReturnType().Range(),
                "borrowed multi-results must use a flat tuple");
-    if (hasBorrowedResult && !function.HasBorrowSource()) {
+    if (requiresBorrowSource && !function.HasBorrowSource()) {
         Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                function.ReturnType().Range(),
                "reference and slice results require a '<- parameter>' "
@@ -1032,7 +1080,8 @@ void SemanticAnalyzer::RegisterFunction(
     } else if (!hasBorrowedResult && function.HasBorrowSource()) {
         Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                function.BorrowSourceRange(),
-               "a borrow contract requires a reference or slice result");
+               "a borrow contract requires a reference, slice, or stringv "
+               "result");
     } else if (function.HasBorrowSource()) {
         for (std::size_t index = 0; index < function.Parameters().size();
              ++index) {
@@ -1047,11 +1096,12 @@ void SemanticAnalyzer::RegisterFunction(
                    function.BorrowSourceRange(),
                    "borrow source '" + function.BorrowSource() +
                        "' is not a parameter");
-        } else if (!parameterTypes[*borrowSourceIndex].IsBorrowed()) {
+        } else if (!parameterTypes[*borrowSourceIndex].HasBorrowedLifetime()) {
             Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                    function.BorrowSourceRange(),
                    "borrow source '" + function.BorrowSource() +
-                       "' must be a checked reference or slice parameter");
+                       "' must be a checked reference, slice, or stringv "
+                       "parameter");
             borrowSourceIndex.reset();
         }
     }
@@ -1233,11 +1283,18 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     RegisterBuiltIns();
     _moduleScopes.clear();
     _entryModules.clear();
+    _testModules.clear();
+    _testPairs.clear();
+    _testingModule = unit.testingModule;
+    _currentModule.clear();
     Scope* builtins = _currentScope;
     _moduleScopes[""] = builtins;
     for (const auto& module : unit.modules) {
         if (!module.id.empty()) _moduleScopes[module.id] = &AddScope(builtins);
         if (module.entry) _entryModules.insert(module.id);
+        if (module.test) _testModules.insert(module.id);
+        if (!module.testPair.empty())
+            _testPairs.emplace(module.id, module.testPair);
         for (const auto& import : module.imports)
             for (const auto& declaration : unit.Declarations()) {
                 if (declaration->moduleId != module.id) continue;
@@ -1740,6 +1797,8 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                        TypeMismatch(expected, actual));
             } else if (returnStatement.Value() != nullptr &&
                        expected.Kind() == SemanticTypeKind::StringView &&
+                       (_currentFunction == nullptr ||
+                        !_currentFunction->BorrowSourceIndex().has_value()) &&
                        BorrowsLocalString(*returnStatement.Value())) {
                 Report(diagnostics::DiagnosticCode::BorrowEscapesOwner,
                        returnStatement.Value()->Range(),
@@ -2044,9 +2103,9 @@ SemanticType SemanticAnalyzer::AnalyzeMatch(
                    expression.Range(),
                    "non-exhaustive match; missing " + missing);
     }
-    if (!result.IsError() && result.IsBorrowed())
+    if (!result.IsError() && result.HasBorrowedLifetime())
         Report(diagnostics::DiagnosticCode::InvalidMatch, expression.Range(),
-               "match expressions cannot yet produce borrowed references");
+               "match expressions cannot yet produce borrowed values");
     return result;
 }
 
@@ -2604,7 +2663,8 @@ SemanticType SemanticAnalyzer::AnalyzeMemberAccess(
         for (const auto& field : receiver.Structure()->fields)
             if (field.name == expression.Member()) {
                 if (field.syntax->IsPrivate() &&
-                    CurrentOwner() != receiver.Structure())
+                    CurrentOwner() != receiver.Structure() &&
+                    !CanAccessPrivateOf(receiver.Structure()->syntax->moduleId))
                     Report(diagnostics::DiagnosticCode::PrivateAccess,
                            expression.MemberRange(),
                            "field '" + field.name + "' is private");
@@ -3397,25 +3457,106 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         RequireUnsafe(expression.Callee().Range());
     if (_currentFunction) _functionCalls[_currentFunction].insert(function);
     if (function->BuiltIn() == BuiltInFunction::Stdout ||
-        function->BuiltIn() == BuiltInFunction::StdoutLine) {
+        function->BuiltIn() == BuiltInFunction::StdoutLine ||
+        function->BuiltIn() == BuiltInFunction::StdoutFormat) {
         if (_inZero)
             Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                    expression.Range(),
                    "zero cannot cause external side effects");
         if (_currentFunction) _forbiddenZeroEffects.insert(_currentFunction);
-        if (argumentTypes.size() != 1) {
+        if (function->BuiltIn() != BuiltInFunction::StdoutFormat) {
+            for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+                if (argumentTypes[index].IsError() ||
+                    argumentTypes[index].IsPrintable())
+                    continue;
+                Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                       expression.Arguments()[index]->Range(),
+                       "function '" + function->Name() +
+                           "' requires printable values, found '" +
+                           std::string(argumentTypes[index].Name()) + "'");
+            }
+            return function->ReturnType().WithoutConst();
+        }
+
+        if (expression.Arguments().empty()) {
             Report(diagnostics::DiagnosticCode::WrongArgumentCount,
                    expression.Range(),
-                   "function '" + function->Name() +
-                       "' expects 1 argument, found " +
-                       std::to_string(argumentTypes.size()));
-        } else if (!argumentTypes.front().IsError() &&
-                   !argumentTypes.front().IsPrintable()) {
-            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   "function 'stdoutf' requires a format string");
+            return function->ReturnType().WithoutConst();
+        }
+
+        const core::Expression* formatExpression =
+            expression.Arguments().front().get();
+        while (formatExpression->Kind() ==
+               core::AstNodeKind::ParenthesizedExpression)
+            formatExpression =
+                &static_cast<const core::ParenthesizedExpression&>(
+                     *formatExpression)
+                     .Inner();
+        if (formatExpression->Kind() != core::AstNodeKind::LiteralExpression ||
+            static_cast<const core::LiteralExpression&>(*formatExpression)
+                    .LiteralType() != TokenType::StringLiteral) {
+            Report(diagnostics::DiagnosticCode::InvalidFormat,
                    expression.Arguments().front()->Range(),
-                   "function '" + function->Name() +
-                       "' requires a printable value, found '" +
-                       std::string(argumentTypes.front().Name()) + "'");
+                   "stdoutf format must be a string literal");
+            return function->ReturnType().WithoutConst();
+        }
+
+        const auto& literal =
+            static_cast<const core::LiteralExpression&>(*formatExpression);
+        const core::OutputFormat format =
+            core::ParseOutputFormat(literal.Value());
+        if (!format.IsValid()) {
+            Report(diagnostics::DiagnosticCode::InvalidFormat,
+                   expression.Arguments().front()->Range(), format.error);
+            return function->ReturnType().WithoutConst();
+        }
+        if (argumentTypes.size() != format.ArgumentCount() + 1) {
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "format requires " + std::to_string(format.ArgumentCount()) +
+                       " value argument(s), found " +
+                       std::to_string(argumentTypes.size() - 1));
+        }
+
+        std::size_t argumentIndex = 1;
+        for (const auto& part : format.parts) {
+            if (part.kind == core::OutputFormatPartKind::Literal) continue;
+            if (argumentIndex >= argumentTypes.size()) break;
+            const SemanticType type = argumentTypes[argumentIndex];
+            bool valid = type.IsError();
+            std::string_view expected;
+            char specifier = '?';
+            switch (part.kind) {
+                case core::OutputFormatPartKind::Decimal:
+                    valid = valid || type.IsNumeric();
+                    expected = "a number";
+                    specifier = 'd';
+                    break;
+                case core::OutputFormatPartKind::String:
+                    valid = valid || type.Kind() == SemanticTypeKind::String ||
+                            type.Kind() == SemanticTypeKind::StringView ||
+                            type.Kind() == SemanticTypeKind::Char;
+                    expected = "a string or char";
+                    specifier = 's';
+                    break;
+                case core::OutputFormatPartKind::Boolean:
+                    valid = valid || type.Kind() == SemanticTypeKind::Bool ||
+                            type.Kind() == SemanticTypeKind::U8;
+                    expected = "a bool or u8";
+                    specifier = 'b';
+                    break;
+                case core::OutputFormatPartKind::Literal:
+                    break;
+            }
+            if (!valid)
+                Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                       expression.Arguments()[argumentIndex]->Range(),
+                       "format argument " + std::to_string(argumentIndex) +
+                           " for '%" + std::string(1, specifier) +
+                           "' requires " + std::string(expected) + ", found '" +
+                           std::string(type.Name()) + "'");
+            ++argumentIndex;
         }
         return function->ReturnType().WithoutConst();
     }
@@ -3874,8 +4015,11 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
     if (function.IsPrivate() &&
         ((function.Owner() && CurrentOwner() != function.Owner()) ||
          (function.EnumOwner() && CurrentEnumOwner() != function.EnumOwner())))
-        Report(diagnostics::DiagnosticCode::PrivateAccess, range,
-               "method '" + function.Name() + "' is private");
+        if (!CanAccessPrivateOf(function.Owner()
+                                    ? function.Owner()->syntax->moduleId
+                                    : function.EnumOwner()->syntax->moduleId))
+            Report(diagnostics::DiagnosticCode::PrivateAccess, range,
+                   "method '" + function.Name() + "' is private");
     if (function.IsUnsafe() || function.ReturnType().IsImmovable())
         RequireUnsafe(range);
 }

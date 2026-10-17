@@ -1,0 +1,11 @@
+module math_test;
+
+@imports
+    :: root::math
+    :: lib::std::tests::testing;
+
+test discovers_tests(&testing::UnitTest t) {
+    if math::secret() != 42 {
+        t->fail();
+    }
+}

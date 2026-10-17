@@ -115,7 +115,7 @@ unsafe []const T RawArray<T>::view(&const self) <-self {
     return self->storage[:self->length];
 }
 
-unsafe []T RawArray<T>::view_ref(&self) <-self {
+unsafe []T RawArray<T>::viewRef(&self) <-self {
     return self->storage[:self->length];
 }
 

@@ -40,7 +40,19 @@
         "scopeName": "source.flecha",
         "path": "./syntaxes/flecha.tmLanguage.json"
       }
-    ]
+    ],
+    "configurationDefaults": {
+      "editor.tokenColorCustomizations": {
+        "textMateRules": [
+          {
+            "scope": "keyword.other.test.flecha",
+            "settings": {
+              "foreground": "#FFD700"
+            }
+          }
+        ]
+      }
+    }
   },
   "devDependencies": {
     "@vscode/vsce": "4.0.0"

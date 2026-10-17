@@ -3,8 +3,11 @@
 #include <llvm/Support/Program.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -335,7 +338,7 @@ TEST(LlvmCodeGeneratorTests, EmitsShortCircuitBooleanLogic) {
 
 TEST(LlvmCodeGeneratorTests, EmitsStringViewsAndContentEquality) {
     GeneratedSource result = Generate(
-        "stringv Identity(stringv value) { return value; } "
+        "stringv Identity(stringv value) <- value { return value; } "
         "bool Equal(stringv left, stringv right) { return left == right; } "
         "i32 main() { value := Identity(\"Flecha\"); "
         "if Equal(value, \"Flecha\") and value != \"Arrow\" { return 42; } "
@@ -388,8 +391,8 @@ TEST(LlvmCodeGeneratorTests, EmitsOwnedStringConversionsAndCleanup) {
 
 TEST(LlvmCodeGeneratorTests, EmitsLengthAwareStandardOutput) {
     GeneratedSource result = Generate(
-        "i32 main() { stdout(\"Flecha\"); "
-        "stdoutln(\"Language\"); stdout(-42); stdout(1 as i8); "
+        "i32 main() { stdout(); stdout(\"Flecha\", -42, true); "
+        "stdoutln(); stdoutln(\"Language\"); stdout(1 as i8); "
         "stdout(2 as i16); stdout(3 as i64); stdout(4 as isize); "
         "stdout(5 as u8); stdout(6 as u16); stdout(7 as u32); "
         "stdout(8 as u64); stdout(9 as usize); stdout(1 as f32); "
@@ -410,6 +413,69 @@ TEST(LlvmCodeGeneratorTests, EmitsLengthAwareStandardOutput) {
     }
     EXPECT_EQ(ir.find("@write"), std::string::npos);
     EXPECT_EQ(ir.find("@snprintf"), std::string::npos);
+}
+
+TEST(LlvmCodeGeneratorTests, EmitsFormattedStandardOutput) {
+    GeneratedSource result = Generate(
+        "void output_byte(u8 value) { stdoutf(\"%b\", value); } "
+        "void deferred(i32 value) { defer stdoutf(\"value: %d\", value); } "
+        "i32 main() { stdoutf(\"expected: %d, text: %s%s, ok: %b/%b, "
+        "percent: %%\", 42, \"flecha\", '!', true, 1 as u8); return 0; }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_stdout_i32"), std::string::npos);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_stdout_string_view"),
+              std::string::npos);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_stdout_char"), std::string::npos);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_stdout_bool"), std::string::npos);
+    EXPECT_NE(ir.find("stdoutf.byte.bool"), std::string::npos);
+    EXPECT_NE(ir.find("percent: %"), std::string::npos);
+}
+
+TEST(NativeCompilerTests, RunsVariadicAndFormattedStandardOutput) {
+    GeneratedSource result = Generate(
+        "i32 main() { stdout(\"answer: \", 42); stdoutln('!'); "
+        "stdoutf(\"expected: %d, text: %s%s, ok: %b/%b, percent: %%\", "
+        "-7, \"flecha\", '.', true, 0 as u8); return 0; }");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path temporaryDirectory =
+        std::filesystem::temp_directory_path();
+    const std::filesystem::path executablePath =
+        temporaryDirectory / "flecha_formatted_stdout_test";
+    const std::filesystem::path outputPath =
+        temporaryDirectory / "flecha_formatted_stdout_test.txt";
+    std::filesystem::remove(executablePath);
+    std::filesystem::remove(outputPath);
+
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "formatted_stdout_test", executablePath.string()))
+        << compiler.Error();
+
+    const std::string executablePathText = executablePath.string();
+    const std::string outputPathText = outputPath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    const std::array<std::optional<llvm::StringRef>, 3> redirects = {
+        std::nullopt, llvm::StringRef(outputPathText), std::nullopt};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments,
+                                        std::nullopt, redirects),
+              0);
+
+    std::ifstream output(outputPath, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(output)),
+                           std::istreambuf_iterator<char>());
+    EXPECT_EQ(text,
+              "answer: 42!\n"
+              "expected: -7, text: flecha., ok: true/false, percent: %");
+
+    std::filesystem::remove(executablePath);
+    std::filesystem::remove(outputPath);
 }
 
 TEST(LlvmCodeGeneratorTests, UsesTargetPointerWidthForSizeTypes) {

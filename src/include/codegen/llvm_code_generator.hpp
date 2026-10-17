@@ -130,6 +130,10 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::Value* EmitRuntimeOutput(llvm::Value* value,
                                                  semantic::SemanticType type,
                                                  bool newline);
+    [[nodiscard]] llvm::Value* EmitRuntimeNewline();
+    [[nodiscard]] llvm::Value* EmitBuiltInOutput(
+        const lowering::BoundCallExpression& expression,
+        const std::vector<llvm::Value*>& arguments);
     [[nodiscard]] llvm::Value* EmitStringViewOperation(
         const lowering::BoundStringViewOperationExpression& expression);
     [[nodiscard]] llvm::Value* EmitOwnedString(

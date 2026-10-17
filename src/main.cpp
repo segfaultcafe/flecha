@@ -1,6 +1,8 @@
 #include <llvm/IR/Module.h>
+#include <llvm/Support/Program.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -14,6 +16,10 @@
 #include "flecha/version.hpp"
 #include "lowering/lowerer.hpp"
 #include "semantic/semantic_analyzer.hpp"
+
+#ifndef FLECHA_EXECUTABLE_SUFFIX
+#define FLECHA_EXECUTABLE_SUFFIX ""
+#endif
 
 namespace {
 void PrintDiagnostic(const flecha::diagnostics::Diagnostic& diagnostic) {
@@ -33,10 +39,14 @@ void PrintDiagnostics(const flecha::diagnostics::DiagnosticBag& diagnostics) {
 int Compile(const std::string& command, const std::string& input,
             const std::string& output, const std::filesystem::path& root,
             const std::map<std::string, std::filesystem::path>& libraries,
-            const std::vector<std::string>& linkInputs) {
+            const std::vector<std::string>& linkInputs, bool verboseTests) {
     flecha::diagnostics::DiagnosticBag diagnostics;
     flecha::core::ModuleLoader loader(diagnostics);
-    auto unit = loader.Load(input, root, libraries);
+    auto unit =
+        loader.Load(input, root, libraries,
+                    command == "test" ? flecha::core::ModuleLoadMode::Test
+                                      : flecha::core::ModuleLoadMode::Runtime,
+                    verboseTests);
     if (diagnostics.HasErrors()) {
         PrintDiagnostics(diagnostics);
         return 1;
@@ -48,7 +58,7 @@ int Compile(const std::string& command, const std::string& input,
         return 1;
     }
     PrintDiagnostics(diagnostics);
-    if (command == "build") {
+    if (command == "build" || command == "test") {
         const flecha::semantic::FunctionSymbol* entry = nullptr;
         for (const auto& symbol : semanticModel.Symbols())
             if (symbol->Kind() == flecha::semantic::SymbolKind::Function &&
@@ -95,21 +105,42 @@ int Compile(const std::string& command, const std::string& input,
         return 0;
     }
     flecha::codegen::NativeCompiler compiler;
-    const bool success =
-        compiler.Ready() &&
-        (command == "--emit-object"
-             ? compiler.EmitObject(*program, input, output)
-             : compiler.BuildExecutable(*program, input, output, linkInputs));
+    std::string executable = output;
+    const bool temporaryTestExecutable = command == "test" && output.empty();
+    if (temporaryTestExecutable) {
+        executable = (std::filesystem::temp_directory_path() /
+                      ("flecha-test-" +
+                       std::to_string(std::chrono::high_resolution_clock::now()
+                                          .time_since_epoch()
+                                          .count()) +
+                       FLECHA_EXECUTABLE_SUFFIX))
+                         .string();
+    }
+    const bool success = compiler.Ready() &&
+                         (command == "--emit-object"
+                              ? compiler.EmitObject(*program, input, output)
+                              : compiler.BuildExecutable(
+                                    *program, input, executable, linkInputs));
     if (!success && compiler.LastDiagnostic())
         PrintDiagnostic(*compiler.LastDiagnostic());
-    return success ? 0 : 1;
+    if (!success) return 1;
+    if (command != "test") return 0;
+    const std::string executablePath =
+        std::filesystem::absolute(executable).string();
+    const llvm::StringRef arguments[] = {executablePath};
+    const int result = llvm::sys::ExecuteAndWait(executablePath, arguments);
+    if (temporaryTestExecutable) {
+        std::error_code error;
+        std::filesystem::remove(executable, error);
+    }
+    return result < 0 ? 1 : result;
 }
 void PrintUsage(const char* executable) {
-    std::cerr
-        << "usage: " << executable
-        << " <check|build|--emit-llvm|--emit-object> <input.fl> [-o output]"
-           " [--root source-directory] [--lib name=source-directory ...]"
-           " [--link object-or-library ...]\n";
+    std::cerr << "usage: " << executable
+              << " <check|build|test|--emit-llvm|--emit-object> <input.fl> [-o "
+                 "output]"
+                 " [--root source-directory] [--lib name=source-directory ...]"
+                 " [--link object-or-library ...] [--verbose]\n";
 }
 }  // namespace
 int main(int argc, char** argv) {
@@ -122,8 +153,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     const std::string command = argv[1];
-    if (command != "check" && command != "build" && command != "--emit-llvm" &&
-        command != "--emit-object") {
+    if (command != "check" && command != "build" && command != "test" &&
+        command != "--emit-llvm" && command != "--emit-object") {
         PrintUsage(argv[0]);
         return 1;
     }
@@ -131,8 +162,17 @@ int main(int argc, char** argv) {
     std::filesystem::path root;
     std::map<std::string, std::filesystem::path> libraries;
     std::vector<std::string> linkInputs;
+    bool verboseTests = false;
     for (int index = 3; index < argc; ++index) {
         const std::string option = argv[index];
+        if (option == "--verbose") {
+            if (command != "test" || verboseTests) {
+                PrintUsage(argv[0]);
+                return 1;
+            }
+            verboseTests = true;
+            continue;
+        }
         if (++index == argc) {
             PrintUsage(argv[0]);
             return 1;
@@ -163,12 +203,13 @@ int main(int argc, char** argv) {
         PrintUsage(argv[0]);
         return 1;
     }
-    if (command != "build" && !linkInputs.empty()) {
-        std::cerr << "--link is supported only by build\n";
+    if (command != "build" && command != "test" && !linkInputs.empty()) {
+        std::cerr << "--link is supported only by build and test\n";
         return 1;
     }
     try {
-        return Compile(command, argv[2], output, root, libraries, linkInputs);
+        return Compile(command, argv[2], output, root, libraries, linkInputs,
+                       verboseTests);
     } catch (const std::filesystem::filesystem_error& error) {
         std::cerr << error.what() << "\n";
         return 1;

@@ -1,5 +1,6 @@
 #include <llvm/Support/Program.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -220,6 +221,7 @@ void Usage() {
     std::cout << "usage: longbow new NAME [--lib]\n"
                  "       longbow init [--lib]\n"
                  "       longbow check|build|run|clean\n"
+                 "       longbow test [--verbose]\n"
                  "       longbow run -- [program arguments]\n";
 }
 int Run(int argc, char** argv) {
@@ -253,11 +255,14 @@ int Run(int argc, char** argv) {
         return 0;
     }
     if (command != "check" && command != "build" && command != "run" &&
-        command != "clean") {
+        command != "test" && command != "clean") {
         Usage();
         return 1;
     }
-    if (argc > 2 && (command != "run" || std::string(argv[2]) != "--")) {
+    const bool verboseTests =
+        command == "test" && argc == 3 && std::string(argv[2]) == "--verbose";
+    if (argc > 2 && !verboseTests &&
+        (command != "run" || std::string(argv[2]) != "--")) {
         Usage();
         return 1;
     }
@@ -269,6 +274,59 @@ int Run(int argc, char** argv) {
     if (command == "clean") {
         fs::remove_all(target);
         return 0;
+    }
+    if (command == "test") {
+        std::vector<fs::path> tests;
+        const fs::path sourceRoot = root / "src";
+        if (fs::is_directory(sourceRoot))
+            for (const auto& item :
+                 fs::recursive_directory_iterator(sourceRoot)) {
+                if (!item.is_regular_file() ||
+                    item.path().extension() != ".fl" ||
+                    !item.path().stem().string().ends_with("_test"))
+                    continue;
+                tests.push_back(item.path());
+            }
+        std::sort(tests.begin(), tests.end());
+        std::size_t passed = 0;
+        std::size_t failed = 0;
+        for (const fs::path& test : tests) {
+            std::vector<std::string> compile{Compiler(argv[0]), "test",
+                                             test.string(), "--root",
+                                             sourceRoot.string()};
+            if (verboseTests) compile.push_back("--verbose");
+            if (!manifest.dependencies.contains("std")) {
+                if (const auto standardLibrary = StandardLibrary(argv[0])) {
+                    compile.push_back("--lib");
+                    compile.push_back("std=" + standardLibrary->string());
+                }
+            }
+            for (const auto& [name, source] : manifest.dependencies) {
+                compile.push_back("--lib");
+                compile.push_back(name + "=" + source.string());
+            }
+            for (const auto& [name, input] : manifest.native) {
+                (void)name;
+                compile.push_back("--link");
+                compile.push_back(input.lexically_normal().string());
+            }
+            if (Execute(compile) == 0)
+                ++passed;
+            else
+                ++failed;
+        }
+        if (tests.size() > 1) {
+            const std::size_t total = passed + failed;
+            if (failed == 0)
+                std::cout << "\nOK [" << passed << "/" << total
+                          << "] test files passed\n";
+            else
+                std::cout << "\nFAIL [" << passed << "/" << total
+                          << "] test files passed, but [" << failed << "/"
+                          << total << "] failed\n";
+        } else if (tests.empty())
+            std::cout << "no test files found\n";
+        return failed == 0 ? 0 : 1;
     }
     const bool binary = manifest.kind == "program";
     const fs::path entry =

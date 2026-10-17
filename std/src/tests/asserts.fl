@@ -1,0 +1,79 @@
+module asserts;
+
+@imports :: root::tests::testing;
+
+export void is_true(
+    &testing::UnitTest ut,
+    bool actual,
+    stringv message
+) {
+    ut->recordAssertion(actual, "actual is true", message);
+}
+
+export void is_false(
+    &testing::UnitTest ut,
+    bool actual,
+    stringv message
+) {
+    ut->recordAssertion(!actual, "actual is false", message);
+}
+
+export void equal<T>(
+    &testing::UnitTest ut,
+    &const T expected,
+    &const T actual,
+    stringv message
+) {
+    ut->recordAssertion(*actual == *expected, "actual == expected", message);
+}
+
+export void not_equal<T>(
+    &testing::UnitTest ut,
+    &const T unexpected,
+    &const T actual,
+    stringv message
+) {
+    ut->recordAssertion(*actual != *unexpected, "actual != unexpected", message);
+}
+
+export void type_equal<A, B>(
+    &testing::UnitTest ut,
+    &const A expected,
+    &const B actual,
+    stringv message
+) {
+    ut->recordAssertion(*actual === *expected, "actual === expected", message);
+}
+
+export void type_not_equal<A, B>(
+    &testing::UnitTest ut,
+    &const A unexpected,
+    &const B actual,
+    stringv message
+) {
+    ut->recordAssertion(*actual !== *unexpected, "actual !== unexpected", message);
+}
+
+export void is_none<T>(
+    &testing::UnitTest ut,
+    &const T actual,
+    stringv message
+) {
+    ut->recordAssertion(*actual == none, "actual == none", message);
+}
+
+export void is_null<T>(
+    &testing::UnitTest ut,
+    &const T actual,
+    stringv message
+) {
+    ut->recordAssertion(*actual == null, "actual == null", message);
+}
+
+export void has_error(
+    &testing::UnitTest ut,
+    error actual,
+    stringv message
+) {
+    ut->recordAssertion(actual != none, "actual != none", message);
+}

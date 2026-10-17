@@ -1,4 +1,4 @@
-module algorithms_test;
+module algorithms;
 
 @imports
     :: lib::std::containers::algorithms

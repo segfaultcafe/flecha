@@ -1,0 +1,18 @@
+module math_test;
+
+@imports
+    :: root::math
+    :: lib::std::tests::testing;
+
+test private_access(&testing::UnitTest t) {
+    box := math::Box::init();
+    if math::secret() != box.hidden() {
+        t->fail();
+    }
+}
+
+test another_name(&testing::UnitTest t) {
+    if math::secret() != 42 {
+        t->fail();
+    }
+}

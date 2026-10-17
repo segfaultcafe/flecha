@@ -122,7 +122,7 @@ build/flecha --emit-object examples/llvm_poc.fl -o build/llvm_poc.o
 The complete command-line form is:
 
 ```text
-flecha <check|build|--emit-llvm|--emit-object> <input.fl> [-o output]
+flecha <check|build|test|--emit-llvm|--emit-object> <input.fl> [-o output]
        [--root source-directory] [--lib name=source-directory ...]
        [--link object-or-library ...]
 ```
@@ -156,9 +156,10 @@ Longbow manages a project described by `longbow.toml`.
 build/longbow new hello
 cd hello
 
-# Check, build, or run it from the project directory
+# Check, build, test, or run it from the project directory
 ../build/longbow check
 ../build/longbow build
+../build/longbow test
 ../build/longbow run
 ```
 
@@ -186,6 +187,7 @@ Longbow's available commands are:
 longbow new NAME [--lib]
 longbow init [--lib]
 longbow check|build|run|clean
+longbow test [--verbose]
 longbow run -- [program arguments]
 ```
 

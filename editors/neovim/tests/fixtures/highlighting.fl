@@ -72,6 +72,7 @@ unsafe void inspect(lend *const i32 pointer) {}
 stringv directive = "@imports string";
 
 module highlighting;
+test gold_keyword(&testing::UnitTest t) {}
 export i32 exported_function() { return 42; }
 
 unsafe { old := take(self->storage); buffer, err := new<[]i32>(count); }

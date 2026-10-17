@@ -17,6 +17,8 @@
 #include <string>
 #include <utility>
 
+#include "core/output_format.hpp"
+
 namespace flecha::codegen {
 namespace {
 
@@ -615,11 +617,7 @@ bool LlvmCodeGenerator::EmitDeferredCalls(const CleanupScope& scope) {
                      *call.Function().ParameterTypes()[0].Target());
         } else if (call.Function().BuiltIn() !=
                    semantic::BuiltInFunction::None) {
-            if (EmitRuntimeOutput(
-                    arguments.front(), deferred.argumentTypes.front(),
-                    call.Function().BuiltIn() ==
-                        semantic::BuiltInFunction::StdoutLine) == nullptr)
-                return false;
+            if (EmitBuiltInOutput(call, arguments) == nullptr) return false;
         } else {
             if (call.Type().ContainsStructure()) {
                 // Construct discarded results in their final storage too:
@@ -809,11 +807,95 @@ llvm::Value* LlvmCodeGenerator::EmitRuntimeOutput(llvm::Value* value,
     llvm::Value* call = _builder.CreateCall(output, arguments);
     if (!newline) return call;
 
+    return EmitRuntimeNewline();
+}
+
+llvm::Value* LlvmCodeGenerator::EmitRuntimeNewline() {
     llvm::FunctionType* newlineType =
         llvm::FunctionType::get(llvm::Type::getVoidTy(_context), {}, false);
     llvm::FunctionCallee emitNewline = _module->getOrInsertFunction(
         "flecha_runtime_v1_stdout_newline", newlineType);
     return _builder.CreateCall(emitNewline);
+}
+
+llvm::Value* LlvmCodeGenerator::EmitBuiltInOutput(
+    const lowering::BoundCallExpression& expression,
+    const std::vector<llvm::Value*>& arguments) {
+    const semantic::BuiltInFunction builtIn = expression.Function().BuiltIn();
+    llvm::Value* result = nullptr;
+    if (builtIn == semantic::BuiltInFunction::Stdout ||
+        builtIn == semantic::BuiltInFunction::StdoutLine) {
+        for (std::size_t index = 0; index < arguments.size(); ++index) {
+            result = EmitRuntimeOutput(
+                arguments[index], expression.Arguments()[index]->Type(), false);
+            if (result == nullptr) return nullptr;
+        }
+        if (builtIn == semantic::BuiltInFunction::StdoutLine)
+            return EmitRuntimeNewline();
+    } else if (builtIn == semantic::BuiltInFunction::StdoutFormat) {
+        if (expression.Arguments().empty() ||
+            expression.Arguments().front()->Kind() !=
+                lowering::BoundNodeKind::LiteralExpression)
+            return Fail("stdoutf format was not lowered as a literal"), nullptr;
+        const auto& literal =
+            static_cast<const lowering::BoundLiteralExpression&>(
+                *expression.Arguments().front());
+        const core::OutputFormat format =
+            core::ParseOutputFormat(literal.Value());
+        if (!format.IsValid())
+            return Fail("invalid stdoutf format reached code generation"),
+                   nullptr;
+
+        std::size_t argumentIndex = 1;
+        for (const auto& part : format.parts) {
+            if (part.kind == core::OutputFormatPartKind::Literal) {
+                const lowering::BoundLiteralExpression text(
+                    expression.Range(),
+                    semantic::SemanticType(
+                        semantic::SemanticTypeKind::StringView),
+                    part.text);
+                llvm::Value* value = EmitLiteral(text);
+                if (value == nullptr) return nullptr;
+                result = EmitRuntimeOutput(
+                    value,
+                    semantic::SemanticType(
+                        semantic::SemanticTypeKind::StringView),
+                    false);
+                if (result == nullptr) return nullptr;
+                continue;
+            }
+            if (argumentIndex >= arguments.size())
+                return Fail("stdoutf argument count changed after analysis"),
+                       nullptr;
+            semantic::SemanticType type =
+                expression.Arguments()[argumentIndex]->Type();
+            llvm::Value* value = arguments[argumentIndex];
+            if (part.kind == core::OutputFormatPartKind::Boolean &&
+                type.Kind() == semantic::SemanticTypeKind::U8) {
+                value = _builder.CreateICmpNE(
+                    value, llvm::ConstantInt::get(value->getType(), 0),
+                    "stdoutf.byte.bool");
+                type = semantic::SemanticType(semantic::SemanticTypeKind::Bool);
+            }
+            result = EmitRuntimeOutput(value, type, false);
+            if (result == nullptr) return nullptr;
+            ++argumentIndex;
+        }
+    } else {
+        return Fail("unsupported output built-in"), nullptr;
+    }
+
+    if (result != nullptr) return result;
+    const lowering::BoundLiteralExpression empty(
+        expression.Range(),
+        semantic::SemanticType(semantic::SemanticTypeKind::StringView), "");
+    llvm::Value* value = EmitLiteral(empty);
+    return value == nullptr
+               ? nullptr
+               : EmitRuntimeOutput(value,
+                                   semantic::SemanticType(
+                                       semantic::SemanticTypeKind::StringView),
+                                   false);
 }
 
 llvm::Value* LlvmCodeGenerator::EmitStringViewOperation(
@@ -2387,15 +2469,12 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 ++argumentIndex;
             }
             if (call.Function().BuiltIn() ==
-                semantic::BuiltInFunction::Stdout) {
-                return EmitRuntimeOutput(
-                    arguments.front(), call.Arguments().front()->Type(), false);
-            }
-            if (call.Function().BuiltIn() ==
-                semantic::BuiltInFunction::StdoutLine) {
-                return EmitRuntimeOutput(
-                    arguments.front(), call.Arguments().front()->Type(), true);
-            }
+                    semantic::BuiltInFunction::Stdout ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StdoutLine ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StdoutFormat)
+                return EmitBuiltInOutput(call, arguments);
             if (call.Function().BuiltIn() == semantic::BuiltInFunction::Free)
                 return EmitFree(arguments.front(),
                                 *call.Function().ParameterTypes()[0].Target());

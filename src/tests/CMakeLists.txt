@@ -38,6 +38,73 @@ set_tests_properties(CliTests.LongbowVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^longbow ${PROJECT_VERSION}"
 )
 
+add_test(
+    NAME LanguageTestTests.PassingModule
+    COMMAND $<TARGET_FILE:flecha>
+        test
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/math_test.fl
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        --lib std=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/std
+)
+set_tests_properties(LanguageTestTests.PassingModule PROPERTIES
+    PASS_REGULAR_EXPRESSION "math_test.fl [\.]+ OK"
+)
+
+add_test(
+    NAME LanguageTestTests.PassingModuleVerbose
+    COMMAND $<TARGET_FILE:flecha>
+        test
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/math_test.fl
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        --lib std=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/std
+        --verbose
+)
+set_tests_properties(LanguageTestTests.PassingModuleVerbose PROPERTIES
+    PASS_REGULAR_EXPRESSION "private_access [\.]+ ok"
+)
+
+add_test(
+    NAME LanguageTestTests.FailingModule
+    COMMAND $<TARGET_FILE:flecha>
+        test
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/failure_test.fl
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        --lib std=${PROJECT_SOURCE_DIR}/std/src
+)
+set_tests_properties(LanguageTestTests.FailingModule PROPERTIES WILL_FAIL TRUE)
+
+add_test(
+    NAME LanguageTestTests.FailureDiagnostics
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/failure_test.fl
+        -DFLECHA_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_test_failure.cmake
+)
+
+add_test(
+    NAME LanguageTestTests.LongbowDiscovery
+    COMMAND ${CMAKE_COMMAND} -E env
+        FLECHA_COMPILER=$<TARGET_FILE:flecha>
+        $<TARGET_FILE:longbow> test
+)
+set_tests_properties(LanguageTestTests.LongbowDiscovery PROPERTIES
+    WORKING_DIRECTORY
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project
+)
+
+add_test(
+    NAME StandardLibraryTests.FlechaModules
+    COMMAND ${CMAKE_COMMAND} -E env
+        FLECHA_COMPILER=$<TARGET_FILE:flecha>
+        FLECHA_STANDARD_LIBRARY=${PROJECT_SOURCE_DIR}/std/src
+        $<TARGET_FILE:longbow> test --verbose
+)
+set_tests_properties(StandardLibraryTests.FlechaModules PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/std
+)
+
 add_test(NAME EditorTests.VSCodeManifest
     COMMAND ${CMAKE_COMMAND}
         -DEDITOR_ROOT=${PROJECT_SOURCE_DIR}/editors/vscode
@@ -423,7 +490,7 @@ foreach(case IN ITEMS
         remove
         swap_remove
         structure_mutations
-        algorithms_test)
+        algorithms)
     set(array_fail_call 0)
     if(case STREQUAL "main")
         set(array_fail_call 2)
