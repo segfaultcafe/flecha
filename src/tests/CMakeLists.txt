@@ -94,6 +94,17 @@ set_tests_properties(LanguageTestTests.LongbowDiscovery PROPERTIES
         ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project
 )
 
+add_test(
+    NAME StandardLibraryTests.FlechaModules
+    COMMAND ${CMAKE_COMMAND} -E env
+        FLECHA_COMPILER=$<TARGET_FILE:flecha>
+        FLECHA_STANDARD_LIBRARY=${PROJECT_SOURCE_DIR}/std/src
+        $<TARGET_FILE:longbow> test --verbose
+)
+set_tests_properties(StandardLibraryTests.FlechaModules PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/std
+)
+
 add_test(NAME EditorTests.VSCodeManifest
     COMMAND ${CMAKE_COMMAND}
         -DEDITOR_ROOT=${PROJECT_SOURCE_DIR}/editors/vscode
