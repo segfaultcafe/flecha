@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.2 - 2026-10-17
+
+Flecha 0.1.2 is a patch release correcting zero-construction triviality.
+
 ### Fixed
 
 - Explicit `zero()` overrides that only construct canonical zero values are
