@@ -106,16 +106,22 @@ Use the following workflow for an urgent patch:
 2. Create `bugfix/<name>` from `release`, not from `master`.
 3. Open the focused pull request against `release` and run the complete release
    checks.
-4. Merge the fix, finish the patch release metadata, and tag the resulting
-   `release` commit (for example, `v0.1.2`).
-5. Immediately merge `release` forward into `master`, resolving conflicts in
-   favor of retaining both the patch and the newer development work.
+4. After the fix merges, create `release/vMAJOR.MINOR.PATCH` from `release`,
+   update the version and release notes, and merge that release-preparation
+   pull request back into `release`.
+5. Tag the exact resulting `release` head (for example, `v0.1.2`) and publish
+   the release.
+6. Immediately open and merge a `release`-to-`master` pull request, resolving
+   conflicts in favor of retaining both the patch and the newer development
+   work.
 
-When the planned minor or major version is ready, ensure `master` contains all
-patches, merge `master` into `release`, complete the release checks and
-metadata, and tag that `release` commit. New development then continues on
-`master`. This keeps every shipped fix in future versions without forcing a
-tag for each development commit.
+For a planned minor or major version, first ensure `master` contains all
+patches. Prepare its version and release notes through a focused pull request
+to `master`, then open a promotion pull request from `master` to `release`.
+After that promotion passes the release checks and merges, tag the exact
+`release` head. New development then continues on `master`. This keeps every
+shipped fix in future versions without forcing a tag for each development
+commit.
 
 Every version tag must point to the exact current head of `release`. Version
 tags use the form `vMAJOR.MINOR.PATCH`, are created only by a maintainer after
