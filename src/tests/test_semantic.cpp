@@ -2876,6 +2876,53 @@ TEST(SemanticStructureTests, ValidatesZeroLifecycleAndContextualNone) {
     }
 }
 
+TEST(SemanticStructureTests,
+     ClassifiesCanonicalZeroOverridesIndependentlyFromTheirOrigin) {
+    Analysis trivial = Analyze(
+        "structure Storage { *u8 data; usize length; usize capacity; }; "
+        "Storage Storage::zero() override { return build Storage { "
+        "self.data = null; self.length = 0; self.capacity = 0; }; } "
+        "void Storage::tear(&self) override {} "
+        "structure Buffer { Storage storage; }; "
+        "Buffer Buffer::zero() override { return build Buffer { "
+        "self.storage = none; }; }");
+    ASSERT_FALSE(trivial.diagnostics.HasErrors());
+    ASSERT_EQ(trivial.model.Structures().size(), 2);
+    EXPECT_TRUE(SemanticType(trivial.model.Structures()[0].get())
+                    .IsTriviallyZeroable());
+    EXPECT_TRUE(SemanticType(trivial.model.Structures()[1].get())
+                    .IsTriviallyZeroable());
+    for (const Diagnostic& diagnostic : trivial.diagnostics.Diagnostics())
+        EXPECT_NE(diagnostic.severity, DiagnosticSeverity::Warning);
+
+    Analysis generic = Analyze(
+        "structure Storage<T> { *T data; usize length; }; "
+        "Storage<T> Storage<T>::zero() override { return build Storage<T> { "
+        "self.data = null; self.length = 0; }; } "
+        "void Storage<T>::tear(&self) override {} "
+        "void f() { Storage<i32> storage = none; }");
+    ASSERT_FALSE(generic.diagnostics.HasErrors());
+    for (const Diagnostic& diagnostic : generic.diagnostics.Diagnostics())
+        EXPECT_NE(diagnostic.severity, DiagnosticSeverity::Warning);
+
+    Analysis nontrivial = Analyze(
+        "structure Offset { i32 value; }; "
+        "Offset Offset::zero() override { return build Offset { "
+        "self.value = 1; }; } "
+        "structure View { Offset offset; }; "
+        "View View::zero() override { return build View {}; }");
+    ASSERT_FALSE(nontrivial.diagnostics.HasErrors());
+    ASSERT_EQ(nontrivial.model.Structures().size(), 2);
+    EXPECT_FALSE(SemanticType(nontrivial.model.Structures()[0].get())
+                     .IsTriviallyZeroable());
+    EXPECT_FALSE(SemanticType(nontrivial.model.Structures()[1].get())
+                     .IsTriviallyZeroable());
+    std::size_t warnings = 0;
+    for (const Diagnostic& diagnostic : nontrivial.diagnostics.Diagnostics())
+        if (diagnostic.severity == DiagnosticSeverity::Warning) ++warnings;
+    EXPECT_EQ(warnings, 2);
+}
+
 TEST(SemanticStructureTests, NoneDirectlyConstructsNonCopyableStructures) {
     Analysis result = Analyze(
         "structure Box { i32 value; }; "

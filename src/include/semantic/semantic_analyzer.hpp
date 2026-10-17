@@ -56,6 +56,7 @@ class SemanticAnalyzer final {
         const core::MemberCallExpression& expression, SemanticType receiver);
     void CheckTransfer(const core::Expression& expression, SemanticType type);
     void WarnForNontrivialDefault(SemanticType type, source::SourceRange range);
+    void ClassifyTrivialZeros(const core::CompilationUnit& unit);
     void RecordZeroDependency(SemanticType type);
     void RecordCleanupEffects(SemanticType type);
     void ValidateZeroCycles();
@@ -119,6 +120,7 @@ class SemanticAnalyzer final {
     std::size_t _loopDepth = 0;
     bool _inUnsafe = false;
     bool _inZero = false;
+    bool _zeroTrivialityKnown = false;
     std::unordered_set<const core::Expression*> _directConstructions;
     const Symbol* _buildSelf = nullptr;
     bool _allowBuildSelf = false;
