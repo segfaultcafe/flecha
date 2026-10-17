@@ -66,16 +66,38 @@ Flecha keeps planned development separate from the currently released line:
 
 - `master` contains work for the next planned minor or major release. It may
   include compatible features and other changes that are not part of the
-  current release series.
+  current release series. It is the default integration branch and the base
+  for features, ordinary fixes, refactors, and documentation intended for the
+  next version.
 - `release` represents the latest shipped production line. Immediately after
   a release is completed, its head must be the commit carrying the latest
-  version tag. Feature development does not happen on this branch.
+  version tag. It accepts only approved patches to the current version and
+  promotion pull requests from `master`; feature development does not happen
+  directly on this branch.
 
 Ordinary commits on either branch are not releases and must not receive a
 version tag. Releases are deliberate milestones following semantic versioning:
 compatible feature work accumulates toward a minor version, incompatible work
 toward a major version, and only necessary fixes to an already shipped version
 justify a patch release.
+
+Direct pushes to `master` and `release` are not part of the normal workflow.
+Maintainers push focused branches to the upstream repository and open ordinary
+pull requests. Non-maintainers push branches to personal forks, open pull
+requests from those forks, and require at least one maintainer approval. Both
+types of pull request must pass the required checks and resolve review threads.
+
+Use the following push flow for planned development:
+
+1. Start a focused `feat/<name>`, `fix/<name>`, or documentation branch from
+   the latest `master`.
+2. Push it to the upstream repository when working as a maintainer, or to a
+   personal fork otherwise.
+3. Open a pull request against `master`.
+4. Merge only after the applicable review and required checks pass.
+
+Commits on `master` are integration commits, not releases, and are never tagged
+as versions.
 
 Use the following workflow for an urgent patch:
 
@@ -94,6 +116,12 @@ patches, merge `master` into `release`, complete the release checks and
 metadata, and tag that `release` commit. New development then continues on
 `master`. This keeps every shipped fix in future versions without forcing a
 tag for each development commit.
+
+Every version tag must point to the exact current head of `release`. Version
+tags use the form `vMAJOR.MINOR.PATCH`, are created only by a maintainer after
+the release pull request and checks complete, and must never point directly to
+`master` or to an older `release` commit. The release workflow verifies this
+identity before publishing artifacts.
 
 ## Review and merge policy
 
