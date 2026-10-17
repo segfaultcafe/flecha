@@ -157,7 +157,7 @@ error Array<T>::set(&self, usize index, T value) {
 
         setErr := self->set(index, replacement);
         if setErr != none {
-
+            return (none, setErr);
         }
     }
 
