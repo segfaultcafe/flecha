@@ -2,7 +2,7 @@
   "name": "flecha-language",
   "displayName": "Flecha Language Support",
   "description": "Syntax highlighting and editing support for Flecha source files.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "flecha",
   "license": "MIT",
   "repository": {

@@ -18,6 +18,15 @@
 - Development builds of Flecha and Longbow now include the commit distance,
   abbreviated Git revision, and dirty-worktree state in `--version` output.
 
+## 0.1.2 - 2026-10-17
+
+Flecha 0.1.2 is a patch release correcting zero-construction triviality.
+
+### Fixed
+
+- Explicit `zero()` overrides that only construct canonical zero values are
+  recognized as trivial, including through generic and nested structures.
+
 ## 0.1.1 - 2026-10-16
 
 Flecha 0.1.1 is a stabilization release for the first installable toolchain.
