@@ -54,7 +54,7 @@ class SemanticAnalyzer final {
     SemanticType AnalyzeBuild(const core::BuildExpression& expression);
     SemanticType AnalyzeStructureCall(
         const core::MemberCallExpression& expression, SemanticType receiver);
-    void CheckCopy(const core::Expression& expression, SemanticType type);
+    void CheckTransfer(const core::Expression& expression, SemanticType type);
     void WarnForNontrivialDefault(SemanticType type, source::SourceRange range);
     void RecordZeroDependency(SemanticType type);
     void RecordCleanupEffects(SemanticType type);

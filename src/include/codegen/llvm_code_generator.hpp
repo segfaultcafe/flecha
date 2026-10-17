@@ -97,7 +97,8 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::Value* EmitArray(
         const lowering::BoundArrayExpression& expression);
     [[nodiscard]] llvm::Value* EmitMatch(
-        const lowering::BoundMatchExpression& expression);
+        const lowering::BoundMatchExpression& expression,
+        llvm::Value* destination = nullptr);
     [[nodiscard]] llvm::Value* EmitArrayStorage(
         const lowering::BoundExpression& expression);
     [[nodiscard]] llvm::Value* EmitAddress(

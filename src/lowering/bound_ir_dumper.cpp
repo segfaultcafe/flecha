@@ -334,6 +334,18 @@ class Dumper final {
                                .Symbol()
                                .Name();
                 break;
+            case BoundNodeKind::MoveExpression:
+                _stream << "move ";
+                WriteExpression(
+                    static_cast<const BoundMoveExpression&>(expression)
+                        .Source());
+                break;
+            case BoundNodeKind::DirectExpression:
+                _stream << "direct ";
+                WriteExpression(
+                    static_cast<const BoundDirectExpression&>(expression)
+                        .Value());
+                break;
             case BoundNodeKind::FunctionExpression:
                 _stream << "function_ref "
                         << static_cast<const BoundFunctionExpression&>(

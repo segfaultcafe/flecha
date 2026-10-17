@@ -302,6 +302,7 @@ llvm::AllocaInst* LlvmCodeGenerator::CreateOwnedStringTemporary(
 llvm::Value* LlvmCodeGenerator::EmitValueCopy(llvm::Value* value,
                                               semantic::SemanticType type,
                                               bool temporary) {
+    if (!type.IsCopyable()) return value;
     if (temporary && type.ContainsStructure()) {
         llvm::Value* copy = EmitValueCopy(value, type, false);
         if (!copy) return nullptr;
@@ -439,7 +440,11 @@ bool LlvmCodeGenerator::EmitDestructure(
             field = CoerceValue(_builder.CreateExtractValue(value, i),
                                 type.Elements()[i], variable->Type());
             if (field == nullptr) return false;
-            field = EmitValueCopy(field, variable->Type(), false);
+            if (type.IsCopyable())
+                field = EmitValueCopy(field, variable->Type(), false);
+        } else if (!type.IsCopyable() && type.Elements()[i].OwnsStorage()) {
+            EmitValueDestroy(_builder.CreateExtractValue(value, i),
+                             type.Elements()[i]);
         }
         values.push_back(field);
     }
@@ -1060,9 +1065,11 @@ bool LlvmCodeGenerator::EmitFunction(
         llvm::AllocaInst* storage = CreateEntryAlloca(parameter);
         if (storage == nullptr) return false;
         llvm::Value* parameterValue = &argument;
-        if (parameter.Type().OwnsStorage()) {
+        if (parameter.Type().OwnsStorage() && parameter.Type().IsCopyable()) {
             parameterValue =
                 EmitValueCopy(parameterValue, parameter.Type(), false);
+        }
+        if (parameter.Type().OwnsStorage()) {
             _cleanupScopes.back()->ownedValues.push_back(
                 {storage, parameter.Type()});
         }
@@ -1315,11 +1322,20 @@ bool LlvmCodeGenerator::EmitStatement(
         case lowering::BoundNodeKind::DeferStatement:
             return EmitDefer(
                 static_cast<const lowering::BoundDeferStatement&>(statement));
-        case lowering::BoundNodeKind::ExpressionStatement:
-            return EmitExpression(
-                       static_cast<const lowering::BoundExpressionStatement&>(
-                           statement)
-                           .Expression()) != nullptr;
+        case lowering::BoundNodeKind::ExpressionStatement: {
+            const auto& expression =
+                static_cast<const lowering::BoundExpressionStatement&>(
+                    statement)
+                    .Expression();
+            llvm::Value* value = EmitExpression(expression);
+            if (value == nullptr) return false;
+            if (!expression.Type().IsCopyable() &&
+                (expression.Kind() == lowering::BoundNodeKind::MoveExpression ||
+                 expression.Kind() ==
+                     lowering::BoundNodeKind::DirectExpression))
+                EmitValueDestroy(value, expression.Type());
+            return true;
+        }
         case lowering::BoundNodeKind::ReturnStatement: {
             const lowering::BoundReturnStatement& returnStatement =
                 static_cast<const lowering::BoundReturnStatement&>(statement);
@@ -2216,6 +2232,35 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
             return EmitLiteral(
                 static_cast<const lowering::BoundLiteralExpression&>(
                     expression));
+        case lowering::BoundNodeKind::DirectExpression: {
+            const auto& direct =
+                static_cast<const lowering::BoundDirectExpression&>(expression);
+            auto* storage = CreateOwnedValueTemporary(expression.Type(),
+                                                      "direct.temporary");
+            if (!EmitInto(direct.Value(), storage, expression.Type()))
+                return nullptr;
+            if (expression.Type().ContainsStructure())
+                _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
+                                     LifetimeFlag(storage));
+            llvm::Value* value = _builder.CreateLoad(MapType(expression.Type()),
+                                                     storage, "direct.value");
+            if (expression.Type().ContainsStructure())
+                _builder.CreateStore(llvm::ConstantInt::getFalse(_context),
+                                     LifetimeFlag(storage));
+            return value;
+        }
+        case lowering::BoundNodeKind::MoveExpression: {
+            const auto& move =
+                static_cast<const lowering::BoundMoveExpression&>(expression);
+            llvm::Value* storage = EmitAddress(move.Source());
+            if (storage == nullptr) return nullptr;
+            llvm::Value* value = _builder.CreateLoad(MapType(expression.Type()),
+                                                     storage, "moved.value");
+            if (expression.Type().ContainsStructure())
+                _builder.CreateStore(llvm::ConstantInt::getFalse(_context),
+                                     LifetimeFlag(storage));
+            return value;
+        }
         case lowering::BoundNodeKind::VariableExpression: {
             const semantic::VariableSymbol& symbol =
                 static_cast<const lowering::BoundVariableExpression&>(
@@ -2255,22 +2300,6 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                     expression);
             llvm::Value* storage = EmitAddress(assignment.Target());
             if (storage == nullptr) return nullptr;
-            if (assignment.Value().Kind() ==
-                    lowering::BoundNodeKind::DefaultExpression &&
-                static_cast<const lowering::BoundDefaultExpression&>(
-                    assignment.Value())
-                    .IsSemanticZero() &&
-                assignment.Target().Type().ContainsStructure()) {
-                EmitValueDestroy(
-                    _builder.CreateLoad(MapType(assignment.Target().Type()),
-                                        storage, "value.old"),
-                    assignment.Target().Type());
-                if (!EmitInto(assignment.Value(), storage,
-                              assignment.Target().Type()))
-                    return nullptr;
-                return _builder.CreateLoad(MapType(assignment.Target().Type()),
-                                           storage, "value.defaulted");
-            }
             llvm::Value* value = EmitExpression(assignment.Value());
             if (value == nullptr) return nullptr;
             value = CoerceValue(value, assignment.Value().Type(),
@@ -2280,12 +2309,22 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
             }
             if (value == nullptr) return nullptr;
             if (assignment.Target().Type().OwnsStorage()) {
-                EmitValueDestroy(
-                    _builder.CreateLoad(MapType(assignment.Target().Type()),
-                                        storage, "value.old"),
-                    assignment.Target().Type());
+                if (assignment.Target().Kind() ==
+                    lowering::BoundNodeKind::VariableExpression)
+                    EmitValueStorageCleanup(storage,
+                                            assignment.Target().Type());
+                else
+                    EmitValueDestroy(
+                        _builder.CreateLoad(MapType(assignment.Target().Type()),
+                                            storage, "value.old"),
+                        assignment.Target().Type());
             }
             _builder.CreateStore(value, storage);
+            if (assignment.Target().Type().ContainsStructure() &&
+                assignment.Target().Kind() ==
+                    lowering::BoundNodeKind::VariableExpression)
+                _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
+                                     LifetimeFlag(storage));
             return value;
         }
         case lowering::BoundNodeKind::AllocationExpression:
@@ -2384,19 +2423,23 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
 }
 
 llvm::Value* LlvmCodeGenerator::EmitMatch(
-    const lowering::BoundMatchExpression& expression) {
+    const lowering::BoundMatchExpression& expression,
+    llvm::Value* destination) {
     llvm::Value* matched = EmitExpression(expression.Matched());
     if (matched == nullptr) return nullptr;
 
     const bool returnsVoid =
         expression.Type().Kind() == semantic::SemanticTypeKind::Void;
-    llvm::AllocaInst* result = nullptr;
+    llvm::Value* result = destination;
+    const bool ownsResult =
+        result == nullptr && expression.Type().OwnsStorage();
     if (!returnsVoid) {
-        result =
-            expression.Type().OwnsStorage()
-                ? CreateOwnedValueTemporary(expression.Type(), "match.result")
-                : CreateTemporaryAlloca(MapType(expression.Type()),
-                                        "match.result");
+        if (result == nullptr)
+            result = ownsResult
+                         ? CreateOwnedValueTemporary(expression.Type(),
+                                                     "match.result")
+                         : CreateTemporaryAlloca(MapType(expression.Type()),
+                                                 "match.result");
     }
 
     llvm::BasicBlock* merge =
@@ -2445,7 +2488,7 @@ llvm::Value* LlvmCodeGenerator::EmitMatch(
     }
     _builder.SetInsertPoint(merge);
     if (returnsVoid) return llvm::ConstantInt::getFalse(_context);
-    if (expression.Type().ContainsStructure())
+    if (ownsResult && expression.Type().ContainsStructure())
         _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
                              LifetimeFlag(result));
     return _builder.CreateLoad(MapType(expression.Type()), result,
@@ -2572,6 +2615,11 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
                                  semantic::SemanticType type) {
     using Node = lowering::BoundNodeKind;
     using Kind = semantic::SemanticTypeKind;
+    if (expression.Kind() == Node::DirectExpression)
+        return EmitInto(
+            static_cast<const lowering::BoundDirectExpression&>(expression)
+                .Value(),
+            destination, type);
     if (expression.Kind() == Node::DefaultExpression)
         return EmitDefaultInto(
             destination, type,
@@ -2611,6 +2659,10 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
         EmitFunctionCall(call.Function(), arguments);
         return true;
     }
+    if (expression.Kind() == Node::MatchExpression && type.ContainsStructure())
+        return EmitMatch(static_cast<const lowering::BoundMatchExpression&>(
+                             expression),
+                         destination) != nullptr;
     if (expression.Kind() == Node::TupleExpression &&
         type.ContainsStructure()) {
         const auto& tuple =

@@ -3091,6 +3091,190 @@ TEST(SemanticStructureTests,
                                         "f() { Parent p = Parent::init(); }"),
                        DiagnosticCode::UnsafeOperation),
         nullptr);
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(prefix + "structure Parent { Box child; }; unsafe void "
+                             "f() { p := Parent::init(); moved := p; }"),
+            DiagnosticCode::NonCopyableValue),
+        nullptr);
+    EXPECT_NE(
+        FindDiagnostic(Analyze(prefix + "unsafe void f() { left, right := "
+                                        "(Box::init(), Box::init()); }"),
+                       DiagnosticCode::NonCopyableValue),
+        nullptr);
+}
+
+TEST(SemanticStructureTests, MovesSafeTearValuesAndRestoresReassignedSources) {
+    auto result = Analyze(R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        Box pass(Box value) { return value; }
+        Box choose(bool condition, Box left, Box right) {
+            if condition { return left; }
+            return right;
+        }
+        i32 test(bool condition) {
+            first := Box::init();
+            second := first;
+            first = Box::init();
+            third := pass(second);
+            selected := choose(condition, first, third);
+            first = Box::init();
+            return selected.value + first.value;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticStructureTests, DiscardingAWholeNonCopyableValueConsumesIt) {
+    const std::string prefix = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+    )";
+    auto result = Analyze(prefix + R"(
+        void test() {
+            box := Box::init();
+            box;
+            stdout(box.value);
+        }
+    )");
+    EXPECT_NE(FindDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
+    EXPECT_FALSE(Analyze(prefix + R"(
+        enum Pick { Left, Right, }
+        void test(Pick pick) {
+            left := Box::init();
+            right := Box::init();
+            match pick { Pick.Left => left, Pick.Right => right, };
+        }
+    )")
+                     .diagnostics.HasErrors());
+}
+
+TEST(SemanticStructureTests, DiagnosesMovedPossibleAndSelfMovedValues) {
+    const std::string prefix = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+    )";
+    for (const std::string& body : {
+             "first := Box::init(); second := first; stdout(first.value);",
+             "first := Box::init(); if condition { second := first; } "
+             "stdout(first.value);",
+             "first := Box::init(); while condition { second := first; break; "
+             "} stdout(first.value);",
+         }) {
+        SCOPED_TRACE(body);
+        auto result =
+            Analyze(prefix + "void test(bool condition) { " + body + " }");
+        const Diagnostic* diagnostic =
+            FindDiagnostic(result, DiagnosticCode::MovedValue);
+        ASSERT_NE(diagnostic, nullptr);
+        EXPECT_EQ(diagnostic->range.start.offset,
+                  (prefix + "void test(bool condition) { " + body + " }")
+                      .rfind("first"));
+    }
+    EXPECT_NE(FindDiagnostic(Analyze(prefix + R"(
+        void test() { value := Box::init(); value = value; }
+    )"),
+                             DiagnosticCode::NonCopyableValue),
+              nullptr);
+    EXPECT_FALSE(Analyze(prefix + R"(
+        void test(bool condition) {
+            value := Box::init();
+            if condition { moved := value; }
+            value = Box::init();
+            stdout(value.value);
+        }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(FindDiagnostic(Analyze(prefix + R"(
+        void test() {
+            left, right := (Box::init(), Box::init());
+            (left, right) = (left, right);
+        }
+    )"),
+                             DiagnosticCode::NonCopyableValue),
+              nullptr);
+}
+
+TEST(SemanticStructureTests, WholeMovesRespectLoansAndRejectPartialMoves) {
+    const std::string prefix = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        void consume(Box value) {}
+        void inspect(&const i32 value) { stdout(*value); }
+    )";
+    for (const std::string& body : {
+             "box := Box::init(); reference := &box.value; moved := box; "
+             "stdout(*reference);",
+             "box := Box::init(); reference := &box.value; consume(box); "
+             "stdout(*reference);",
+             "box := Box::init(); reference := &box.value; defer "
+             "inspect(reference); moved := box;",
+         }) {
+        SCOPED_TRACE(body);
+        EXPECT_NE(
+            FindDiagnostic(Analyze(prefix + "void test() { " + body + " }"),
+                           DiagnosticCode::BorrowConflict),
+            nullptr);
+    }
+    EXPECT_NE(FindDiagnostic(Analyze(prefix + R"(
+        void test() { values := [Box::init()]; box := values[0]; }
+    )"),
+                             DiagnosticCode::NonCopyableValue),
+              nullptr);
+    EXPECT_FALSE(Analyze(prefix + R"(
+        void test() {
+            box := Box::init();
+            reference := &box.value;
+            stdout(*reference);
+            moved := box;
+        }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+            structure Buffer { own *i32 data; usize length; };
+            unsafe Buffer Buffer::init(own *i32 data, usize length) override {
+                return build Buffer {
+                    self.data = data;
+                    self.length = length;
+                };
+            }
+            void Buffer::tear(&self) override {
+                unsafe { free(self->data); }
+            }
+            unsafe []i32 Buffer::view(&self) <- self {
+                return self->data[:self->length];
+            }
+            unsafe void test() {
+                data, err := new<[]i32>(1);
+                buffer := Buffer::init(data, 1);
+                values := buffer.view();
+                moved := buffer;
+                stdout(values[0]);
+            }
+        )"),
+                             DiagnosticCode::BorrowConflict),
+              nullptr);
+}
+
+TEST(SemanticStructureTests, MovesWholeTuplesArraysAndNestedValues) {
+    auto result = Analyze(R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        structure Outer { Box child; };
+        void Outer::tear(&self) override {}
+        void test() {
+            pair := (Box::init(), Box::init());
+            left, right := pair;
+            values := [left, right];
+            movedValues := values;
+            outer := Outer::init();
+            movedOuter := outer;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
 }
 
 TEST(SemanticStructureTests,
@@ -4197,6 +4381,22 @@ TEST(SemanticGenericTests, GenericLifecycleKeepsUnsafeTearRestrictions) {
     EXPECT_FALSE(
         Analyze(prefix + "unsafe void main() { a := Box<i32>::init(); }")
             .diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests, GenericSafeTearValuesMoveByValue) {
+    auto result = Analyze(R"(
+        structure Box<T> { T value; };
+        void Box<T>::tear(&self) override {}
+        Box<T> pass<T>(Box<T> value) { return value; }
+        i32 main() {
+            first := Box<i32>::init();
+            second := pass<i32>(first);
+            first = Box<i32>::init();
+            return second.value + first.value;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
 }
 
 TEST(SemanticGenericTests, GenericMethodsResolveMixedTuplesAndBuildSelfFields) {

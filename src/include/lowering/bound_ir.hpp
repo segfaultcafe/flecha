@@ -36,6 +36,8 @@ enum class BoundNodeKind {
     ArrayElementExpression,
     ArrayLengthExpression,
     LiteralExpression,
+    DirectExpression,
+    MoveExpression,
     VariableExpression,
     DereferenceExpression,
     AddressExpression,
@@ -347,6 +349,36 @@ class BoundVariableExpression final : public BoundPlaceExpression {
 
    private:
     const semantic::VariableSymbol& _symbol;
+};
+
+class BoundMoveExpression final : public BoundExpression {
+   public:
+    BoundMoveExpression(source::SourceRange range,
+                        std::unique_ptr<BoundPlaceExpression> source)
+        : BoundExpression(range, source->Type()), _source(std::move(source)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::MoveExpression;
+    }
+    [[nodiscard]] const BoundPlaceExpression& Source() const {
+        return *_source;
+    }
+
+   private:
+    std::unique_ptr<BoundPlaceExpression> _source;
+};
+
+class BoundDirectExpression final : public BoundExpression {
+   public:
+    BoundDirectExpression(source::SourceRange range,
+                          std::unique_ptr<BoundExpression> value)
+        : BoundExpression(range, value->Type()), _value(std::move(value)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::DirectExpression;
+    }
+    [[nodiscard]] const BoundExpression& Value() const { return *_value; }
+
+   private:
+    std::unique_ptr<BoundExpression> _value;
 };
 
 class BoundFunctionExpression final : public BoundExpression {

@@ -278,6 +278,20 @@ std::unique_ptr<BoundPlaceExpression> Lowerer::LowerPlace(
 std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
     const core::Expression& expression, semantic::SemanticType expected) {
     const semantic::SemanticType type = _semanticModel->TypeOf(expression);
+    if (_semanticModel->TransferOf(expression) == semantic::TransferKind::Move)
+        return std::make_unique<BoundMoveExpression>(expression.Range(),
+                                                     LowerPlace(expression));
+    if (_semanticModel->TransferOf(expression) ==
+            semantic::TransferKind::Direct &&
+        _directTransfer != &expression) {
+        const core::Expression* previous = _directTransfer;
+        _directTransfer = &expression;
+        std::unique_ptr<BoundExpression> value =
+            LowerExpression(expression, expected);
+        _directTransfer = previous;
+        return std::make_unique<BoundDirectExpression>(expression.Range(),
+                                                       std::move(value));
+    }
     switch (expression.Kind()) {
         case core::AstNodeKind::BuildExpression: {
             const auto& build =

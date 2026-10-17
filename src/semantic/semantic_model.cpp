@@ -38,4 +38,10 @@ SemanticType SemanticModel::TypeOf(const core::Expression& expression) const {
     return found == _types.end() ? SemanticType::Error() : found->second;
 }
 
+TransferKind SemanticModel::TransferOf(
+    const core::Expression& expression) const {
+    const auto found = _transfers.find(&expression);
+    return found == _transfers.end() ? TransferKind::Copy : found->second;
+}
+
 }  // namespace flecha::semantic

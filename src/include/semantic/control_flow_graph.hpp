@@ -17,6 +17,7 @@ struct FlowNode final {
     const core::NameExpression* read = nullptr;
     const Symbol* write = nullptr;
     const Symbol* reset = nullptr;
+    const Symbol* move = nullptr;
     // Whole-expression actions for borrow/move analysis. These precede the
     // corresponding ordered events; each pass consumes only its own events.
     const core::Expression* evaluation = nullptr;

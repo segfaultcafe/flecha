@@ -629,6 +629,104 @@ TEST(NativeCompilerTests, RunsOwnerBackedCheckedSlices) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsWholeValueMovesWithExactlyOnceCleanup) {
+    GeneratedSource result = Generate(R"(
+        structure Box { own *i32 data; };
+        unsafe Box Box::init(own *i32 data) override {
+            return build Box { self.data = data; };
+        }
+        void Box::tear(&self) override {
+            unsafe { free(self->data); }
+        }
+        unsafe i32 Box::read(&const self) { return *self->data; }
+        Box relay(Box value) { return value; }
+        (Box, string, i32) tag(Box value) {
+            return (value, "moved", 20);
+        }
+        i32 main() {
+            unsafe {
+                firstData, err := new<i32>(20);
+                if err != none { return 1; }
+                secondData, err := new<i32>(22);
+                if err != none { free(firstData); return 2; }
+                discardedData, err := new<i32>(1);
+                if err != none { free(firstData); free(secondData); return 4; }
+                discarded := Box::init(discardedData);
+                discarded;
+                first := Box::init(firstData);
+                second := Box::init(secondData);
+                first = second;
+                tagged, label, extra := tag(first);
+                if label != "moved" { return 3; }
+                result := relay(relay(tagged));
+                return result.read() + extra;
+            }
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_whole_value_moves_test";
+    std::filesystem::remove(executablePath);
+
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_whole_value_moves_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsMoveOnlyMatchResults) {
+    GeneratedSource result = Generate(R"(
+        enum Pick { Left, Right, }
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        Box make(i32 value) {
+            box := Box::init();
+            box.value = value;
+            return box;
+        }
+        Box choose(Pick pick, Box left, Box right) {
+            return match pick {
+                Pick.Left => left,
+                Pick.Right => right,
+            };
+        }
+        i32 main() {
+            result := choose(Pick.Right, make(20), make(22));
+            return result.value + 20;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_move_match_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_move_match_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsEnumMatchesInMemberFunctions) {
     GeneratedSource result = Generate(R"(
         enum TokenKind: u8 { Identifier = 2, Number = 7, End = 9, }

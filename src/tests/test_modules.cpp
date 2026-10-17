@@ -375,3 +375,20 @@ TEST_F(ModuleTests, PublicGenericMethodsAcceptCallerPrivateArguments) {
     )");
     EXPECT_EQ(Check(), "");
 }
+
+TEST_F(ModuleTests, MoveOnlyValuesTransferAcrossModuleBoundaries) {
+    Write("box.fl", R"(module box;
+        export structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        export Box pass(Box value) { return value; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::box;
+        i32 main() {
+            first := box::Box::init();
+            second := box::pass(first);
+            first = box::Box::init();
+            return first.value + second.value;
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+}

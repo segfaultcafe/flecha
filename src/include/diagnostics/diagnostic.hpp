@@ -78,6 +78,7 @@ enum class DiagnosticCode {
     InvalidEnumDeclaration,
     InvalidMatch,
     InvalidBorrowContract,
+    MovedValue,
     NativeTargetUnavailable,
     ObjectEmissionFailed,
     RuntimeUnavailable,
