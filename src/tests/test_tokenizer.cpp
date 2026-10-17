@@ -37,6 +37,14 @@ TEST(TokenizerTests, RecognizesKeywords) {
     EXPECT_EQ(tokens[11].type, TokenType::EOF_TOKEN);
 }
 
+TEST(TokenizerTests, RecognizesTestKeyword) {
+    const std::vector<Token> tokens = Tokenize("test addition");
+
+    ASSERT_EQ(tokens.size(), 3);
+    EXPECT_EQ(tokens[0].type, TokenType::Test);
+    EXPECT_EQ(tokens[1].type, TokenType::Identifier);
+}
+
 TEST(TokenizerTests, RecognizesFunctionModifiersAndReservedWords) {
     std::vector<Token> tokens = Tokenize(
         "export extern inline comptime yield if else while proceed break "

@@ -123,6 +123,29 @@ TEST(ParserTests, ParsesTypedParametersAndBareReturn) {
     EXPECT_EQ(returnStatement.Value(), nullptr);
 }
 
+TEST(ParserTests, ParsesTestDeclarationsWithMutableContexts) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "module sample; @imports :: root::testing; "
+        "test addition(&testing::UnitTest t) { t->fail(); }",
+        diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_TRUE(function.IsTest());
+    EXPECT_EQ(function.Name(), "addition");
+    EXPECT_EQ(function.ReturnType().Type(), PrimitiveType::Void);
+    ASSERT_EQ(function.Parameters().size(), 1);
+    EXPECT_EQ(function.Parameters()[0]->Type().TypeForm(), TypeKind::Reference);
+    EXPECT_FALSE(function.Parameters()[0]->Type().Target()->IsConst());
+    EXPECT_EQ(function.Parameters()[0]->Type().Target()->Name(),
+              "testing::UnitTest");
+}
+
 TEST(ParserTests, ParsesBorrowResultSourceAfterParameters) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(
@@ -205,9 +228,9 @@ TEST(ParserTests, AppendsMissingEndOfFileTokenSafely) {
 
 TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
     DiagnosticBag diagnostics;
-    std::unique_ptr<CompilationUnit> unit =
-        ParseSource("bool test() { return a or b and c ^ d == e < f + g * h; }",
-                    diagnostics);
+    std::unique_ptr<CompilationUnit> unit = ParseSource(
+        "bool check() { return a or b and c ^ d == e < f + g * h; }",
+        diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const BinaryExpression& logicalOr =
@@ -242,7 +265,7 @@ TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
 TEST(ParserExpressionTests, BinaryOperatorsAreLeftAssociative) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return 10 - 3 - 2; }", diagnostics);
+        ParseSource("i32 check() { return 10 - 3 - 2; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const BinaryExpression& outer =
@@ -257,7 +280,7 @@ TEST(ParserExpressionTests, BinaryOperatorsAreLeftAssociative) {
 TEST(ParserExpressionTests, UnaryOperatorsBindTighterAndAssociateRight) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return !-*value; }", diagnostics);
+        ParseSource("i32 check() { return !-*value; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const UnaryExpression& logicalNot =
@@ -274,7 +297,7 @@ TEST(ParserExpressionTests, UnaryOperatorsBindTighterAndAssociateRight) {
 TEST(ParserExpressionTests, ParenthesesOverridePrecedenceAndKeepRange) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return (1 + 2) * 3; }", diagnostics);
+        ParseSource("i32 check() { return (1 + 2) * 3; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const BinaryExpression& multiplication =
@@ -291,7 +314,7 @@ TEST(ParserExpressionTests, ParenthesesOverridePrecedenceAndKeepRange) {
 TEST(ParserExpressionTests, ReportsMissingRightOperandWithoutThrowing) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return 1 +; }", diagnostics);
+        ParseSource("i32 check() { return 1 +; }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -302,7 +325,7 @@ TEST(ParserExpressionTests, ReportsMissingRightOperandWithoutThrowing) {
 TEST(ParserAssignmentTests, AssignmentsHaveLowestPrecedence) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return result = a or b + c; }", diagnostics);
+        ParseSource("i32 check() { return result = a or b + c; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const AssignmentExpression& assignment =
@@ -317,7 +340,7 @@ TEST(ParserAssignmentTests, AssignmentsHaveLowestPrecedence) {
 TEST(ParserAssignmentTests, AssignmentsAssociateRight) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return a = b = 0; }", diagnostics);
+        ParseSource("i32 check() { return a = b = 0; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const AssignmentExpression& outer =
@@ -329,7 +352,7 @@ TEST(ParserAssignmentTests, AssignmentsAssociateRight) {
 TEST(ParserAssignmentTests, ReportsInvalidAssignmentTarget) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return (a + b) = 3; }", diagnostics);
+        ParseSource("i32 check() { return (a + b) = 3; }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -341,8 +364,8 @@ TEST(ParserAssignmentTests, ReportsInvalidAssignmentTarget) {
 
 TEST(ParserVariableDeclarationTests, ParsesTypedInitializedVariables) {
     DiagnosticBag diagnostics;
-    std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { i32 x = 32; bool y = false; }", diagnostics);
+    std::unique_ptr<CompilationUnit> unit = ParseSource(
+        "void check() { i32 x = 32; bool y = false; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const FunctionDeclaration& function =
@@ -373,7 +396,7 @@ TEST(ParserVariableDeclarationTests, ParsesTypedInitializedVariables) {
 TEST(ParserVariableDeclarationTests, ParsesTypedDeclarationWithoutInitializer) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { i32 value; }", diagnostics);
+        ParseSource("void check() { i32 value; }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_FALSE(diagnostics.HasErrors());
@@ -391,7 +414,7 @@ TEST(ParserVariableDeclarationTests, ParsesTypedDeclarationWithoutInitializer) {
 TEST(ParserVariableDeclarationTests, ParsesInferredVariables) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { x := 32; y := false; }", diagnostics);
+        ParseSource("void check() { x := 32; y := false; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const FunctionDeclaration& function =
@@ -421,7 +444,7 @@ TEST(ParserVariableDeclarationTests, ParsesInferredVariables) {
 TEST(ParserVariableDeclarationTests, InferredVariablesRequireInitializer) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { value :=; }", diagnostics);
+        ParseSource("void check() { value :=; }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -431,7 +454,7 @@ TEST(ParserVariableDeclarationTests, InferredVariablesRequireInitializer) {
 TEST(ParserCallTests, ParsesNestedFunctionCalls) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "i32 test() { return add(1, multiply(2, 3)); }", diagnostics);
+        "i32 check() { return add(1, multiply(2, 3)); }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const CallExpression& add =
@@ -448,7 +471,7 @@ TEST(ParserCallTests, ParsesNestedFunctionCalls) {
 TEST(ParserCallTests, ParsesEmptyAndChainedCalls) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return factory()(value); }", diagnostics);
+        ParseSource("i32 check() { return factory()(value); }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const CallExpression& outer =
@@ -463,8 +486,8 @@ TEST(ParserCallTests, ParsesEmptyAndChainedCalls) {
 
 TEST(ParserCallTests, CallsBindTighterThanUnaryAndBinaryOperators) {
     DiagnosticBag diagnostics;
-    std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return -value(1) * other(2); }", diagnostics);
+    std::unique_ptr<CompilationUnit> unit = ParseSource(
+        "i32 check() { return -value(1) * other(2); }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const BinaryExpression& multiplication =
@@ -479,7 +502,7 @@ TEST(ParserCallTests, CallsBindTighterThanUnaryAndBinaryOperators) {
 TEST(ParserCallTests, ReportsMissingArgumentSeparatorAndRecovers) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return add(1 2); }", diagnostics);
+        ParseSource("i32 check() { return add(1 2); }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -490,7 +513,7 @@ TEST(ParserCallTests, ReportsMissingArgumentSeparatorAndRecovers) {
 TEST(ParserCallTests, ReportsTrailingComma) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return add(1,); }", diagnostics);
+        ParseSource("i32 check() { return add(1,); }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -501,7 +524,7 @@ TEST(ParserCallTests, ReportsTrailingComma) {
 TEST(ParserStringViewTests, ParsesMembersIndexingAndPostfixChains) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "stringv test(stringv text) { return text.substr(0, 3); } "
+        "stringv check(stringv text) { return text.substr(0, 3); } "
         "char first(stringv text) { return text.at(0); } "
         "char indexed(stringv text) { return text.substr(1, 2)[0]; }",
         diagnostics);
@@ -537,7 +560,7 @@ TEST(ParserStringViewTests, ParsesMembersIndexingAndPostfixChains) {
 TEST(ParserConditionalTests, ParsesConditionalAlsoClauses) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "void test() { if x {} also y {} else if z {} also w {} else {} }",
+        "void check() { if x {} also y {} else if z {} also w {} else {} }",
         diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
@@ -566,7 +589,7 @@ TEST(ParserConditionalTests, ParsesConditionalAlsoClauses) {
 TEST(ParserConditionalTests, RejectsMultipleAlsoClausesOnOneBranch) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "void test() { if ready {} also warm {} also authorized {} }",
+        "void check() { if ready {} also warm {} also authorized {} }",
         diagnostics);
 
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -588,7 +611,7 @@ TEST(ParserConditionalTests, RejectsMultipleAlsoClausesOnOneBranch) {
 TEST(ParserConditionalTests, RejectsBareAlsoClause) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { if ready {} also {} }", diagnostics);
+        ParseSource("void check() { if ready {} also {} }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);

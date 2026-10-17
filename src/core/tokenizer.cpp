@@ -28,6 +28,7 @@ const KeywordMap KEYWORDS = {
     {"string", TokenType::String},
     {"stringv", TokenType::StringView},
     {"module", TokenType::Module},
+    {"test", TokenType::Test},
     {"enum", TokenType::Enum},
     {"structure", TokenType::Structure},
     {"private", TokenType::Private},

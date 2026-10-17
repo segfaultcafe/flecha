@@ -3253,7 +3253,7 @@ TEST(SemanticStructureTests, MovesSafeTearValuesAndRestoresReassignedSources) {
             if condition { return left; }
             return right;
         }
-        i32 test(bool condition) {
+        i32 check(bool condition) {
             first := Box::init();
             second := first;
             first = Box::init();
@@ -3273,7 +3273,7 @@ TEST(SemanticStructureTests, DiscardingAWholeNonCopyableValueConsumesIt) {
         void Box::tear(&self) override {}
     )";
     auto result = Analyze(prefix + R"(
-        void test() {
+        void check() {
             box := Box::init();
             box;
             stdout(box.value);
@@ -3282,7 +3282,7 @@ TEST(SemanticStructureTests, DiscardingAWholeNonCopyableValueConsumesIt) {
     EXPECT_NE(FindDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
     EXPECT_FALSE(Analyze(prefix + R"(
         enum Pick { Left, Right, }
-        void test(Pick pick) {
+        void check(Pick pick) {
             left := Box::init();
             right := Box::init();
             match pick { Pick.Left => left, Pick.Right => right, };
@@ -3298,7 +3298,7 @@ TEST(SemanticStructureTests, DeferredByValueCallsMoveAtRegistration) {
         void consume(Box value) {}
     )";
     const std::string source = prefix + R"(
-        void test() {
+        void check() {
             box := Box::init();
             defer consume(box);
             stdout(box.value);
@@ -3325,21 +3325,21 @@ TEST(SemanticStructureTests, DiagnosesMovedPossibleAndSelfMovedValues) {
          }) {
         SCOPED_TRACE(body);
         auto result =
-            Analyze(prefix + "void test(bool condition) { " + body + " }");
+            Analyze(prefix + "void check(bool condition) { " + body + " }");
         const Diagnostic* diagnostic =
             FindDiagnostic(result, DiagnosticCode::MovedValue);
         ASSERT_NE(diagnostic, nullptr);
         EXPECT_EQ(diagnostic->range.start.offset,
-                  (prefix + "void test(bool condition) { " + body + " }")
+                  (prefix + "void check(bool condition) { " + body + " }")
                       .rfind("first"));
     }
     EXPECT_NE(FindDiagnostic(Analyze(prefix + R"(
-        void test() { value := Box::init(); value = value; }
+        void check() { value := Box::init(); value = value; }
     )"),
                              DiagnosticCode::NonCopyableValue),
               nullptr);
     EXPECT_FALSE(Analyze(prefix + R"(
-        void test(bool condition) {
+        void check(bool condition) {
             value := Box::init();
             if condition { moved := value; }
             value = Box::init();
@@ -3348,7 +3348,7 @@ TEST(SemanticStructureTests, DiagnosesMovedPossibleAndSelfMovedValues) {
     )")
                      .diagnostics.HasErrors());
     EXPECT_NE(FindDiagnostic(Analyze(prefix + R"(
-        void test() {
+        void check() {
             left, right := (Box::init(), Box::init());
             (left, right) = (left, right);
         }
@@ -3374,17 +3374,17 @@ TEST(SemanticStructureTests, WholeMovesRespectLoansAndRejectPartialMoves) {
          }) {
         SCOPED_TRACE(body);
         EXPECT_NE(
-            FindDiagnostic(Analyze(prefix + "void test() { " + body + " }"),
+            FindDiagnostic(Analyze(prefix + "void check() { " + body + " }"),
                            DiagnosticCode::BorrowConflict),
             nullptr);
     }
     EXPECT_NE(FindDiagnostic(Analyze(prefix + R"(
-        void test() { values := [Box::init()]; box := values[0]; }
+        void check() { values := [Box::init()]; box := values[0]; }
     )"),
                              DiagnosticCode::NonCopyableValue),
               nullptr);
     EXPECT_FALSE(Analyze(prefix + R"(
-        void test() {
+        void check() {
             box := Box::init();
             reference := &box.value;
             stdout(*reference);
@@ -3406,7 +3406,7 @@ TEST(SemanticStructureTests, WholeMovesRespectLoansAndRejectPartialMoves) {
             unsafe []i32 Buffer::view(&self) <- self {
                 return self->data[:self->length];
             }
-            unsafe void test() {
+            unsafe void check() {
                 data, err := new<[]i32>(1);
                 buffer := Buffer::init(data, 1);
                 values := buffer.view();
@@ -3424,7 +3424,7 @@ TEST(SemanticStructureTests, MovesWholeTuplesArraysAndNestedValues) {
         void Box::tear(&self) override {}
         structure Outer { Box child; };
         void Outer::tear(&self) override {}
-        void test() {
+        void check() {
             pair := (Box::init(), Box::init());
             left, right := pair;
             values := [left, right];
@@ -3441,7 +3441,7 @@ TEST(SemanticStructureTests, MoveOnlyArrayRepeatsConsumeAtMostOnce) {
     EXPECT_FALSE(Analyze(R"(
         structure Box {};
         void Box::tear(&self) override {}
-        void test() {
+        void check() {
             zero := Box::init();
             empty := [zero; 0];
             one := Box::init();
@@ -3452,7 +3452,7 @@ TEST(SemanticStructureTests, MoveOnlyArrayRepeatsConsumeAtMostOnce) {
     EXPECT_NE(FindDiagnostic(Analyze(R"(
         structure Box {};
         void Box::tear(&self) override {}
-        void test() {
+        void check() {
             box := Box::init();
             duplicated := [box; 2];
         }
@@ -4639,7 +4639,7 @@ TEST(SemanticReferenceTests, AllowsDisjointStructureFieldBorrows) {
             *x = 20;
             return self->y + *x;
         }
-        i32 test() {
+        i32 check() {
             value := Nested::init();
             x := &value.pair.x;
             y := &value.pair.y;
@@ -4677,8 +4677,8 @@ TEST(SemanticReferenceTests,
           "parent := &value.pair; child := &parent->x; parent = &value.pair; "
           "return *child;"}) {
         SCOPED_TRACE(body);
-        auto result = Analyze(prefix + "i32 test() { value := Outer::init(); " +
-                              body + " }");
+        auto result = Analyze(
+            prefix + "i32 check() { value := Outer::init(); " + body + " }");
         EXPECT_NE(FindDiagnostic(result, DiagnosticCode::BorrowConflict),
                   nullptr);
     }
@@ -4687,7 +4687,7 @@ TEST(SemanticReferenceTests,
 TEST(SemanticReferenceTests, FieldBorrowsTrackReborrowsJoinsAndLoops) {
     const std::string prefix = "structure Triple { i32 x; i32 y; i32 z; }; ";
     auto valid = Analyze(prefix + R"(
-        i32 test(bool condition) {
+        i32 check(bool condition) {
             value := Triple::init();
             parent := &value;
             child := &parent->x;
@@ -4704,7 +4704,7 @@ TEST(SemanticReferenceTests, FieldBorrowsTrackReborrowsJoinsAndLoops) {
     for (const auto& diagnostic : valid.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
     auto invalid = Analyze(prefix + R"(
-        i32 test(bool condition) {
+        i32 check(bool condition) {
             value := Triple::init();
             child := &value.x;
             if condition { child = &value.y; }
@@ -4720,7 +4720,7 @@ TEST(SemanticReferenceTests, FieldBorrowsPreserveWholeArrayConflicts) {
         "structure Pair { i32 x; i32 y; }; structure Buffer { [2]Pair values; "
         "usize length; }; ";
     auto valid = Analyze(prefix + R"(
-        i32 test() {
+        i32 check() {
             buffer := Buffer::init();
             element := &buffer.values[0].x;
             buffer.length = 2;
@@ -4731,10 +4731,11 @@ TEST(SemanticReferenceTests, FieldBorrowsPreserveWholeArrayConflicts) {
     for (const auto& access :
          {"buffer.values[1].x = 2;", "buffer.values[1].y = 2;",
           "buffer.values = [Pair::init(), Pair::init()];"}) {
-        auto invalid = Analyze(prefix +
-                               "i32 test() { buffer := Buffer::init(); element "
-                               ":= &buffer.values[0].x; " +
-                               access + " return *element; }");
+        auto invalid =
+            Analyze(prefix +
+                    "i32 check() { buffer := Buffer::init(); element "
+                    ":= &buffer.values[0].x; " +
+                    access + " return *element; }");
         EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::BorrowConflict),
                   nullptr);
     }
@@ -4743,11 +4744,11 @@ TEST(SemanticReferenceTests, FieldBorrowsPreserveWholeArrayConflicts) {
 TEST(SemanticReferenceTests, DeferredFieldBorrowsProtectOnlyTheirField) {
     const std::string prefix =
         "structure Pair { i32 x; i32 y; }; void touch(&i32 n) { *n = 42; } ";
-    EXPECT_FALSE(Analyze(prefix + "void test() { value := Pair::init(); defer "
+    EXPECT_FALSE(Analyze(prefix + "void check() { value := Pair::init(); defer "
                                   "touch(&value.x); value.y = 22; }")
                      .diagnostics.HasErrors());
     auto invalid = Analyze(prefix +
-                           "void test() { value := Pair::init(); defer "
+                           "void check() { value := Pair::init(); defer "
                            "touch(&value.x); value.x = 22; }");
     EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::BorrowConflict), nullptr);
 }
@@ -4755,7 +4756,7 @@ TEST(SemanticReferenceTests, DeferredFieldBorrowsProtectOnlyTheirField) {
 TEST(SemanticReferenceTests, DerefMemberSharesDereferenceLvalueAndBorrowRules) {
     auto valid = Analyze(R"(
         structure Pair { i32 x; i32 y; };
-        i32 test() {
+        i32 check() {
             pair := Pair::init();
             parent := &pair;
             x := &parent->deref().x;
@@ -4771,13 +4772,14 @@ TEST(SemanticReferenceTests, DerefMemberSharesDereferenceLvalueAndBorrowRules) {
     for (const auto& diagnostic : valid.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
     for (const auto& source :
-         {"void test() { i32 x = 1; &const i32 r = &x; r->deref() = 2; }",
-          "i32 test() { i32 x = 1; r := &x; child := &r->deref(); r->deref() = "
+         {"void check() { i32 x = 1; &const i32 r = &x; r->deref() = 2; }",
+          "i32 check() { i32 x = 1; r := &x; child := &r->deref(); r->deref() "
+          "= "
           "2; return child->deref(); }",
-          "i32 test() { i32 x = 1; r := &x; moved := r; return r->deref(); }",
-          "unsafe i32 test(*i32 p) { return p->deref(); }",
-          "i32 test() { i32 x = 1; return x->deref(); }",
-          "i32 test() { i32 x = 1; r := &x; return r->deref(1); }"}) {
+          "i32 check() { i32 x = 1; r := &x; moved := r; return r->deref(); }",
+          "unsafe i32 check(*i32 p) { return p->deref(); }",
+          "i32 check() { i32 x = 1; return x->deref(); }",
+          "i32 check() { i32 x = 1; r := &x; return r->deref(1); }"}) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }

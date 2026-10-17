@@ -724,6 +724,7 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
         }
         return declaration;
     }
+    if (Check(TokenType::Test)) return ParseTestDeclaration();
     if (Check(TokenType::Structure)) return ParseStructureDeclaration();
     if (Check(TokenType::Enum)) return ParseEnumDeclaration();
     if (Check(TokenType::Error) && Peek(1).type == TokenType::Identifier &&
@@ -736,6 +737,33 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
 
     ReportUnexpectedToken("at top level");
     return nullptr;
+}
+
+std::unique_ptr<FunctionDeclaration> Parser::ParseTestDeclaration() {
+    const Token& keyword = Advance();
+    const Token* name = Consume(TokenType::Identifier, "test name");
+    if (name == nullptr ||
+        Consume(TokenType::LParen, "'(' after test name") == nullptr)
+        return nullptr;
+
+    std::vector<std::unique_ptr<Parameter>> parameters;
+    while (!Check(TokenType::RParen) && !IsAtEnd()) {
+        auto parameter = ParseParameter();
+        if (parameter != nullptr) parameters.push_back(std::move(parameter));
+        if (!Match(TokenType::Comma)) break;
+    }
+    if (Consume(TokenType::RParen, "')' after test parameters") == nullptr)
+        return nullptr;
+    auto body = ParseBlockStatement();
+    if (body == nullptr) return nullptr;
+
+    auto declaration = std::make_unique<FunctionDeclaration>(
+        source::SourceRange{keyword.range.start, body->Range().end},
+        std::vector<FunctionModifier>{},
+        std::make_unique<TypeNode>(keyword.range, PrimitiveType::Void),
+        name->value, std::move(parameters), std::move(body), name->range);
+    declaration->MarkTest();
+    return declaration;
 }
 
 std::unique_ptr<BlockStatement> Parser::ParseBlockStatement(bool isUnsafe) {
@@ -1774,7 +1802,8 @@ void Parser::SynchronizeTopLevel() {
     // Parse() guarantees progress if a failed declaration consumed nothing.
     // Keep a following declaration's first token after a partially parsed one.
     while (!IsAtEnd() && !StartsType() && !Check(TokenType::Unsafe) &&
-           !Check(TokenType::Structure) && !Check(TokenType::Private)) {
+           !Check(TokenType::Structure) && !Check(TokenType::Private) &&
+           !Check(TokenType::Test)) {
         Advance();
     }
 }

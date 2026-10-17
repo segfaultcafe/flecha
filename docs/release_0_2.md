@@ -58,7 +58,7 @@ module math_test;
     :: root::math
     :: lib::std::tests::testing;
 
-test addition(t testing::UnitTest) {
+test addition(&testing::UnitTest t) {
     result := math::add(20, 22);
 }
 ```
@@ -72,7 +72,7 @@ The standard testing API lives in the `std::tests::testing` module, imported as
 The initial declaration form is:
 
 ```text
-test name(parameterName testing::UnitTest) {
+test name(&testing::UnitTest parameterName) {
     body
 }
 ```
@@ -81,12 +81,13 @@ The `test` keyword identifies the declaration, so the test name itself does not
 need to start with `test`. A test declaration:
 
 - appears only at module scope in a `_test.fl` module;
-- has exactly one parameter, whose type is `testing::UnitTest`;
+- has exactly one parameter, whose type is mutable
+  `&testing::UnitTest`;
 - has no explicit return type and behaves as a `void` function;
 - is not generic and has no function modifiers; and
 - cannot be a structure member.
 
-The runner supplies the `testing::UnitTest` value and discovers every valid
+The runner supplies the mutable `testing::UnitTest` reference and discovers every valid
 `test` declaration in a loaded test module. Ordinary helper functions may also
 be declared in the test module, but the runner does not discover or invoke
 them. Additional injected parameters are postponed beyond the initial design.
@@ -119,6 +120,6 @@ The compiler diagnoses:
 - a runtime import of a test module; and
 - private access outside the exact paired-module relationship.
 
-Test result reporting, assertion APIs, filtering, parallel execution, and the
-precise command-line interface remain separate runner and standard-library
-design work.
+`flecha test <file>`, and `longbow test` discovers `_test.fl` files recursively
+under the project's `src` directory. Filtering and parallel execution remain
+later runner work.

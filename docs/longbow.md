@@ -55,6 +55,7 @@ library scaffolds also have valid importable module names.
 | `longbow check` | Load and check source and its reachable imports without emitting artifacts |
 | `longbow build` | Compile a program, or emit a host-native object for a library |
 | `longbow run -- ARGS` | Build, then run the program and propagate its exit status |
+| `longbow test` | Discover every `src/**/*_test.fl`, run each test module, and fail if any test fails |
 | `longbow clean` | Remove the project's generated `target` directory |
 
 Commands locate the nearest ancestor `longbow.toml`, so they also work inside
@@ -98,7 +99,8 @@ The first manifest reader supports only the shown package string keys and local
 path dependency entries, with blank lines and comments. Unsupported TOML forms,
 unknown keys, duplicate entries, and malformed values are diagnosed. Dependency
 versions, recursive manifest resolution, registries, downloads, lockfiles,
-workspaces, release profiles, tests, and formatting commands are future work.
+workspaces, release profiles, test filtering, and formatting commands are
+future work.
 Nonstandard library imports currently use the source map explicitly configured
 by the root project. Prebuilt library objects are not used to resolve imports.
 

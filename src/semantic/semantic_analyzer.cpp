@@ -328,23 +328,37 @@ Scope& SemanticAnalyzer::AddScope(const Scope* parent) {
 }
 
 void SemanticAnalyzer::SetModule(const std::string& id) {
+    _currentModule = id;
     const auto found = _moduleScopes.find(id);
     if (found != _moduleScopes.end()) _currentScope = found->second;
 }
+
+bool SemanticAnalyzer::CanAccessPrivateOf(const std::string& id) const {
+    const auto pair = _testPairs.find(_currentModule);
+    return pair != _testPairs.end() && pair->second == id;
+}
+
 std::string SemanticAnalyzer::TopName(const core::Declaration& declaration,
                                       const std::string& name) const {
-    if (name == "main" && _entryModules.contains(declaration.moduleId) &&
-        declaration.Kind() == core::AstNodeKind::FunctionDeclaration)
-        return name;
+    if (declaration.Kind() == core::AstNodeKind::FunctionDeclaration) {
+        const auto& function =
+            static_cast<const core::FunctionDeclaration&>(declaration);
+        if (function.IsTestHarness()) return "main";
+        if (name == "main" && !function.IsTest() &&
+            _entryModules.contains(declaration.moduleId))
+            return name;
+    }
     return declaration.moduleId + name;
 }
 void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
     for (const auto& module : unit.modules) {
         auto* scope = _moduleScopes.at(module.id);
         for (const auto& import : module.imports) {
+            const bool privileged =
+                module.test && module.testPair == import.resolvedModule;
             for (const auto& declaration : unit.Declarations()) {
                 if (declaration->moduleId != import.resolvedModule ||
-                    !declaration->exported)
+                    (!declaration->exported && !privileged))
                     continue;
                 const Symbol* symbol = _model.DeclaredSymbol(*declaration);
                 if (!symbol) continue;
@@ -382,6 +396,12 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
     // Template API visibility is checked before substitution. A caller may
     // instantiate a public generic method with its own private argument type.
     std::unordered_set<const Symbol*> specializedFunctions;
+    for (const auto& declaration : unit.Declarations())
+        if (_testModules.contains(declaration->moduleId) &&
+            declaration->exported)
+            Report(diagnostics::DiagnosticCode::PrivateAccess,
+                   declaration->Range(),
+                   "test modules cannot export declarations");
     for (const auto& declaration : unit.Declarations())
         if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration &&
             !declaration->instantiationOrigins.empty())
@@ -1022,6 +1042,24 @@ void SemanticAnalyzer::RegisterFunction(
         parameterContracts.push_back(parameter->Type().Contract());
     }
     const SemanticType returnType = ResolveType(function.ReturnType(), true);
+    if (function.IsTest()) {
+        bool valid =
+            _testModules.contains(function.moduleId) && !function.exported &&
+            function.Owner().empty() && function.genericParameters.empty() &&
+            function.Parameters().size() == 1 && parameterTypes.size() == 1 &&
+            parameterTypes[0].Kind() == SemanticTypeKind::Reference &&
+            !parameterTypes[0].Target()->IsConst();
+        if (valid) {
+            const SemanticType context = *parameterTypes[0].Target();
+            valid = context.Kind() == SemanticTypeKind::Structure &&
+                    context.Structure()->syntax->moduleId == _testingModule &&
+                    context.Structure()->syntax->Name() == "UnitTest";
+        }
+        if (!valid)
+            Report(diagnostics::DiagnosticCode::InvalidMember, function.Range(),
+                   "a test must be declared in a '_test.fl' module and take "
+                   "exactly one mutable '&testing::UnitTest' parameter");
+    }
     const bool hasBorrowedResult = HasBorrowedResult(returnType);
     const bool requiresBorrowSource = RequiresBorrowSource(returnType);
     std::optional<std::size_t> borrowSourceIndex;
@@ -1245,11 +1283,18 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     RegisterBuiltIns();
     _moduleScopes.clear();
     _entryModules.clear();
+    _testModules.clear();
+    _testPairs.clear();
+    _testingModule = unit.testingModule;
+    _currentModule.clear();
     Scope* builtins = _currentScope;
     _moduleScopes[""] = builtins;
     for (const auto& module : unit.modules) {
         if (!module.id.empty()) _moduleScopes[module.id] = &AddScope(builtins);
         if (module.entry) _entryModules.insert(module.id);
+        if (module.test) _testModules.insert(module.id);
+        if (!module.testPair.empty())
+            _testPairs.emplace(module.id, module.testPair);
         for (const auto& import : module.imports)
             for (const auto& declaration : unit.Declarations()) {
                 if (declaration->moduleId != module.id) continue;
@@ -2618,7 +2663,8 @@ SemanticType SemanticAnalyzer::AnalyzeMemberAccess(
         for (const auto& field : receiver.Structure()->fields)
             if (field.name == expression.Member()) {
                 if (field.syntax->IsPrivate() &&
-                    CurrentOwner() != receiver.Structure())
+                    CurrentOwner() != receiver.Structure() &&
+                    !CanAccessPrivateOf(receiver.Structure()->syntax->moduleId))
                     Report(diagnostics::DiagnosticCode::PrivateAccess,
                            expression.MemberRange(),
                            "field '" + field.name + "' is private");
@@ -3969,8 +4015,11 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
     if (function.IsPrivate() &&
         ((function.Owner() && CurrentOwner() != function.Owner()) ||
          (function.EnumOwner() && CurrentEnumOwner() != function.EnumOwner())))
-        Report(diagnostics::DiagnosticCode::PrivateAccess, range,
-               "method '" + function.Name() + "' is private");
+        if (!CanAccessPrivateOf(function.Owner()
+                                    ? function.Owner()->syntax->moduleId
+                                    : function.EnumOwner()->syntax->moduleId))
+            Report(diagnostics::DiagnosticCode::PrivateAccess, range,
+                   "method '" + function.Name() + "' is private");
     if (function.IsUnsafe() || function.ReturnType().IsImmovable())
         RequireUnsafe(range);
 }

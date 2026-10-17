@@ -1,0 +1,9 @@
+module failure_test;
+
+@imports
+    :: root::failure
+    :: lib::std::tests::testing;
+
+test reports_failure(&testing::UnitTest t) {
+    t->fail();
+}

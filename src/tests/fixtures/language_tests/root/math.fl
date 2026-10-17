@@ -1,0 +1,19 @@
+module math;
+
+i32 secret() {
+    return 42;
+}
+
+export structure Box {
+    private i32 value;
+};
+
+Box Box::init() override {
+    return build Box {
+        self.value = 42;
+    };
+}
+
+private i32 Box::hidden(&const self) {
+    return self->value;
+}

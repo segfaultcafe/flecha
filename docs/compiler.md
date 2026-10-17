@@ -12,6 +12,8 @@ flecha --version
 flecha check INPUT [--root DIR] [--lib NAME=DIR ...]
 flecha build INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
              [--link OBJECT-OR-LIBRARY ...]
+flecha test INPUT_TEST [--root DIR] [--lib NAME=DIR ...]
+            [--link OBJECT-OR-LIBRARY ...]
 flecha --emit-llvm INPUT [-o OUTPUT] [--root DIR] [--lib NAME=DIR ...]
 flecha --emit-object INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
 ```
@@ -26,13 +28,15 @@ jobs configure with `FLECHA_RELEASE_BUILD=ON`, which always reports exactly the
 package version and never includes a Git or dirty-worktree suffix.
 
 `check` runs the complete frontend without creating an artifact. `build` emits
-and links a host-native executable with the Flecha runtime. `--emit-object`
-stops before linking. `--emit-llvm` writes textual LLVM IR, or prints it when
-`-o` is omitted.
+and links a host-native executable with the Flecha runtime. `test` requires a
+`_test.fl` entry module, builds a temporary native runner, executes every test
+declaration in that module, and returns a nonzero status when any test records
+a failure. `--emit-object` stops before linking. `--emit-llvm` writes textual
+LLVM IR, or prints it when `-o` is omitted.
 
 `--root` supplies the source root used by `root::` imports. Each `--lib`
 option maps one `lib::` namespace to a source directory. `--link` adds a native
-object or library when building an executable containing `extern`
+object or library when building or testing code containing `extern`
 declarations.
 
 The compiler invokes a host C++ linker driver for executable builds. Release

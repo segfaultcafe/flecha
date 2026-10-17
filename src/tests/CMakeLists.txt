@@ -38,6 +38,36 @@ set_tests_properties(CliTests.LongbowVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^longbow ${PROJECT_VERSION}"
 )
 
+add_test(
+    NAME LanguageTestTests.PassingModule
+    COMMAND $<TARGET_FILE:flecha>
+        test
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/math_test.fl
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        --lib std=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/std
+)
+
+add_test(
+    NAME LanguageTestTests.FailingModule
+    COMMAND $<TARGET_FILE:flecha>
+        test
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/failure_test.fl
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        --lib std=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/std
+)
+set_tests_properties(LanguageTestTests.FailingModule PROPERTIES WILL_FAIL TRUE)
+
+add_test(
+    NAME LanguageTestTests.LongbowDiscovery
+    COMMAND ${CMAKE_COMMAND} -E env
+        FLECHA_COMPILER=$<TARGET_FILE:flecha>
+        $<TARGET_FILE:longbow> test
+)
+set_tests_properties(LanguageTestTests.LongbowDiscovery PROPERTIES
+    WORKING_DIRECTORY
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project
+)
+
 add_test(NAME EditorTests.VSCodeManifest
     COMMAND ${CMAKE_COMMAND}
         -DEDITOR_ROOT=${PROJECT_SOURCE_DIR}/editors/vscode
@@ -423,7 +453,7 @@ foreach(case IN ITEMS
         remove
         swap_remove
         structure_mutations
-        algorithms_test)
+        algorithms)
     set(array_fail_call 0)
     if(case STREQUAL "main")
         set(array_fail_call 2)

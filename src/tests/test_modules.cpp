@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -14,9 +13,11 @@ class ModuleTests : public ::testing::Test {
    protected:
     fs::path root;
     void SetUp() override {
-        static std::atomic<unsigned> sequence{0};
+        const auto* test =
+            ::testing::UnitTest::GetInstance()->current_test_info();
         root = fs::temp_directory_path() /
-               ("flecha_modules_" + std::to_string(sequence++));
+               (std::string("flecha_modules_") + test->test_suite_name() + "_" +
+                test->name());
         fs::remove_all(root);
         fs::create_directories(root);
     }
@@ -25,11 +26,13 @@ class ModuleTests : public ::testing::Test {
         fs::create_directories((root / name).parent_path());
         std::ofstream(root / name) << text;
     }
-    std::string Check() {
+    std::string Check(flecha::core::ModuleLoadMode mode =
+                          flecha::core::ModuleLoadMode::Runtime) {
         flecha::diagnostics::DiagnosticBag diagnostics;
         flecha::core::ModuleLoader loader(diagnostics);
-        auto unit =
-            loader.Load(root / "main.fl", root, {{"test", root / "library"}});
+        auto unit = loader.Load(
+            root / "main.fl", root,
+            {{"fixture", root / "library"}, {"std", root / "std"}}, mode);
         if (!diagnostics.HasErrors()) {
             flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
             auto model = analyzer.Analyze(*unit);
@@ -58,9 +61,10 @@ TEST_F(ModuleTests, LibrariesUseTheirOwnRootAndDiamondImportsShareIdentity) {
     Write("library/two.fl",
           "module two; @imports :: root::helper; export i32 read(&const "
           "helper::Box b) { return b->n; }");
-    Write("main.fl",
-          "module main; @imports :: lib::test::one :: lib::test::two; i32 "
-          "main() { b := one::make(); return two::read(&b); }");
+    Write(
+        "main.fl",
+        "module main; @imports :: lib::fixture::one :: lib::fixture::two; i32 "
+        "main() { b := one::make(); return two::read(&b); }");
     EXPECT_EQ(Check(), "");
 }
 TEST_F(ModuleTests, ExportedStructuresBundleMethodsButRespectPrivacy) {
@@ -166,6 +170,80 @@ TEST_F(ModuleTests, BorrowedResultContractsCrossModuleBoundaries) {
           "\"arrow\"; stdout(result); }");
     EXPECT_NE(Check().find("conflicts with live reference"), std::string::npos);
 }
+TEST_F(ModuleTests, ValidatesAndPrivilegesPairedTestModules) {
+    Write("std/tests/testing.fl",
+          "module testing; export structure UnitTest { usize failures; }; "
+          "UnitTest UnitTest::init(stringv name, bool verbose) override { "
+          "return build UnitTest { self.failures = 0; }; } void "
+          "UnitTest::fail(&self) { self->failures++; } usize "
+          "UnitTest::failureCount(&const self) { return self->failures; }");
+    Write("math.fl",
+          "module math; i32 secret() { return 42; } export structure Box { "
+          "private i32 value; }; Box Box::init() override { return build Box "
+          "{ self.value = 42; }; } private i32 Box::hidden(&const self) { "
+          "return self->value; }");
+    Write("main.fl",
+          "module main; @imports :: root::math :: "
+          "lib::std::tests::testing; void main() {}");
+    EXPECT_EQ(Check(), "");
+
+    Write("math_test.fl",
+          "module math_test; @imports :: root::math :: "
+          "lib::std::tests::testing; test private_access("
+          "&testing::UnitTest t) { box := math::Box::init(); if "
+          "math::secret() != box.hidden() { t->fail(); } }");
+    fs::rename(root / "main.fl", root / "saved_main.fl");
+    fs::rename(root / "math_test.fl", root / "main.fl");
+    EXPECT_NE(Check().find("must match filename"), std::string::npos);
+    fs::rename(root / "main.fl", root / "math_test.fl");
+    fs::rename(root / "saved_main.fl", root / "main.fl");
+
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit =
+        loader.Load(root / "math_test.fl", root, {{"std", root / "std"}},
+                    flecha::core::ModuleLoadMode::Test);
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+    auto model = analyzer.Analyze(*unit);
+    EXPECT_FALSE(diagnostics.HasErrors());
+}
+
+TEST_F(ModuleTests, RejectsInvalidTestModulesAndSignatures) {
+    Write("std/tests/testing.fl",
+          "module testing; export structure UnitTest { usize failures; };");
+    Write("math.fl", "module math; export i32 value() { return 42; }");
+    Write("main.fl", "module main; test invalid(i32 value) {}");
+    EXPECT_NE(Check().find("test must be declared"), std::string::npos);
+
+    const auto analyzeTestModule = [&]() {
+        flecha::diagnostics::DiagnosticBag diagnostics;
+        flecha::core::ModuleLoader loader(diagnostics);
+        auto unit =
+            loader.Load(root / "math_test.fl", root, {{"std", root / "std"}},
+                        flecha::core::ModuleLoadMode::Test);
+        flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+        if (!diagnostics.HasErrors()) (void)analyzer.Analyze(*unit);
+        std::string messages;
+        for (const auto& diagnostic : diagnostics.Diagnostics())
+            messages += diagnostic.message + "\n";
+        return messages;
+    };
+
+    Write("math_test.fl",
+          "module math_test; @imports :: root::math :: "
+          "lib::std::tests::testing; test invalid(testing::UnitTest t) {}");
+    EXPECT_NE(analyzeTestModule().find("mutable '&testing::UnitTest'"),
+              std::string::npos);
+
+    Write("math_test.fl",
+          "module math_test; @imports :: root::math :: "
+          "lib::std::tests::testing; test extra(&testing::UnitTest t, i32 "
+          "value) {}");
+    EXPECT_NE(analyzeTestModule().find("exactly one"), std::string::npos);
+}
 TEST_F(ModuleTests, RequiresImportsBeforeDeclarationsAndRejectsWrongDirective) {
     Write("main.fl", "module main; void main() {} @imports :: root::a;");
     EXPECT_FALSE(Check().empty());
@@ -212,12 +290,13 @@ TEST_F(ModuleTests, RejectsSourceRootEscapesAndConflictingRoots) {
     fs::create_symlink(root / "outside.fl", root / "library/outside.fl", error);
     if (error) GTEST_SKIP() << "symbolic links are unavailable: " << error;
     Write("main.fl",
-          "module main; @imports :: lib::test::outside; void main() {}");
+          "module main; @imports :: lib::fixture::outside; void main() {}");
     EXPECT_NE(Check().find("escapes its source root"), std::string::npos);
     Write("library/shared.fl",
           "module shared; export i32 value() { return 1; }");
     Write("main.fl",
-          "module main; @imports :: root::library::shared :: lib::test::shared "
+          "module main; @imports :: root::library::shared :: "
+          "lib::fixture::shared "
           "as other; void main() {}");
     EXPECT_NE(Check().find("conflicting source roots"), std::string::npos);
 }
@@ -270,7 +349,7 @@ TEST_F(ModuleTests, WildcardsDiscoverTypesAndOnlyImmediateModuleFiles) {
 TEST_F(ModuleTests, LibraryWildcardsAndEmptyDirectories) {
     Write("library/a.fl", "module a; export i32 value() { return 42; }");
     Write("main.fl",
-          "module main; @imports :: lib::test::*; i32 main() { return "
+          "module main; @imports :: lib::fixture::*; i32 main() { return "
           "a::value(); }");
     EXPECT_EQ(Check(), "");
     fs::create_directories(root / "empty");
@@ -290,7 +369,8 @@ TEST_F(ModuleTests, WildcardsRejectInvalidNamesAndEscapingSymlinks) {
     std::error_code error;
     fs::create_symlink(root / "outside.fl", root / "library/outside.fl", error);
     if (error) GTEST_SKIP() << "symbolic links are unavailable: " << error;
-    Write("main.fl", "module main; @imports :: lib::test::*; void main() {}");
+    Write("main.fl",
+          "module main; @imports :: lib::fixture::*; void main() {}");
     EXPECT_NE(Check().find("escapes its source root"), std::string::npos);
 }
 TEST_F(ModuleTests, RejectsMalformedModuleSelections) {

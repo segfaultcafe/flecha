@@ -1,0 +1,19 @@
+module testing;
+
+export structure UnitTest {
+    usize failures;
+};
+
+UnitTest UnitTest::init(stringv name, bool verbose) override {
+    return build UnitTest {
+        self.failures = 0;
+    };
+}
+
+void UnitTest::fail(&self) {
+    self->failures++;
+}
+
+usize UnitTest::failureCount(&const self) {
+    return self->failures;
+}

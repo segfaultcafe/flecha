@@ -1,5 +1,6 @@
 #include <llvm/Support/Program.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -219,7 +220,7 @@ std::optional<fs::path> StandardLibrary(const char* executable) {
 void Usage() {
     std::cout << "usage: longbow new NAME [--lib]\n"
                  "       longbow init [--lib]\n"
-                 "       longbow check|build|run|clean\n"
+                 "       longbow check|build|run|test|clean\n"
                  "       longbow run -- [program arguments]\n";
 }
 int Run(int argc, char** argv) {
@@ -253,7 +254,7 @@ int Run(int argc, char** argv) {
         return 0;
     }
     if (command != "check" && command != "build" && command != "run" &&
-        command != "clean") {
+        command != "test" && command != "clean") {
         Usage();
         return 1;
     }
@@ -269,6 +270,45 @@ int Run(int argc, char** argv) {
     if (command == "clean") {
         fs::remove_all(target);
         return 0;
+    }
+    if (command == "test") {
+        std::vector<fs::path> tests;
+        const fs::path sourceRoot = root / "src";
+        if (fs::is_directory(sourceRoot))
+            for (const auto& item :
+                 fs::recursive_directory_iterator(sourceRoot)) {
+                if (!item.is_regular_file() ||
+                    item.path().extension() != ".fl" ||
+                    !item.path().stem().string().ends_with("_test"))
+                    continue;
+                tests.push_back(item.path());
+            }
+        std::sort(tests.begin(), tests.end());
+        int status = 0;
+        for (const fs::path& test : tests) {
+            std::cout << "test " << test.lexically_relative(root).string()
+                      << "\n";
+            std::vector<std::string> compile{Compiler(argv[0]), "test",
+                                             test.string(), "--root",
+                                             sourceRoot.string()};
+            if (!manifest.dependencies.contains("std")) {
+                if (const auto standardLibrary = StandardLibrary(argv[0])) {
+                    compile.push_back("--lib");
+                    compile.push_back("std=" + standardLibrary->string());
+                }
+            }
+            for (const auto& [name, source] : manifest.dependencies) {
+                compile.push_back("--lib");
+                compile.push_back(name + "=" + source.string());
+            }
+            for (const auto& [name, input] : manifest.native) {
+                (void)name;
+                compile.push_back("--link");
+                compile.push_back(input.lexically_normal().string());
+            }
+            if (Execute(compile) != 0) status = 1;
+        }
+        return status;
     }
     const bool binary = manifest.kind == "program";
     const fs::path entry =

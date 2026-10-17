@@ -463,6 +463,10 @@ class FunctionDeclaration final : public Declaration {
     [[nodiscard]] bool IsExtern() const {
         return HasModifier(FunctionModifier::Extern);
     }
+    [[nodiscard]] bool IsTest() const { return _isTest; }
+    [[nodiscard]] bool IsTestHarness() const { return _isTestHarness; }
+    void MarkTest() { _isTest = true; }
+    void MarkTestHarness() { _isTestHarness = true; }
     const std::string& Owner() const { return _owner; }
     bool HasModifier(FunctionModifier modifier) const {
         for (const auto item : _modifiers)
@@ -499,6 +503,8 @@ class FunctionDeclaration final : public Declaration {
     source::SourceRange _nameRange;
     std::string _borrowSource;
     source::SourceRange _borrowSourceRange;
+    bool _isTest = false;
+    bool _isTestHarness = false;
 };
 
 struct Import final {
@@ -513,6 +519,8 @@ struct Module final {
     std::string name;
     std::string file;
     bool entry = false;
+    bool test = false;
+    std::string testPair;
     std::vector<Import> imports;
 };
 
@@ -531,6 +539,7 @@ class CompilationUnit final : public AstNode {
     std::string moduleName;
     std::vector<Import> imports;
     std::vector<Module> modules;
+    std::string testingModule;
     std::vector<std::unique_ptr<Declaration>> TakeDeclarations() {
         return std::move(_declarations);
     }
