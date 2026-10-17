@@ -130,6 +130,11 @@ class AllocationChecker final {
             }
         }
         for (const core::FunctionDeclaration* function : _ordered) {
+            // Test harnesses are compiler-generated orchestration. Verifying
+            // each user test independently still checks its ownership, while
+            // expanding every pass/fail combination in the harness grows as
+            // 2^N and rejects otherwise valid test modules at modest sizes.
+            if (function->IsTestHarness()) continue;
             if (!_resourceFunctions.contains(function) &&
                 !HasContracts(*function) && !HasOwningFields(*function))
                 continue;

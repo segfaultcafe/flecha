@@ -1,0 +1,127 @@
+module raw_array_test;
+
+@imports
+    :: root::containers::raw_array
+    :: root::containers::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test starts_empty_and_reserves_capacity(&testing::UnitTest t) {
+    unsafe {
+        values := raw_array::RawArray<i32>::init();
+
+        asserts::is_true(t, values.len() == 0, "a new RawArray is empty");
+        asserts::is_true(t, values.capacity() == 0, "a new RawArray has no allocation");
+
+        err := values.reserve(4);
+        asserts::is_true(t, err == none, "reserve allocates the requested capacity");
+        asserts::is_true(t, values.len() == 0, "reserve does not change the length");
+        asserts::is_true(t, values.capacity() == 4, "reserve records the new capacity");
+
+        err = values.reserve(2);
+        asserts::is_true(t, err == none, "reserving less than the capacity succeeds");
+        asserts::is_true(t, values.capacity() == 4, "reserve never shrinks the allocation");
+    }
+}
+
+test push_grows_and_preserves_values(&testing::UnitTest t) {
+    unsafe {
+        values := raw_array::RawArray<i32>::init();
+        loop i32 value = 10; value <= 50; value = value + 10 {
+            err := values.push(value);
+            asserts::is_true(t, err == none, "push appends a value");
+            if err != none {
+                return;
+            }
+        }
+
+        asserts::is_true(t, values.len() == 5, "push increases the length");
+        asserts::is_true(t, values.capacity() == 8, "the fifth push grows the allocation");
+
+        loop usize index = 0; index < values.len(); index++ {
+            actual, err := values.get(index);
+            expected := ((index as i32) + 1) * 10;
+            asserts::is_true(t, err == none and actual == expected, "growth preserves element order");
+        }
+    }
+}
+
+test get_and_set_report_bounds_errors(&testing::UnitTest t) {
+    unsafe {
+        values := raw_array::RawArray<i32>::init();
+        pushError := values.push(10);
+        asserts::is_true(t, pushError == none, "the setup value is appended");
+        if pushError != none {
+            return;
+        }
+
+        setError := values.set(0, 42);
+        actual, getError := values.get(0);
+        asserts::is_true(t, setError == none, "set accepts an existing index");
+        asserts::is_true(t, getError == none and actual == 42, "get reads the updated value");
+
+        missing, boundsError := values.get(1);
+        asserts::is_true(t, boundsError == errors::ArrayError.IndexOutOfBounds, "get rejects the end index");
+        asserts::is_true(t, missing == none, "a failed get has no value");
+        asserts::is_true(
+            t,
+            values.set(1, 99) == errors::ArrayError.IndexOutOfBounds,
+            "set rejects the end index"
+        );
+    }
+}
+
+test pop_and_clear_update_the_length(&testing::UnitTest t) {
+    unsafe {
+        values := raw_array::RawArray<i32>::init();
+        firstPush := values.push(10);
+        secondPush := values.push(20);
+        asserts::is_true(t, firstPush == none and secondPush == none, "the setup values are appended");
+        if firstPush != none or secondPush != none {
+            return;
+        }
+
+        value, err := values.pop();
+        asserts::is_true(t, err == none and value == 20, "pop removes the last value");
+        asserts::is_true(t, values.len() == 1, "pop decreases the length");
+
+        const usize capacity = values.capacity();
+        values.clear();
+        asserts::is_true(t, values.len() == 0, "clear removes every value");
+        asserts::is_true(t, values.capacity() == capacity, "clear retains allocated capacity");
+
+        missing, emptyError := values.pop();
+        asserts::is_true(t, emptyError == errors::ArrayError.Empty, "pop reports an empty array");
+        asserts::is_true(t, missing == none, "an empty pop has no value");
+    }
+}
+
+test views_borrow_the_stored_values(&testing::UnitTest t) {
+    unsafe {
+        values := raw_array::RawArray<i32>::init();
+        firstPush := values.push(10);
+        secondPush := values.push(20);
+        thirdPush := values.push(30);
+        asserts::is_true(
+            t,
+            firstPush == none and secondPush == none and thirdPush == none,
+            "the setup values are appended"
+        );
+        if firstPush != none or secondPush != none or thirdPush != none {
+            return;
+        }
+
+        {
+            view := values.view();
+            asserts::is_true(t, view.len() == 3 and view[0] == 10 and view[2] == 30, "view exposes the initialized prefix");
+        }
+
+        {
+            mutable := values.viewRef();
+            mutable[1] = 42;
+        }
+
+        changed, err := values.get(1);
+        asserts::is_true(t, err == none and changed == 42, "viewRef mutates the stored value");
+    }
+}

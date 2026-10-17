@@ -1,0 +1,170 @@
+module array_test;
+
+@imports
+    :: root::containers::array
+    :: root::containers::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test starts_empty_and_pushes_values(&testing::UnitTest t) {
+    values := array::Array<i32>::init();
+    asserts::is_true(t, values.empty(), "a new Array is empty");
+    asserts::is_true(t, values.len() == 0, "a new Array has length zero");
+    asserts::is_true(t, values.capacity() == 0, "a new Array has no allocation");
+
+    reserveError := values.reserve(2);
+    firstError := values.push(10);
+    secondError := values.push(20);
+    asserts::is_true(t, reserveError == none, "reserve succeeds");
+    asserts::is_true(t, firstError == none and secondError == none, "push appends values");
+    asserts::is_true(t, values.len() == 2, "push increases the length");
+    asserts::is_false(t, values.empty(), "an Array with values is not empty");
+}
+
+test from_slice_and_append_copy_the_source(&testing::UnitTest t) {
+    [2]i32 source = [10, 20];
+    values, err := array::Array<i32>::fromSlice(source[:]);
+    asserts::is_true(t, err == none, "fromSlice constructs an Array");
+    if err != none {
+        return;
+    }
+
+    source[0] = 99;
+    copied, copiedError := values.get(0);
+    asserts::is_true(t, copiedError == none and copied == 10, "fromSlice copies its source");
+
+    [3]i32 added = [30, 40, 50];
+    appendError := values.append(added[:]);
+    asserts::is_true(t, appendError == none, "append accepts a slice");
+    asserts::is_true(t, values.len() == 5, "append increases the length");
+
+    added[2] = 0;
+    last, lastError := values.get(4);
+    asserts::is_true(t, lastError == none and last == 50, "append copies its source values");
+
+    [0]i32 empty = [];
+    const usize capacity = values.capacity();
+    asserts::is_true(t, values.append(empty[:]) == none, "appending an empty slice succeeds");
+    asserts::is_true(t, values.len() == 5 and values.capacity() == capacity, "an empty append changes nothing");
+}
+
+test get_and_set_report_bounds_errors(&testing::UnitTest t) {
+    values := array::Array<i32>::init();
+    pushError := values.push(10);
+    asserts::is_true(t, pushError == none, "the setup value is appended");
+    if pushError != none {
+        return;
+    }
+
+    setError := values.set(0, 42);
+    actual, getError := values.get(0);
+    asserts::is_true(t, setError == none, "set accepts an existing index");
+    asserts::is_true(t, getError == none and actual == 42, "get reads the updated value");
+
+    missing, boundsError := values.get(1);
+    asserts::is_true(t, boundsError == errors::ArrayError.IndexOutOfBounds, "get rejects the end index");
+    asserts::is_true(t, missing == none, "a failed get has no value");
+    asserts::is_true(
+        t,
+        values.set(1, 99) == errors::ArrayError.IndexOutOfBounds,
+        "set rejects the end index"
+    );
+}
+
+test remove_preserves_the_remaining_order(&testing::UnitTest t) {
+    [4]i32 source = [10, 20, 30, 40];
+    values, createError := array::Array<i32>::fromSlice(source[:]);
+    if createError != none {
+        asserts::is_true(t, false, "the setup Array is constructed");
+        return;
+    }
+
+    removed, err := values.remove(1);
+    first, firstError := values.get(0);
+    middle, middleError := values.get(1);
+    last, lastError := values.get(2);
+    asserts::is_true(
+        t,
+        err == none and removed == 20 and values.len() == 3 and
+            firstError == none and first == 10 and
+            middleError == none and middle == 30 and
+            lastError == none and last == 40,
+        "remove returns the selected value and preserves the remaining order"
+    );
+}
+
+test swap_remove_replaces_with_the_last_value(&testing::UnitTest t) {
+    [4]i32 source = [10, 20, 30, 40];
+    values, createError := array::Array<i32>::fromSlice(source[:]);
+    if createError != none {
+        asserts::is_true(t, false, "the setup Array is constructed");
+        return;
+    }
+
+    removed, err := values.swapRemove(1);
+    replacement, replacementError := values.get(1);
+    tail, tailError := values.get(2);
+    asserts::is_true(
+        t,
+        err == none and removed == 20 and values.len() == 3 and
+            replacementError == none and replacement == 40 and
+            tailError == none and tail == 30,
+        "swapRemove returns the selected value and fills the gap with the last value"
+    );
+}
+
+test clone_has_independent_storage(&testing::UnitTest t) {
+    [2]i32 source = [10, 20];
+    values, createError := array::Array<i32>::fromSlice(source[:]);
+    asserts::is_true(t, createError == none, "the source Array is constructed");
+    if createError != none {
+        return;
+    }
+
+    copy, cloneError := values.clone();
+    asserts::is_true(t, cloneError == none, "clone succeeds");
+    if cloneError != none {
+        return;
+    }
+
+    originalSetError := values.set(0, 99);
+    copySetError := copy.set(1, 88);
+    originalSecond, originalSecondError := values.get(1);
+    copiedFirst, copiedFirstError := copy.get(0);
+    asserts::is_true(t, originalSetError == none and copySetError == none, "both Arrays remain mutable");
+    asserts::is_true(t, originalSecondError == none and originalSecond == 20, "mutating the clone does not affect the source");
+    asserts::is_true(t, copiedFirstError == none and copiedFirst == 10, "mutating the source does not affect the clone");
+}
+
+test first_last_pop_and_clear_handle_empty_arrays(&testing::UnitTest t) {
+    values := array::Array<i32>::init();
+
+    missingFirst, firstError := values.first();
+    missingLast, lastError := values.last();
+    missingPop, popError := values.pop();
+
+    firstPush := values.push(10);
+    secondPush := values.push(20);
+    if firstPush != none or secondPush != none {
+        asserts::is_true(t, false, "the setup values are appended");
+        return;
+    }
+
+    first, populatedFirstError := values.first();
+    last, populatedLastError := values.last();
+    popped, populatedPopError := values.pop();
+
+    const usize capacity = values.capacity();
+    values.clear();
+    asserts::is_true(
+        t,
+        firstError == errors::ArrayError.Empty and missingFirst == none and
+            lastError == errors::ArrayError.Empty and missingLast == none and
+            popError == errors::ArrayError.Empty and missingPop == none and
+            populatedFirstError == none and first == 10 and
+            populatedLastError == none and last == 20 and
+            populatedPopError == none and popped == 20 and
+            values.empty() and values.capacity() == capacity,
+        "first, last, pop, and clear preserve the Array lifecycle contract"
+    );
+}
