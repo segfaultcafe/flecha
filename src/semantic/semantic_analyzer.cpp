@@ -1189,6 +1189,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     _currentFunction = nullptr;
     _inUnsafe = false;
     _inZero = false;
+    _zeroTrivialityKnown = false;
     _directConstructions.clear();
     _warnedDefaults.clear();
     _zeroDependencies.clear();
@@ -1298,6 +1299,8 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                 static_cast<const core::FunctionDeclaration&>(*declaration));
         }
     }
+    ClassifyTrivialZeros(unit);
+    _zeroTrivialityKnown = true;
     for (const auto& structure : _model._structures)
         if (SemanticType(structure.get()).IsZeroable())
             WarnForNontrivialDefault(SemanticType(structure.get()),
@@ -2216,8 +2219,225 @@ void SemanticAnalyzer::ValidateZeroEffects() {
     }
 }
 
+void SemanticAnalyzer::ClassifyTrivialZeros(const core::CompilationUnit& unit) {
+    std::unordered_map<const FunctionSymbol*, const core::FunctionDeclaration*>
+        declarations;
+    const auto remember = [&](const core::FunctionDeclaration& declaration) {
+        const Symbol* symbol = _model.DeclaredSymbol(declaration);
+        if (symbol && symbol->Kind() == SymbolKind::Function)
+            declarations.emplace(static_cast<const FunctionSymbol*>(symbol),
+                                 &declaration);
+    };
+    for (const auto& function : _model._generatedFunctions) remember(*function);
+    for (const auto& declaration : unit.Declarations())
+        if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration)
+            remember(
+                static_cast<const core::FunctionDeclaration&>(*declaration));
+
+    enum class Visit { Unseen, Active, Complete };
+    std::unordered_map<const StructureType*, Visit> visits;
+    std::unordered_map<const StructureType*, bool> trivialities;
+    std::function<bool(SemanticType)> trivialType;
+    std::function<bool(const StructureType*)> trivialStructure;
+    std::function<bool(const core::Expression&, SemanticType)> trivialValue;
+    std::function<bool(const core::BuildExpression&, const StructureType*)>
+        trivialBuild;
+
+    trivialType = [&](SemanticType type) {
+        if (type.Kind() == SemanticTypeKind::Enum)
+            return type.Enum()->defaultValue.has_value() &&
+                   *type.Enum()->defaultValue == 0;
+        if (type.Kind() == SemanticTypeKind::Structure)
+            return trivialStructure(type.Structure());
+        if (type.Kind() == SemanticTypeKind::Array)
+            return trivialType(*type.Target());
+        if (type.Kind() == SemanticTypeKind::Tuple) {
+            for (const SemanticType element : type.Elements())
+                if (!trivialType(element)) return false;
+            return true;
+        }
+        return type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool ||
+               type.Kind() == SemanticTypeKind::Char ||
+               type.Kind() == SemanticTypeKind::Pointer;
+    };
+
+    trivialValue = [&](const core::Expression& expression,
+                       SemanticType expected) -> bool {
+        if (expression.Kind() == core::AstNodeKind::ParenthesizedExpression)
+            return trivialValue(
+                static_cast<const core::ParenthesizedExpression&>(expression)
+                    .Inner(),
+                expected);
+        if (expression.Kind() == core::AstNodeKind::LiteralExpression) {
+            const auto& literal =
+                static_cast<const core::LiteralExpression&>(expression);
+            switch (literal.LiteralType()) {
+                case TokenType::NumberLiteral:
+                    return expected.IsNumeric() && literal.Value() == "0";
+                case TokenType::FloatLiteral:
+                    return expected.IsNumeric() &&
+                           std::all_of(literal.Value().begin(),
+                                       literal.Value().end(), [](char value) {
+                                           return value == '0' || value == '.';
+                                       });
+                case TokenType::False:
+                    return expected.Kind() == SemanticTypeKind::Bool;
+                case TokenType::CharLiteral:
+                    return expected.Kind() == SemanticTypeKind::Char &&
+                           literal.Value() == std::string(1, '\0');
+                case TokenType::Null:
+                    return expected.Kind() == SemanticTypeKind::Pointer;
+                case TokenType::None:
+                    return trivialType(expected);
+                default:
+                    return false;
+            }
+        }
+        if (expression.Kind() == core::AstNodeKind::UnaryExpression) {
+            const auto& unary =
+                static_cast<const core::UnaryExpression&>(expression);
+            return expected.IsNumeric() &&
+                   (unary.OperatorType() == TokenType::Add ||
+                    unary.OperatorType() == TokenType::Sub) &&
+                   trivialValue(unary.Operand(), expected);
+        }
+        if (expression.Kind() == core::AstNodeKind::CastExpression) {
+            const auto& cast =
+                static_cast<const core::CastExpression&>(expression);
+            const SemanticType source = _model.TypeOf(cast.Value());
+            return !source.IsError() && trivialValue(cast.Value(), source);
+        }
+        if (expression.Kind() == core::AstNodeKind::TupleExpression &&
+            expected.Kind() == SemanticTypeKind::Tuple) {
+            const auto& tuple =
+                static_cast<const core::TupleExpression&>(expression);
+            if (tuple.Elements().size() != expected.Elements().size())
+                return false;
+            for (std::size_t index = 0; index < tuple.Elements().size();
+                 ++index)
+                if (!trivialValue(*tuple.Elements()[index],
+                                  expected.Elements()[index]))
+                    return false;
+            return true;
+        }
+        if (expression.Kind() == core::AstNodeKind::ArrayExpression &&
+            expected.Kind() == SemanticTypeKind::Array) {
+            const auto& array =
+                static_cast<const core::ArrayExpression&>(expression);
+            for (const auto& element : array.Elements())
+                if (!trivialValue(*element, *expected.Target())) return false;
+            return true;
+        }
+        if (expression.Kind() == core::AstNodeKind::BuildExpression &&
+            expected.Kind() == SemanticTypeKind::Structure) {
+            const auto& build =
+                static_cast<const core::BuildExpression&>(expression);
+            const SemanticType actual = _model.TypeOf(build);
+            return actual.Kind() == SemanticTypeKind::Structure &&
+                   actual.Structure() == expected.Structure() &&
+                   trivialBuild(build, expected.Structure());
+        }
+        if (expression.Kind() == core::AstNodeKind::MemberCallExpression &&
+            expected.Kind() == SemanticTypeKind::Structure) {
+            const auto& call =
+                static_cast<const core::MemberCallExpression&>(expression);
+            return call.Arguments().empty() &&
+                   _model.MethodFor(call) == expected.Structure()->zero &&
+                   trivialStructure(expected.Structure());
+        }
+        if (expression.Kind() == core::AstNodeKind::MemberAccessExpression &&
+            expected.Kind() == SemanticTypeKind::Enum) {
+            const auto& access =
+                static_cast<const core::MemberAccessExpression&>(expression);
+            if (_model.TypeOf(access).Enum() != expected.Enum()) return false;
+            for (const EnumVariant& variant : expected.Enum()->variants)
+                if (variant.name == access.Member()) return variant.value == 0;
+        }
+        return false;
+    };
+
+    trivialBuild = [&](const core::BuildExpression& build,
+                       const StructureType* structure) {
+        std::unordered_set<const StructureField*> initialized;
+        for (const auto& statement : build.Body().Statements()) {
+            if (statement->Kind() != core::AstNodeKind::ExpressionStatement)
+                return false;
+            const auto& value =
+                static_cast<const core::ExpressionStatement&>(*statement)
+                    .Value();
+            if (value.Kind() != core::AstNodeKind::AssignmentExpression)
+                return false;
+            const auto& assignment =
+                static_cast<const core::AssignmentExpression&>(value);
+            if (assignment.Target().Kind() !=
+                core::AstNodeKind::MemberAccessExpression)
+                return false;
+            const auto& target =
+                static_cast<const core::MemberAccessExpression&>(
+                    assignment.Target());
+            if (target.Receiver().Kind() != core::AstNodeKind::NameExpression ||
+                static_cast<const core::NameExpression&>(target.Receiver())
+                        .Name() != "self")
+                return false;
+            const StructureField* field = _model.FieldFor(target);
+            if (!field || !trivialValue(assignment.Value(), field->type))
+                return false;
+            initialized.insert(field);
+        }
+        for (const StructureField& field : structure->fields)
+            if (!initialized.contains(&field) && !trivialType(field.type))
+                return false;
+        return true;
+    };
+
+    trivialStructure = [&](const StructureType* structure) {
+        if (!structure->zero) return false;
+        if (visits[structure] == Visit::Complete)
+            return trivialities[structure];
+        if (visits[structure] == Visit::Active) return false;
+        visits[structure] = Visit::Active;
+        bool result = false;
+        if (structure->zeroIsGenerated) {
+            result = true;
+            for (const StructureField& field : structure->fields)
+                if (!trivialType(field.type)) {
+                    result = false;
+                    break;
+                }
+        } else if (const auto found = declarations.find(structure->zero);
+                   found != declarations.end()) {
+            const auto& statements = found->second->Body().Statements();
+            if (statements.size() == 1 &&
+                statements.front()->Kind() ==
+                    core::AstNodeKind::ReturnStatement) {
+                const core::Expression* value =
+                    static_cast<const core::ReturnStatement&>(
+                        *statements.front())
+                        .Value();
+                while (value && value->Kind() ==
+                                    core::AstNodeKind::ParenthesizedExpression)
+                    value = &static_cast<const core::ParenthesizedExpression&>(
+                                 *value)
+                                 .Inner();
+                if (value &&
+                    value->Kind() == core::AstNodeKind::BuildExpression)
+                    result = trivialBuild(
+                        static_cast<const core::BuildExpression&>(*value),
+                        structure);
+            }
+        }
+        trivialities[structure] = result;
+        visits[structure] = Visit::Complete;
+        return result;
+    };
+
+    for (const auto& structure : _model._structures)
+        structure->zeroIsTrivial = trivialStructure(structure.get());
+}
+
 void SemanticAnalyzer::WarnForNontrivialDefault(SemanticType type,
                                                 source::SourceRange range) {
+    if (!_zeroTrivialityKnown) return;
     if (type.Kind() == SemanticTypeKind::Array) {
         WarnForNontrivialDefault(*type.Target(), range);
         return;
