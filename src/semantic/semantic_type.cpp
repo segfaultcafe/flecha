@@ -56,10 +56,7 @@ bool SemanticType::IsTriviallyZeroable() const {
     if (_kind == SemanticTypeKind::Enum)
         return _enum->defaultValue.has_value() && *_enum->defaultValue == 0;
     if (_kind == SemanticTypeKind::Structure) {
-        if (!_structure->zero || !_structure->zeroIsGenerated) return false;
-        for (const auto& field : _structure->fields)
-            if (!field.type.IsTriviallyZeroable()) return false;
-        return true;
+        return _structure->zero && _structure->zeroIsTrivial;
     }
     if (_kind == SemanticTypeKind::Array)
         return Target()->IsTriviallyZeroable();
