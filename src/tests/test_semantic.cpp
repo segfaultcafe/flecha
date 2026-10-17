@@ -3151,6 +3151,26 @@ TEST(SemanticStructureTests, DiscardingAWholeNonCopyableValueConsumesIt) {
                      .diagnostics.HasErrors());
 }
 
+TEST(SemanticStructureTests, DeferredByValueCallsMoveAtRegistration) {
+    const std::string prefix = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        void consume(Box value) {}
+    )";
+    const std::string source = prefix + R"(
+        void test() {
+            box := Box::init();
+            defer consume(box);
+            stdout(box.value);
+        }
+    )";
+    auto result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindDiagnostic(result, DiagnosticCode::MovedValue);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("box"));
+}
+
 TEST(SemanticStructureTests, DiagnosesMovedPossibleAndSelfMovedValues) {
     const std::string prefix = R"(
         structure Box { i32 value; };
@@ -3275,6 +3295,30 @@ TEST(SemanticStructureTests, MovesWholeTuplesArraysAndNestedValues) {
     )");
     for (const auto& diagnostic : result.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticStructureTests, MoveOnlyArrayRepeatsConsumeAtMostOnce) {
+    EXPECT_FALSE(Analyze(R"(
+        structure Box {};
+        void Box::tear(&self) override {}
+        void test() {
+            zero := Box::init();
+            empty := [zero; 0];
+            one := Box::init();
+            singleton := [one; 1];
+        }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        structure Box {};
+        void Box::tear(&self) override {}
+        void test() {
+            box := Box::init();
+            duplicated := [box; 2];
+        }
+    )"),
+                             DiagnosticCode::NonCopyableValue),
+              nullptr);
 }
 
 TEST(SemanticStructureTests,

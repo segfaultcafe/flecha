@@ -34,6 +34,7 @@ class LlvmCodeGenerator final {
         const lowering::BoundDeferStatement* statement;
         llvm::StructType* recordType;
         std::vector<semantic::SemanticType> argumentTypes;
+        std::vector<bool> argumentOwnershipTransfers;
     };
     struct OwnedStorage final {
         llvm::Value* storage;

@@ -525,8 +525,9 @@ bool LlvmCodeGenerator::EmitDefer(
         else
             value = CoerceValue(value, argument.Type(), type);
         if (value == nullptr) return false;
-        if (type.Kind() == semantic::SemanticTypeKind::Tuple ||
-            type.ContainsStructure())
+        if ((type.Kind() == semantic::SemanticTypeKind::Tuple ||
+             type.ContainsStructure()) &&
+            !deferred.argumentOwnershipTransfers[index])
             value = EmitValueCopy(value, type, false);
         captured.push_back(value);
     }
@@ -637,9 +638,10 @@ bool LlvmCodeGenerator::EmitDeferredCalls(const CleanupScope& scope) {
             }
         }
         for (std::size_t i = arguments.size(); i > 0; --i)
-            if (deferred.argumentTypes[i - 1].Kind() ==
-                    semantic::SemanticTypeKind::Tuple ||
-                deferred.argumentTypes[i - 1].ContainsStructure())
+            if ((deferred.argumentTypes[i - 1].Kind() ==
+                     semantic::SemanticTypeKind::Tuple ||
+                 deferred.argumentTypes[i - 1].ContainsStructure()) &&
+                !deferred.argumentOwnershipTransfers[i - 1])
                 EmitValueDestroy(arguments[i - 1],
                                  deferred.argumentTypes[i - 1]);
         for (auto string = strings.rbegin(); string != strings.rend(); ++string)
@@ -1164,6 +1166,7 @@ void LlvmCodeGenerator::CollectPositionScopePaths(
             static_cast<const lowering::BoundDeferStatement&>(*statement);
         const auto& call = deferred.Call();
         std::vector<semantic::SemanticType> argumentTypes;
+        std::vector<bool> argumentOwnershipTransfers;
         std::vector<llvm::Type*> fields{llvm::PointerType::getUnqual(_context),
                                         llvm::Type::getInt32Ty(_context)};
         for (std::size_t index = 0; index < call.Arguments().size(); ++index) {
@@ -1172,15 +1175,20 @@ void LlvmCodeGenerator::CollectPositionScopePaths(
                     ? call.Function().ParameterTypes()[index]
                     : call.Arguments()[index]->Type();
             argumentTypes.push_back(type);
+            argumentOwnershipTransfers.push_back(
+                call.Arguments()[index]->Kind() ==
+                    lowering::BoundNodeKind::MoveExpression ||
+                call.Arguments()[index]->Kind() ==
+                    lowering::BoundNodeKind::DirectExpression);
             fields.push_back(
                 type.Kind() == semantic::SemanticTypeKind::String ||
                         type.Kind() == semantic::SemanticTypeKind::StringView
                     ? StringType()
                     : MapType(type));
         }
-        scope->deferredCalls.push_back({&deferred,
-                                        llvm::StructType::get(_context, fields),
-                                        std::move(argumentTypes)});
+        scope->deferredCalls.push_back(
+            {&deferred, llvm::StructType::get(_context, fields),
+             std::move(argumentTypes), std::move(argumentOwnershipTransfers)});
     }
     if (!scope->deferredCalls.empty()) {
         scope->deferredHead = CreateTemporaryAlloca(
@@ -2679,6 +2687,13 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
         type.ContainsStructure()) {
         const auto& array =
             static_cast<const lowering::BoundArrayExpression&>(expression);
+        if (array.IsRepeat() && !type.Target()->IsCopyable() &&
+            type.Length() == 0) {
+            llvm::Value* value = EmitExpression(*array.Elements()[0]);
+            if (!value) return false;
+            EmitValueDestroy(value, *type.Target());
+            return true;
+        }
         if (array.IsRepeat() && !type.Target()->IsCopyable() &&
             type.Length() == 1) {
             auto* indexType = llvm::Type::getInt64Ty(_context);
