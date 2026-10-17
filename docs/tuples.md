@@ -83,9 +83,13 @@ introduced in this milestone.
 
 Supported elements are numeric scalars, booleans, characters, raw pointers,
 owning strings, error values, structures, supported fixed arrays, and nested
-tuples. Tuples use value-copy semantics for copyable elements. Arrays copy inline; owning string elements are deep-copied whenever
-ownership is duplicated. Deferred tuple arguments also receive independent
-copies. Discarded owning elements and tuple results are cleaned up.
+tuples. A tuple is copyable when all its elements are copyable. Those tuples
+use value-copy semantics; owning strings are deep-copied whenever ownership is
+duplicated, including in deferred snapshots. A tuple containing a noncopyable
+but movable structure instead moves as a complete value on initialization,
+assignment, by-value argument or return, discard, and complete destructuring.
+Its source becomes unavailable until reassigned. Discarded or ignored owning
+elements are destroyed exactly once.
 
 An expected `string` element accepts a string literal or view by copying it:
 
@@ -112,21 +116,24 @@ unsupported, consistent with the existing restriction on borrowing strings.
 `none` zero-initializes an explicitly typed tuple without structures recursively,
 including empty owning strings and null raw pointers. Tuples containing structures
 require construction; their copy, destruction, and immovability rules follow
-[structures](structures.md). Noncopyable tuples cannot be destructured yet. Delayed tuple initialization uses the
-existing whole-variable definite-assignment rules. Tuples cannot be cast.
+[structures](structures.md). Complete noncopyable tuples can be moved and
+destructured; moving an individual tuple field is not supported. A tuple that
+contains an unsafe-tear value is immovable. Delayed tuple initialization uses
+the existing whole-variable definite-assignment rules. Tuples cannot be cast.
 
 ## Cleanup and ABI
 
-Returning an owning tuple produces an independent result before scope cleanup
-runs. Local tuples, parameters, temporaries, and deferred captures recursively
-release their owning strings. Existing cleanup edges cover returns, fallthrough,
-break, proceed, and outward jumps, including repeated declarations reached by
-backward jumps. Traps retain the existing no-unwind behavior.
+Returning a copyable owning tuple produces an independent result; returning a
+noncopyable movable tuple transfers it. Local tuples, parameters, temporaries,
+and deferred captures recursively release only the ownership they retain.
+Existing cleanup edges cover returns, fallthrough, break, proceed, and outward
+jumps, including repeated declarations reached by backward jumps. Traps retain
+the existing no-unwind behavior.
 
 The internal LLVM representation is a non-packed struct whose fields follow
-source order. Nested tuples remain nested structs. Flecha functions accept and
-return these aggregates directly in LLVM IR; LLVM lowers them for the native
-target. Padding follows the target data layout. This is an internal Flecha ABI,
+source order. Nested tuples remain nested structs. Results containing a
+structure use caller-provided storage; structure-free tuples use LLVM aggregate
+values. Padding follows the target data layout. This is an internal Flecha ABI,
 not a promised C struct ABI or stable cross-version binary interface. No foreign
 aggregate interoperability is introduced.
 
