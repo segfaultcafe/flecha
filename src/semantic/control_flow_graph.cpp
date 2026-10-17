@@ -348,6 +348,12 @@ class GraphBuilder final {
                 return BuildExpression(match.Value(), dispatch);
             }
             case core::AstNodeKind::NameExpression: {
+                if (_model.TransferOf(expression) == TransferKind::Move) {
+                    const NodeId move = AddNode({next});
+                    _graph.nodes[move].move = _model.SymbolFor(
+                        static_cast<const core::NameExpression&>(expression));
+                    next = move;
+                }
                 const NodeId read = AddNode({next});
                 _graph.nodes[read].read =
                     static_cast<const core::NameExpression*>(&expression);

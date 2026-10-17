@@ -69,12 +69,10 @@ TEST(DiagnosticTests, SemanticCodesAreStableAndContiguous) {
               "FLECHA-S0015");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::UnknownPosition),
               "FLECHA-S0016");
-    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidCast),
-              "FLECHA-S0017");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidCast), "FLECHA-S0017");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidMember),
               "FLECHA-S0018");
-    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::NotIndexable),
-              "FLECHA-S0019");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::NotIndexable), "FLECHA-S0019");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::BorrowEscapesOwner),
               "FLECHA-S0020");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::UninitializedVariable),
@@ -83,10 +81,10 @@ TEST(DiagnosticTests, SemanticCodesAreStableAndContiguous) {
               "FLECHA-S0022");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidExtern),
               "FLECHA-S0055");
-    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidMatch),
-              "FLECHA-S0057");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidMatch), "FLECHA-S0057");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidBorrowContract),
               "FLECHA-S0058");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::MovedValue), "FLECHA-S0059");
 }
 
 TEST(DiagnosticTests, CompilerCodesAreStableAndContiguous) {
@@ -96,6 +94,5 @@ TEST(DiagnosticTests, CompilerCodesAreStableAndContiguous) {
               "FLECHA-C0002");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::RuntimeUnavailable),
               "FLECHA-C0003");
-    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::LinkerFailed),
-              "FLECHA-C0004");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::LinkerFailed), "FLECHA-C0004");
 }

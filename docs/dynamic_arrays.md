@@ -60,8 +60,9 @@ Mutable calls accepting a reference to the owning structure conservatively
 invalidate tracked aliases to its owning fields; aliases must be obtained again
 after the call. General field-effect summaries are not yet implemented.
 
-Construction and destruction rules remain unchanged: `tear` is compiler-invoked,
-and an unsafe tear makes a structure immovable and noncopyable.
+Construction and destruction use the ordinary lifecycle rules: `tear` is
+compiler-invoked, a safe tear makes a structure noncopyable but movable as a
+whole value, and an unsafe tear makes it immovable.
 
 ## Standard-library `RawArray<T>`
 
@@ -133,10 +134,19 @@ Growth failure preserves length, capacity, and existing contents.
 `RawArray` now has a safe initializer and a safe `tear` containing internal
 unsafe cleanup. The wrapper's generated lifecycle initializes and destroys its
 inner field automatically; it does not free the buffer separately. Both types
-remain noncopyable, and existing values cannot be implicitly moved or replaced.
-The language's unsafe-tear immovability rule is unchanged.
+remain noncopyable but are movable as complete values. Initialization,
+assignment, by-value arguments and returns, and discard transfer the buffer
+cleanup responsibility and invalidate the source until it is reassigned. A
+live borrow from `view()` or `view_ref()` prevents moving, replacing, or
+destroying its container. The language's unsafe-tear immovability rule is
+unchanged.
+
+Element relocation is still limited to the documented copyable element set.
+`push`, `pop`, `get`, `set`, growth, and compaction do not yet support
+move-only elements, and indexing cannot partially move an element out of a
+container. Container-level moves do not relax those element restrictions.
 
 `StandardLibraryTests.SafeArray.*` runs growth/failure, scalar, structure, and
 scope-cleanup checks through safe callers with allocation tracking.
-`CompilerDiagnostics.SafeArray` checks privacy, copying, implicit movement,
+`CompilerDiagnostics.SafeArray` checks privacy, use after a container move,
 conflicting borrows, and unsupported element operations.

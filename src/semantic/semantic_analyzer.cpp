@@ -671,9 +671,40 @@ void SemanticAnalyzer::AnalyzeDestructure(
                    "destructuring requires a tuple value");
         return;
     }
-    if (value.ContainsStructure() && !value.IsCopyable())
-        Report(diagnostics::DiagnosticCode::NonCopyableValue, statement.Range(),
-               "destructuring cannot copy or move a non-copyable structure");
+    if (value.IsImmovable())
+        Report(diagnostics::DiagnosticCode::NonCopyableValue,
+               statement.Value().Range(),
+               "an immovable tuple cannot be destructured");
+    else
+        CheckTransfer(statement.Value(), value);
+    const core::Expression* transferred = &statement.Value();
+    while (transferred->Kind() == core::AstNodeKind::ParenthesizedExpression)
+        transferred =
+            &static_cast<const core::ParenthesizedExpression&>(*transferred)
+                 .Inner();
+    if (transferred->Kind() == core::AstNodeKind::TupleExpression) {
+        const auto& tuple =
+            static_cast<const core::TupleExpression&>(*transferred);
+        for (std::size_t index = 0;
+             index < tuple.Elements().size() && index < targets.size();
+             ++index) {
+            const core::Expression* element = tuple.Elements()[index].get();
+            while (element->Kind() ==
+                   core::AstNodeKind::ParenthesizedExpression)
+                element =
+                    &static_cast<const core::ParenthesizedExpression&>(*element)
+                         .Inner();
+            if (targets[index] != nullptr &&
+                element->Kind() == core::AstNodeKind::NameExpression &&
+                _model.TransferOf(*element) == TransferKind::Move &&
+                _model.SymbolFor(static_cast<const core::NameExpression&>(
+                    *element)) == targets[index])
+                Report(
+                    diagnostics::DiagnosticCode::NonCopyableValue,
+                    element->Range(),
+                    "cannot move '" + targets[index]->Name() + "' into itself");
+        }
+    }
     if (statement.Bindings().size() != value.Elements().size() ||
         statement.Bindings().size() < 2) {
         Report(diagnostics::DiagnosticCode::InvalidDestructure,
@@ -1286,7 +1317,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                     Report(diagnostics::DiagnosticCode::IncompatibleType,
                            field.syntax->Initializer()->Range(),
                            TypeMismatch(field.type, actual));
-                CheckCopy(*field.syntax->Initializer(), field.type);
+                CheckTransfer(*field.syntax->Initializer(), field.type);
             }
     }
     _currentFunction = nullptr;
@@ -1333,10 +1364,10 @@ void SemanticAnalyzer::AnalyzeFunction(
 
     if (_currentFunction)
         for (const auto& type : _currentFunction->ParameterTypes())
-            if (type.ContainsStructure() && !type.IsCopyable())
+            if (type.IsImmovable())
                 Report(diagnostics::DiagnosticCode::NonCopyableValue,
                        function.NameRange(),
-                       "non-copyable structure parameters must be borrowed");
+                       "immovable structure parameters must be borrowed");
     _positions.clear();
     _localStringBorrows.clear();
     _loopDepth = 0;
@@ -1370,8 +1401,7 @@ void SemanticAnalyzer::AnalyzeFunction(
         Report(diagnostics::DiagnosticCode::InvalidReturnType,
                function.NameRange(),
                "not all control paths in function '" + function.Name() +
-                   "' return '" + _currentFunction->ReturnType().Name() +
-                   "'");
+                   "' return '" + _currentFunction->ReturnType().Name() + "'");
     }
     AnalyzeDefiniteAssignment(function, _model, _diagnostics, graph);
     bool hasNewErrors = false;
@@ -1544,7 +1574,7 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                 variableType = SemanticType::Error();
             }
             if (variable.Initializer())
-                CheckCopy(*variable.Initializer(), variableType);
+                CheckTransfer(*variable.Initializer(), variableType);
             if (variableType.Kind() == SemanticTypeKind::Tuple &&
                 HasBorrowedResult(variableType))
                 Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
@@ -1658,6 +1688,14 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                 static_cast<const core::ExpressionStatement&>(statement)
                     .Value();
             const SemanticType type = AnalyzeExpression(value);
+            const core::Expression* effect = &value;
+            while (effect->Kind() == core::AstNodeKind::ParenthesizedExpression)
+                effect =
+                    &static_cast<const core::ParenthesizedExpression&>(*effect)
+                         .Inner();
+            if (type.ContainsStructure() && !type.IsCopyable() &&
+                effect->Kind() != core::AstNodeKind::AssignmentExpression)
+                CheckTransfer(value, type);
             if (type.Kind() == SemanticTypeKind::Tuple &&
                 HasBorrowedResult(type))
                 Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
@@ -1681,7 +1719,7 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                                        *returnStatement.Value(), false);
             }
             if (returnStatement.Value())
-                CheckCopy(*returnStatement.Value(), expected);
+                CheckTransfer(*returnStatement.Value(), expected);
             if (_currentFunction && returnStatement.Value() &&
                 expected.Kind() == SemanticTypeKind::String &&
                 actual.Kind() != SemanticTypeKind::String &&
@@ -3043,17 +3081,16 @@ SemanticType SemanticAnalyzer::AnalyzeAssignment(
     const SemanticType targetValue = AnalyzeExpression(expression.Target());
     const SemanticType target = PlaceType(expression.Target());
     if (target.OwnsStorage()) RecordCleanupEffects(target);
-    CheckCopy(expression.Value(), target);
-    if (target.ContainsStructure() && !target.IsCopyable() &&
-        !IsNoneLiteral(expression.Value()))
-        Report(diagnostics::DiagnosticCode::NonCopyableValue,
-               expression.Range(),
-               "a non-copyable value cannot be replaced by assignment");
     if (IsNoneLiteral(expression.Value()))
         MarkDirectConstruction(_directConstructions, expression.Value(), true);
     const SemanticType value = AnalyzeExpression(expression.Value(), target);
     if (IsNoneLiteral(expression.Value()))
         MarkDirectConstruction(_directConstructions, expression.Value(), false);
+    CheckTransfer(expression.Value(), target);
+    if (target.IsImmovable())
+        Report(diagnostics::DiagnosticCode::NonCopyableValue,
+               expression.Range(),
+               "an immovable value cannot be replaced by assignment");
     if (_currentFunction && target.Kind() == SemanticTypeKind::String &&
         value.Kind() != SemanticTypeKind::String &&
         value.Kind() != SemanticTypeKind::None)
@@ -3074,6 +3111,20 @@ SemanticType SemanticAnalyzer::AnalyzeAssignment(
         place->Kind() == core::AstNodeKind::NameExpression
             ? _model.SymbolFor(static_cast<const core::NameExpression&>(*place))
             : nullptr;
+    const core::Expression* moved = &expression.Value();
+    while (moved->Kind() == core::AstNodeKind::ParenthesizedExpression)
+        moved =
+            &static_cast<const core::ParenthesizedExpression&>(*moved).Inner();
+    if (symbol != nullptr &&
+        moved->Kind() == core::AstNodeKind::NameExpression &&
+        _model.TransferOf(*moved) == TransferKind::Move &&
+        _model.SymbolFor(static_cast<const core::NameExpression&>(*moved)) ==
+            symbol) {
+        Report(diagnostics::DiagnosticCode::NonCopyableValue,
+               expression.Value().Range(),
+               "cannot move '" + symbol->Name() + "' into itself");
+        return SemanticType::Error();
+    }
     if (target.IsConst() || (symbol != nullptr && !symbol->Writable())) {
         Report(diagnostics::DiagnosticCode::SymbolNotWritable,
                expression.Target().Range(),
@@ -3202,7 +3253,7 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
         if (allocate && !dynamic)
             MarkDirectConstruction(_directConstructions, *value, false);
         if (allocate) {
-            CheckCopy(*value, input);
+            CheckTransfer(*value, input);
             if (!IsAssignable(input, argument))
                 Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                        value->Range(), TypeMismatch(input, argument));
@@ -3334,7 +3385,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                 : SemanticType::Error();
         argumentTypes.push_back(
             AnalyzeExpression(*expression.Arguments()[index], expected));
-        CheckCopy(*expression.Arguments()[index], expected);
+        CheckTransfer(*expression.Arguments()[index], expected);
     }
     if (calleeType.IsError()) return SemanticType::Error();
     if (function == nullptr) {
@@ -3829,8 +3880,8 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
         RequireUnsafe(range);
 }
 
-void SemanticAnalyzer::CheckCopy(const core::Expression& expression,
-                                 SemanticType type) {
+void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
+                                     SemanticType type) {
     const core::Expression* source = &expression;
     while (source->Kind() == core::AstNodeKind::ParenthesizedExpression)
         source =
@@ -3842,28 +3893,54 @@ void SemanticAnalyzer::CheckCopy(const core::Expression& expression,
         source->Kind() != core::AstNodeKind::MemberCallExpression &&
         !semanticDefault)
         _forbiddenZeroEffects.insert(_currentFunction);
-    if (!type.ContainsStructure() || type.IsCopyable()) return;
-    if (semanticDefault) return;
+    if (!type.ContainsStructure() || type.IsCopyable()) {
+        _model._transfers.insert_or_assign(&expression, TransferKind::Copy);
+        return;
+    }
+    if (semanticDefault) {
+        _model._transfers.insert_or_assign(&expression, TransferKind::Direct);
+        return;
+    }
     if (expression.Kind() == core::AstNodeKind::ParenthesizedExpression) {
-        CheckCopy(static_cast<const core::ParenthesizedExpression&>(expression)
-                      .Inner(),
-                  type);
+        CheckTransfer(
+            static_cast<const core::ParenthesizedExpression&>(expression)
+                .Inner(),
+            type);
         return;
     }
     if (expression.Kind() == core::AstNodeKind::BuildExpression ||
-        expression.Kind() == core::AstNodeKind::CallExpression)
+        expression.Kind() == core::AstNodeKind::CallExpression) {
+        _model._transfers.insert_or_assign(&expression, TransferKind::Direct);
         return;
+    }
     if (expression.Kind() == core::AstNodeKind::MemberCallExpression &&
         _model.MethodFor(
-            static_cast<const core::MemberCallExpression&>(expression)))
+            static_cast<const core::MemberCallExpression&>(expression))) {
+        _model._transfers.insert_or_assign(&expression, TransferKind::Direct);
         return;
+    }
+    if (expression.Kind() == core::AstNodeKind::NameExpression) {
+        const auto& name = static_cast<const core::NameExpression&>(expression);
+        const Symbol* symbol = _model.SymbolFor(name);
+        if (type.IsImmovable()) {
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   expression.Range(),
+                   "'" + type.Name() + "' is immovable; borrow it instead");
+            return;
+        }
+        if (symbol != nullptr && symbol->Kind() != SymbolKind::Function) {
+            _model._transfers.insert_or_assign(&expression, TransferKind::Move);
+            return;
+        }
+    }
     if (expression.Kind() == core::AstNodeKind::TupleExpression &&
         type.Kind() == SemanticTypeKind::Tuple) {
         const auto& tuple =
             static_cast<const core::TupleExpression&>(expression);
         for (std::size_t i = 0;
              i < tuple.Elements().size() && i < type.Elements().size(); ++i)
-            CheckCopy(*tuple.Elements()[i], type.Elements()[i]);
+            CheckTransfer(*tuple.Elements()[i], type.Elements()[i]);
+        _model._transfers.insert_or_assign(&expression, TransferKind::Direct);
         return;
     }
     if (expression.Kind() == core::AstNodeKind::ArrayExpression &&
@@ -3872,13 +3949,22 @@ void SemanticAnalyzer::CheckCopy(const core::Expression& expression,
             static_cast<const core::ArrayExpression&>(expression);
         if (!array.IsRepeat() || array.Length() <= 1) {
             for (const auto& element : array.Elements())
-                CheckCopy(*element, *type.Target());
+                CheckTransfer(*element, *type.Target());
+            _model._transfers.insert_or_assign(&expression,
+                                               TransferKind::Direct);
             return;
         }
     }
+    if (expression.Kind() == core::AstNodeKind::MatchExpression) {
+        const auto& match =
+            static_cast<const core::MatchExpression&>(expression);
+        for (const auto& arm : match.Arms()) CheckTransfer(arm->Value(), type);
+        _model._transfers.insert_or_assign(&expression, TransferKind::Direct);
+        return;
+    }
     Report(diagnostics::DiagnosticCode::NonCopyableValue, expression.Range(),
-           "'" + type.Name() +
-               "' cannot be copied or implicitly moved; borrow it instead");
+           "cannot partially move '" + type.Name() +
+               "'; move the complete variable instead");
 }
 
 SemanticType SemanticAnalyzer::AnalyzeBuild(
@@ -4053,7 +4139,7 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                 : SemanticType::Error();
         const SemanticType actual =
             AnalyzeExpression(*expression.Arguments()[i], expected);
-        CheckCopy(*expression.Arguments()[i], expected);
+        CheckTransfer(*expression.Arguments()[i], expected);
         if (!IsAssignable(expected, actual) && !CanReborrow(expected, actual))
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                    expression.Arguments()[i]->Range(),

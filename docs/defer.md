@@ -21,13 +21,19 @@ i32 main() {
 
 - Arguments evaluate once, left to right, when execution reaches the statement.
   Their side effects happen immediately; the outer call runs later.
-- Scalar, raw-pointer, fixed-array, and tuple arguments capture their current values.
-  Reassigning the original variable does not change the captured value.
+- Scalar and raw-pointer arguments capture their current values. Copyable fixed
+  arrays, tuples, and structures capture independent snapshots. Reassigning the
+  original variable does not change such a snapshot.
 - Both `string` and `stringv` arguments get independent owned byte snapshots.
   This copy can allocate. A `stringv` parameter receives a view of its snapshot
   during the deferred call. All snapshots are destroyed after that call.
-- Tuple arguments recursively copy owning string elements; discarded tuple
-  results recursively release their owned storage.
+- Copyable tuple arguments recursively copy owning string elements; discarded
+  tuple results recursively release their owned storage.
+- A noncopyable movable structure, tuple, or fixed array is moved into the
+  deferred record when the statement registers. The source is unavailable
+  afterward until reassigned. At scope exit that ownership transfers to the
+  by-value callee, which tears it down; the record does not destroy it a second
+  time.
 - References and slices capture borrowed handles, without copying their targets.
   Their loans remain active until scope exit, including the lifetime of any
   parent reborrow. They must not outlive their owners.

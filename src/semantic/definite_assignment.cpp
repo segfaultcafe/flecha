@@ -30,6 +30,8 @@ void AnalyzeDefiniteAssignment(const core::FunctionDeclaration& function,
     }
     std::vector<SymbolSet> outgoing(graph.nodes.size(), universe);
     std::vector<SymbolSet> incomingStates(graph.nodes.size());
+    std::vector<SymbolSet> movedOutgoing(graph.nodes.size());
+    std::vector<SymbolSet> movedIncoming(graph.nodes.size());
     std::vector<bool> queued(graph.nodes.size(), true);
     while (!worklist.empty()) {
         const NodeId index = worklist.front();
@@ -37,11 +39,14 @@ void AnalyzeDefiniteAssignment(const core::FunctionDeclaration& function,
         queued[index] = false;
         const FlowNode& node = graph.nodes[index];
         SymbolSet incoming = index == entry ? parameters : universe;
+        SymbolSet moved;
         for (NodeId predecessor : node.predecessors) {
             if (!graph.nodes[predecessor].reachable) continue;
             std::erase_if(incoming, [&](const Symbol* symbol) {
                 return !outgoing[predecessor].contains(symbol);
             });
+            moved.insert(movedOutgoing[predecessor].begin(),
+                         movedOutgoing[predecessor].end());
         }
         // Leaving a lexical scope ends its locals' lifetimes. This also
         // prevents a later jump back into that scope from reusing
@@ -52,11 +57,30 @@ void AnalyzeDefiniteAssignment(const core::FunctionDeclaration& function,
                    std::find(node.scopes.begin(), node.scopes.end(),
                              scope->second) == node.scopes.end();
         });
+        std::erase_if(moved, [&](const Symbol* symbol) {
+            const auto scope = graph.symbolScopes.find(symbol);
+            return scope != graph.symbolScopes.end() &&
+                   std::find(node.scopes.begin(), node.scopes.end(),
+                             scope->second) == node.scopes.end();
+        });
         incomingStates[index] = incoming;
-        if (node.reset != nullptr) incoming.erase(node.reset);
-        if (node.write != nullptr) incoming.insert(node.write);
-        if (incoming == outgoing[index]) continue;
+        movedIncoming[index] = moved;
+        if (node.reset != nullptr) {
+            incoming.erase(node.reset);
+            moved.erase(node.reset);
+        }
+        if (node.move != nullptr) {
+            incoming.erase(node.move);
+            moved.insert(node.move);
+        }
+        if (node.write != nullptr) {
+            incoming.insert(node.write);
+            moved.erase(node.write);
+        }
+        if (incoming == outgoing[index] && moved == movedOutgoing[index])
+            continue;
         outgoing[index] = std::move(incoming);
+        movedOutgoing[index] = std::move(moved);
         for (NodeId successor : node.successors) {
             if (!queued[successor]) {
                 queued[successor] = true;
@@ -66,27 +90,35 @@ void AnalyzeDefiniteAssignment(const core::FunctionDeclaration& function,
     }
 
     // Source order is stable even though the graph is built backwards.
-    std::vector<const core::NameExpression*> uninitialized;
+    struct InvalidRead final {
+        const core::NameExpression* expression;
+        bool moved;
+    };
+    std::vector<InvalidRead> uninitialized;
     for (NodeId index = 0; index < graph.nodes.size(); ++index) {
         const FlowNode& node = graph.nodes[index];
         if (!node.reachable || node.read == nullptr) continue;
         const Symbol* symbol = model.SymbolFor(*node.read);
         if (symbol != nullptr && symbol->Kind() != SymbolKind::Function &&
             !incomingStates[index].contains(symbol)) {
-            uninitialized.push_back(node.read);
+            uninitialized.push_back(
+                {node.read, movedIncoming[index].contains(symbol)});
         }
     }
     std::sort(uninitialized.begin(), uninitialized.end(),
-              [](const core::NameExpression* left,
-                 const core::NameExpression* right) {
-                  return left->Range().start.offset <
-                         right->Range().start.offset;
+              [](const InvalidRead& left, const InvalidRead& right) {
+                  return left.expression->Range().start.offset <
+                         right.expression->Range().start.offset;
               });
-    for (const core::NameExpression* read : uninitialized) {
-        diagnostics.Report(diagnostics::DiagnosticCode::UninitializedVariable,
-                           read->Range(),
-                           "variable '" + read->Name() +
-                               "' may be read before it is initialized");
+    for (const InvalidRead& invalid : uninitialized) {
+        const auto code =
+            invalid.moved ? diagnostics::DiagnosticCode::MovedValue
+                          : diagnostics::DiagnosticCode::UninitializedVariable;
+        diagnostics.Report(
+            code, invalid.expression->Range(),
+            "variable '" + invalid.expression->Name() +
+                (invalid.moved ? "' may have been moved"
+                               : "' may be read before it is initialized"));
     }
 }
 }  // namespace flecha::semantic

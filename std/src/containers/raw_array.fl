@@ -18,6 +18,14 @@ void RawArray<T>::tear(&self) override {
     }
 }
 
+RawArray<T> RawArray<T>::zero() override {
+    return build RawArray<T> {
+        self.storage = null;
+        self.length = 0;
+        self.allocated = 0;
+    };
+}
+
 usize RawArray<T>::len(&const self) {
     return self->length;
 }
@@ -101,6 +109,14 @@ unsafe (T, error) RawArray<T>::pop(&self) {
     len := &self->length;
     *len = *len - 1;
     return (self->storage[*len], none);
+}
+
+unsafe []const T RawArray<T>::view(&const self) <-self {
+    return self->storage[:self->length];
+}
+
+unsafe []T RawArray<T>::view_ref(&self) <-self {
+    return self->storage[:self->length];
 }
 
 void RawArray<T>::clear(&self) {

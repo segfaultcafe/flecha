@@ -12,6 +12,8 @@ namespace flecha::semantic {
 
 class SemanticAnalyzer;
 
+enum class TransferKind { Copy, Move, Direct };
+
 class SemanticModel final {
    public:
     SemanticModel() = default;
@@ -29,6 +31,8 @@ class SemanticModel final {
     [[nodiscard]] const Symbol* DestructureTarget(
         const core::DestructureBinding& binding) const;
     [[nodiscard]] SemanticType TypeOf(const core::Expression& expression) const;
+    [[nodiscard]] TransferKind TransferOf(
+        const core::Expression& expression) const;
     const StructureField* FieldFor(
         const core::MemberAccessExpression& expression) const {
         const auto found = _fields.find(&expression);
@@ -65,6 +69,7 @@ class SemanticModel final {
     std::unordered_map<const core::NameExpression*, const Symbol*> _bindings;
     std::unordered_map<const core::AstNode*, const Symbol*> _declarations;
     std::unordered_map<const core::Expression*, SemanticType> _types;
+    std::unordered_map<const core::Expression*, TransferKind> _transfers;
     std::unordered_map<const core::DestructureBinding*, const Symbol*>
         _destructureTargets;
     std::unordered_map<const core::DeferStatement*, std::vector<const Symbol*>>

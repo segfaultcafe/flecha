@@ -54,7 +54,7 @@ structure Box { own *i32 value; };
 unsafe Box Box::init(own *i32 value) override {
     return build Box { self.value = value; };
 }
-unsafe void Box::tear(&self) override { free(self->value); }
+void Box::tear(&self) override { unsafe { free(self->value); } }
 ```
 
 Owning fields require an explicit `tear`. The compiler independently checks that
@@ -63,9 +63,13 @@ transfers the stored allocation; destroying the raw-pointer field performs no
 additional free. Null fields need no cleanup.
 
 Existing lifecycle rules remain: `tear` is compiler-invoked and cannot be called
-explicitly. A custom tear makes its structure noncopyable, and an unsafe tear also
-makes it immovable. Transferring a pointer to an immovable structure does not move
-the structure. Fresh construction still goes directly into its final storage.
+explicitly. A custom safe tear makes its structure noncopyable but movable as a
+complete value; moving transfers the field cleanup obligation and invalidates
+the source until reassignment. An unsafe tear makes the structure immovable.
+Transferring a pointer to an immovable structure does not move the structure.
+Fresh construction still goes directly into its final storage. Moving an owning
+field out by ordinary member access remains unsupported; use `take` where its
+explicit field-replacement contract applies.
 
 The initial field implementation supports initialization in `build` and access
 through the structure's `self` methods. Omitted owning fields start null, as other
@@ -90,9 +94,10 @@ The existing allocation-analysis path budgets remain, with an additional limit o
 site with its previous result still live is rejected. Unsupported ownership effects
 fail before object emission rather than silently losing tracking.
 
-This does not introduce external-function support, safe heap references, general
-moves, or complete memory-safety verification. Unverified external raw-pointer
-validity, aliasing, nullability, and stack lifetimes remain unsafe obligations.
-Runtime-sized zeroed scalar allocation and an `i32` dynamic array are now
+This does not introduce external-function support, safe heap references, partial
+field/index moves, or complete memory-safety verification. Whole noncopyable
+aggregate moves are implemented, but unverified external raw-pointer validity,
+aliasing, nullability, and stack lifetimes remain unsafe obligations.
+Runtime-sized zeroed allocation and the standard-library dynamic arrays are
 implemented; see [dynamic arrays](dynamic_arrays.md). Partially initialized
-storage and generic element moves remain future work.
+storage and move-only dynamic-array element relocation remain future work.

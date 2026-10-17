@@ -1,0 +1,40 @@
+module from_slice;
+
+@imports :: lib::std::containers::array;
+
+i32 main() {
+    [3]i32 source = [10, 20, 30];
+    values, err := array::Array<i32>::fromSlice(source[:]);
+    if err != none {
+        return 1;
+    }
+
+    if values.len() != 3 || values.capacity() != 3 {
+        return 2;
+    }
+
+    source[0] = 99;
+    first, firstError := values.get(0);
+    middle, middleError := values.get(1);
+    last, lastError := values.get(2);
+    if firstError != none || first != 10 {
+        return 3;
+    }
+    if middleError != none || middle != 20 {
+        return 4;
+    }
+    if lastError != none || last != 30 {
+        return 5;
+    }
+
+    [0]i32 emptySource = [];
+    empty, emptyError := array::Array<i32>::fromSlice(emptySource[:]);
+    if emptyError != none {
+        return 6;
+    }
+    if !empty.empty() || empty.capacity() != 0 {
+        return 7;
+    }
+
+    return 42;
+}

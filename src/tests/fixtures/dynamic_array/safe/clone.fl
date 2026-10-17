@@ -1,0 +1,42 @@
+module clone;
+
+@imports :: lib::std::containers::array;
+
+i32 main() {
+    values := array::Array<i32>::init();
+    if values.push(10) != none || values.push(20) != none || values.reserve(8) != none {
+        return 1;
+    }
+
+    copy, err := values.clone();
+    if err != none {
+        return 2;
+    }
+
+    if copy.len() != 2 || copy.capacity() != 2 {
+        return 3;
+    }
+
+    if values.set(0, 99) != none || copy.set(1, 88) != none {
+        return 4;
+    }
+
+    originalFirst, originalFirstError := values.get(0);
+    originalSecond, originalSecondError := values.get(1);
+    copiedFirst, copiedFirstError := copy.get(0);
+    copiedSecond, copiedSecondError := copy.get(1);
+    if originalFirstError != none || originalFirst != 99 {
+        return 5;
+    }
+    if originalSecondError != none || originalSecond != 20 {
+        return 6;
+    }
+    if copiedFirstError != none || copiedFirst != 10 {
+        return 7;
+    }
+    if copiedSecondError != none || copiedSecond != 88 {
+        return 8;
+    }
+
+    return 42;
+}

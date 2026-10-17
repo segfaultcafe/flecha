@@ -1,0 +1,40 @@
+module append;
+
+@imports :: lib::std::containers::array;
+
+i32 main() {
+    values := array::Array<i32>::init();
+    if values.push(10) != none || values.push(20) != none {
+        return 1;
+    }
+
+    [3]i32 source = [30, 40, 50];
+    if values.append(source[:]) != none {
+        return 2;
+    }
+
+    if values.len() != 5 || values.capacity() != 5 {
+        return 3;
+    }
+
+    source[0] = 99;
+    firstAppended, firstError := values.get(2);
+    lastAppended, lastError := values.get(4);
+    if firstError != none || firstAppended != 30 {
+        return 4;
+    }
+    if lastError != none || lastAppended != 50 {
+        return 5;
+    }
+
+    [0]i32 empty = [];
+    const usize beforeCapacity = values.capacity();
+    if values.append(empty[:]) != none || values.len() != 5 {
+        return 6;
+    }
+    if values.capacity() != beforeCapacity {
+        return 7;
+    }
+
+    return 42;
+}

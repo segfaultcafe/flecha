@@ -1,8 +1,10 @@
 # Structures and lifecycle methods
 
 Structures are nominal inline value types. This milestone implements fields,
-privacy, out-of-line methods, construction, and automatic destruction. It does
-not add heap allocation, general moves, inheritance, or `unsafe structure`.
+privacy, out-of-line methods, construction, automatic destruction, and
+whole-value moves for noncopyable movable structures. It does not add
+inheritance or `unsafe structure`; explicit raw heap allocation is documented
+separately.
 
 ## Declaration and access
 
@@ -198,10 +200,21 @@ deep-copied, including within arrays and tuples. Direct deferred function calls
 capture these values independently at registration and release them after the
 call. Member-call defer syntax remains future work.
 
-A custom tear makes its structure noncopyable in this milestone, transitively
-through fields, arrays, and tuples. Existing values cannot be implicitly moved,
-returned by value, passed by value, destructured, or replaced. Borrow them instead;
-explicit general move semantics remain future work.
+A custom tear makes its structure noncopyable, transitively through fields,
+arrays, and tuples. If the tear is safe, the complete value is nevertheless
+movable. Initialization, assignment, by-value arguments, returns, discarded
+expressions, match arms, complete tuple destructuring, and whole fixed-array
+transfers implicitly move such values. The source becomes unavailable and is
+not torn down; assigning a fresh value restores it. Replacing a destination
+evaluates the new value before destroying the old one, and direct self-move is
+rejected. Fresh build, factory, and match results construct directly when
+possible rather than being copied through an extra owner.
+
+Moves transfer cleanup responsibility exactly once. They are destructive
+accesses for borrow checking, so a value cannot move while a reference, slice,
+returned loan, or deferred borrow still protects it. Moving an individual
+field or indexed element out of an aggregate is not supported; move the whole
+named value or use a type-specific replacement API.
 
 An **unsafe tear additionally makes the type immovable**. Creating a value of
 that type requires unsafe permission, including through an otherwise safe
@@ -216,7 +229,10 @@ which need not be the unsafe block where the value was constructed.
 - `FLECHA-S0043`: invalid structure, receiver, layout, or construction.
 - `FLECHA-S0044`: private member access.
 - `FLECHA-S0045`: invalid lifecycle signature/override or direct tear call.
-- `FLECHA-S0046`: prohibited copy, implicit move, or replacement.
+- `FLECHA-S0046`: prohibited copy, partial move, immovable transfer, or
+  self-move.
+- `FLECHA-S0059`: use of a value that was moved, or may have moved on another
+  control-flow path.
 
 Existing unsafe, const, borrow, and definite-assignment diagnostics continue to
 apply. Native representation is a named non-packed LLVM structure with fields
@@ -227,5 +243,6 @@ storage; this compiler-private convention is described in
 Run `examples/structures.fl` for a complete example (exit status 42).
 `NativeSemanticTests.Structures` checks methods, privacy-related valid paths,
 address stability, nested destruction order, all scope exits, owning-field
-copies, defaults, and deferred captures/results. Parser and semantic tests cover
-rejected forms and diagnostics. The sanitizer target includes the native fixture.
+copies, whole-value moves, defaults, and deferred captures/results. Parser and
+semantic tests cover rejected forms and diagnostics. The sanitizer target
+includes the native fixture.

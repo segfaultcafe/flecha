@@ -29,13 +29,16 @@ element type and subsequent elements must be assignable to it. Empty literals
 need an expected array type; `[value; 0]` can infer its type from `value`.
 
 List elements evaluate once each, left to right. A repeat initializer evaluates
-its value exactly once and copies that result, even when its count is zero.
+its value exactly once. Copyable values are copied into every element. A
+noncopyable movable value is accepted only for counts zero and one: zero
+destroys the evaluated value immediately, while one transfers it into the sole
+element. Larger counts would duplicate ownership and are rejected.
 
 Supported elements are integer/floating-point scalars, booleans, characters,
 enums, raw pointers, structures, and nested arrays of these types. Reference
 handles, strings, views, void, and other non-value element types are rejected,
-even at length zero. Borrowed and owning elements need additional
-lifetime/destruction rules.
+even at length zero. Structure elements use their normal copy, move,
+destruction, and immovability rules.
 
 Native layout arithmetic is checked before lowering. Lengths and storage sizes
 must fit the implementation's conservative limit of `PTRDIFF_MAX / 8` bytes
@@ -66,11 +69,15 @@ Writing individual elements does not establish definite initialization yet.
 }
 ```
 
-Arrays copy their element values on assignment, passing, and return. A copy
-owns its own inline storage; modifying it does not modify the source. Nested
-arrays copy recursively. Copying raw pointers copies addresses and neither
-clones nor frees the pointees. Array casts, comparisons, implicit decay to a
-pointer, and implicit conversion between different lengths are not supported.
+An array copies on assignment, passing, and return when every element is
+copyable. A copy owns its own inline storage; modifying it does not modify the
+source. An array containing a noncopyable movable structure instead moves as a
+complete value in those contexts, as well as when discarded or embedded in a
+complete tuple transfer. The source becomes unavailable until reassigned, and
+cleanup transfers to the destination. Nested arrays apply the rule recursively.
+Copying raw pointers copies addresses and neither clones nor frees the pointees.
+Array casts, comparisons, implicit decay to a pointer, and implicit conversion
+between different lengths are not supported.
 
 ## Indexing and length
 
@@ -158,8 +165,11 @@ convention is internal to Flecha; C interoperability for by-value arrays is not
 yet a public ABI contract.
 
 Borrowed [checked slices](checked_slices.md) are implemented. Resizing,
-heap-backed arrays, partial initialization/moves, and arrays of owning or
-borrowed elements remain separate features.
+heap-backed arrays and partial initialization/moves remain separate features.
+Arbitrary field or indexed-element moves are rejected; only the complete array
+can move. Direct arrays of reference, slice, string, or ownership-qualified raw
+pointer elements remain unsupported, although supported structures may manage
+their own fields and lifecycle.
 
 ## Iteration
 
@@ -178,7 +188,8 @@ counted form or index-only range with explicit indexing to mutate the original.
 
 Arrays also support [structure](structures.md) elements. Their fields are
 constructed in place and destroyed in reverse element order. Copyable elements
-clone owned fields; arrays containing a custom tear are noncopyable. An unsafe
-tear makes the containing array immovable. Such arrays require an initializer
-and fresh elements rather than copies. These rules also apply when arrays are
+clone owned fields; arrays containing a safe custom tear are noncopyable but
+move as whole values. An unsafe tear makes the containing array immovable. Such
+arrays require an initializer and cannot duplicate an existing element in a
+repeat with length greater than one. These rules also apply when arrays are
 structure fields.

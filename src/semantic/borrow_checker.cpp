@@ -738,8 +738,10 @@ class BorrowChecker final {
                     return {handle.origins, symbol, 0};
                 }
                 if (symbol != nullptr && symbol->Kind() != SymbolKind::Function)
-                    CheckAccess({{{symbol, {}}}, nullptr, 0}, false,
-                                expression.Range());
+                    CheckAccess(
+                        {{{symbol, {}}}, nullptr, 0},
+                        _model.TransferOf(expression) == TransferKind::Move,
+                        expression.Range());
                 return {};
             }
             case Kind::UnaryExpression: {

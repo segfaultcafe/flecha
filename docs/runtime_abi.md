@@ -76,11 +76,15 @@ construction through tear, including nested factory calls. These results must
 not be called from a C harness as ordinary C aggregate returns. Tests expose
 scalar wrappers instead.
 
-Copyable structure parameters use LLVM aggregate values. The callee clones
-owned fields on entry and cleans up that copy on exit. Noncopyable parameters
-must use references or raw pointers. Compiler-generated calls invoke tear with
-an address, then recursively destroy fields in reverse order. Existing scalar,
-string runtime, and structure-free tuple conventions are unchanged.
+Structure parameters use LLVM aggregate values. For a copyable structure, the
+callee clones owned fields on entry and cleans up that copy on exit. For a
+noncopyable movable structure, the caller transfers the aggregate bits and
+clears its source live state; the callee becomes the sole cleanup owner.
+Structures with an unsafe tear remain immovable and cannot be parameters by
+value. Compiler-generated calls invoke tear with an address, then recursively
+destroy fields in reverse order. The same transfer rule applies recursively to
+tuples and fixed arrays containing structures. Existing scalar, standalone
+string, and structure-free tuple conventions are unchanged.
 
 ## Raw allocation storage ABI
 

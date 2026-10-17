@@ -218,6 +218,36 @@ TEST(LoweringTests, PreservesOwningStringConversions) {
     EXPECT_NE(dump.find("(string.view"), std::string::npos);
 }
 
+TEST(LoweringTests, RepresentsWholeValueMovesExplicitly) {
+    LoweredSource result = Lower(R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        Box pass(Box value) { return value; }
+        i32 main() {
+            first := Box::init();
+            second := first;
+            third := pass(second);
+            return third.value;
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const BoundFunction& main = *result.program->Functions()[2];
+    const auto& second = static_cast<const BoundVariableDeclarationStatement&>(
+        *main.Body().Statements()[1]);
+    ASSERT_NE(second.Initializer(), nullptr);
+    EXPECT_EQ(second.Initializer()->Kind(), BoundNodeKind::MoveExpression);
+    const auto& move =
+        static_cast<const BoundMoveExpression&>(*second.Initializer());
+    EXPECT_EQ(static_cast<const BoundVariableExpression&>(move.Source())
+                  .Symbol()
+                  .Name(),
+              "first");
+    EXPECT_NE(DumpBoundProgram(*result.program).find("move load first"),
+              std::string::npos);
+}
+
 TEST(LoweringTests, SafelyRepresentsFunctionReferences) {
     LoweredSource result =
         Lower("i32 helper() { return 1; } i32 main() { helper; return 0; }");

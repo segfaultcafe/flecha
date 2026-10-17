@@ -14,10 +14,11 @@ function(reject_array name code body)
     endif()
 endfunction()
 
-reject_array(copy FLECHA-S0046 [=[
+reject_array(move_reuse FLECHA-S0059 [=[
 void main() {
     values := array::Array<i32>::init();
-    copy := values;
+    moved := values;
+    values.len();
 }
 ]=])
 reject_array(private_field FLECHA-S0044 [=[
@@ -25,13 +26,6 @@ void main() {
     values := array::Array<i32>::init();
     values.inner.clear();
 }
-]=])
-reject_array(return_owner FLECHA-S0046 [=[
-array::Array<i32> make() {
-    values := array::Array<i32>::init();
-    return values;
-}
-void main() {}
 ]=])
 reject_array(borrow FLECHA-S0029 [=[
 void main() {

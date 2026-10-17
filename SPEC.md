@@ -125,6 +125,17 @@ Tentative function modifiers include:
 
 Modifiers and their exact interactions will be specified as their corresponding features are implemented.
 
+For v0.2.0, function values and anonymous functions are a design target.
+`func` is reserved for anonymous functions. The proposed function-typed
+parameter spelling is:
+
+```flecha
+apply(func(&self, i32)(&i32 <- self) callback, i32 val)
+```
+
+This records the intended syntax; function values, anonymous functions, and
+indirect calls are not implemented yet.
+
 ## 6. Return and yield
 
 `return` ends a function and optionally supplies its final result:

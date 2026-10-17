@@ -1,0 +1,40 @@
+module algorithms;
+
+export (usize, bool) index_of<T>([]const T values, T needle) {
+    for (i, val) := range values {
+        if val == needle {
+            return (i, true);
+        }
+    }
+
+    return (0, false);
+}
+
+export bool contains<T>([]const T values, T needle) {
+    _, found := index_of<T>(values, needle);
+    return found;
+}
+
+export void reverse<T>([]T values) {
+    usize left = 0;
+    usize right = values.len();
+
+    while left < right {
+        right = right - 1;
+        if left >= right {
+            break;
+        }
+
+        T temporary = values[left];
+        values[left] = values[right];
+        values[right] = temporary;
+
+        left++;
+    }
+}
+
+export void fill<T>([]T values, T value) {
+    loop usize index = 0; index < values.len(); index++ {
+        values[index] = value;
+    }
+}
