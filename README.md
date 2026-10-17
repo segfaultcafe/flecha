@@ -252,6 +252,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/editors.md`](docs/editors.md) — VS Code and Neovim installation and packaging
 - [`docs/release_0_1.md`](docs/release_0_1.md) — 0.1 distribution contract and release gates
 - [`docs/release_0_1_1.md`](docs/release_0_1_1.md) — v0.1.1 stabilization scope and release condition
+- [`docs/release_0_2.md`](docs/release_0_2.md) — v0.2.0 language and tooling design targets
 - [`docs/toolchains.md`](docs/toolchains.md) — supported compiler, LLVM, linker, SDK, and CI versions
 - [`docs/semantic_analysis.md`](docs/semantic_analysis.md) — name binding, types, scopes, and analysis pipeline
 - [`docs/llvm_codegen.md`](docs/llvm_codegen.md) — current LLVM backend scope and limitations

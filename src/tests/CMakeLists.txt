@@ -412,7 +412,18 @@ add_test(NAME NativeSemanticTests.StructureZero
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_unsafe_pointers.cmake)
 
 # The safe fixtures exercise the public API without unsafe caller blocks.
-foreach(case IN ITEMS main scalars structures lifecycle)
+foreach(case IN ITEMS
+        main
+        scalars
+        structures
+        lifecycle
+        from_slice
+        append
+        clone
+        remove
+        swap_remove
+        structure_mutations
+        algorithms_test)
     set(array_fail_call 0)
     if(case STREQUAL "main")
         set(array_fail_call 2)

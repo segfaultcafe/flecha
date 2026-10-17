@@ -11,9 +11,42 @@ structure Token {
 
 Token Token::zero() override {
     return build Token {
-        self.kind = -1;
+        self.kind = 0;
         self.value = '\0';
     };
+}
+
+i32 check_endpoints() {
+    tokens := array::Array<Token>::init();
+    if !tokens.empty() {
+        return 6;
+    }
+
+    missingFirst, firstEmpty := tokens.first();
+    missingLast, lastEmpty := tokens.last();
+    if firstEmpty != errors::ArrayError.Empty || missingFirst != none ||
+        lastEmpty != errors::ArrayError.Empty || missingLast != none {
+        return 7;
+    }
+
+    Token first = none;
+    first.kind = 7;
+    first.value = 'a';
+    Token second = none;
+    second.kind = 9;
+    second.value = 'b';
+    if tokens.push(first) != none || tokens.push(second) != none {
+        return 8;
+    }
+
+    firstToken, firstError := tokens.first();
+    lastToken, lastError := tokens.last();
+    if tokens.empty() || firstError != none || firstToken != first ||
+        lastError != none || lastToken != second || tokens.len() != 2 {
+        return 9;
+    }
+
+    return 42;
 }
 
 i32 main() {
@@ -51,5 +84,5 @@ i32 main() {
         }
     }
 
-    return 42;
+    return check_endpoints();
 }

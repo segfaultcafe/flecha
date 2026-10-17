@@ -1,0 +1,99 @@
+module remove;
+
+@imports
+    :: lib::std::containers::array
+    :: lib::std::containers::errors;
+
+i32 check_errors() {
+    values := array::Array<i32>::init();
+    missing, emptyError := values.remove(0);
+    if emptyError != errors::ArrayError.IndexOutOfBounds || missing != none {
+        return 1;
+    }
+
+    if values.push(10) != none || values.push(20) != none {
+        return 2;
+    }
+
+    const usize beforeLength = values.len();
+    const usize beforeCapacity = values.capacity();
+    absent, boundsError := values.remove(2);
+    if boundsError != errors::ArrayError.IndexOutOfBounds || absent != none {
+        return 3;
+    }
+    if values.len() != beforeLength || values.capacity() != beforeCapacity {
+        return 4;
+    }
+
+    return 42;
+}
+
+i32 check_middle() {
+    values := array::Array<i32>::init();
+    if values.push(10) != none || values.push(20) != none ||
+        values.push(30) != none || values.push(40) != none {
+        return 5;
+    }
+
+    removed, err := values.remove(1);
+    if err != none || removed != 20 {
+        return 6;
+    }
+    if values.len() != 3 || values.capacity() != 4 {
+        return 7;
+    }
+
+    first, firstError := values.get(0);
+    middle, middleError := values.get(1);
+    last, lastError := values.get(2);
+    if firstError != none || first != 10 {
+        return 8;
+    }
+    if middleError != none || middle != 30 {
+        return 9;
+    }
+    if lastError != none || last != 40 {
+        return 10;
+    }
+
+    return 42;
+}
+
+i32 check_edges() {
+    values := array::Array<i32>::init();
+    if values.push(10) != none || values.push(20) != none ||
+        values.push(30) != none || values.push(40) != none {
+        return 11;
+    }
+
+    removedLast, lastError := values.remove(3);
+    if lastError != none || removedLast != 40 || values.len() != 3 {
+        return 12;
+    }
+
+    removedFirst, firstError := values.remove(0);
+    if firstError != none || removedFirst != 10 || values.len() != 2 {
+        return 13;
+    }
+
+    first, readError := values.get(0);
+    if readError != none || first != 20 {
+        return 14;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    result := check_errors();
+    if result != 42 {
+        return result;
+    }
+
+    result = check_middle();
+    if result != 42 {
+        return result;
+    }
+
+    return check_edges();
+}

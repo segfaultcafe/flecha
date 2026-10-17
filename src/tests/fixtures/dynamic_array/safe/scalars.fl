@@ -4,6 +4,33 @@ module scalars;
     :: lib::std::containers::array
     :: lib::std::containers::errors;
 
+i32 check_endpoints() {
+    values := array::Array<i32>::init();
+    if !values.empty() {
+        return 15;
+    }
+
+    missingFirst, firstEmpty := values.first();
+    missingLast, lastEmpty := values.last();
+    if firstEmpty != errors::ArrayError.Empty || missingFirst != none ||
+        lastEmpty != errors::ArrayError.Empty || missingLast != none {
+        return 16;
+    }
+
+    if values.push(10) != none || values.push(42) != none {
+        return 17;
+    }
+
+    first, firstError := values.first();
+    last, lastError := values.last();
+    if values.empty() || firstError != none || first != 10 ||
+        lastError != none || last != 42 || values.len() != 2 {
+        return 18;
+    }
+
+    return 42;
+}
+
 i32 check_array<T>(T first, T second) {
     {
         values := array::Array<T>::init();
@@ -140,5 +167,5 @@ i32 main() {
         return 14;
     }
 
-    return 42;
+    return check_endpoints();
 }

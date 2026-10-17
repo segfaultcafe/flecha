@@ -18,6 +18,14 @@ void RawArray<T>::tear(&self) override {
     }
 }
 
+RawArray<T> RawArray<T>::zero() override {
+    return build RawArray<T> {
+        self.storage = null;
+        self.length = 0;
+        self.allocated = 0;
+    };
+}
+
 usize RawArray<T>::len(&const self) {
     return self->length;
 }

@@ -4,5 +4,6 @@ module std;
     :: root::containers::raw_array
     :: root::containers::array
     :: root::containers::errors
+    :: root::containers::algorithms
     :: root::io::filesystem
     :: root::io::errors;

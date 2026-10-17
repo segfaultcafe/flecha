@@ -20,6 +20,9 @@ stringv Echo(stringv value) {
     return value;
 }
 
+T generic_identity<T>(T value) { return value; }
+i32 generic_result = generic_identity<i32>(42);
+
 constptr u8 fixed_pointer;
 constref u8 fixed_reference;
 &const u8 shared_reference;
