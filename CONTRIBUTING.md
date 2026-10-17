@@ -48,9 +48,10 @@ are not accepted.
 
 1. Fork `alexbsec/flecha` on GitHub.
 2. Clone your fork and add the upstream repository as a read-only remote.
-3. Create a focused branch in your fork.
+3. Create a focused branch from the appropriate base branch in your fork.
 4. Push the branch to your fork.
-5. Open a pull request from that branch into `alexbsec/flecha:master`.
+5. Open a pull request into `master` for planned development or `release` for
+   an approved patch to the currently released version.
 
 GitHub cannot prevent someone from making a read-only clone of a public
 repository. The project therefore enforces the part that affects repository
@@ -59,6 +60,41 @@ non-maintainer pull requests sourced from one. Only maintainers may work
 directly against the upstream repository. At present, the repository owner is
 the only person authorized to do so.
 
+## Development and release branches
+
+Flecha keeps planned development separate from the currently released line:
+
+- `master` contains work for the next planned minor or major release. It may
+  include compatible features and other changes that are not part of the
+  current release series.
+- `release` represents the latest shipped production line. Immediately after
+  a release is completed, its head must be the commit carrying the latest
+  version tag. Feature development does not happen on this branch.
+
+Ordinary commits on either branch are not releases and must not receive a
+version tag. Releases are deliberate milestones following semantic versioning:
+compatible feature work accumulates toward a minor version, incompatible work
+toward a major version, and only necessary fixes to an already shipped version
+justify a patch release.
+
+Use the following workflow for an urgent patch:
+
+1. Confirm that the change must ship before the next planned minor or major
+   release.
+2. Create `bugfix/<name>` from `release`, not from `master`.
+3. Open the focused pull request against `release` and run the complete release
+   checks.
+4. Merge the fix, finish the patch release metadata, and tag the resulting
+   `release` commit (for example, `v0.1.2`).
+5. Immediately merge `release` forward into `master`, resolving conflicts in
+   favor of retaining both the patch and the newer development work.
+
+When the planned minor or major version is ready, ensure `master` contains all
+patches, merge `master` into `release`, complete the release checks and
+metadata, and tag that `release` commit. New development then continues on
+`master`. This keeps every shipped fix in future versions without forcing a
+tag for each development commit.
+
 ## Review and merge policy
 
 Every pull request from a contributor fork requires at least one approving
@@ -66,8 +102,9 @@ review from a Flecha maintainer before it can be merged. The author cannot
 approve their own work. New commits that materially change the reviewed diff
 may require a fresh approval, and all required CI checks must still pass.
 GitHub enforces every Linux test, sanitizer, editor, and cross-platform package
-check on `master`. A failed, canceled, skipped, or missing required check blocks
-the merge, and the pull-request branch must be up to date with `master`.
+check on protected branches. A failed, canceled, skipped, or missing required
+check blocks the merge, and the pull-request branch must be up to date with its
+target branch.
 
 Maintainers may work directly in the upstream repository. For now, a
 maintainer's own pull request does not require a second maintainer's approval,
