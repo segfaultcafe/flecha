@@ -186,7 +186,8 @@ Longbow's available commands are:
 ```text
 longbow new NAME [--lib]
 longbow init [--lib]
-longbow check|build|run|test|clean
+longbow check|build|run|clean
+longbow test [--verbose]
 longbow run -- [program arguments]
 ```
 

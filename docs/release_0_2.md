@@ -22,8 +22,8 @@ and native function pointers remain to be designed.
 Both the compiler and Longbow will provide a test command:
 
 ```text
-flecha test ...
-longbow test
+flecha test ... [--verbose]
+longbow test [--verbose]
 ```
 
 ### Test modules
@@ -87,8 +87,8 @@ need to start with `test`. A test declaration:
 - is not generic and has no function modifiers; and
 - cannot be a structure member.
 
-The runner supplies the mutable `testing::UnitTest` reference and discovers every valid
-`test` declaration in a loaded test module. Ordinary helper functions may also
+The runner supplies the mutable `testing::UnitTest` reference and discovers
+every valid `test` declaration in a loaded test module. Ordinary helper functions may also
 be declared in the test module, but the runner does not discover or invoke
 them. Additional injected parameters are postponed beyond the initial design.
 
@@ -120,6 +120,11 @@ The compiler diagnoses:
 - a runtime import of a test module; and
 - private access outside the exact paired-module relationship.
 
-`flecha test <file>`, and `longbow test` discovers `_test.fl` files recursively
-under the project's `src` directory. Filtering and parallel execution remain
-later runner work.
+`flecha test <file>` runs one test file, and `longbow test` discovers `_test.fl`
+files recursively under the project's `src` directory. By default each file
+prints one dot-leader `ok` or `fail` line. `--verbose` prints each test's status
+while assertion failures print their assertion, message, and the test
+declaration's `file:line:column` beneath the failed status line. Exact assertion
+call-site injection and production-code stack traces remain later work. Each
+run ends with an `OK [passed/total]` or `FAIL [passed/total]` summary. Filtering
+and parallel execution remain later runner work.

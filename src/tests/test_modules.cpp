@@ -176,7 +176,9 @@ TEST_F(ModuleTests, ValidatesAndPrivilegesPairedTestModules) {
           "UnitTest UnitTest::init(stringv name, bool verbose) override { "
           "return build UnitTest { self.failures = 0; }; } void "
           "UnitTest::fail(&self) { self->failures++; } usize "
-          "UnitTest::failureCount(&const self) { return self->failures; }");
+          "UnitTest::failureCount(&const self) { return self->failures; } "
+          "bool UnitTest::failed(&const self) { return self->failures != 0; } "
+          "void UnitTest::printOutput(&const self) {}");
     Write("math.fl",
           "module math; i32 secret() { return 42; } export structure Box { "
           "private i32 value; }; Box Box::init() override { return build Box "

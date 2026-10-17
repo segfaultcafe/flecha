@@ -45,7 +45,7 @@ syntax region flechaBlockComment start=/\/\*/ end=/\*\// contains=flechaTodo
 
 highlight default flechaImports guifg=#87CEFA ctermfg=117
 highlight default flechaSelf guifg=#5F87AF ctermfg=67
-highlight default flechaTest guifg=#FFD700 ctermfg=220
+highlight default flechaTest guifg=#D4AF37 ctermfg=178
 highlight default link flechaType Type
 highlight default link flechaModifier StorageClass
 highlight default link flechaConditional Conditional

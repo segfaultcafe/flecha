@@ -220,7 +220,8 @@ std::optional<fs::path> StandardLibrary(const char* executable) {
 void Usage() {
     std::cout << "usage: longbow new NAME [--lib]\n"
                  "       longbow init [--lib]\n"
-                 "       longbow check|build|run|test|clean\n"
+                 "       longbow check|build|run|clean\n"
+                 "       longbow test [--verbose]\n"
                  "       longbow run -- [program arguments]\n";
 }
 int Run(int argc, char** argv) {
@@ -258,7 +259,10 @@ int Run(int argc, char** argv) {
         Usage();
         return 1;
     }
-    if (argc > 2 && (command != "run" || std::string(argv[2]) != "--")) {
+    const bool verboseTests =
+        command == "test" && argc == 3 && std::string(argv[2]) == "--verbose";
+    if (argc > 2 && !verboseTests &&
+        (command != "run" || std::string(argv[2]) != "--")) {
         Usage();
         return 1;
     }
@@ -284,13 +288,13 @@ int Run(int argc, char** argv) {
                 tests.push_back(item.path());
             }
         std::sort(tests.begin(), tests.end());
-        int status = 0;
+        std::size_t passed = 0;
+        std::size_t failed = 0;
         for (const fs::path& test : tests) {
-            std::cout << "test " << test.lexically_relative(root).string()
-                      << "\n";
             std::vector<std::string> compile{Compiler(argv[0]), "test",
                                              test.string(), "--root",
                                              sourceRoot.string()};
+            if (verboseTests) compile.push_back("--verbose");
             if (!manifest.dependencies.contains("std")) {
                 if (const auto standardLibrary = StandardLibrary(argv[0])) {
                     compile.push_back("--lib");
@@ -306,9 +310,23 @@ int Run(int argc, char** argv) {
                 compile.push_back("--link");
                 compile.push_back(input.lexically_normal().string());
             }
-            if (Execute(compile) != 0) status = 1;
+            if (Execute(compile) == 0)
+                ++passed;
+            else
+                ++failed;
         }
-        return status;
+        if (tests.size() > 1) {
+            const std::size_t total = passed + failed;
+            if (failed == 0)
+                std::cout << "\nOK [" << passed << "/" << total
+                          << "] test files passed\n";
+            else
+                std::cout << "\nFAIL [" << passed << "/" << total
+                          << "] test files passed, but [" << failed << "/"
+                          << total << "] failed\n";
+        } else if (tests.empty())
+            std::cout << "no test files found\n";
+        return failed == 0 ? 0 : 1;
     }
     const bool binary = manifest.kind == "program";
     const fs::path entry =

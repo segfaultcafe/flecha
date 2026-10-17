@@ -39,13 +39,14 @@ void PrintDiagnostics(const flecha::diagnostics::DiagnosticBag& diagnostics) {
 int Compile(const std::string& command, const std::string& input,
             const std::string& output, const std::filesystem::path& root,
             const std::map<std::string, std::filesystem::path>& libraries,
-            const std::vector<std::string>& linkInputs) {
+            const std::vector<std::string>& linkInputs, bool verboseTests) {
     flecha::diagnostics::DiagnosticBag diagnostics;
     flecha::core::ModuleLoader loader(diagnostics);
     auto unit =
         loader.Load(input, root, libraries,
                     command == "test" ? flecha::core::ModuleLoadMode::Test
-                                      : flecha::core::ModuleLoadMode::Runtime);
+                                      : flecha::core::ModuleLoadMode::Runtime,
+                    verboseTests);
     if (diagnostics.HasErrors()) {
         PrintDiagnostics(diagnostics);
         return 1;
@@ -139,7 +140,7 @@ void PrintUsage(const char* executable) {
               << " <check|build|test|--emit-llvm|--emit-object> <input.fl> [-o "
                  "output]"
                  " [--root source-directory] [--lib name=source-directory ...]"
-                 " [--link object-or-library ...]\n";
+                 " [--link object-or-library ...] [--verbose]\n";
 }
 }  // namespace
 int main(int argc, char** argv) {
@@ -161,8 +162,17 @@ int main(int argc, char** argv) {
     std::filesystem::path root;
     std::map<std::string, std::filesystem::path> libraries;
     std::vector<std::string> linkInputs;
+    bool verboseTests = false;
     for (int index = 3; index < argc; ++index) {
         const std::string option = argv[index];
+        if (option == "--verbose") {
+            if (command != "test" || verboseTests) {
+                PrintUsage(argv[0]);
+                return 1;
+            }
+            verboseTests = true;
+            continue;
+        }
         if (++index == argc) {
             PrintUsage(argv[0]);
             return 1;
@@ -198,7 +208,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     try {
-        return Compile(command, argv[2], output, root, libraries, linkInputs);
+        return Compile(command, argv[2], output, root, libraries, linkInputs,
+                       verboseTests);
     } catch (const std::filesystem::filesystem_error& error) {
         std::cerr << error.what() << "\n";
         return 1;

@@ -20,9 +20,52 @@ bool IsStandardTestingImport(const Import& import) {
            std::vector<std::string>{"lib", "std", "tests", "testing"};
 }
 
-std::string TestHarnessSource(const CompilationUnit& unit) {
+std::string DotLeader(std::string label) {
+    label += " ";
+    constexpr std::size_t statusColumn = 52;
+    label.append(statusColumn > label.size() ? statusColumn - label.size() : 3,
+                 '.');
+    return label + " ";
+}
+
+std::string DisplayPath(const fs::path& file) {
+    std::error_code error;
+    const fs::path relative = fs::relative(file, fs::current_path(), error);
+    if (!error && !relative.empty() && *relative.begin() != "..")
+        return relative.generic_string();
+    return file.generic_string();
+}
+
+std::string StringLiteral(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char character : value) {
+        if (character == '\\' || character == '"') escaped += '\\';
+        escaped += character;
+    }
+    return escaped;
+}
+
+std::string TestHarnessSource(const CompilationUnit& unit, const fs::path& file,
+                              bool verbose) {
+    const std::string fileName = file.filename().string();
+    const std::string displayPath = DisplayPath(file);
+    const std::string escapedFileName = StringLiteral(fileName);
+    const std::string escapedDisplayPath = StringLiteral(displayPath);
+    std::size_t testCount = 0;
+    for (const auto& declaration : unit.Declarations())
+        if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
+            static_cast<const FunctionDeclaration&>(*declaration).IsTest())
+            ++testCount;
+
     std::ostringstream source;
-    source << "i32 __flecha_test_main() { usize __flecha_failures = 0; ";
+    source << "i32 __flecha_test_main() { usize __flecha_passed = 0; "
+              "usize __flecha_failed = 0; ";
+    struct TestContext final {
+        const FunctionDeclaration* function;
+        std::string variable;
+    };
+    std::vector<TestContext> contexts;
     std::size_t index = 0;
     for (const auto& declaration : unit.Declarations()) {
         if (declaration->Kind() != AstNodeKind::FunctionDeclaration) continue;
@@ -31,13 +74,43 @@ std::string TestHarnessSource(const CompilationUnit& unit) {
         if (!function.IsTest()) continue;
         const std::string context =
             "__flecha_test_context_" + std::to_string(index++);
+        contexts.push_back({&function, context});
         source << "testing::UnitTest " << context
-               << " = testing::UnitTest::init(\"" << function.Name()
-               << "\", false); " << function.Name() << "(&" << context
-               << "); __flecha_failures = __flecha_failures + " << context
-               << ".failureCount(); ";
+               << " = testing::UnitTest::init(\"" << function.Name() << "\", "
+               << (verbose ? "true" : "false") << "); " << function.Name()
+               << "(&" << context << "); if " << context
+               << ".failed() { __flecha_failed++; } else { "
+                  "__flecha_passed++; } ";
     }
-    source << "if __flecha_failures != 0 { return 1; } return 0; }";
+    source << "if __flecha_failed != 0 { ";
+    source << "stdoutln(\"" << escapedFileName << "\"); ";
+    for (const auto& context : contexts) {
+        const auto& function = *context.function;
+        source << "if " << context.variable << ".failed() { "
+               << "stdoutln(\"" << DotLeader("  " + function.Name())
+               << "fail\"); stdoutf(\"    test: " << escapedDisplayPath << ":"
+               << function.NameRange().start.line << ":"
+               << function.NameRange().start.column << "\\n\"); "
+               << context.variable << ".printOutput(); } ";
+        if (verbose)
+            source << "else { stdoutln(\"" << DotLeader("  " + function.Name())
+                   << "ok\"); " << context.variable << ".printOutput(); } ";
+    }
+    source << "stdoutln(\"\"); ";
+    source << "stdoutf(\"FAIL [%d/" << testCount << "] tests passed, but [%d/"
+           << testCount
+           << "] failed\\n\", __flecha_passed, __flecha_failed); return 1; } ";
+    if (verbose) {
+        source << "stdoutln(\"" << escapedFileName << "\"); ";
+        for (const auto& context : contexts)
+            source << "stdoutln(\""
+                   << DotLeader("  " + context.function->Name()) << "ok\"); "
+                   << context.variable << ".printOutput(); ";
+        source << "stdoutln(\"\"); ";
+    } else
+        source << "stdout(\"" << StringLiteral(DotLeader(fileName)) << "\"); ";
+    source << "stdoutf(\"OK [%d/" << testCount
+           << "] tests passed\\n\", __flecha_passed); return 0; }";
     return source.str();
 }
 }  // namespace
@@ -49,13 +122,15 @@ void ModuleLoader::Report(source::SourceRange range,
 }
 std::unique_ptr<CompilationUnit> ModuleLoader::Load(
     const fs::path& entry, fs::path root,
-    std::map<std::string, fs::path> libraries, ModuleLoadMode mode) {
+    std::map<std::string, fs::path> libraries, ModuleLoadMode mode,
+    bool verboseTests) {
     _loaded.clear();
     _roots.clear();
     _active.clear();
     _modules.clear();
     _declarations.clear();
     _mode = mode;
+    _verboseTests = verboseTests;
     _testingModule.clear();
     _libraries = std::move(libraries);
     if (root.empty()) {
@@ -260,7 +335,8 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
     if (entry && _mode == ModuleLoadMode::Test) {
         diagnostics::DiagnosticBag generatedDiagnostics;
         auto generatedTokens =
-            Tokenizer(TestHarnessSource(*unit), generatedDiagnostics)
+            Tokenizer(TestHarnessSource(*unit, file, _verboseTests),
+                      generatedDiagnostics)
                 .Tokenize();
         Parser generatedParser(std::move(generatedTokens),
                                generatedDiagnostics);

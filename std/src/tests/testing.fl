@@ -6,6 +6,7 @@ export structure UnitTest {
         usize assertionsRecorded;
         usize failuresRecorded;
         bool verboseEnabled;
+        string outputBuffer;
     }
 };
 
@@ -15,6 +16,7 @@ UnitTest UnitTest::init(stringv name, bool verbose) override {
         self.assertionsRecorded = 0;
         self.failuresRecorded = 0;
         self.verboseEnabled = verbose;
+        self.outputBuffer = "";
     };
 }
 
@@ -40,25 +42,25 @@ void UnitTest::fail(&self) {
 
 void UnitTest::reportError(&self, stringv message) {
     self->fail();
-    self->log(message);
+    self->outputBuffer = self->outputBuffer + "    error: " + message + "\n";
 }
 
 void UnitTest::recordAssertion(&self, bool passed, stringv assertion, stringv message) {
     self->assertionsRecorded++;
 
     if !passed {
-        string output = "FAIL " + message + ". Assertion: " + assertion;
-        self->reportError(output.view());
+        self->failuresRecorded++;
+        self->outputBuffer = self->outputBuffer
+            + "    assertion: " + assertion + "\n"
+            + "    message: " + message + "\n";
         return;
-    }
-
-    if self->verboseEnabled {
-        string output = "ok " + message + ". Assertion: " + assertion;
-        self->log(output.view());
     }
 }
 
-void UnitTest::log(&const self, stringv message) {
-    string output = "[" + self->testName + "] " + message;
-    stdoutln(output);
+void UnitTest::printOutput(&const self) {
+    stdout(self->outputBuffer);
+}
+
+void UnitTest::log(&self, stringv message) {
+    self->outputBuffer = self->outputBuffer + "    log: " + message + "\n";
 }

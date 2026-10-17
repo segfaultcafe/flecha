@@ -12,7 +12,7 @@ flecha --version
 flecha check INPUT [--root DIR] [--lib NAME=DIR ...]
 flecha build INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
              [--link OBJECT-OR-LIBRARY ...]
-flecha test INPUT_TEST [--root DIR] [--lib NAME=DIR ...]
+flecha test INPUT_TEST [--root DIR] [--lib NAME=DIR ...] [--verbose]
             [--link OBJECT-OR-LIBRARY ...]
 flecha --emit-llvm INPUT [-o OUTPUT] [--root DIR] [--lib NAME=DIR ...]
 flecha --emit-object INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
@@ -31,8 +31,14 @@ package version and never includes a Git or dirty-worktree suffix.
 and links a host-native executable with the Flecha runtime. `test` requires a
 `_test.fl` entry module, builds a temporary native runner, executes every test
 declaration in that module, and returns a nonzero status when any test records
-a failure. `--emit-object` stops before linking. `--emit-llvm` writes textual
-LLVM IR, or prints it when `-o` is omitted.
+a failure. Its default output is one dot-leader status line for the test file;
+`--verbose` instead shows one status line per test. Assertion failures retain
+their detailed `testing::UnitTest` output beneath the failed test and include
+the test declaration's `file:line:column` location. This location identifies
+the test function, not an inferred defect inside the production function.
+Both modes report the number of passed and failed tests. `--emit-object` stops
+before linking.
+`--emit-llvm` writes textual LLVM IR, or prints it when `-o` is omitted.
 
 `--root` supplies the source root used by `root::` imports. Each `--lib`
 option maps one `lib::` namespace to a source directory. `--link` adds a native

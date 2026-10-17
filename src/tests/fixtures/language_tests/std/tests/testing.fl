@@ -1,13 +1,21 @@
 module testing;
 
 export structure UnitTest {
+    usize assertions;
     usize failures;
+    bool verboseEnabled;
 };
 
 UnitTest UnitTest::init(stringv name, bool verbose) override {
     return build UnitTest {
+        self.assertions = 0;
         self.failures = 0;
+        self.verboseEnabled = verbose;
     };
+}
+
+usize UnitTest::assertionCount(&const self) {
+    return self->assertions;
 }
 
 void UnitTest::fail(&self) {
@@ -17,3 +25,9 @@ void UnitTest::fail(&self) {
 usize UnitTest::failureCount(&const self) {
     return self->failures;
 }
+
+bool UnitTest::failed(&const self) {
+    return self->failures != 0;
+}
+
+void UnitTest::printOutput(&const self) {}

@@ -2,8 +2,9 @@ module failure_test;
 
 @imports
     :: root::failure
-    :: lib::std::tests::testing;
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
 
 test reports_failure(&testing::UnitTest t) {
-    t->fail();
+    asserts::is_true(t, false, "expected fixture failure");
 }

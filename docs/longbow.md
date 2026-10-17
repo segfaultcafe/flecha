@@ -55,7 +55,7 @@ library scaffolds also have valid importable module names.
 | `longbow check` | Load and check source and its reachable imports without emitting artifacts |
 | `longbow build` | Compile a program, or emit a host-native object for a library |
 | `longbow run -- ARGS` | Build, then run the program and propagate its exit status |
-| `longbow test` | Discover every `src/**/*_test.fl`, run each test module, and fail if any test fails |
+| `longbow test [--verbose]` | Discover every `src/**/*_test.fl`, run each test module, and optionally show individual test results |
 | `longbow clean` | Remove the project's generated `target` directory |
 
 Commands locate the nearest ancestor `longbow.toml`, so they also work inside

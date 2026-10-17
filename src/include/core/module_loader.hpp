@@ -23,7 +23,8 @@ class ModuleLoader final {
     std::unique_ptr<CompilationUnit> Load(
         const std::filesystem::path& entry, std::filesystem::path root = {},
         std::map<std::string, std::filesystem::path> libraries = {},
-        ModuleLoadMode mode = ModuleLoadMode::Runtime);
+        ModuleLoadMode mode = ModuleLoadMode::Runtime,
+        bool verboseTests = false);
 
    private:
     std::string Visit(const std::filesystem::path& file,
@@ -38,6 +39,7 @@ class ModuleLoader final {
     std::vector<Module> _modules;
     std::vector<std::unique_ptr<Declaration>> _declarations;
     ModuleLoadMode _mode = ModuleLoadMode::Runtime;
+    bool _verboseTests = false;
     std::string _testingModule;
 };
 }  // namespace flecha::core
