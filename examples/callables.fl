@@ -1,0 +1,28 @@
+func Mapper(i32) => (i32);
+
+structure Pipeline { Mapper callback; };
+
+Pipeline Pipeline::init(Mapper callback) <- callback override {
+    return build Pipeline { self.callback = callback; };
+}
+
+i32 Pipeline::run(&const self, i32 value) {
+    return (self->callback)(value);
+}
+
+T relay<T>(T value) <- value { return value; }
+
+Mapper offset(i32 amount) {
+    return [copy amount](value) => { return value + amount; };
+}
+
+i32 main() {
+    Mapper explicit = [](i32 value) => (i32) { return value * 2; };
+    Mapper inferred = (value) => { return value + 2; };
+    Pipeline pipeline = Pipeline::init(offset(20));
+
+    Mapper generic = relay<Mapper>(explicit);
+    if generic(21) != 42 { return 1; }
+    if inferred(40) != 42 { return 2; }
+    return pipeline.run(22);
+}

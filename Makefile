@@ -18,7 +18,7 @@ HOST_NVIM_CONFIG ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/nvim,$(HOME)/.con
 
 .PHONY: help configure build configure-tests build-tests test \
 	test-semantic llvm-poc native-poc native-if-also native-functions \
-	native-while native-loop-control native-casts native-string-view \
+	native-callables native-while native-loop-control native-casts native-string-view \
 	native-string-view-operations native-owning-string native-stdout \
 	native-definite-assignment package-vscode test-neovim test-sanitizers clean \
 	sandbox enter-sandbox
@@ -37,6 +37,7 @@ help:
 	@echo "  make native-poc     Build and execute a native Flecha program"
 	@echo "  make native-if-also Build and test the if/also native example"
 	@echo "  make native-functions Build and test calls and recursion"
+	@echo "  make native-callables Build and test callable values and closures"
 	@echo "  make native-while   Build and test while/also loops"
 	@echo "  make native-loop-control Build and test loop control"
 	@echo "  make native-casts   Build and test numeric casts"
@@ -131,13 +132,13 @@ test-sanitizers:
 		$(if $(GTEST_SOURCE_DIR),-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=$(GTEST_SOURCE_DIR),) \
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 	$(CMAKE) --build $(SANITIZER_BUILD_DIR) --parallel
-	ASAN_OPTIONS=detect_leaks=0 \
+	ASAN_OPTIONS=detect_leaks=1 \
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 		$(SANITIZER_BUILD_DIR)/src/tests/test_flecha
 	ASAN_OPTIONS=detect_leaks=1 \
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \
-		-R '^NativeSemanticTests.(ControlFlowDefiniteAssignment|ConstDeclarations|UnsafePointers|CheckedReferences|FixedArrays|Iteration|CheckedSlices|Defer|Tuples|ErrorValues|Structures|RawAllocation)$$'
+		-R '^NativeSemanticTests.(ControlFlowDefiniteAssignment|ConstDeclarations|UnsafePointers|CheckedReferences|FixedArrays|Iteration|CheckedSlices|Defer|Tuples|ErrorValues|Structures|RawAllocation|Modules|CallableIntegration|CallableAllocationFailure)$$'
 
 llvm-poc: build
 	$(BUILD_DIR)/flecha --emit-llvm examples/llvm_poc.fl \
@@ -166,6 +167,12 @@ native-functions: build
 	@test -f $(BUILD_DIR)/native_functions.o
 	@$(BUILD_DIR)/native_functions; result=$$?; test $$result -eq 42
 	@echo "Native function example returned 42"
+
+native-callables: build
+	$(BUILD_DIR)/flecha build examples/callables.fl \
+		-o $(BUILD_DIR)/callables
+	@$(BUILD_DIR)/callables; result=$$?; test $$result -eq 42
+	@echo "Native callable example returned 42"
 
 native-while: build
 	$(BUILD_DIR)/flecha build examples/while_also.fl \
