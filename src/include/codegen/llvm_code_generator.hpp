@@ -72,6 +72,9 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::StructType* StringType();
     [[nodiscard]] llvm::FunctionType* MapFunctionType(
         const semantic::FunctionSymbol& function);
+    [[nodiscard]] llvm::FunctionType* MapCallableInvokeType(
+        const semantic::CallableSignature& signature);
+    llvm::Function* CallableAdapter(const semantic::FunctionSymbol& symbol);
     [[nodiscard]] std::optional<llvm::Attribute::AttrKind>
     ExternIntegerExtension(semantic::SemanticType type) const;
     void ApplyExternAttributes(const semantic::FunctionSymbol& symbol,
@@ -107,6 +110,9 @@ class LlvmCodeGenerator final {
     llvm::Value* EmitAllocation(
         const lowering::BoundAllocationExpression& expression);
     llvm::Value* EmitFree(llvm::Value* owner, semantic::SemanticType ownerType);
+    llvm::Value* EmitIndirectCall(
+        const lowering::BoundIndirectCallExpression& expression,
+        llvm::Value* destination = nullptr);
     llvm::Value* EmitExpression(const lowering::BoundExpression& expression);
     [[nodiscard]] llvm::Value* EmitLiteral(
         const lowering::BoundLiteralExpression& expression);
@@ -174,6 +180,8 @@ class LlvmCodeGenerator final {
     std::optional<llvm::DataLayout> _dataLayout;
     std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
         _functions;
+    std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
+        _callableAdapters;
     std::unordered_map<const semantic::VariableSymbol*, llvm::Value*>
         _variables;
     std::unordered_map<std::string, llvm::BasicBlock*> _positions;

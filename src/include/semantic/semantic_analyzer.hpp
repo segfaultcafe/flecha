@@ -49,6 +49,8 @@ class SemanticAnalyzer final {
     SemanticType ResolveTypeSyntax(const core::TypeNode& type);
     void RegisterErrorTypes(const core::CompilationUnit& unit);
     void RegisterEnums(const core::CompilationUnit& unit);
+    void DeclareCallableTypes(const core::CompilationUnit& unit);
+    void ResolveCallableTypes(const core::CompilationUnit& unit);
     SemanticType AnalyzeMemberAccess(
         const core::MemberAccessExpression& expression);
     void RegisterStructures(const core::CompilationUnit& unit);
@@ -127,9 +129,13 @@ class SemanticAnalyzer final {
     bool _inZero = false;
     bool _zeroTrivialityKnown = false;
     std::unordered_set<const core::Expression*> _directConstructions;
+    std::unordered_map<const core::CallableTypeDeclaration*,
+                       std::shared_ptr<CallableSignature>>
+        _callableSignatures;
     const Symbol* _buildSelf = nullptr;
     bool _allowBuildSelf = false;
     std::size_t _buildDepth = 0;
+    bool _analyzingCallCallee = false;
 };
 
 }  // namespace flecha::semantic

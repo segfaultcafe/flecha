@@ -439,6 +439,76 @@ std::unique_ptr<Parameter> Parser::ParseParameter() {
         name->value, name->range);
 }
 
+std::unique_ptr<Parameter> Parser::ParseCallableParameter() {
+    const source::SourceLocation start = Current().range.start;
+    std::unique_ptr<TypeNode> type = ParseType(true, true, true);
+    if (type == nullptr) return nullptr;
+
+    std::string name;
+    source::SourceRange nameRange = type->Range();
+    if (Check(TokenType::Identifier)) {
+        const Token& token = Advance();
+        name = token.value;
+        nameRange = token.range;
+    }
+    return std::make_unique<Parameter>(
+        source::SourceRange{start, nameRange.end}, std::move(type),
+        std::move(name), nameRange);
+}
+
+std::unique_ptr<CallableTypeDeclaration>
+Parser::ParseCallableTypeDeclaration() {
+    const source::SourceLocation start = Current().range.start;
+    const bool isUnsafe = Match(TokenType::Unsafe);
+    if (Consume(TokenType::Func, "'func'") == nullptr) return nullptr;
+    const Token* name = Consume(TokenType::Identifier, "callable type name");
+    if (name == nullptr ||
+        Consume(TokenType::LParen, "'(' after callable type name") == nullptr)
+        return nullptr;
+
+    std::vector<std::unique_ptr<Parameter>> parameters;
+    while (!Check(TokenType::RParen) && !IsAtEnd()) {
+        auto parameter = ParseCallableParameter();
+        if (parameter == nullptr) return nullptr;
+        parameters.push_back(std::move(parameter));
+        if (!Match(TokenType::Comma)) break;
+    }
+    if (Consume(TokenType::RParen, "')' after callable parameters") == nullptr)
+        return nullptr;
+    if (Consume(TokenType::FatArrow, "'=>' after callable parameters") ==
+        nullptr)
+        return nullptr;
+    if (Consume(TokenType::LParen, "'(' before callable results") == nullptr)
+        return nullptr;
+
+    std::vector<std::unique_ptr<TypeNode>> results;
+    while (!Check(TokenType::RParen) && !IsAtEnd()) {
+        auto result = ParseType(true, false, true);
+        if (result == nullptr) return nullptr;
+        results.push_back(std::move(result));
+        if (!Match(TokenType::Comma)) break;
+    }
+    if (Consume(TokenType::RParen, "')' after callable results") == nullptr)
+        return nullptr;
+
+    std::string borrowSource;
+    source::SourceRange borrowSourceRange;
+    if (Match(TokenType::LeftArrow)) {
+        const Token* source =
+            Consume(TokenType::Identifier, "borrow source after '<-'");
+        if (source == nullptr) return nullptr;
+        borrowSource = source->value;
+        borrowSourceRange = source->range;
+    }
+    const Token* semicolon =
+        Consume(TokenType::SemiColon, "';' after callable type declaration");
+    if (semicolon == nullptr) return nullptr;
+    return std::make_unique<CallableTypeDeclaration>(
+        source::SourceRange{start, semicolon->range.end}, name->value,
+        name->range, std::move(parameters), std::move(results), isUnsafe,
+        std::move(borrowSource), borrowSourceRange);
+}
+
 std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     const auto tokenStart = _position;
     std::vector<std::pair<std::size_t, std::size_t>> erased;
@@ -730,6 +800,9 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
     if (Check(TokenType::Error) && Peek(1).type == TokenType::Identifier &&
         Peek(2).type == TokenType::LCurly)
         return ParseErrorDeclaration();
+    if (Check(TokenType::Func) ||
+        (Check(TokenType::Unsafe) && Peek(1).type == TokenType::Func))
+        return ParseCallableTypeDeclaration();
     if (StartsType() || Check(TokenType::Unsafe) || Check(TokenType::Private) ||
         Check(TokenType::Extern)) {
         return ParseFunctionDeclaration();
@@ -1801,9 +1874,9 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpression() {
 void Parser::SynchronizeTopLevel() {
     // Parse() guarantees progress if a failed declaration consumed nothing.
     // Keep a following declaration's first token after a partially parsed one.
-    while (!IsAtEnd() && !StartsType() && !Check(TokenType::Unsafe) &&
-           !Check(TokenType::Structure) && !Check(TokenType::Private) &&
-           !Check(TokenType::Test)) {
+    while (!IsAtEnd() && !StartsType() && !Check(TokenType::Func) &&
+           !Check(TokenType::Unsafe) && !Check(TokenType::Structure) &&
+           !Check(TokenType::Private) && !Check(TokenType::Test)) {
         Advance();
     }
 }

@@ -84,6 +84,9 @@ invalidates earlier aliases and requires the extracted owner to be discharged. S
 
 Annotated functions are verified independently, even when unused. Calls use their
 contracts, so annotated recursion does not require recursive body interpretation.
+Named callable signatures carry the same `own` and `lend` parameter contracts
+through indirect calls. An owning argument is transferred at the indirect call
+boundary, and an owning result creates a new caller cleanup obligation.
 Known-null calls are checked against the body as well. Unannotated helpers retain
 the existing bounded visible-body analysis. Tracked raw pointers passed to an
 annotated function need explicit parameter contracts; indirect mutation through

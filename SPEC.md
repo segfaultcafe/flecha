@@ -125,16 +125,44 @@ Tentative function modifiers include:
 
 Modifiers and their exact interactions will be specified as their corresponding features are implemented.
 
-For v0.2.0, function values and anonymous functions are a design target.
-`func` is reserved for anonymous functions. The proposed function-typed
-parameter spelling is:
+Flecha 0.2.0 introduces named callable signatures:
 
 ```flecha
-apply(func(&self, i32)(&i32 <- self) callback, i32 val)
+func Mapper(i32) => (i32);
+func Logger(stringv) => ();
+unsafe func Reader(lend *const u8 source) => (i32);
 ```
 
-This records the intended syntax; function values, anonymous functions, and
-indirect calls are not implemented yet.
+A named signature is a normal type. Parameter names are optional unless a
+borrowed result names its source. Results always use a list: `()` means `void`,
+one entry is a single result, and multiple entries form a tuple result.
+Ownership contracts and `unsafe` are part of structural compatibility.
+
+Named functions can be stored, passed, returned, inferred by `:=`, and called
+indirectly:
+
+```flecha
+func Mapper(i32) => (i32);
+
+i32 twice(i32 value) { return value * 2; }
+i32 apply(Mapper callback, i32 value) { return callback(value); }
+
+i32 main() {
+    callback := twice;
+    return apply(callback, 21);
+}
+```
+
+Callable aliases are structural rather than nominal: two complete signatures
+with identical parameter, result, safety, ownership, and borrow contracts are
+compatible regardless of their declaration names. Callable values are
+move-only and use a uniform compiler ABI containing invoke, environment, and
+destroy pointers. Captureless named functions use null environment and destroy
+pointers.
+
+Anonymous `func(...) => (...) { ... }` expressions and explicit capture lists
+remain later v0.2.0 work. `once func` remains future work beyond the initial
+closure implementation.
 
 ## 6. Return and yield
 

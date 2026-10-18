@@ -90,6 +90,76 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::I64)));
 }
 
+TEST(SemanticCallableTests, ResolvesStructuralSignaturesAndFunctionValues) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        func Equivalent(i32 value) => (i32);
+        i32 twice(i32 value) { return value * 2; }
+        i32 apply(Mapper callback, i32 value) { return callback(value); }
+        i32 main() {
+            Equivalent callback = twice;
+            Mapper moved = callback;
+            return apply(moved, 21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const auto& declaration = static_cast<const CallableTypeDeclaration&>(
+        *result.unit->Declarations()[0]);
+    const auto* symbol = result.model.DeclaredSymbol(declaration);
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->Kind(), SymbolKind::CallableType);
+    EXPECT_EQ(symbol->Type().Name(), "func(i32) => (i32)");
+    EXPECT_FALSE(symbol->Type().IsCopyable());
+    EXPECT_TRUE(symbol->Type().OwnsStorage());
+}
+
+TEST(SemanticCallableTests, DiagnosesSignatureAndSafetyMismatches) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        func Wrong(i64) => (i32);
+        func InvalidPointer(*u8) => ();
+        structure RawBox { *u8 pointer; };
+        func InvalidTransitive(RawBox) => ();
+        i32 twice(i32 value) { return value * 2; }
+        i32 main() { Wrong callback = twice; return 0; }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::IncompatibleType),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RequiresUnsafeContextForUnsafeIndirectCalls) {
+    Analysis result = Analyze(R"(
+        unsafe func Reader(lend *const i32 source) => (i32);
+        unsafe i32 read(lend *const i32 source) { return *source; }
+        i32 invoke(Reader reader, *const i32 source) {
+            return reader(source);
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, TreatsCallableVariablesAsMoveOnly) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 twice(i32 value) { return value * 2; }
+        i32 main() {
+            Mapper first = twice;
+            Mapper second = first;
+            return first(21);
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
+}
+
 TEST(SemanticMatchTests, AcceptsExhaustiveAndWildcardEnumMatches) {
     Analysis result = Analyze(R"(
         enum TokenKind: u8 { Identifier = 1, Number = 4, End = 9, }

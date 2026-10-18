@@ -46,6 +46,12 @@ void Walk(const AstNode& input, const Callback& callback) {
             visit(n.Body());
             break;
         }
+        case AstNodeKind::CallableTypeDeclaration: {
+            NODE(CallableTypeDeclaration);
+            list(n.Parameters());
+            list(n.Results());
+            break;
+        }
         case AstNodeKind::StructureDeclaration: {
             NODE(StructureDeclaration);
             list(n.Fields());
@@ -248,6 +254,8 @@ std::string Name(const Declaration& declaration) {
         return static_cast<const StructureDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::EnumDeclaration)
         return static_cast<const EnumDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::CallableTypeDeclaration)
+        return static_cast<const CallableTypeDeclaration&>(declaration).Name();
     return static_cast<const ErrorDeclaration&>(declaration).Name();
 }
 bool Template(const Declaration& d) {

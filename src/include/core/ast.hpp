@@ -18,6 +18,7 @@ namespace flecha::core {
 enum class AstNodeKind {
     CompilationUnit,
     FunctionDeclaration,
+    CallableTypeDeclaration,
     ErrorDeclaration,
     EnumDeclaration,
     StructureDeclaration,
@@ -505,6 +506,59 @@ class FunctionDeclaration final : public Declaration {
     source::SourceRange _borrowSourceRange;
     bool _isTest = false;
     bool _isTestHarness = false;
+};
+
+class CallableTypeDeclaration final : public Declaration {
+   public:
+    CallableTypeDeclaration(source::SourceRange range, std::string name,
+                            source::SourceRange nameRange,
+                            std::vector<std::unique_ptr<Parameter>> parameters,
+                            std::vector<std::unique_ptr<TypeNode>> results,
+                            bool isUnsafe, std::string borrowSource = {},
+                            source::SourceRange borrowSourceRange = {})
+        : Declaration(range),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _parameters(std::move(parameters)),
+          _results(std::move(results)),
+          _isUnsafe(isUnsafe),
+          _borrowSource(std::move(borrowSource)),
+          _borrowSourceRange(borrowSourceRange) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::CallableTypeDeclaration;
+    }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] const source::SourceRange& NameRange() const {
+        return _nameRange;
+    }
+    [[nodiscard]] const std::vector<std::unique_ptr<Parameter>>& Parameters()
+        const {
+        return _parameters;
+    }
+    [[nodiscard]] const std::vector<std::unique_ptr<TypeNode>>& Results()
+        const {
+        return _results;
+    }
+    [[nodiscard]] bool IsUnsafe() const { return _isUnsafe; }
+    [[nodiscard]] bool HasBorrowSource() const {
+        return !_borrowSource.empty();
+    }
+    [[nodiscard]] const std::string& BorrowSource() const {
+        return _borrowSource;
+    }
+    [[nodiscard]] const source::SourceRange& BorrowSourceRange() const {
+        return _borrowSourceRange;
+    }
+
+   private:
+    std::string _name;
+    source::SourceRange _nameRange;
+    std::vector<std::unique_ptr<Parameter>> _parameters;
+    std::vector<std::unique_ptr<TypeNode>> _results;
+    bool _isUnsafe;
+    std::string _borrowSource;
+    source::SourceRange _borrowSourceRange;
 };
 
 struct Import final {

@@ -47,6 +47,7 @@ enum class BoundNodeKind {
     BinaryExpression,
     AssignmentExpression,
     CallExpression,
+    IndirectCallExpression,
     AllocationExpression,
     StringViewOperationExpression,
     CastExpression,
@@ -544,6 +545,29 @@ class BoundCallExpression final : public BoundExpression {
 
    private:
     const semantic::FunctionSymbol& _function;
+    std::vector<std::unique_ptr<BoundExpression>> _arguments;
+};
+
+class BoundIndirectCallExpression final : public BoundExpression {
+   public:
+    BoundIndirectCallExpression(
+        source::SourceRange range, std::unique_ptr<BoundExpression> callee,
+        std::vector<std::unique_ptr<BoundExpression>> arguments)
+        : BoundExpression(range,
+                          callee->Type().Signature().result.WithoutConst()),
+          _callee(std::move(callee)),
+          _arguments(std::move(arguments)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::IndirectCallExpression;
+    }
+    [[nodiscard]] const BoundExpression& Callee() const { return *_callee; }
+    [[nodiscard]] const std::vector<std::unique_ptr<BoundExpression>>&
+    Arguments() const {
+        return _arguments;
+    }
+
+   private:
+    std::unique_ptr<BoundExpression> _callee;
     std::vector<std::unique_ptr<BoundExpression>> _arguments;
 };
 

@@ -75,6 +75,7 @@ enum class TokenType {
     Private,
     Override,
     Build,
+    Func,
     Unsafe,
     Export,
     Extern,

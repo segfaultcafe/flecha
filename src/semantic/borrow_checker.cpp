@@ -475,14 +475,14 @@ class BorrowChecker final {
 
     Value BorrowResult(SemanticType type, const Value& source,
                        source::SourceRange range,
-                       const FunctionSymbol& function, std::size_t& resultIndex,
+                       const FunctionSymbol* function, std::size_t& resultIndex,
                        bool multiple) {
         if (type.HasBorrowedLifetime()) {
             Value projected = source;
             if (multiple) {
                 Origins origins;
                 for (Origin origin : projected.origins) {
-                    origin.fields.push_back({nullptr, &function, resultIndex});
+                    origin.fields.push_back({nullptr, function, resultIndex});
                     origins.insert(std::move(origin));
                 }
                 projected.origins = std::move(origins);
@@ -820,7 +820,14 @@ class BorrowChecker final {
                     static_cast<const core::CallExpression&>(expression);
                 const Symbol* symbol = Named(call.Callee());
                 const auto* function =
-                    static_cast<const FunctionSymbol*>(symbol);
+                    symbol && symbol->Kind() == SymbolKind::Function
+                        ? static_cast<const FunctionSymbol*>(symbol)
+                        : nullptr;
+                const SemanticType callable = _model.TypeOf(call.Callee());
+                const CallableSignature* signature =
+                    callable.Kind() == SemanticTypeKind::Function
+                        ? &callable.Signature()
+                        : nullptr;
                 const bool allocation =
                     function && function->BuiltIn() == BuiltInFunction::New;
                 const State skipped = allocation ? *_state : State{};
@@ -830,39 +837,38 @@ class BorrowChecker final {
                      ++index) {
                     Value value = Evaluate(*call.Arguments()[index]);
                     const bool destroys =
-                        function != nullptr &&
-                        ((index == 0 &&
+                        signature != nullptr &&
+                        ((index == 0 && function != nullptr &&
                           (function->BuiltIn() == BuiltInFunction::Free ||
                            function->BuiltIn() == BuiltInFunction::Take)) ||
-                         function->ParameterContract(index) ==
-                             core::OwnershipContract::Own);
+                         (index < signature->parameterContracts.size() &&
+                          signature->parameterContracts[index] ==
+                              core::OwnershipContract::Own));
                     if (destroys)
                         CheckAccess(Place(*call.Arguments()[index]), true,
                                     call.Arguments()[index]->Range());
-                    if (function != nullptr &&
-                        function->BorrowSourceIndex() == index)
+                    if (signature != nullptr &&
+                        signature->borrowSourceIndex == index)
                         borrowSource = value;
-                    if (function != nullptr &&
-                        index < function->ParameterTypes().size() &&
-                        function->ParameterTypes()[index]
-                            .HasBorrowedLifetime()) {
-                        (void)Borrow(std::move(value),
-                                     IsExclusiveBorrow(
-                                         function->ParameterTypes()[index]),
-                                     call.Arguments()[index]->Range());
+                    if (signature != nullptr &&
+                        index < signature->parameters.size() &&
+                        signature->parameters[index].HasBorrowedLifetime()) {
+                        (void)Borrow(
+                            std::move(value),
+                            IsExclusiveBorrow(signature->parameters[index]),
+                            call.Arguments()[index]->Range());
                     }
                 }
                 _temporaries = previousLoans;
                 if (allocation) Merge(*_state, skipped);
-                if (function != nullptr &&
-                    ContainsBorrowed(function->ReturnType()) &&
-                    function->BorrowSourceIndex().has_value()) {
+                if (signature != nullptr &&
+                    ContainsBorrowed(signature->result) &&
+                    signature->borrowSourceIndex.has_value()) {
                     std::size_t resultIndex = 0;
-                    return BorrowResult(function->ReturnType(), borrowSource,
-                                        expression.Range(), *function,
-                                        resultIndex,
-                                        function->ReturnType().Kind() ==
-                                            SemanticTypeKind::Tuple);
+                    return BorrowResult(
+                        signature->result, borrowSource, expression.Range(),
+                        function, resultIndex,
+                        signature->result.Kind() == SemanticTypeKind::Tuple);
                 }
                 return {};
             }
@@ -931,7 +937,7 @@ class BorrowChecker final {
                         method->BorrowSourceIndex().has_value()) {
                         std::size_t resultIndex = 0;
                         return BorrowResult(method->ReturnType(), borrowSource,
-                                            expression.Range(), *method,
+                                            expression.Range(), method,
                                             resultIndex,
                                             method->ReturnType().Kind() ==
                                                 SemanticTypeKind::Tuple);

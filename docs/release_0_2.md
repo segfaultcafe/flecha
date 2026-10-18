@@ -1,23 +1,59 @@
 # Flecha 0.2.0 milestone
 
-Flecha 0.2.0 is the next language and tooling feature milestone. Items in this
-document are design targets, not descriptions of behavior implemented by the
-current compiler.
+Flecha 0.2.0 is the callable-values and closures milestone. This document
+separates implemented foundations from the remaining staged work.
 
-## Function values and anonymous functions
+## Callable syntax and contracts
 
-- `func` is reserved for anonymous functions.
-- Function values may be accepted as parameters.
-- The proposed function-typed parameter spelling is:
+Named callable signatures use:
 
 ```flecha
-apply(func(&self, i32)(&i32 <- self) callback, i32 val)
+func Mapper(i32) => (i32);
+func Logger(stringv) => ();
+unsafe func Reader(lend *const u8 source) => (i32);
 ```
 
-The complete rules for captures, ownership, borrow contracts, indirect calls,
-and native function pointers remain to be designed.
+Anonymous functions will use the same signature shape:
 
-## Language tests
+```flecha
+func(i32 value) => (i32) { return value * 2; }
+func[copy factor, &counter, &const limit](i32 value) => (i32) { ... }
+```
+
+The empty capture list is omitted; `func[](...)` is invalid. A literal either
+spells its complete signature or receives its complete signature from context.
+Partial signature inference is invalid. Named aliases are structural, while
+all callable values are move-only.
+
+Capture modes are `copy`, `&`, `&const`, `lend`, and `own`. Raw-pointer
+parameters, results, and captures require `unsafe func`. `lend` closures cannot
+escape. `own` transfers cleanup into the closure, but a reusable closure cannot
+consume that capture from its body. `once func` stays on the future radar.
+
+## Implementation sequence
+
+1. **Callable type foundation — implemented by PR 1.** Named
+   signatures, structural type checking, captureless named-function values,
+   move-only transfer, indirect calls, ownership/borrow contracts, unsafe
+   propagation, and a uniform `{invoke, environment, destroy}` compiler ABI.
+2. **Captureless anonymous functions.** Add explicit literals and complete
+   contextual signature inference; reject partial forms.
+3. **Closure environments and `copy`.** Heap environments, invoke and destroy
+   thunks, snapshot captures, and deterministic reverse-order cleanup.
+4. **Checked-reference captures.** Add `&` and `&const`, explicit-capture-only
+   name resolution, borrow liveness, and escape diagnostics.
+5. **Raw-resource captures.** Add unsafe `lend` and `own`, nonescape checking,
+   allocation-obligation transfer, and exactly-once cleanup.
+6. **Integration and release hardening.** Standard-library callbacks,
+   examples, editor support, sanitizer/leak/failure-injection coverage, package
+   validation, and indirect-call benchmarks.
+
+The uniform callable ABI is fixed before capture environments arrive. A
+captureless value stores an adapter in `invoke` and null environment/destructor
+pointers. Later phases populate the latter two fields without changing user
+code or callable storage layout.
+
+## Language tests (implemented before 0.2.0)
 
 Both the compiler and Longbow will provide a test command:
 

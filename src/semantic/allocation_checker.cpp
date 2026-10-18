@@ -724,6 +724,45 @@ class AllocationChecker final {
         for (const Value& argument : arguments)
             CheckUse(state, argument, expression);
         InvalidateMutableFields(state, function, expression, arguments);
+        if (function == nullptr &&
+            expression.Kind() == AstNodeKind::CallExpression) {
+            const auto& call =
+                static_cast<const core::CallExpression&>(expression);
+            const SemanticType callable = _model.TypeOf(call.Callee());
+            if (callable.Kind() == SemanticTypeKind::Function) {
+                const auto& signature = callable.Signature();
+                std::set<Identity> consumed;
+                for (std::size_t i = 0;
+                     i < arguments.size() && i < signature.parameters.size();
+                     ++i) {
+                    const auto contract =
+                        i < signature.parameterContracts.size()
+                            ? signature.parameterContracts[i]
+                            : OwnershipContract::None;
+                    if (contract == OwnershipContract::Own &&
+                        arguments[i].kind != ValueKind::Null) {
+                        if (!consumed.insert(arguments[i].identity).second)
+                            Report(DiagnosticCode::UnverifiedOwnership,
+                                   expression,
+                                   "the same allocation cannot satisfy two "
+                                   "consuming callable parameters",
+                                   arguments[i].identity);
+                        Transfer(state, arguments[i], expression);
+                    } else if (contract == OwnershipContract::None &&
+                               Tracks(arguments[i]) &&
+                               signature.parameters[i].Kind() ==
+                                   SemanticTypeKind::Pointer) {
+                        Report(DiagnosticCode::UnverifiedOwnership, expression,
+                               "an indirect callable needs own or lend on raw "
+                               "pointer parameters receiving tracked storage",
+                               arguments[i].identity);
+                    }
+                }
+                Value result =
+                    IndirectContractResult(state, expression, signature);
+                return {{std::move(state), std::move(result)}};
+            }
+        }
         if (function && function->IsExtern()) {
             for (const Value& argument : arguments)
                 if (Owns(state, argument) || Lent(state, argument))
@@ -856,6 +895,39 @@ class AllocationChecker final {
             (shape->kind == ValueKind::Null || shape->kind == ValueKind::Error))
             return *shape;
         return {};
+    }
+
+    Value IndirectContractResult(State& state, const core::Expression& call,
+                                 const CallableSignature& signature) {
+        const auto owned = [&](std::size_t index) {
+            return index < signature.resultContracts.size() &&
+                   signature.resultContracts[index] == OwnershipContract::Own;
+        };
+        const auto makeOwned = [&](std::size_t index) {
+            const auto key = std::make_pair(&call, index);
+            auto& origin = _indirectReturnOrigins[key];
+            if (!origin)
+                origin = std::make_unique<core::TypeNode>(
+                    call.Range(), core::PrimitiveType::Void);
+            const Identity identity = origin.get();
+            const auto previous = state.resources.find(identity);
+            if (previous != state.resources.end() && previous->second.live)
+                Report(DiagnosticCode::UnverifiedOwnership, call,
+                       "owning indirect-call result is revisited while its "
+                       "previous allocation is still live",
+                       identity);
+            for (auto& [symbol, value] : state.bindings)
+                Retire(value, identity);
+            for (auto& [node, value] : state.values) Retire(value, identity);
+            state.resources[identity] = {true, true, false, true};
+            return Value{ValueKind::Pointer, identity};
+        };
+        if (signature.result.Kind() != SemanticTypeKind::Tuple)
+            return owned(0) ? makeOwned(0) : Value{};
+        Value result{ValueKind::Aggregate};
+        for (std::size_t i = 0; i < signature.result.Elements().size(); ++i)
+            result.elements.push_back(owned(i) ? makeOwned(i) : Value{});
+        return result;
     }
     void CheckReturn(State& state, const Value& result,
                      const core::TypeNode& type, const core::AstNode& at,
@@ -1718,6 +1790,9 @@ class AllocationChecker final {
     std::map<std::pair<const core::Expression*, const core::TypeNode*>,
              std::unique_ptr<core::TypeNode>>
         _returnOrigins;
+    std::map<std::pair<const core::Expression*, std::size_t>,
+             std::unique_ptr<core::TypeNode>>
+        _indirectReturnOrigins;
     const SemanticModel& _model;
     diagnostics::DiagnosticBag& _diagnostics;
     std::map<const FunctionSymbol*, const core::FunctionDeclaration*>
