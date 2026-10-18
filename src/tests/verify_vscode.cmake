@@ -60,14 +60,16 @@ if(NOT lockedVsceVersion STREQUAL vsceVersion)
 endif()
 
 file(READ "${EDITOR_ROOT}/syntaxes/flecha.tmLanguage.json" grammar)
-foreach(required IN ITEMS enum match test "=>")
+foreach(required IN ITEMS enum match test func "storage.type.function.flecha" "=>")
     string(FIND "${grammar}" "${required}" position)
     if(position EQUAL -1)
         message(FATAL_ERROR "VS Code grammar does not cover ${required}")
     endif()
 endforeach()
 
-foreach(required IN ITEMS "keyword.other.test.flecha" "#FFD700")
+foreach(required IN ITEMS
+        "keyword.other.test.flecha" "#FFD700"
+        "storage.type.function.flecha" "#569CD6")
     string(FIND "${manifest}" "${required}" position)
     if(position EQUAL -1)
         message(FATAL_ERROR "VS Code manifest does not style ${required}")

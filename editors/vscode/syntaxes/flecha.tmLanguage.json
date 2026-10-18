@@ -8,6 +8,7 @@
     {"include": "#characters"},
     {"include": "#imports"},
     {"include": "#tests"},
+    {"include": "#callableDeclarations"},
     {"include": "#types"},
     {"include": "#modifiers"},
     {"include": "#control"},
@@ -65,6 +66,10 @@
     "tests": {
       "name": "keyword.other.test.flecha",
       "match": "\\btest\\b"
+    },
+    "callableDeclarations": {
+      "name": "storage.type.function.flecha",
+      "match": "\\bfunc\\b"
     },
     "types": {
       "patterns": [
