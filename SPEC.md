@@ -174,9 +174,28 @@ list; its entire signature comes from the expected callable type. Inference is
 available in typed initializers, arguments, and returns, but not in `:=`
 declarations without an expected type. Partial inference is rejected.
 
-These functions are captureless: names in the body resolve from module scope,
-not the surrounding local scope. Nonempty capture lists and `once` functions
-remain later v0.2.0 work.
+An omitted or empty capture list is captureless: names in the body resolve from
+module scope, not the surrounding local scope. Local values must be listed
+explicitly. The implemented capture mode is `copy`:
+
+```flecha
+i32 factor = 2;
+Mapper scaled = [copy factor](value) => {
+    return value * factor;
+};
+```
+
+Each `copy` entry snapshots its source when the anonymous function value is
+created. Scalars and copyable aggregates are copied by value; owning strings
+and owning fields are deep-copied. Reassigning or leaving the source scope does
+not affect the captured value. Captured state belongs to the closure and may be
+mutated independently when its source binding was writable.
+
+Copy captures reject borrowed handles, raw pointers, callable values, and other
+noncopyable values. Raw resources will use the later `lend` and `own` capture
+modes. Callable values remain move-only, and moving a closure transfers its
+environment and cleanup responsibility exactly once. `once` functions remain
+future work.
 
 ## 6. Return and yield
 

@@ -109,6 +109,12 @@ result into `(*T, error)`. Allocation errors use the existing generic error ABI.
 The allocation-failure test harness wraps the allocation symbol at link time;
 production code has no failure-injection setting or test-only global state.
 
+Closure environments use the same allocator. Because creating a callable value
+has no language-level error result, a null environment allocation calls
+`flecha_runtime_v1_allocation_failure()`, which prints a runtime diagnostic and
+terminates. Generated destroy thunks recursively tear down captured owning
+fields in reverse capture order before calling `flecha_runtime_v1_free`.
+
 Runtime scalar arrays use `flecha_runtime_v1_alloc_array(count, element_size,
 alignment)`, which checks multiplication before allocating zeroed storage.
 `flecha_runtime_v1_allocation_count(pointer)` returns the recorded count (zero

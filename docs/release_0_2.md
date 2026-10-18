@@ -28,13 +28,24 @@ from a typed initializer, argument, or return context. Partial signature
 inference is invalid. Named aliases are structural, while all callable values
 are move-only.
 
-Nonempty capture lists are reserved for the closure phases. Their planned
-shape is `[copy factor, &counter, &const limit](...) => (...) { ... }`.
+Nonempty capture lists now support snapshot captures:
 
-Capture modes are `copy`, `&`, `&const`, `lend`, and `own`. Raw-pointer
-parameters, results, and captures require an `unsafe` literal. `lend` closures cannot
-escape. `own` transfers cleanup into the closure, but a reusable closure cannot
-consume that capture from its body. `once func` stays on the future radar.
+```flecha
+Mapper scaled = [copy factor](value) => { return value * factor; };
+```
+
+`copy` is contextual inside capture lists, so existing variables named `copy`
+remain valid elsewhere. Captures are explicit: an outer local omitted from the
+list is not visible in the body. Copyable scalars and aggregates are captured
+by value, owning fields are cloned, and the snapshot remains valid after the
+creating scope exits. Borrowed handles, raw pointers, callable values, and
+other noncopyable values are rejected by this mode.
+
+The remaining planned capture modes are `&`, `&const`, `lend`, and `own`.
+Raw-pointer parameters and results require an `unsafe` literal; raw pointers
+are never accepted by `copy`. Future `lend` closures cannot escape. `own`
+transfers cleanup into the closure, but a reusable closure cannot consume that
+capture from its body. `once func` stays on the future radar.
 
 ## Implementation sequence
 
@@ -45,8 +56,9 @@ consume that capture from its body. `once func` stays on the future radar.
 2. **Captureless anonymous functions — implemented.** Explicit `[](...)` and
    simplified `(...)` literals, complete contextual signature inference, and
    rejection of partial forms and local captures.
-3. **Closure environments and `copy`.** Heap environments, invoke and destroy
-   thunks, snapshot captures, and deterministic reverse-order cleanup.
+3. **Closure environments and `copy` — implemented.** Heap environments,
+   invoke and destroy thunks, snapshot captures, nested and returned closures,
+   move-only ownership transfer, and deterministic reverse-order cleanup.
 4. **Checked-reference captures.** Add `&` and `&const`, explicit-capture-only
    name resolution, borrow liveness, and escape diagnostics.
 5. **Raw-resource captures.** Add unsafe `lend` and `own`, nonescape checking,
@@ -55,10 +67,11 @@ consume that capture from its body. `once func` stays on the future radar.
    examples, editor support, sanitizer/leak/failure-injection coverage, package
    validation, and indirect-call benchmarks.
 
-The uniform callable ABI is fixed before capture environments arrive. A
-captureless value stores an adapter in `invoke` and null environment/destructor
-pointers. Later phases populate the latter two fields without changing user
-code or callable storage layout.
+The uniform callable ABI stores `{invoke, environment, destroy}`. A captureless
+value keeps the latter two pointers null. A capturing value stores a heap
+environment and typed destroy thunk without changing callable storage layout.
+The environment clones captures in source order, releases owning fields in
+reverse order, and then releases its allocation.
 
 ## Language tests (implemented before 0.2.0)
 
