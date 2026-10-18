@@ -409,7 +409,7 @@ TEST(TokenizerTests, RecognizesLoopKeywordsAndAdjacentIncrement) {
 TEST(TokenizerTests, RecognizesOwnershipContractsAsKeywords) {
     const auto tokens = Tokenize("copy own lend copier owner lender");
     ASSERT_EQ(tokens.size(), 7);
-    EXPECT_EQ(tokens[0].type, TokenType::Copy);
+    EXPECT_EQ(tokens[0].type, TokenType::Identifier);
     EXPECT_EQ(tokens[1].type, TokenType::Own);
     EXPECT_EQ(tokens[2].type, TokenType::Lend);
     EXPECT_EQ(tokens[3].type, TokenType::Identifier);

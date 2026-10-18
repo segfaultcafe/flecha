@@ -55,7 +55,6 @@ const KeywordMap KEYWORDS = {
     {"break", TokenType::Break},
     {"jumpto", TokenType::JumpTo},
     {"error", TokenType::Error},
-    {"copy", TokenType::Copy},
     {"const", TokenType::Const},
     {"own", TokenType::Own},
     {"lend", TokenType::Lend},

@@ -1718,9 +1718,16 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
         captures;
     if (explicitCaptureList) {
         while (!Check(TokenType::RBracket) && !IsAtEnd()) {
-            const Token* mode = Consume(TokenType::Copy,
-                                        "'copy' before a captured name");
+            const Token* mode =
+                Consume(TokenType::Identifier,
+                        "'copy' before a captured name");
             if (mode == nullptr) return nullptr;
+            if (mode->value != "copy") {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::UnexpectedToken, mode->range,
+                    "expected 'copy' before a captured name");
+                return nullptr;
+            }
             const Token* name =
                 Consume(TokenType::Identifier, "captured variable name");
             if (name == nullptr) return nullptr;

@@ -96,7 +96,6 @@ enum class TokenType {
     Break,
     JumpTo,
     Error,
-    Copy,
     Own,
     Lend,
     Const,
