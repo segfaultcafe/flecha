@@ -4,6 +4,13 @@
   <img src="identity/flecha-logo.png" alt="Flecha logo" width="360">
 </p>
 
+<p align="center">
+  <a href="https://flecha-lang.org/">Website</a> ·
+  <a href="https://flecha-lang.org/docs/">Documentation</a> ·
+  <a href="https://flecha-lang.org/install/">Install</a> ·
+  <a href="https://flecha-lang.org/examples/">Examples</a>
+</p>
+
 Flecha is an early-stage, statically typed systems programming language and compiler. It is designed for predictable execution, explicit memory operations, strong diagnostics, and direct access to native targets without a garbage-collected runtime.
 
 The compiler is implemented in modern C++ and currently includes a tokenizer, parser, semantic analyzer, lowering pipeline, LLVM backend, native compiler, runtime support, standard library, and the Longbow package/project tool.
