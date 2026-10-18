@@ -495,6 +495,36 @@ TEST(SemanticCallableTests, PropagatesCaptureOriginsThroughCallableReturns) {
               nullptr);
 }
 
+TEST(SemanticCallableTests, PropagatesCaptureOriginsThroughStructures) {
+    Analysis missingContract = Analyze(R"(
+        func Reader() => (i32);
+        structure Holder { Reader callback; };
+        Holder Holder::init(Reader callback) override {
+            return build Holder { self.callback = callback; };
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(missingContract,
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+
+    Analysis valid = Analyze(R"(
+        func Reader() => (i32);
+        structure Holder { Reader callback; };
+        Holder Holder::init(Reader callback) <- callback override {
+            return build Holder { self.callback = callback; };
+        }
+        i32 main() {
+            i32 value = 42;
+            Reader callback = [&const value]() => { return value; };
+            Holder holder = Holder::init(callback);
+            return value;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+}
+
 TEST(SemanticCallableTests, EnforcesAnonymousFunctionPointerSafety) {
     Analysis valid = Analyze(R"(
         unsafe func Reader(*const i32) => (i32);

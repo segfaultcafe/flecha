@@ -752,8 +752,119 @@ class BorrowChecker final {
         return result;
     }
 
+    void SimulateBuildBlock(const core::BlockStatement& block) {
+        for (const auto& statement : block.Statements())
+            SimulateBuildStatement(*statement);
+    }
+
+    void SimulateBuildStatement(const core::Statement& statement) {
+        switch (statement.Kind()) {
+            case Kind::VariableDeclarationStatement: {
+                const auto& declaration =
+                    static_cast<const core::VariableDeclarationStatement&>(
+                        statement);
+                const Symbol* symbol = _model.DeclaredSymbol(declaration);
+                Value value;
+                if (declaration.Initializer() != nullptr)
+                    value = Evaluate(*declaration.Initializer());
+                if (TracksBorrow(symbol))
+                    Store(symbol, std::move(value), declaration.Range());
+                break;
+            }
+            case Kind::DestructureStatement: {
+                const auto& destructure =
+                    static_cast<const core::DestructureStatement&>(statement);
+                Value value = Evaluate(destructure.Value());
+                for (std::size_t index = 0;
+                     index < destructure.Bindings().size(); ++index) {
+                    const Symbol* target = _model.DestructureTarget(
+                        *destructure.Bindings()[index]);
+                    if (TracksBorrow(target) && index < value.elements.size())
+                        Store(target, value.elements[index],
+                              destructure.Bindings()[index]->Range());
+                }
+                break;
+            }
+            case Kind::ExpressionStatement:
+                (void)Evaluate(
+                    static_cast<const core::ExpressionStatement&>(statement)
+                        .Value());
+                break;
+            case Kind::ReturnStatement: {
+                const auto* value =
+                    static_cast<const core::ReturnStatement&>(statement)
+                        .Value();
+                if (value != nullptr) (void)Evaluate(*value);
+                break;
+            }
+            case Kind::BlockStatement:
+                SimulateBuildBlock(
+                    static_cast<const core::BlockStatement&>(statement));
+                break;
+            case Kind::RangeStatement:
+                SimulateBuildBlock(
+                    static_cast<const core::RangeStatement&>(statement)
+                        .Expansion());
+                break;
+            case Kind::IfStatement: {
+                const auto& conditional =
+                    static_cast<const core::IfStatement&>(statement);
+                const State before = *_state;
+                State merged = before;
+                auto mergeBranch = [&](const core::BlockStatement& body) {
+                    *_state = before;
+                    SimulateBuildBlock(body);
+                    Merge(merged, *_state);
+                };
+                mergeBranch(conditional.PrimaryBranch().Body());
+                for (const auto& branch : conditional.ElseIfBranches())
+                    mergeBranch(branch->Body());
+                if (conditional.ElseBody() != nullptr)
+                    mergeBranch(*conditional.ElseBody());
+                *_state = std::move(merged);
+                break;
+            }
+            case Kind::WhileStatement: {
+                const auto& loop =
+                    static_cast<const core::WhileStatement&>(statement);
+                const State before = *_state;
+                SimulateBuildBlock(loop.Body());
+                Merge(*_state, before);
+                if (loop.Also() != nullptr)
+                    SimulateBuildBlock(loop.Also()->Body());
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    Value EvaluateBuild(const core::BuildExpression& build) {
+        State simulated = *_state;
+        State* const previousState = _state;
+        const Symbols previousActive = _active;
+        const Symbols previousPinned = _pinned;
+        const std::vector<Loan> previousLoans = _temporaries;
+        const std::size_t previousTemporary = _nextTemporary;
+        _state = &simulated;
+        const Symbol* self = _model.DeclaredSymbol(build);
+        if (self != nullptr) simulated[self] = {};
+        SimulateBuildBlock(build.Body());
+        Value result;
+        if (self != nullptr) result.origins = simulated[self].origins;
+        _state = previousState;
+        _active = previousActive;
+        _pinned = previousPinned;
+        _temporaries = previousLoans;
+        _nextTemporary = previousTemporary;
+        return result;
+    }
+
     Value Evaluate(const core::Expression& expression) {
         switch (expression.Kind()) {
+            case Kind::BuildExpression:
+                return EvaluateBuild(
+                    static_cast<const core::BuildExpression&>(expression));
             case Kind::AnonymousFunctionExpression: {
                 const auto& function =
                     static_cast<const core::AnonymousFunctionExpression&>(
