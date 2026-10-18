@@ -279,10 +279,10 @@ TEST(LoweringTests, CarriesCopyCapturesIntoClosureEnvironments) {
         static_cast<const BoundVariableDeclarationStatement&>(
             *result.program->Functions()[0]->Body().Statements()[1]);
     ASSERT_NE(declaration.Initializer(), nullptr);
-    const auto& direct = static_cast<const BoundDirectExpression&>(
-        *declaration.Initializer());
-    const auto& closure = static_cast<const BoundFunctionExpression&>(
-        direct.Value());
+    const auto& direct =
+        static_cast<const BoundDirectExpression&>(*declaration.Initializer());
+    const auto& closure =
+        static_cast<const BoundFunctionExpression&>(direct.Value());
     ASSERT_EQ(closure.Captures().size(), 1);
     EXPECT_EQ(closure.Captures()[0].variable->Name(), "factor");
     EXPECT_EQ(static_cast<const BoundVariableExpression&>(
@@ -291,9 +291,38 @@ TEST(LoweringTests, CarriesCopyCapturesIntoClosureEnvironments) {
                   .Name(),
               "factor");
     ASSERT_EQ(result.program->Functions()[1]->Captures().size(), 1);
-    EXPECT_EQ(result.program->Functions()[1]->Captures()[0]->Name(),
+    EXPECT_EQ(result.program->Functions()[1]->Captures()[0].variable->Name(),
               "factor");
     EXPECT_NE(DumpBoundProgram(*result.program).find("[copy load factor]"),
+              std::string::npos);
+}
+
+TEST(LoweringTests, CarriesCheckedReferenceCaptureModes) {
+    LoweredSource result = Lower(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 1;
+            Reader callback = [&const value]() => { return value; };
+            return callback();
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const auto& declaration =
+        static_cast<const BoundVariableDeclarationStatement&>(
+            *result.program->Functions()[0]->Body().Statements()[1]);
+    const auto& direct =
+        static_cast<const BoundDirectExpression&>(*declaration.Initializer());
+    const auto& closure =
+        static_cast<const BoundFunctionExpression&>(direct.Value());
+    ASSERT_EQ(closure.Captures().size(), 1);
+    EXPECT_EQ(closure.Captures()[0].mode,
+              AnonymousFunctionExpression::CaptureMode::ConstReference);
+    ASSERT_EQ(result.program->Functions()[1]->Captures().size(), 1);
+    EXPECT_EQ(result.program->Functions()[1]->Captures()[0].mode,
+              AnonymousFunctionExpression::CaptureMode::ConstReference);
+    EXPECT_NE(DumpBoundProgram(*result.program).find("[&const load value]"),
               std::string::npos);
 }
 

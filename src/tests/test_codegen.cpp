@@ -828,6 +828,73 @@ TEST(NativeCompilerTests, RunsNestedCopyCaptures) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsCheckedReferenceCaptures) {
+    GeneratedSource result = Generate(R"(
+        func Counter() => (i32);
+        i32 main() {
+            i32 value = 40;
+            Counter increment = [&value]() => {
+                value = value + 1;
+                return value;
+            };
+            increment();
+            return increment();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_reference_capture_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_reference_capture_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsReturnedCheckedReferenceCaptures) {
+    GeneratedSource result = Generate(R"(
+        func Reader() => (i32);
+        Reader bind(&const i32 source) <- source {
+            return [&const source]() => { return *source; };
+        }
+        i32 main() {
+            i32 value = 42;
+            Reader callback = bind(&value);
+            return callback();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_returned_reference_capture_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "native_returned_reference_capture_test",
+        executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsUnsafeRawPointerCopyCaptures) {
     GeneratedSource result = Generate(R"(
         unsafe func Reader() => (i32);
