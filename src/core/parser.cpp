@@ -1722,6 +1722,12 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
             if (Check(TokenType::Identifier) && Current().value == "copy") {
                 mode = &Advance();
                 captureMode = AnonymousFunctionExpression::CaptureMode::Copy;
+            } else if (Check(TokenType::Lend)) {
+                mode = &Advance();
+                captureMode = AnonymousFunctionExpression::CaptureMode::Lend;
+            } else if (Check(TokenType::Own)) {
+                mode = &Advance();
+                captureMode = AnonymousFunctionExpression::CaptureMode::Own;
             } else if (Check(TokenType::Ampersand)) {
                 mode = &Advance();
                 captureMode =
@@ -1733,8 +1739,8 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
                 _diagnostics.Report(
                     diagnostics::DiagnosticCode::UnexpectedToken,
                     Current().range,
-                    "expected 'copy', '&', or '&const' before a captured "
-                    "name");
+                    "expected 'copy', '&', '&const', 'lend', or 'own' before "
+                    "a captured name");
                 return nullptr;
             }
             const Token* name =

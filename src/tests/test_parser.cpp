@@ -256,6 +256,34 @@ TEST(ParserTests, ParsesCheckedReferenceCaptureLists) {
               AnonymousFunctionExpression::CaptureMode::ConstReference);
 }
 
+TEST(ParserTests, ParsesRawResourceCaptureLists) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        unsafe func Reader() => (i32);
+        void main() {
+            Reader callback = unsafe [lend borrowed, own transferred]() => {
+                return *borrowed + *transferred;
+            };
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& variable = static_cast<const VariableDeclarationStatement&>(
+        *main.Body().Statements()[0]);
+    const auto& function = static_cast<const AnonymousFunctionExpression&>(
+        *variable.Initializer());
+    ASSERT_EQ(function.Captures().size(), 2);
+    EXPECT_EQ(function.Captures()[0]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::Lend);
+    EXPECT_EQ(function.Captures()[1]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::Own);
+}
+
 TEST(ParserTests, ParsesTestDeclarationsWithMutableContexts) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

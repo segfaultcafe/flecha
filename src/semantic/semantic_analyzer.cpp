@@ -163,6 +163,11 @@ bool ContainsRawPointer(SemanticType type) {
     return contains(contains, type);
 }
 
+bool IsRawResource(SemanticType type) {
+    return type.Kind() == SemanticTypeKind::Pointer ||
+           type.Kind() == SemanticTypeKind::OwnedBuffer;
+}
+
 std::vector<core::OwnershipContract> ResultContracts(
     const core::TypeNode& type) {
     std::vector<core::OwnershipContract> result;
@@ -2488,6 +2493,13 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
         const bool mutableReference =
             capture->Mode() ==
             core::AnonymousFunctionExpression::CaptureMode::Reference;
+        const bool lendsResource =
+            capture->Mode() ==
+            core::AnonymousFunctionExpression::CaptureMode::Lend;
+        const bool ownsResource =
+            capture->Mode() ==
+            core::AnonymousFunctionExpression::CaptureMode::Own;
+        const bool resourceCapture = lendsResource || ownsResource;
         if (source->Kind() != SymbolKind::Parameter &&
             source->Kind() != SymbolKind::LocalVariable) {
             Report(diagnostics::DiagnosticCode::NonCopyableValue,
@@ -2500,6 +2512,21 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
                    capture->NameRange(),
                    "borrowed value '" + capture->Name() +
                        "' cannot be captured by copy");
+            continue;
+        }
+        if (resourceCapture && !function.IsUnsafe()) {
+            Report(diagnostics::DiagnosticCode::UnsafeOperation,
+                   capture->NameRange(),
+                   std::string(lendsResource ? "lend" : "own") +
+                       " capture requires an unsafe anonymous function");
+            continue;
+        }
+        if (resourceCapture && !IsRawResource(type)) {
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   capture->NameRange(),
+                   std::string(lendsResource ? "lend" : "own") +
+                       " capture requires a raw pointer resource, found '" +
+                       type.Name() + "'");
             continue;
         }
         if (ContainsRawPointer(type) && !function.IsUnsafe()) {

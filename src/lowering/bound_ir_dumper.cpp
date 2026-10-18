@@ -369,6 +369,14 @@ class Dumper final {
                                 CaptureMode::ConstReference:
                                 _stream << "&const ";
                                 break;
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::Lend:
+                                _stream << "lend ";
+                                break;
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::Own:
+                                _stream << "own ";
+                                break;
                         }
                         WriteExpression(*capture.value);
                     }
