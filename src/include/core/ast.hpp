@@ -24,6 +24,7 @@ enum class AstNodeKind {
     StructureDeclaration,
     StructureField,
     BuildExpression,
+    AnonymousCapture,
     AnonymousFunctionExpression,
     Parameter,
     Type,
@@ -522,12 +523,40 @@ class FunctionDeclaration final : public Declaration {
 
 class AnonymousFunctionExpression final : public Expression {
    public:
+    enum class CaptureMode { Copy };
+
+    class Capture final : public AstNode {
+       public:
+        Capture(source::SourceRange range, CaptureMode mode, std::string name,
+                source::SourceRange nameRange)
+            : AstNode(range),
+              _mode(mode),
+              _name(std::move(name)),
+              _nameRange(nameRange) {}
+
+        [[nodiscard]] AstNodeKind Kind() const override {
+            return AstNodeKind::AnonymousCapture;
+        }
+        [[nodiscard]] CaptureMode Mode() const { return _mode; }
+        [[nodiscard]] const std::string& Name() const { return _name; }
+        [[nodiscard]] const source::SourceRange& NameRange() const {
+            return _nameRange;
+        }
+
+       private:
+        CaptureMode _mode;
+        std::string _name;
+        source::SourceRange _nameRange;
+    };
+
     AnonymousFunctionExpression(source::SourceRange range,
                                 std::unique_ptr<FunctionDeclaration> function,
+                                std::vector<std::unique_ptr<Capture>> captures,
                                 bool inferredSignature,
                                 bool explicitCaptureList)
         : Expression(range),
           _function(std::move(function)),
+          _captures(std::move(captures)),
           _inferredSignature(inferredSignature),
           _explicitCaptureList(explicitCaptureList) {}
 
@@ -538,6 +567,9 @@ class AnonymousFunctionExpression final : public Expression {
         return *_function;
     }
     [[nodiscard]] FunctionDeclaration& Function() { return *_function; }
+    [[nodiscard]] const std::vector<std::unique_ptr<Capture>>& Captures() const {
+        return _captures;
+    }
     [[nodiscard]] bool HasInferredSignature() const {
         return _inferredSignature;
     }
@@ -547,6 +579,7 @@ class AnonymousFunctionExpression final : public Expression {
 
    private:
     std::unique_ptr<FunctionDeclaration> _function;
+    std::vector<std::unique_ptr<Capture>> _captures;
     bool _inferredSignature;
     bool _explicitCaptureList;
 };

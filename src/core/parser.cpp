@@ -1714,15 +1714,29 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
     const source::SourceLocation start = first.range.start;
     const bool isUnsafe = Match(TokenType::Unsafe);
     const bool explicitCaptureList = Match(TokenType::LBracket);
+    std::vector<std::unique_ptr<AnonymousFunctionExpression::Capture>>
+        captures;
     if (explicitCaptureList) {
-        if (!Check(TokenType::RBracket)) {
-            _diagnostics.Report(
-                diagnostics::DiagnosticCode::UnexpectedToken, Current().range,
-                "captureless anonymous functions require an empty '[]' "
-                "capture list");
-            while (!IsAtEnd() && !Check(TokenType::RBracket) &&
-                   !Check(TokenType::LParen))
-                Advance();
+        while (!Check(TokenType::RBracket) && !IsAtEnd()) {
+            const Token* mode =
+                Consume(TokenType::Identifier,
+                        "'copy' before a captured name");
+            if (mode == nullptr) return nullptr;
+            if (mode->value != "copy") {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::UnexpectedToken, mode->range,
+                    "expected 'copy' before a captured name");
+                return nullptr;
+            }
+            const Token* name =
+                Consume(TokenType::Identifier, "captured variable name");
+            if (name == nullptr) return nullptr;
+            captures.push_back(
+                std::make_unique<AnonymousFunctionExpression::Capture>(
+                    source::SourceRange{mode->range.start, name->range.end},
+                    AnonymousFunctionExpression::CaptureMode::Copy,
+                    name->value, name->range));
+            if (!Match(TokenType::Comma)) break;
         }
         if (Consume(TokenType::RBracket,
                     "']' after anonymous function capture list") == nullptr)
@@ -1833,7 +1847,8 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
         std::move(parameters), std::move(body), first.range, "",
         std::move(borrowSource), borrowSourceRange);
     return std::make_unique<AnonymousFunctionExpression>(
-        range, std::move(function), inferredSignature, explicitCaptureList);
+        range, std::move(function), std::move(captures), inferredSignature,
+        explicitCaptureList);
 }
 
 std::optional<std::uint64_t> Parser::ParseArrayLength() {

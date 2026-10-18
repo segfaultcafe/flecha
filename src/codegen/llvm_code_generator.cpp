@@ -312,6 +312,15 @@ llvm::AllocaInst* LlvmCodeGenerator::CreateOwnedStringTemporary(
 llvm::Value* LlvmCodeGenerator::EmitValueCopy(llvm::Value* value,
                                               semantic::SemanticType type,
                                               bool temporary) {
+    if (type.OwnsStorage() && !type.IsCopyable()) {
+        const auto fresh = _freshOwnedValues.find(value);
+        if (fresh != _freshOwnedValues.end()) {
+            _builder.CreateStore(
+                llvm::Constant::getNullValue(MapType(type)), fresh->second);
+            _freshOwnedValues.erase(fresh);
+            return value;
+        }
+    }
     if (type.Kind() == semantic::SemanticTypeKind::String) {
         const auto fresh = _freshOwnedStrings.find(value);
         if (fresh != _freshOwnedStrings.end()) {
@@ -389,6 +398,26 @@ llvm::Value* LlvmCodeGenerator::EmitValueCopy(llvm::Value* value,
 
 void LlvmCodeGenerator::EmitValueDestroy(llvm::Value* value,
                                          semantic::SemanticType type) {
+    if (type.Kind() == semantic::SemanticTypeKind::Function) {
+        llvm::Value* destroy =
+            _builder.CreateExtractValue(value, 2, "function.destroy");
+        llvm::Value* environment =
+            _builder.CreateExtractValue(value, 1, "function.environment");
+        llvm::Value* present = _builder.CreateICmpNE(
+            destroy, llvm::Constant::getNullValue(destroy->getType()));
+        auto* run = llvm::BasicBlock::Create(_context, "function.destroy.run",
+                                             _currentFunction);
+        auto* done = llvm::BasicBlock::Create(
+            _context, "function.destroy.done", _currentFunction);
+        _builder.CreateCondBr(present, run, done);
+        _builder.SetInsertPoint(run);
+        auto* type = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(_context), {environment->getType()}, false);
+        _builder.CreateCall(type, destroy, {environment});
+        _builder.CreateBr(done);
+        _builder.SetInsertPoint(done);
+        return;
+    }
     if (type.ContainsStructure()) {
         auto* storage =
             CreateTemporaryAlloca(MapType(type), "aggregate.destroy");
@@ -993,7 +1022,8 @@ llvm::Value* LlvmCodeGenerator::EmitStringViewOperation(
 }
 
 llvm::FunctionType* LlvmCodeGenerator::MapFunctionType(
-    const semantic::FunctionSymbol& function) {
+    const lowering::BoundFunction& boundFunction) {
+    const semantic::FunctionSymbol& function = boundFunction.Symbol();
     llvm::Type* returnType = function.ReturnType().ContainsStructure()
                                  ? llvm::Type::getVoidTy(_context)
                                  : MapType(function.ReturnType());
@@ -1001,6 +1031,8 @@ llvm::FunctionType* LlvmCodeGenerator::MapFunctionType(
     std::vector<llvm::Type*> parameters;
     parameters.reserve(function.ParameterTypes().size() + 1);
     if (function.ReturnType().ContainsStructure())
+        parameters.push_back(llvm::PointerType::getUnqual(_context));
+    if (!boundFunction.Captures().empty())
         parameters.push_back(llvm::PointerType::getUnqual(_context));
     for (semantic::SemanticType parameter : function.ParameterTypes()) {
         llvm::Type* parameterType = MapType(parameter);
@@ -1122,10 +1154,12 @@ llvm::Value* LlvmCodeGenerator::EmitIndirectCall(
 
 bool LlvmCodeGenerator::DeclareFunctions(
     const lowering::BoundProgram& program) {
+    for (const auto& function : program.Functions())
+        _boundFunctions.emplace(&function->Symbol(), function.get());
     for (const std::unique_ptr<lowering::BoundFunction>& boundFunction :
          program.Functions()) {
         const semantic::FunctionSymbol& symbol = boundFunction->Symbol();
-        llvm::FunctionType* type = MapFunctionType(symbol);
+        llvm::FunctionType* type = MapFunctionType(*boundFunction);
         if (type == nullptr) return false;
         const std::string& linkName = symbol.LinkName();
         llvm::Function* function = _module->getFunction(linkName);
@@ -1174,7 +1208,11 @@ llvm::Function* LlvmCodeGenerator::CallableAdapter(
     std::size_t index = 0;
     if (symbol.ReturnType().ContainsStructure())
         arguments.push_back(adapter->getArg(index++));
-    adapter->getArg(index++)->setName("environment");
+    llvm::Value* environment = adapter->getArg(index++);
+    environment->setName("environment");
+    const auto bound = _boundFunctions.find(&symbol);
+    if (bound != _boundFunctions.end() && !bound->second->Captures().empty())
+        arguments.push_back(environment);
     for (; index < adapter->arg_size(); ++index)
         arguments.push_back(adapter->getArg(index));
     llvm::CallInst* call =
@@ -1194,6 +1232,119 @@ llvm::Function* LlvmCodeGenerator::CallableAdapter(
     else
         builder.CreateRet(call);
     return adapter;
+}
+
+llvm::StructType* LlvmCodeGenerator::ClosureEnvironmentType(
+    const lowering::BoundFunction& function) {
+    const auto found = _closureEnvironmentTypes.find(&function.Symbol());
+    if (found != _closureEnvironmentTypes.end()) return found->second;
+    auto* environment = llvm::StructType::create(
+        _context, "flecha.closure.env." + function.Symbol().LinkName());
+    _closureEnvironmentTypes.emplace(&function.Symbol(), environment);
+    std::vector<llvm::Type*> fields;
+    fields.reserve(function.Captures().size());
+    for (const auto* capture : function.Captures())
+        fields.push_back(MapType(capture->Type()));
+    environment->setBody(fields);
+    return environment;
+}
+
+llvm::Function* LlvmCodeGenerator::ClosureDestroyer(
+    const lowering::BoundFunction& function) {
+    const auto found = _closureDestroyers.find(&function.Symbol());
+    if (found != _closureDestroyers.end()) return found->second;
+    llvm::Type* pointer = llvm::PointerType::getUnqual(_context);
+    auto* type = llvm::FunctionType::get(llvm::Type::getVoidTy(_context),
+                                        {pointer}, false);
+    auto* destroyer = llvm::Function::Create(
+        type, llvm::Function::InternalLinkage,
+        function.Symbol().LinkName() + ".$closure.destroy", *_module);
+    _closureDestroyers.emplace(&function.Symbol(), destroyer);
+
+    const auto savedIP = _builder.saveIP();
+    llvm::Function* savedFunction = _currentFunction;
+    _currentFunction = destroyer;
+    auto* entry = llvm::BasicBlock::Create(_context, "entry", destroyer);
+    _builder.SetInsertPoint(entry);
+    llvm::Value* environment = destroyer->getArg(0);
+    environment->setName("environment");
+    auto* environmentType = ClosureEnvironmentType(function);
+    for (std::size_t index = function.Captures().size(); index > 0; --index) {
+        const auto* capture = function.Captures()[index - 1];
+        if (capture->Type().OwnsStorage())
+            EmitDestroyAt(_builder.CreateStructGEP(environmentType, environment,
+                                                   index - 1),
+                          capture->Type());
+    }
+    llvm::FunctionCallee release = _module->getOrInsertFunction(
+        "flecha_runtime_v1_free", type);
+    _builder.CreateCall(release, {environment});
+    _builder.CreateRetVoid();
+    _currentFunction = savedFunction;
+    _builder.restoreIP(savedIP);
+    return destroyer;
+}
+
+llvm::Value* LlvmCodeGenerator::EmitClosure(
+    const lowering::BoundFunctionExpression& expression) {
+    const auto bound = _boundFunctions.find(&expression.Symbol());
+    if (bound == _boundFunctions.end()) return nullptr;
+    const lowering::BoundFunction& function = *bound->second;
+    llvm::Value* callable =
+        llvm::PoisonValue::get(MapType(expression.Type()));
+    llvm::Function* adapter = CallableAdapter(expression.Symbol());
+    if (adapter == nullptr) return nullptr;
+    callable = _builder.CreateInsertValue(callable, adapter, 0);
+    auto* pointerType = llvm::PointerType::getUnqual(_context);
+    if (expression.Captures().empty()) {
+        auto* null = llvm::ConstantPointerNull::get(pointerType);
+        callable = _builder.CreateInsertValue(callable, null, 1);
+        return _builder.CreateInsertValue(callable, null, 2, "function.value");
+    }
+
+    auto* environmentType = ClosureEnvironmentType(function);
+    const llvm::DataLayout& layout = _module->getDataLayout();
+    llvm::Type* sizeType =
+        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
+    llvm::FunctionCallee allocate = _module->getOrInsertFunction(
+        "flecha_runtime_v1_alloc",
+        llvm::FunctionType::get(pointerType, {sizeType, sizeType}, false));
+    llvm::Value* environment = _builder.CreateCall(
+        allocate,
+        {llvm::ConstantInt::get(
+             sizeType,
+             layout.getTypeAllocSize(environmentType).getFixedValue()),
+         llvm::ConstantInt::get(
+             sizeType, layout.getABITypeAlign(environmentType).value())},
+        "closure.environment");
+    auto* initialize = llvm::BasicBlock::Create(
+        _context, "closure.initialize", _currentFunction);
+    auto* failed = llvm::BasicBlock::Create(_context, "closure.alloc.failed",
+                                            _currentFunction);
+    _builder.CreateCondBr(
+        _builder.CreateICmpNE(
+            environment, llvm::ConstantPointerNull::get(pointerType)),
+        initialize, failed);
+    _builder.SetInsertPoint(failed);
+    llvm::FunctionCallee panic = _module->getOrInsertFunction(
+        "flecha_runtime_v1_allocation_failure",
+        llvm::FunctionType::get(llvm::Type::getVoidTy(_context), false));
+    _builder.CreateCall(panic);
+    _builder.CreateUnreachable();
+    _builder.SetInsertPoint(initialize);
+    for (std::size_t index = 0; index < expression.Captures().size(); ++index) {
+        const auto& capture = expression.Captures()[index];
+        llvm::Value* value = EmitExpression(*capture.value);
+        if (value == nullptr) return nullptr;
+        value = EmitValueCopy(value, capture.variable->Type(), false);
+        if (value == nullptr) return nullptr;
+        _builder.CreateStore(
+            value,
+            _builder.CreateStructGEP(environmentType, environment, index));
+    }
+    callable = _builder.CreateInsertValue(callable, environment, 1);
+    return _builder.CreateInsertValue(callable, ClosureDestroyer(function), 2,
+                                      "closure.value");
 }
 
 llvm::AllocaInst* LlvmCodeGenerator::CreateEntryAlloca(
@@ -1247,6 +1398,7 @@ bool LlvmCodeGenerator::EmitFunction(
     _cleanupRequests.clear();
     _blockScopes.clear();
     _freshOwnedStrings.clear();
+    _freshOwnedValues.clear();
     _currentReturnType = boundFunction.Symbol().ReturnType();
     llvm::BasicBlock* entry =
         llvm::BasicBlock::Create(_context, "entry", _currentFunction);
@@ -1263,6 +1415,19 @@ bool LlvmCodeGenerator::EmitFunction(
             _returnStorage == nullptr) {
             _returnStorage = &argument;
             argument.setName("result.storage");
+            continue;
+        }
+        if (!boundFunction.Captures().empty() &&
+            index == 0 && _variables.empty()) {
+            argument.setName("environment");
+            auto* environmentType = ClosureEnvironmentType(boundFunction);
+            for (std::size_t captureIndex = 0;
+                 captureIndex < boundFunction.Captures().size();
+                 ++captureIndex)
+                _variables.emplace(
+                    boundFunction.Captures()[captureIndex],
+                    _builder.CreateStructGEP(environmentType, &argument,
+                                             captureIndex));
             continue;
         }
         const semantic::VariableSymbol& parameter =
@@ -1303,7 +1468,9 @@ bool LlvmCodeGenerator::EmitFunction(
                         [](const auto& scope) {
                             if (scope->deferredHead != nullptr) return true;
                             for (const auto& storage : scope->ownedValues)
-                                if (storage.type.ContainsStructure())
+                                if (storage.type.ContainsStructure() ||
+                                    storage.type.Kind() ==
+                                        semantic::SemanticTypeKind::Function)
                                     return true;
                             return false;
                         });
@@ -2475,6 +2642,13 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
             if (expression.Type().ContainsStructure())
                 _builder.CreateStore(llvm::ConstantInt::getFalse(_context),
                                      LifetimeFlag(storage));
+            if (!expression.Type().ContainsStructure() &&
+                (expression.Type().ContainsOwnedBuffer() ||
+                 expression.Type().Kind() ==
+                     semantic::SemanticTypeKind::Function))
+                _builder.CreateStore(
+                    llvm::Constant::getNullValue(MapType(expression.Type())),
+                    storage);
             return value;
         }
         case lowering::BoundNodeKind::MoveExpression: {
@@ -2635,8 +2809,11 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 function->getReturnType()->isVoidTy() ? "" : "call");
             if (ownedResult == nullptr) return result;
             _builder.CreateStore(result, ownedResult);
-            return _builder.CreateLoad(MapType(call.Type()), ownedResult,
-                                       "string.call");
+            llvm::Value* owned = _builder.CreateLoad(
+                MapType(call.Type()), ownedResult, "owned.call");
+            if (!call.Type().IsCopyable())
+                _freshOwnedValues.emplace(owned, ownedResult);
+            return owned;
         }
         case lowering::BoundNodeKind::IndirectCallExpression: {
             const auto& call =
@@ -2657,7 +2834,12 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 CreateOwnedValueTemporary(call.Type(), "indirect.call.owner");
             EmitValueStorageCleanup(storage, call.Type());
             _builder.CreateStore(result, storage);
-            return _builder.CreateLoad(MapType(call.Type()), storage);
+            llvm::Value* owned =
+                _builder.CreateLoad(MapType(call.Type()), storage,
+                                    "indirect.call.owner.value");
+            if (!call.Type().IsCopyable())
+                _freshOwnedValues.emplace(owned, storage);
+            return owned;
         }
         case lowering::BoundNodeKind::StringViewOperationExpression:
             return EmitStringViewOperation(
@@ -2665,20 +2847,9 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                     const lowering::BoundStringViewOperationExpression&>(
                     expression));
         case lowering::BoundNodeKind::FunctionExpression: {
-            const auto& symbol =
+            return EmitClosure(
                 static_cast<const lowering::BoundFunctionExpression&>(
-                    expression)
-                    .Symbol();
-            llvm::Value* callable =
-                llvm::PoisonValue::get(MapType(expression.Type()));
-            llvm::Function* adapter = CallableAdapter(symbol);
-            if (adapter == nullptr) return nullptr;
-            callable = _builder.CreateInsertValue(callable, adapter, 0);
-            auto* null = llvm::ConstantPointerNull::get(
-                llvm::PointerType::getUnqual(_context));
-            callable = _builder.CreateInsertValue(callable, null, 1);
-            return _builder.CreateInsertValue(callable, null, 2,
-                                              "function.value");
+                    expression));
         }
         default:
             Fail("unsupported bound expression");
@@ -2832,6 +3003,8 @@ void LlvmCodeGenerator::EmitDestroyAt(llvm::Value* storage,
         });
     } else if (type.Kind() == Kind::String)
         EmitStringDestroy(_builder.CreateLoad(MapType(type), storage));
+    else if (type.Kind() == Kind::Function)
+        EmitValueDestroy(_builder.CreateLoad(MapType(type), storage), type);
 }
 
 bool LlvmCodeGenerator::EmitDefaultInto(llvm::Value* destination,
@@ -3128,6 +3301,9 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
     _error.clear();
     _functions.clear();
     _callableAdapters.clear();
+    _boundFunctions.clear();
+    _closureEnvironmentTypes.clear();
+    _closureDestroyers.clear();
     _structureTypes.clear();
     _variables.clear();
     _module = std::make_unique<llvm::Module>(moduleName, _context);

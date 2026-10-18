@@ -49,11 +49,17 @@ std::unique_ptr<BoundFunction> Lowerer::LowerFunction(
             static_cast<const semantic::VariableSymbol*>(parameterSymbol));
     }
 
+    std::vector<const semantic::VariableSymbol*> captures;
+    for (const semantic::ClosureCapture& capture :
+         _semanticModel->Captures(function))
+        captures.push_back(capture.variable);
+
     _returnType = functionSymbol.ReturnType();
     _zeroFunction =
         functionSymbol.Owner() && functionSymbol.Name().ends_with("::zero");
     auto result = std::make_unique<BoundFunction>(
-        functionSymbol, std::move(parameters), LowerBlock(function.Body()));
+        functionSymbol, std::move(captures), std::move(parameters),
+        LowerBlock(function.Body()));
     _zeroFunction = false;
     return result;
 }
@@ -299,10 +305,21 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const auto& anonymous =
                 static_cast<const core::AnonymousFunctionExpression&>(
                     expression);
+            std::vector<BoundClosureCapture> captures;
+            for (const semantic::ClosureCapture& capture :
+                 _semanticModel->Captures(anonymous.Function())) {
+                captures.push_back(
+                    {capture.variable,
+                     std::make_unique<BoundVariableExpression>(
+                         capture.syntax->NameRange(),
+                         static_cast<const semantic::VariableSymbol&>(
+                             *capture.source))});
+            }
             return std::make_unique<BoundFunctionExpression>(
                 expression.Range(),
                 static_cast<const semantic::FunctionSymbol&>(
-                    *_semanticModel->DeclaredSymbol(anonymous.Function())));
+                    *_semanticModel->DeclaredSymbol(anonymous.Function())),
+                std::move(captures));
         }
         case core::AstNodeKind::BuildExpression: {
             const auto& build =

@@ -30,6 +30,9 @@ typedef enum FlechaRuntimeReadFileStatus {
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.
 void* flecha_runtime_v1_alloc(size_t size, size_t alignment);
+// Terminates execution after an allocation that cannot be represented as a
+// language-level error, such as closure-environment creation.
+void flecha_runtime_v1_allocation_failure(void);
 // Allocates count zeroed elements, checking multiplication before allocation.
 // Zero count still returns a releasable allocation on success. Zero element
 // size is invalid. Failure returns null and does not allocate storage.

@@ -260,6 +260,43 @@ TEST(LoweringTests, SafelyRepresentsFunctionReferences) {
     EXPECT_EQ(statement.Expression().Kind(), BoundNodeKind::FunctionExpression);
 }
 
+TEST(LoweringTests, CarriesCopyCapturesIntoClosureEnvironments) {
+    LoweredSource result = Lower(R"(
+        func Mapper(i32) => (i32);
+        i32 main() {
+            i32 factor = 2;
+            Mapper callback = [copy factor](value) => {
+                return value * factor;
+            };
+            return callback(21);
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    ASSERT_EQ(result.program->Functions().size(), 2);
+    const auto& declaration =
+        static_cast<const BoundVariableDeclarationStatement&>(
+            *result.program->Functions()[0]->Body().Statements()[1]);
+    ASSERT_NE(declaration.Initializer(), nullptr);
+    const auto& direct = static_cast<const BoundDirectExpression&>(
+        *declaration.Initializer());
+    const auto& closure = static_cast<const BoundFunctionExpression&>(
+        direct.Value());
+    ASSERT_EQ(closure.Captures().size(), 1);
+    EXPECT_EQ(closure.Captures()[0].variable->Name(), "factor");
+    EXPECT_EQ(static_cast<const BoundVariableExpression&>(
+                  *closure.Captures()[0].value)
+                  .Symbol()
+                  .Name(),
+              "factor");
+    ASSERT_EQ(result.program->Functions()[1]->Captures().size(), 1);
+    EXPECT_EQ(result.program->Functions()[1]->Captures()[0]->Name(),
+              "factor");
+    EXPECT_NE(DumpBoundProgram(*result.program).find("[copy load factor]"),
+              std::string::npos);
+}
+
 TEST(LoweringTests, PreservesDelayedDeclarationsAcrossTerminatingBranches) {
     LoweredSource result = Lower(
         "i32 main(bool c) { i32 value; string text; "

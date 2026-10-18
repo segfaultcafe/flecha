@@ -132,6 +132,30 @@ TEST(LlvmCodeGeneratorTests, EmitsUniformCallableValuesAndIndirectCalls) {
     EXPECT_NE(ir.find("twice.$callable"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, EmitsHeapBackedCopyCaptureEnvironments) {
+    GeneratedSource result = Generate(R"(
+        func Mapper(i32) => (i32);
+        i32 main() {
+            i32 factor = 2;
+            Mapper callback = [copy factor](value) => {
+                return value * factor;
+            };
+            return callback(21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("flecha.closure.env."), std::string::npos);
+    EXPECT_NE(ir.find("flecha_runtime_v1_alloc"), std::string::npos);
+    EXPECT_NE(ir.find("$closure.destroy"), std::string::npos);
+    EXPECT_NE(ir.find("flecha_runtime_v1_free"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsForwardAndRecursiveCalls) {
     GeneratedSource result = Generate(
         "i32 main() { return Add(Factorial(3), 36); } "
@@ -716,6 +740,119 @@ TEST(NativeCompilerTests, RunsCapturelessAnonymousFunctions) {
     ASSERT_TRUE(compiler.Ready()) << compiler.Error();
     ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
                                          "native_anonymous_functions_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsCopyCapturesAfterTheirCreatorReturns) {
+    GeneratedSource result = Generate(R"(
+        func Mapper(i32) => (i32);
+
+        Mapper make(i32 factor) {
+            string label = "original";
+            Mapper callback = [copy factor, copy label](value) => {
+                if label == "original" { return value * factor; }
+                return 0;
+            };
+            factor = 99;
+            label = "changed";
+            return callback;
+        }
+
+        i32 main() {
+            Mapper callback = make(1);
+            callback = make(2);
+            return callback(21);
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_copy_capture_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_copy_capture_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsNestedCopyCaptures) {
+    GeneratedSource result = Generate(R"(
+        func Mapper(i32) => (i32);
+        func Factory(i32) => (Mapper);
+
+        i32 main() {
+            i32 base = 1;
+            Factory outer = [copy base](delta) => {
+                return [copy base, copy delta](value) => {
+                    return base + delta + value;
+                };
+            };
+            base = 100;
+            Mapper inner = outer(20);
+            return inner(21);
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_nested_capture_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_nested_capture_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsUnsafeRawPointerCopyCaptures) {
+    GeneratedSource result = Generate(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader read = unsafe [copy pointer]() => (i32) {
+                return *pointer;
+            };
+            return read();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_raw_capture_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_raw_capture_test",
                                          executablePath.string()))
         << compiler.Error();
     const std::string executablePathText = executablePath.string();
