@@ -4645,8 +4645,7 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
         source->Kind() != core::AstNodeKind::MemberCallExpression &&
         !semanticDefault)
         _forbiddenZeroEffects.insert(_currentFunction);
-    if ((type.Kind() != SemanticTypeKind::Function &&
-         !type.ContainsStructure() && !type.ContainsOwnedBuffer()) ||
+    if ((!type.OwnsStorage() && !type.ContainsOwnedBuffer()) ||
         type.IsCopyable()) {
         _model._transfers.insert_or_assign(&expression, TransferKind::Copy);
         return;

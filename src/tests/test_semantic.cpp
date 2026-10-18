@@ -160,6 +160,55 @@ TEST(SemanticCallableTests, TreatsCallableVariablesAsMoveOnly) {
     EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
 }
 
+TEST(SemanticCallableTests, TreatsCallableAggregatesAsMoveOnly) {
+    const std::vector<std::string> sources = {
+        R"(
+            func Mapper(i32) => (i32);
+            i32 twice(i32 value) { return value * 2; }
+            i32 main() {
+                Mapper callback = twice;
+                (Mapper, i32) first = (callback, 21);
+                (Mapper, i32) second = first;
+                (Mapper, i32) invalid = first;
+                return 0;
+            }
+        )",
+        R"(
+            func Mapper(i32) => (i32);
+            i32 twice(i32 value) { return value * 2; }
+            i32 main() {
+                Mapper callback = twice;
+                [1]Mapper first = [callback];
+                [1]Mapper second = first;
+                [1]Mapper invalid = first;
+                return 0;
+            }
+        )",
+        R"(
+            func Mapper(i32) => (i32);
+            structure Holder { Mapper callback; };
+            Holder Holder::init(Mapper callback) <- callback override {
+                return build Holder { self.callback = callback; };
+            }
+            i32 twice(i32 value) { return value * 2; }
+            i32 main() {
+                Mapper callback = twice;
+                Holder first = Holder::init(callback);
+                Holder second = first;
+                Holder invalid = first;
+                return 0;
+            }
+        )",
+    };
+
+    for (const std::string& source : sources) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(
+            FindErrorDiagnostic(Analyze(source), DiagnosticCode::MovedValue),
+            nullptr);
+    }
+}
+
 TEST(SemanticCallableTests,
      InfersCapturelessAnonymousFunctionsFromAssignmentsArgumentsAndReturns) {
     Analysis result = Analyze(R"(

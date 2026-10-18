@@ -327,7 +327,7 @@ llvm::Value* LlvmCodeGenerator::EmitValueCopy(llvm::Value* value,
             return value;
         }
     }
-    if (type.Kind() == semantic::SemanticTypeKind::String) {
+    if (type.Kind() == semantic::SemanticTypeKind::String && !temporary) {
         const auto fresh = _freshOwnedStrings.find(value);
         if (fresh != _freshOwnedStrings.end()) {
             // The temporary remains registered for lexical cleanup, so make
@@ -433,6 +433,10 @@ void LlvmCodeGenerator::EmitValueDestroy(llvm::Value* value,
     }
     if (type.Kind() == semantic::SemanticTypeKind::String)
         EmitStringDestroy(value);
+    if (type.Kind() == semantic::SemanticTypeKind::Array && type.OwnsStorage())
+        for (std::size_t i = type.Length(); i > 0; --i)
+            EmitValueDestroy(_builder.CreateExtractValue(value, i - 1),
+                             *type.Target());
     if (type.Kind() == semantic::SemanticTypeKind::Tuple && type.OwnsStorage())
         for (std::size_t i = type.Elements().size(); i > 0; --i)
             EmitValueDestroy(_builder.CreateExtractValue(value, i - 1),
@@ -2678,9 +2682,9 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 _builder.CreateStore(llvm::ConstantInt::getFalse(_context),
                                      LifetimeFlag(storage));
             if (!expression.Type().ContainsStructure() &&
-                (expression.Type().ContainsOwnedBuffer() ||
-                 expression.Type().Kind() ==
-                     semantic::SemanticTypeKind::Function))
+                (expression.Type().OwnsStorage() ||
+                 expression.Type().ContainsOwnedBuffer()) &&
+                !expression.Type().IsCopyable())
                 _builder.CreateStore(
                     llvm::Constant::getNullValue(MapType(expression.Type())),
                     storage);
@@ -2697,9 +2701,9 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 _builder.CreateStore(llvm::ConstantInt::getFalse(_context),
                                      LifetimeFlag(storage));
             if (!expression.Type().ContainsStructure() &&
-                (expression.Type().ContainsOwnedBuffer() ||
-                 expression.Type().Kind() ==
-                     semantic::SemanticTypeKind::Function))
+                (expression.Type().OwnsStorage() ||
+                 expression.Type().ContainsOwnedBuffer()) &&
+                !expression.Type().IsCopyable())
                 _builder.CreateStore(
                     llvm::Constant::getNullValue(MapType(expression.Type())),
                     storage);
