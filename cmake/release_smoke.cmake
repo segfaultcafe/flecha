@@ -87,6 +87,92 @@ if(NOT nativeResult EQUAL 42)
         "native smoke returned ${nativeResult} instead of 42")
 endif()
 
+set(callableRoot "${OUTPUT_ROOT}/callable-smoke")
+file(MAKE_DIRECTORY "${callableRoot}")
+file(WRITE "${callableRoot}/pipeline.fl"
+    "module pipeline;\n"
+    "export func Mapper(i32) => (i32);\n"
+    "export unsafe func Reader() => (i32);\n"
+    "export structure Pipeline { Mapper callback; };\n"
+    "Pipeline Pipeline::init(Mapper callback) <- callback override {\n"
+    "    return build Pipeline { self.callback = callback; };\n"
+    "}\n"
+    "i32 Pipeline::run(&const self, i32 value) {\n"
+    "    return (self->callback)(value);\n"
+    "}\n"
+    "export T relay<T>(T value) <- value { return value; }\n"
+    "export Pipeline offset(i32 amount) {\n"
+    "    Mapper callback = [copy amount](value) => { return value + amount; };\n"
+    "    return Pipeline::init(callback);\n"
+    "}\n"
+    "export Mapper combine(i32 left, i32 right) {\n"
+    "    return [copy left, copy right](value) => {\n"
+    "        return value + left + right;\n"
+    "    };\n"
+    "}\n"
+    "export unsafe Reader retain(own *i32 pointer) {\n"
+    "    return unsafe [own pointer]() => { return *pointer; };\n"
+    "}\n")
+file(WRITE "${callableRoot}/main.fl"
+    "module main;\n"
+    "@imports :: root::pipeline;\n"
+    "i32 main() {\n"
+    "    runner := pipeline::offset(20);\n"
+    "    if runner.run(2) != 22 { return 1; }\n"
+    "    i32 base = 0;\n"
+    "    pipeline::Mapper generic = pipeline::relay<pipeline::Mapper>(\n"
+    "        [copy base](value) => { return value + base; });\n"
+    "    if generic(42) != 42 { return 2; }\n"
+    "    pipeline::Mapper combined = pipeline::combine(10, 12);\n"
+    "    (pipeline::Mapper, i32) pair = (combined, 20);\n"
+    "    callback, input := pair;\n"
+    "    if callback(input) != 42 { return 3; }\n"
+    "    pipeline::Mapper addTwo = pipeline::combine(1, 1);\n"
+    "    pipeline::Mapper addFour = pipeline::combine(2, 2);\n"
+    "    [2]pipeline::Mapper pending = [addTwo, addFour];\n"
+    "    [2]pipeline::Mapper callbacks = pending;\n"
+    "    if (callbacks[0])(40) != 42 { return 4; }\n"
+    "    if (callbacks[1])(38) != 42 { return 5; }\n"
+    "    unsafe {\n"
+    "        pointer, failure := new<i32>(42);\n"
+    "        if failure != none { return 6; }\n"
+    "        pipeline::Reader owner = pipeline::retain(pointer);\n"
+    "        if owner() != 42 { return 7; }\n"
+    "    }\n"
+    "    return 42;\n"
+    "}\n")
+
+execute_process(
+    COMMAND "${FLECHA_COMPILER}" check "${callableRoot}/main.fl"
+        --root "${callableRoot}"
+    RESULT_VARIABLE callableCheckResult
+    ERROR_VARIABLE callableCheckError
+)
+if(NOT callableCheckResult EQUAL 0)
+    message(FATAL_ERROR
+        "callable ABI smoke check failed: ${callableCheckError}")
+endif()
+
+set(callableOutput "${callableRoot}/callable-smoke${EXECUTABLE_SUFFIX}")
+execute_process(
+    COMMAND "${FLECHA_COMPILER}" build "${callableRoot}/main.fl"
+        --root "${callableRoot}" -o "${callableOutput}"
+    RESULT_VARIABLE callableCompileResult
+    ERROR_VARIABLE callableCompileError
+)
+if(NOT callableCompileResult EQUAL 0)
+    message(FATAL_ERROR
+        "callable ABI smoke compilation failed: ${callableCompileError}")
+endif()
+execute_process(
+    COMMAND "${callableOutput}"
+    RESULT_VARIABLE callableResult
+)
+if(NOT callableResult EQUAL 42)
+    message(FATAL_ERROR
+        "callable ABI smoke returned ${callableResult} instead of 42")
+endif()
+
 execute_process(
     COMMAND "${LONGBOW}" new hello
     WORKING_DIRECTORY "${OUTPUT_ROOT}"

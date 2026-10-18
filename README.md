@@ -212,6 +212,7 @@ make llvm-poc            # Emit and execute LLVM IR; expects exit code 42
 make native-poc          # Build and execute a native example; expects 42
 make native-if-also
 make native-functions
+make native-callables
 make native-while
 make native-loop-control
 make native-casts

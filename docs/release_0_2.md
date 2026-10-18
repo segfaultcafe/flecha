@@ -75,9 +75,11 @@ on the future radar.
 5. **Raw-resource captures — implemented.** Unsafe `lend` and `own`, lexical
    nonescape checking, allocation-obligation transfer, conflict diagnostics,
    and exactly-once cleanup.
-6. **Integration and release hardening.** Standard-library callbacks,
-   examples, editor support, sanitizer/leak/failure-injection coverage, package
-   validation, and indirect-call benchmarks.
+6. **Integration and release hardening — implemented.** Cross-module
+   callbacks, aggregate fields, methods, generic transfers, runnable examples,
+   editor coverage, leak-sanitized ownership regressions, and packaged-compiler
+   ABI validation on every release platform. Indirect-call benchmarks remain a
+   performance follow-up rather than a release gate.
 
 The uniform callable ABI stores `{invoke, environment, destroy}`. A captureless
 value keeps the latter two pointers null. A capturing value stores a heap
@@ -88,6 +90,13 @@ non-owning and are never destroyed; the borrow checker proves their storage is
 live. Lent raw resources are also non-owning. Owned raw resources are released
 in reverse capture order before the destroy thunk releases the environment
 allocation.
+
+The integration fixture exercises captureless and capturing callables through
+module exports, generic functions, structure fields and methods, tuples, fixed
+arrays, checked-reference captures, and owned raw-resource captures. Sanitizer
+runs keep leak detection enabled for both compiler unit tests and native
+programs. Release and clean-install jobs run the same callable ABI smoke on
+Linux x86-64, Windows x86-64, macOS x86-64, and macOS arm64.
 
 ## Language tests (implemented before 0.2.0)
 

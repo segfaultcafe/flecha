@@ -91,6 +91,26 @@ destroy fields in reverse order. The same transfer rule applies recursively to
 tuples and fixed arrays containing structures. Existing scalar, standalone
 string, and structure-free tuple conventions are unchanged.
 
+## Callable values (compiler-private ABI)
+
+Every callable value has the uniform compiler-private layout `{invoke,
+environment, destroy}`. `invoke` receives the environment pointer before the
+declared Flecha parameters. Named functions and captureless anonymous
+functions store null environment and destroy pointers. Capturing anonymous
+functions store a heap environment plus a typed destroy thunk.
+
+Callable values are move-only, including transitively through structures,
+tuples, and fixed arrays. A transfer clears the complete source value so only
+the destination can invoke its destroy thunk. Calls, returns, generic
+specializations, module boundaries, aggregate fields, and methods all retain
+the same three-pointer representation. This is not a C callback ABI or a
+stable cross-version binary interface.
+
+Release-package validation executes captureless and capturing callables across
+modules, methods, generic transfers, tuples, arrays, and owned-resource
+captures on every supported native target. Leak-sanitized native tests verify
+that moved environments and captured resources are released exactly once.
+
 ## Raw allocation storage ABI
 
 `flecha_runtime_v1_alloc(size_t size, size_t alignment)` returns a pointer to
