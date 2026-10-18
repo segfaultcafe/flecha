@@ -424,6 +424,18 @@ class Dumper final {
                 _stream << ")";
                 break;
             }
+            case BoundNodeKind::IndirectCallExpression: {
+                const auto& call =
+                    static_cast<const BoundIndirectCallExpression&>(expression);
+                _stream << "(call_indirect ";
+                WriteExpression(call.Callee());
+                for (const auto& argument : call.Arguments()) {
+                    _stream << " ";
+                    WriteExpression(*argument);
+                }
+                _stream << ")";
+                break;
+            }
             case BoundNodeKind::StringViewOperationExpression: {
                 const BoundStringViewOperationExpression& operation =
                     static_cast<const BoundStringViewOperationExpression&>(

@@ -505,33 +505,45 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
         case core::AstNodeKind::CallExpression: {
             const core::CallExpression& call =
                 static_cast<const core::CallExpression&>(expression);
-            const core::NameExpression& callee =
-                static_cast<const core::NameExpression&>(call.Callee());
-            const semantic::FunctionSymbol& function =
-                static_cast<const semantic::FunctionSymbol&>(
-                    *_semanticModel->SymbolFor(callee));
-            if (function.BuiltIn() == semantic::BuiltInFunction::New)
+            const semantic::FunctionSymbol* function = nullptr;
+            if (call.Callee().Kind() == core::AstNodeKind::NameExpression) {
+                const auto& name =
+                    static_cast<const core::NameExpression&>(call.Callee());
+                const auto* symbol = _semanticModel->SymbolFor(name);
+                if (symbol && symbol->Kind() == semantic::SymbolKind::Function)
+                    function =
+                        static_cast<const semantic::FunctionSymbol*>(symbol);
+            }
+            const auto& signature =
+                _semanticModel->TypeOf(call.Callee()).Signature();
+            if (function &&
+                function->BuiltIn() == semantic::BuiltInFunction::New)
                 return std::make_unique<BoundAllocationExpression>(
                     expression.Range(), type, *type.Elements()[0].Target(),
                     _semanticModel->GlobalScope()
                         .Lookup("AllocationError")
                         ->Type(),
                     LowerExpression(*call.Arguments()[0],
-                                    function.ParameterTypes()[0]),
+                                    function->ParameterTypes()[0]),
                     call.TypeArgument()->TypeForm() == core::TypeKind::Slice);
             std::vector<std::unique_ptr<BoundExpression>> arguments;
             arguments.reserve(call.Arguments().size());
             for (const std::unique_ptr<core::Expression>& argument :
                  call.Arguments()) {
                 const semantic::SemanticType parameterType =
-                    (function.BuiltIn() == semantic::BuiltInFunction::None ||
-                     function.BuiltIn() == semantic::BuiltInFunction::Free)
-                        ? function.ParameterTypes()[arguments.size()]
+                    (!function ||
+                     function->BuiltIn() == semantic::BuiltInFunction::None ||
+                     function->BuiltIn() == semantic::BuiltInFunction::Free)
+                        ? signature.parameters[arguments.size()]
                         : semantic::SemanticType::Error();
                 arguments.push_back(LowerExpression(*argument, parameterType));
             }
+            if (!function)
+                return std::make_unique<BoundIndirectCallExpression>(
+                    expression.Range(), LowerExpression(call.Callee()),
+                    std::move(arguments));
             return std::make_unique<BoundCallExpression>(
-                expression.Range(), function, std::move(arguments));
+                expression.Range(), *function, std::move(arguments));
         }
         case core::AstNodeKind::MemberCallExpression: {
             const core::MemberCallExpression& member =

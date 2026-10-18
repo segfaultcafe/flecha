@@ -123,6 +123,36 @@ TEST(ParserTests, ParsesTypedParametersAndBareReturn) {
     EXPECT_EQ(returnStatement.Value(), nullptr);
 }
 
+TEST(ParserTests, ParsesNamedCallableSignatures) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "func Mapper(i32, stringv text) => (i32); "
+        "unsafe func Reader(lend *const u8 source) => (own *u8, error);",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    ASSERT_EQ(unit->Declarations()[0]->Kind(),
+              AstNodeKind::CallableTypeDeclaration);
+    const auto& mapper =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(mapper.Name(), "Mapper");
+    EXPECT_FALSE(mapper.IsUnsafe());
+    ASSERT_EQ(mapper.Parameters().size(), 2);
+    EXPECT_TRUE(mapper.Parameters()[0]->Name().empty());
+    EXPECT_EQ(mapper.Parameters()[1]->Name(), "text");
+    ASSERT_EQ(mapper.Results().size(), 1);
+    EXPECT_EQ(mapper.Results()[0]->Type(), PrimitiveType::I32);
+
+    const auto& reader =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[1]);
+    EXPECT_TRUE(reader.IsUnsafe());
+    EXPECT_EQ(reader.Parameters()[0]->Type().Contract(),
+              OwnershipContract::Lend);
+    ASSERT_EQ(reader.Results().size(), 2);
+    EXPECT_EQ(reader.Results()[0]->Contract(), OwnershipContract::Own);
+}
+
 TEST(ParserTests, ParsesTestDeclarationsWithMutableContexts) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

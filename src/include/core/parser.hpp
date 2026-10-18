@@ -47,6 +47,7 @@ class Parser {
     std::unique_ptr<EnumDeclaration> ParseEnumDeclaration();
     std::unique_ptr<Declaration> ParseDeclaration();
     std::unique_ptr<FunctionDeclaration> ParseTestDeclaration();
+    std::unique_ptr<CallableTypeDeclaration> ParseCallableTypeDeclaration();
     std::unique_ptr<FunctionDeclaration> ParseFunctionDeclaration();
     std::unique_ptr<TypeNode> ParseType(bool allowOwn = false,
                                         bool allowLend = false,
@@ -55,6 +56,7 @@ class Parser {
     std::unique_ptr<Expression> ParseArrayExpression();
     std::unique_ptr<Expression> ParseMatchExpression();
     std::unique_ptr<Parameter> ParseParameter();
+    std::unique_ptr<Parameter> ParseCallableParameter();
     std::unique_ptr<BlockStatement> ParseBlockStatement(bool isUnsafe = false);
     std::unique_ptr<Statement> ParseStatement();
     bool HasParenthesizedBindings() const;

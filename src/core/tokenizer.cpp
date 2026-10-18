@@ -34,6 +34,7 @@ const KeywordMap KEYWORDS = {
     {"private", TokenType::Private},
     {"override", TokenType::Override},
     {"build", TokenType::Build},
+    {"func", TokenType::Func},
     {"unsafe", TokenType::Unsafe},
     {"export", TokenType::Export},
     {"extern", TokenType::Extern},

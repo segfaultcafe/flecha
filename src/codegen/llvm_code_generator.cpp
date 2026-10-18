@@ -130,6 +130,11 @@ llvm::Type* LlvmCodeGenerator::MapType(semantic::SemanticType type) {
             return StringViewType();
         case semantic::SemanticTypeKind::String:
             return StringType();
+        case semantic::SemanticTypeKind::Function:
+            return llvm::StructType::get(
+                _context, {llvm::PointerType::getUnqual(_context),
+                           llvm::PointerType::getUnqual(_context),
+                           llvm::PointerType::getUnqual(_context)});
         default:
             Fail("LLVM type is not implemented for '" +
                  std::string(type.Name()) + "'");
@@ -1005,6 +1010,25 @@ llvm::FunctionType* LlvmCodeGenerator::MapFunctionType(
     return llvm::FunctionType::get(returnType, parameters, false);
 }
 
+llvm::FunctionType* LlvmCodeGenerator::MapCallableInvokeType(
+    const semantic::CallableSignature& signature) {
+    llvm::Type* returnType = signature.result.ContainsStructure()
+                                 ? llvm::Type::getVoidTy(_context)
+                                 : MapType(signature.result);
+    if (returnType == nullptr) return nullptr;
+    std::vector<llvm::Type*> parameters;
+    parameters.reserve(signature.parameters.size() + 2);
+    if (signature.result.ContainsStructure())
+        parameters.push_back(llvm::PointerType::getUnqual(_context));
+    parameters.push_back(llvm::PointerType::getUnqual(_context));
+    for (const auto& parameter : signature.parameters) {
+        auto* type = MapType(parameter);
+        if (type == nullptr) return nullptr;
+        parameters.push_back(type);
+    }
+    return llvm::FunctionType::get(returnType, parameters, false);
+}
+
 std::optional<llvm::Attribute::AttrKind>
 LlvmCodeGenerator::ExternIntegerExtension(semantic::SemanticType type) const {
     using Kind = semantic::SemanticTypeKind;
@@ -1058,6 +1082,44 @@ llvm::CallInst* LlvmCodeGenerator::EmitFunctionCall(
     return call;
 }
 
+llvm::Value* LlvmCodeGenerator::EmitIndirectCall(
+    const lowering::BoundIndirectCallExpression& expression,
+    llvm::Value* destination) {
+    llvm::Value* callable = EmitExpression(expression.Callee());
+    if (callable == nullptr) return nullptr;
+    const auto& signature = expression.Callee().Type().Signature();
+    llvm::Value* invoke =
+        _builder.CreateExtractValue(callable, 0, "function.invoke");
+    llvm::Value* environment =
+        _builder.CreateExtractValue(callable, 1, "function.environment");
+    std::vector<llvm::Value*> arguments;
+    arguments.reserve(expression.Arguments().size() + 2);
+    if (signature.result.ContainsStructure()) {
+        if (destination == nullptr) return nullptr;
+        arguments.push_back(destination);
+    }
+    arguments.push_back(environment);
+    for (std::size_t index = 0; index < expression.Arguments().size();
+         ++index) {
+        const auto& argument = *expression.Arguments()[index];
+        llvm::Value* value = EmitExpression(argument);
+        if (value == nullptr) return nullptr;
+        value =
+            CoerceValue(value, argument.Type(), signature.parameters[index]);
+        if (value == nullptr) return nullptr;
+        value = EmitValueCopy(value, signature.parameters[index], true);
+        if (value == nullptr) return nullptr;
+        arguments.push_back(value);
+    }
+    auto* call = _builder.CreateCall(
+        MapCallableInvokeType(signature), invoke, arguments,
+        signature.result.Kind() == semantic::SemanticTypeKind::Void ||
+                signature.result.ContainsStructure()
+            ? ""
+            : "call.indirect");
+    return call;
+}
+
 bool LlvmCodeGenerator::DeclareFunctions(
     const lowering::BoundProgram& program) {
     for (const std::unique_ptr<lowering::BoundFunction>& boundFunction :
@@ -1093,6 +1155,45 @@ bool LlvmCodeGenerator::DeclareFunctions(
         }
     }
     return true;
+}
+
+llvm::Function* LlvmCodeGenerator::CallableAdapter(
+    const semantic::FunctionSymbol& symbol) {
+    const auto found = _callableAdapters.find(&symbol);
+    if (found != _callableAdapters.end()) return found->second;
+    auto* type = MapCallableInvokeType(symbol.Signature());
+    if (type == nullptr) return nullptr;
+    auto* adapter =
+        llvm::Function::Create(type, llvm::Function::InternalLinkage,
+                               symbol.LinkName() + ".$callable", *_module);
+    _callableAdapters.emplace(&symbol, adapter);
+    auto* entry = llvm::BasicBlock::Create(_context, "entry", adapter);
+    llvm::IRBuilder<> builder(entry);
+    std::vector<llvm::Value*> arguments;
+    arguments.reserve(adapter->arg_size() - 1);
+    std::size_t index = 0;
+    if (symbol.ReturnType().ContainsStructure())
+        arguments.push_back(adapter->getArg(index++));
+    adapter->getArg(index++)->setName("environment");
+    for (; index < adapter->arg_size(); ++index)
+        arguments.push_back(adapter->getArg(index));
+    llvm::CallInst* call =
+        builder.CreateCall(_functions.at(&symbol), arguments);
+    if (symbol.IsExtern()) {
+        if (const auto attribute = ExternIntegerExtension(symbol.ReturnType()))
+            call->addRetAttr(*attribute);
+        for (std::size_t i = 0; i < symbol.ParameterTypes().size(); ++i)
+            if (const auto attribute =
+                    ExternIntegerExtension(symbol.ParameterTypes()[i]))
+                call->addParamAttr(
+                    i + (symbol.ReturnType().ContainsStructure() ? 1 : 0),
+                    *attribute);
+    }
+    if (call->getType()->isVoidTy())
+        builder.CreateRetVoid();
+    else
+        builder.CreateRet(call);
+    return adapter;
 }
 
 llvm::AllocaInst* LlvmCodeGenerator::CreateEntryAlloca(
@@ -2387,7 +2488,9 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 _builder.CreateStore(llvm::ConstantInt::getFalse(_context),
                                      LifetimeFlag(storage));
             if (!expression.Type().ContainsStructure() &&
-                expression.Type().ContainsOwnedBuffer())
+                (expression.Type().ContainsOwnedBuffer() ||
+                 expression.Type().Kind() ==
+                     semantic::SemanticTypeKind::Function))
                 _builder.CreateStore(
                     llvm::Constant::getNullValue(MapType(expression.Type())),
                     storage);
@@ -2535,16 +2638,48 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
             return _builder.CreateLoad(MapType(call.Type()), ownedResult,
                                        "string.call");
         }
+        case lowering::BoundNodeKind::IndirectCallExpression: {
+            const auto& call =
+                static_cast<const lowering::BoundIndirectCallExpression&>(
+                    expression);
+            if (call.Type().ContainsStructure()) {
+                auto* storage = CreateOwnedValueTemporary(
+                    call.Type(), "indirect.call.result");
+                EmitValueStorageCleanup(storage, call.Type());
+                if (!EmitIndirectCall(call, storage)) return nullptr;
+                _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
+                                     LifetimeFlag(storage));
+                return _builder.CreateLoad(MapType(call.Type()), storage);
+            }
+            llvm::Value* result = EmitIndirectCall(call);
+            if (!result || !call.Type().OwnsStorage()) return result;
+            auto* storage =
+                CreateOwnedValueTemporary(call.Type(), "indirect.call.owner");
+            EmitValueStorageCleanup(storage, call.Type());
+            _builder.CreateStore(result, storage);
+            return _builder.CreateLoad(MapType(call.Type()), storage);
+        }
         case lowering::BoundNodeKind::StringViewOperationExpression:
             return EmitStringViewOperation(
                 static_cast<
                     const lowering::BoundStringViewOperationExpression&>(
                     expression));
-        case lowering::BoundNodeKind::FunctionExpression:
-            return _functions.at(
-                &static_cast<const lowering::BoundFunctionExpression&>(
-                     expression)
-                     .Symbol());
+        case lowering::BoundNodeKind::FunctionExpression: {
+            const auto& symbol =
+                static_cast<const lowering::BoundFunctionExpression&>(
+                    expression)
+                    .Symbol();
+            llvm::Value* callable =
+                llvm::PoisonValue::get(MapType(expression.Type()));
+            llvm::Function* adapter = CallableAdapter(symbol);
+            if (adapter == nullptr) return nullptr;
+            callable = _builder.CreateInsertValue(callable, adapter, 0);
+            auto* null = llvm::ConstantPointerNull::get(
+                llvm::PointerType::getUnqual(_context));
+            callable = _builder.CreateInsertValue(callable, null, 1);
+            return _builder.CreateInsertValue(callable, null, 2,
+                                              "function.value");
+        }
         default:
             Fail("unsupported bound expression");
             return nullptr;
@@ -2788,6 +2923,12 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
         EmitFunctionCall(call.Function(), arguments);
         return true;
     }
+    if (expression.Kind() == Node::IndirectCallExpression &&
+        type.ContainsStructure())
+        return EmitIndirectCall(
+                   static_cast<const lowering::BoundIndirectCallExpression&>(
+                       expression),
+                   destination) != nullptr;
     if (expression.Kind() == Node::MatchExpression && type.ContainsStructure())
         return EmitMatch(static_cast<const lowering::BoundMatchExpression&>(
                              expression),
@@ -2986,6 +3127,7 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
     const lowering::BoundProgram& program, std::string moduleName) {
     _error.clear();
     _functions.clear();
+    _callableAdapters.clear();
     _structureTypes.clear();
     _variables.clear();
     _module = std::make_unique<llvm::Module>(moduleName, _context);

@@ -88,6 +88,7 @@ bool SemanticType::IsTriviallyZeroable() const {
 }
 
 bool SemanticType::IsCopyable() const {
+    if (_kind == SemanticTypeKind::Function) return false;
     if (_kind == SemanticTypeKind::OwnedBuffer) return false;
     if (_kind == SemanticTypeKind::Structure) {
         if (!_structure->validLayout || _structure->tear) return false;
@@ -120,6 +121,7 @@ bool SemanticType::OwnsStorage() const {
     if (_kind == SemanticTypeKind::Structure) return true;
     if (_kind == SemanticTypeKind::Array) return Target()->OwnsStorage();
     if (_kind == SemanticTypeKind::String) return true;
+    if (_kind == SemanticTypeKind::Function) return true;
     if (_kind == SemanticTypeKind::Tuple)
         for (const auto& element : Elements())
             if (element.OwnsStorage()) return true;
@@ -130,12 +132,23 @@ bool SemanticType::operator==(const SemanticType& other) const {
     return _kind == other._kind && _isConst == other._isConst &&
            _family == other._family && _structure == other._structure &&
            _enum == other._enum && _length == other._length &&
+           ((_signature == nullptr && other._signature == nullptr) ||
+            (_signature != nullptr && other._signature != nullptr &&
+             *_signature == *other._signature)) &&
            ((_elements == nullptr && other._elements == nullptr) ||
             (_elements != nullptr && other._elements != nullptr &&
              *_elements == *other._elements)) &&
            ((_target == nullptr && other._target == nullptr) ||
             (_target != nullptr && other._target != nullptr &&
              *_target == *other._target));
+}
+
+bool CallableSignature::operator==(const CallableSignature& other) const {
+    return result == other.result && parameters == other.parameters &&
+           parameterContracts == other.parameterContracts &&
+           resultContracts == other.resultContracts &&
+           borrowSourceIndex == other.borrowSourceIndex &&
+           isUnsafe == other.isUnsafe;
 }
 
 SemanticType SemanticType::FromSyntax(const core::TypeNode& type) {
@@ -240,7 +253,44 @@ std::string SemanticType::Name() const {
         case SemanticTypeKind::None:
             return "none";
         case SemanticTypeKind::Function:
-            return "function";
+            if (!_signature) return "function";
+            {
+                std::string name =
+                    _signature->isUnsafe ? "unsafe func(" : "func(";
+                for (std::size_t i = 0; i < _signature->parameters.size();
+                     ++i) {
+                    if (i != 0) name += ", ";
+                    if (i < _signature->parameterContracts.size() &&
+                        _signature->parameterContracts[i] ==
+                            core::OwnershipContract::Own)
+                        name += "own ";
+                    else if (i < _signature->parameterContracts.size() &&
+                             _signature->parameterContracts[i] ==
+                                 core::OwnershipContract::Lend)
+                        name += "lend ";
+                    name += _signature->parameters[i].Name();
+                }
+                name += ") => (";
+                if (_signature->result.Kind() == SemanticTypeKind::Tuple) {
+                    for (std::size_t i = 0;
+                         i < _signature->result.Elements().size(); ++i) {
+                        if (i != 0) name += ", ";
+                        if (i < _signature->resultContracts.size() &&
+                            _signature->resultContracts[i] ==
+                                core::OwnershipContract::Own)
+                            name += "own ";
+                        name += _signature->result.Elements()[i].Name();
+                    }
+                } else if (_signature->result.Kind() !=
+                           SemanticTypeKind::Void) {
+                    if (!_signature->resultContracts.empty() &&
+                        _signature->resultContracts[0] ==
+                            core::OwnershipContract::Own)
+                        name += "own ";
+                    name += _signature->result.Name();
+                }
+                return name + ")";
+            }
         case SemanticTypeKind::Error:
             return "<error>";
     }
