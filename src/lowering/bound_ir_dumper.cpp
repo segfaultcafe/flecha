@@ -346,25 +346,35 @@ class Dumper final {
                     static_cast<const BoundDirectExpression&>(expression)
                         .Value());
                 break;
-            case BoundNodeKind::FunctionExpression:
-                {
-                    const auto& function =
-                        static_cast<const BoundFunctionExpression&>(
-                            expression);
-                    _stream << "function_ref " << function.Symbol().Name();
-                    if (!function.Captures().empty()) {
-                        _stream << " [";
-                        bool first = true;
-                        for (const auto& capture : function.Captures()) {
-                            if (!first) _stream << ", ";
-                            first = false;
-                            _stream << "copy ";
-                            WriteExpression(*capture.value);
+            case BoundNodeKind::FunctionExpression: {
+                const auto& function =
+                    static_cast<const BoundFunctionExpression&>(expression);
+                _stream << "function_ref " << function.Symbol().Name();
+                if (!function.Captures().empty()) {
+                    _stream << " [";
+                    bool first = true;
+                    for (const auto& capture : function.Captures()) {
+                        if (!first) _stream << ", ";
+                        first = false;
+                        switch (capture.mode) {
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::Copy:
+                                _stream << "copy ";
+                                break;
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::Reference:
+                                _stream << "&";
+                                break;
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::ConstReference:
+                                _stream << "&const ";
+                                break;
                         }
-                        _stream << "]";
+                        WriteExpression(*capture.value);
                     }
+                    _stream << "]";
                 }
-                break;
+            } break;
             case BoundNodeKind::IncrementExpression:
                 _stream << "(post-increment ";
                 WriteExpression(

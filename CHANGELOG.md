@@ -4,6 +4,9 @@
 
 ### Language
 
+- Anonymous functions can explicitly borrow outer storage with `&name` or
+  `&const name`. Callable moves, returns, and containers preserve borrow
+  origins, and invalid storage or return escapes are diagnosed.
 - Checked reference and slice results now declare their source parameter with
   `<-`, for example `&const i32 view(&const i32 value) <- value`.
 - Borrowed-result contracts compose through methods, modules, generics, and

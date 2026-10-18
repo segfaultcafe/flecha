@@ -315,8 +315,8 @@ llvm::Value* LlvmCodeGenerator::EmitValueCopy(llvm::Value* value,
     if (type.OwnsStorage() && !type.IsCopyable()) {
         const auto fresh = _freshOwnedValues.find(value);
         if (fresh != _freshOwnedValues.end()) {
-            _builder.CreateStore(
-                llvm::Constant::getNullValue(MapType(type)), fresh->second);
+            _builder.CreateStore(llvm::Constant::getNullValue(MapType(type)),
+                                 fresh->second);
             _freshOwnedValues.erase(fresh);
             return value;
         }
@@ -407,12 +407,12 @@ void LlvmCodeGenerator::EmitValueDestroy(llvm::Value* value,
             destroy, llvm::Constant::getNullValue(destroy->getType()));
         auto* run = llvm::BasicBlock::Create(_context, "function.destroy.run",
                                              _currentFunction);
-        auto* done = llvm::BasicBlock::Create(
-            _context, "function.destroy.done", _currentFunction);
+        auto* done = llvm::BasicBlock::Create(_context, "function.destroy.done",
+                                              _currentFunction);
         _builder.CreateCondBr(present, run, done);
         _builder.SetInsertPoint(run);
-        auto* type = llvm::FunctionType::get(
-            llvm::Type::getVoidTy(_context), {environment->getType()}, false);
+        auto* type = llvm::FunctionType::get(llvm::Type::getVoidTy(_context),
+                                             {environment->getType()}, false);
         _builder.CreateCall(type, destroy, {environment});
         _builder.CreateBr(done);
         _builder.SetInsertPoint(done);
@@ -1243,8 +1243,16 @@ llvm::StructType* LlvmCodeGenerator::ClosureEnvironmentType(
     _closureEnvironmentTypes.emplace(&function.Symbol(), environment);
     std::vector<llvm::Type*> fields;
     fields.reserve(function.Captures().size());
-    for (const auto* capture : function.Captures())
-        fields.push_back(MapType(capture->Type()));
+    for (const auto& capture : function.Captures()) {
+        const bool borrowedValue =
+            capture.variable->Type().HasBorrowedLifetime();
+        fields.push_back(
+            capture.mode ==
+                        core::AnonymousFunctionExpression::CaptureMode::Copy ||
+                    borrowedValue
+                ? MapType(capture.variable->Type())
+                : llvm::PointerType::getUnqual(_context));
+    }
     environment->setBody(fields);
     return environment;
 }
@@ -1255,7 +1263,7 @@ llvm::Function* LlvmCodeGenerator::ClosureDestroyer(
     if (found != _closureDestroyers.end()) return found->second;
     llvm::Type* pointer = llvm::PointerType::getUnqual(_context);
     auto* type = llvm::FunctionType::get(llvm::Type::getVoidTy(_context),
-                                        {pointer}, false);
+                                         {pointer}, false);
     auto* destroyer = llvm::Function::Create(
         type, llvm::Function::InternalLinkage,
         function.Symbol().LinkName() + ".$closure.destroy", *_module);
@@ -1270,14 +1278,16 @@ llvm::Function* LlvmCodeGenerator::ClosureDestroyer(
     environment->setName("environment");
     auto* environmentType = ClosureEnvironmentType(function);
     for (std::size_t index = function.Captures().size(); index > 0; --index) {
-        const auto* capture = function.Captures()[index - 1];
-        if (capture->Type().OwnsStorage())
+        const auto& capture = function.Captures()[index - 1];
+        if (capture.mode ==
+                core::AnonymousFunctionExpression::CaptureMode::Copy &&
+            capture.variable->Type().OwnsStorage())
             EmitDestroyAt(_builder.CreateStructGEP(environmentType, environment,
                                                    index - 1),
-                          capture->Type());
+                          capture.variable->Type());
     }
-    llvm::FunctionCallee release = _module->getOrInsertFunction(
-        "flecha_runtime_v1_free", type);
+    llvm::FunctionCallee release =
+        _module->getOrInsertFunction("flecha_runtime_v1_free", type);
     _builder.CreateCall(release, {environment});
     _builder.CreateRetVoid();
     _currentFunction = savedFunction;
@@ -1290,8 +1300,7 @@ llvm::Value* LlvmCodeGenerator::EmitClosure(
     const auto bound = _boundFunctions.find(&expression.Symbol());
     if (bound == _boundFunctions.end()) return nullptr;
     const lowering::BoundFunction& function = *bound->second;
-    llvm::Value* callable =
-        llvm::PoisonValue::get(MapType(expression.Type()));
+    llvm::Value* callable = llvm::PoisonValue::get(MapType(expression.Type()));
     llvm::Function* adapter = CallableAdapter(expression.Symbol());
     if (adapter == nullptr) return nullptr;
     callable = _builder.CreateInsertValue(callable, adapter, 0);
@@ -1317,13 +1326,13 @@ llvm::Value* LlvmCodeGenerator::EmitClosure(
          llvm::ConstantInt::get(
              sizeType, layout.getABITypeAlign(environmentType).value())},
         "closure.environment");
-    auto* initialize = llvm::BasicBlock::Create(
-        _context, "closure.initialize", _currentFunction);
+    auto* initialize = llvm::BasicBlock::Create(_context, "closure.initialize",
+                                                _currentFunction);
     auto* failed = llvm::BasicBlock::Create(_context, "closure.alloc.failed",
                                             _currentFunction);
     _builder.CreateCondBr(
-        _builder.CreateICmpNE(
-            environment, llvm::ConstantPointerNull::get(pointerType)),
+        _builder.CreateICmpNE(environment,
+                              llvm::ConstantPointerNull::get(pointerType)),
         initialize, failed);
     _builder.SetInsertPoint(failed);
     llvm::FunctionCallee panic = _module->getOrInsertFunction(
@@ -1334,13 +1343,23 @@ llvm::Value* LlvmCodeGenerator::EmitClosure(
     _builder.SetInsertPoint(initialize);
     for (std::size_t index = 0; index < expression.Captures().size(); ++index) {
         const auto& capture = expression.Captures()[index];
-        llvm::Value* value = EmitExpression(*capture.value);
+        llvm::Value* value = nullptr;
+        if (capture.mode ==
+                core::AnonymousFunctionExpression::CaptureMode::Copy ||
+            capture.variable->Type().HasBorrowedLifetime()) {
+            value = EmitExpression(*capture.value);
+            if (value != nullptr &&
+                capture.mode ==
+                    core::AnonymousFunctionExpression::CaptureMode::Copy)
+                value = EmitValueCopy(value, capture.variable->Type(), false);
+        } else {
+            value =
+                EmitAddress(static_cast<const lowering::BoundPlaceExpression&>(
+                    *capture.value));
+        }
         if (value == nullptr) return nullptr;
-        value = EmitValueCopy(value, capture.variable->Type(), false);
-        if (value == nullptr) return nullptr;
-        _builder.CreateStore(
-            value,
-            _builder.CreateStructGEP(environmentType, environment, index));
+        _builder.CreateStore(value, _builder.CreateStructGEP(
+                                        environmentType, environment, index));
     }
     callable = _builder.CreateInsertValue(callable, environment, 1);
     return _builder.CreateInsertValue(callable, ClosureDestroyer(function), 2,
@@ -1417,17 +1436,25 @@ bool LlvmCodeGenerator::EmitFunction(
             argument.setName("result.storage");
             continue;
         }
-        if (!boundFunction.Captures().empty() &&
-            index == 0 && _variables.empty()) {
+        if (!boundFunction.Captures().empty() && index == 0 &&
+            _variables.empty()) {
             argument.setName("environment");
             auto* environmentType = ClosureEnvironmentType(boundFunction);
             for (std::size_t captureIndex = 0;
                  captureIndex < boundFunction.Captures().size();
-                 ++captureIndex)
-                _variables.emplace(
-                    boundFunction.Captures()[captureIndex],
-                    _builder.CreateStructGEP(environmentType, &argument,
-                                             captureIndex));
+                 ++captureIndex) {
+                const auto& capture = boundFunction.Captures()[captureIndex];
+                llvm::Value* field = _builder.CreateStructGEP(
+                    environmentType, &argument, captureIndex);
+                llvm::Value* storage = field;
+                if (capture.mode !=
+                        core::AnonymousFunctionExpression::CaptureMode::Copy &&
+                    !capture.variable->Type().HasBorrowedLifetime())
+                    storage = _builder.CreateLoad(
+                        llvm::PointerType::getUnqual(_context), field,
+                        capture.variable->Name() + ".capture");
+                _variables.emplace(capture.variable, storage);
+            }
             continue;
         }
         const semantic::VariableSymbol& parameter =
@@ -2809,8 +2836,8 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 function->getReturnType()->isVoidTy() ? "" : "call");
             if (ownedResult == nullptr) return result;
             _builder.CreateStore(result, ownedResult);
-            llvm::Value* owned = _builder.CreateLoad(
-                MapType(call.Type()), ownedResult, "owned.call");
+            llvm::Value* owned = _builder.CreateLoad(MapType(call.Type()),
+                                                     ownedResult, "owned.call");
             if (!call.Type().IsCopyable())
                 _freshOwnedValues.emplace(owned, ownedResult);
             return owned;
@@ -2834,9 +2861,8 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 CreateOwnedValueTemporary(call.Type(), "indirect.call.owner");
             EmitValueStorageCleanup(storage, call.Type());
             _builder.CreateStore(result, storage);
-            llvm::Value* owned =
-                _builder.CreateLoad(MapType(call.Type()), storage,
-                                    "indirect.call.owner.value");
+            llvm::Value* owned = _builder.CreateLoad(
+                MapType(call.Type()), storage, "indirect.call.owner.value");
             if (!call.Type().IsCopyable())
                 _freshOwnedValues.emplace(owned, storage);
             return owned;

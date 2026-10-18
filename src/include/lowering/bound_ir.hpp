@@ -383,8 +383,14 @@ class BoundDirectExpression final : public BoundExpression {
 };
 
 struct BoundClosureCapture final {
+    core::AnonymousFunctionExpression::CaptureMode mode;
     const semantic::VariableSymbol* variable;
     std::unique_ptr<BoundExpression> value;
+};
+
+struct BoundFunctionCapture final {
+    core::AnonymousFunctionExpression::CaptureMode mode;
+    const semantic::VariableSymbol* variable;
 };
 
 class BoundFunctionExpression final : public BoundExpression {
@@ -822,7 +828,7 @@ class BoundBuildExpression final : public BoundExpression {
 class BoundFunction final {
    public:
     BoundFunction(const semantic::FunctionSymbol& symbol,
-                  std::vector<const semantic::VariableSymbol*> captures,
+                  std::vector<BoundFunctionCapture> captures,
                   std::vector<const semantic::VariableSymbol*> parameters,
                   std::unique_ptr<BoundBlockStatement> body)
         : _symbol(symbol),
@@ -832,8 +838,7 @@ class BoundFunction final {
     [[nodiscard]] const semantic::FunctionSymbol& Symbol() const {
         return _symbol;
     }
-    [[nodiscard]] const std::vector<const semantic::VariableSymbol*>&
-    Captures() const {
+    [[nodiscard]] const std::vector<BoundFunctionCapture>& Captures() const {
         return _captures;
     }
     [[nodiscard]] const std::vector<const semantic::VariableSymbol*>&
@@ -845,7 +850,7 @@ class BoundFunction final {
 
    private:
     const semantic::FunctionSymbol& _symbol;
-    std::vector<const semantic::VariableSymbol*> _captures;
+    std::vector<BoundFunctionCapture> _captures;
     std::vector<const semantic::VariableSymbol*> _parameters;
     std::unique_ptr<BoundBlockStatement> _body;
 };

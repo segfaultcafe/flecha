@@ -49,10 +49,10 @@ std::unique_ptr<BoundFunction> Lowerer::LowerFunction(
             static_cast<const semantic::VariableSymbol*>(parameterSymbol));
     }
 
-    std::vector<const semantic::VariableSymbol*> captures;
+    std::vector<BoundFunctionCapture> captures;
     for (const semantic::ClosureCapture& capture :
          _semanticModel->Captures(function))
-        captures.push_back(capture.variable);
+        captures.push_back({capture.syntax->Mode(), capture.variable});
 
     _returnType = functionSymbol.ReturnType();
     _zeroFunction =
@@ -309,7 +309,7 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             for (const semantic::ClosureCapture& capture :
                  _semanticModel->Captures(anonymous.Function())) {
                 captures.push_back(
-                    {capture.variable,
+                    {capture.syntax->Mode(), capture.variable,
                      std::make_unique<BoundVariableExpression>(
                          capture.syntax->NameRange(),
                          static_cast<const semantic::VariableSymbol&>(

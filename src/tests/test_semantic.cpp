@@ -321,6 +321,210 @@ TEST(SemanticCallableTests, ChecksCopyCaptureSourceInitialization) {
               nullptr);
 }
 
+TEST(SemanticCallableTests, ResolvesCheckedReferenceCaptures) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 40;
+            const i32 limit = 2;
+            Reader callback = [&value, &const limit]() => {
+                value = value + limit;
+                return value;
+            };
+            return callback();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const auto& captures =
+        result.model.Captures(*result.model.AnonymousFunctions().front());
+    ASSERT_EQ(captures.size(), 2);
+    EXPECT_TRUE(captures[0].variable->Writable());
+    EXPECT_FALSE(captures[1].variable->Writable());
+}
+
+TEST(SemanticCallableTests, RejectsWritesThroughSharedCaptures) {
+    Analysis result = Analyze(R"(
+        func Writer() => ();
+        void main() {
+            i32 value = 1;
+            Writer callback = [&const value]() => { value = 2; };
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::SymbolNotWritable),
+              nullptr);
+
+    Analysis reborrow = Analyze(R"(
+        func Writer() => ();
+        Writer bind(&i32 source) <- source {
+            return [&const source]() => { *source = 2; };
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(reborrow, DiagnosticCode::SymbolNotWritable),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsMutableCaptureOfReadOnlyStorage) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            const i32 value = 1;
+            Reader callback = [&value]() => { return value; };
+            return callback();
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::SymbolNotWritable),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, EnforcesCheckedCaptureLoansUntilLastUse) {
+    Analysis conflict = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 1;
+            Reader callback = [&const value]() => { return value; };
+            value = 2;
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(conflict, DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    Analysis released = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 1;
+            Reader callback = [&const value]() => { return value; };
+            i32 result = callback();
+            value = 2;
+            return result + value;
+        }
+    )");
+    for (const auto& diagnostic : released.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(released.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, DiagnosesCheckedCaptureEscapes) {
+    Analysis storage = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            Reader callback = () => { return 0; };
+            {
+                i32 local = 1;
+                callback = [&const local]() => { return local; };
+            }
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(storage, DiagnosticCode::ReferenceEscape),
+              nullptr);
+
+    Analysis returned = Analyze(R"(
+        func Reader() => (i32);
+        Reader invalid() {
+            i32 local = 1;
+            return [&const local]() => { return local; };
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(returned, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis container = Analyze(R"(
+        func Reader() => (i32);
+        [1]Reader invalid() {
+            i32 local = 1;
+            return [[&const local]() => { return local; }];
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(container, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis containerStorage = Analyze(R"(
+        func Reader() => (i32);
+        i32 zero() { return 0; }
+        i32 main() {
+            [1]Reader callbacks = [zero];
+            {
+                i32 local = 42;
+                callbacks[0] = [&const local]() => { return local; };
+            }
+            return 0;
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(containerStorage, DiagnosticCode::ReferenceEscape),
+        nullptr);
+}
+
+TEST(SemanticCallableTests, PropagatesCaptureOriginsThroughCallableReturns) {
+    Analysis valid = Analyze(R"(
+        func Reader() => (i32);
+        Reader bind(&const i32 source) <- source {
+            return [&const source]() => { return *source; };
+        }
+        i32 main() {
+            i32 value = 41;
+            Reader callback = bind(&value);
+            return callback();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis conflict = Analyze(R"(
+        func Reader() => (i32);
+        Reader bind(&const i32 source) <- source {
+            return [&const source]() => { return *source; };
+        }
+        i32 main() {
+            i32 value = 41;
+            Reader callback = bind(&value);
+            value = 42;
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(conflict, DiagnosticCode::BorrowConflict),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, PropagatesCaptureOriginsThroughStructures) {
+    Analysis missingContract = Analyze(R"(
+        func Reader() => (i32);
+        structure Holder { Reader callback; };
+        Holder Holder::init(Reader callback) override {
+            return build Holder { self.callback = callback; };
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(missingContract,
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+
+    Analysis valid = Analyze(R"(
+        func Reader() => (i32);
+        structure Holder { Reader callback; };
+        Holder Holder::init(Reader callback) <- callback override {
+            return build Holder { self.callback = callback; };
+        }
+        i32 main() {
+            i32 value = 42;
+            Reader callback = [&const value]() => { return value; };
+            Holder holder = Holder::init(callback);
+            return value;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+}
+
 TEST(SemanticCallableTests, EnforcesAnonymousFunctionPointerSafety) {
     Analysis valid = Analyze(R"(
         unsafe func Reader(*const i32) => (i32);
