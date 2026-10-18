@@ -12,6 +12,16 @@
 - Short tuple declarations now reuse writable variables from the same lexical
   scope, so `value, err := call()` follows Go-style mixed declaration and
   assignment semantics. At least one non-blank destination must be new.
+- Runtime-sized `new<[]T>` allocations now return move-only `*[]T` owners that
+  carry their length, eliminating allocator metadata queries from owner
+  indexing and slicing while retaining a consuming compatibility conversion to
+  explicitly typed raw `*T` APIs.
+
+### Performance
+
+- Native object emission now runs LLVM's target-aware default `O2` pipeline.
+- Fresh owning-string results, including concatenation and scalar formatting,
+  transfer into their first owning destination instead of being cloned.
 
 ### Tooling
 

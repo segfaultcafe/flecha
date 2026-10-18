@@ -19,9 +19,10 @@ pointer. The existing mixed form `(pointer, error err) = new<u8>(42);` also work
 when pointer has already been declared.
 
 Runtime-sized scalar buffers are also available as `new<[]T>(count)`, returning
-`(*T, error)`. The count is evaluated before allocation, and all elements start
-at zero. See [dynamic arrays](dynamic_arrays.md) for indexing, supported types,
-and the first Flecha standard-library container.
+`(*[]T, error)`. The move-only `*[]T` owner carries both data and length. The
+count is evaluated before allocation, and all elements start at zero. See
+[dynamic arrays](dynamic_arrays.md) for indexing, transfer rules, supported
+types, and the first Flecha standard-library container.
 
 ## Allocation and evaluation
 
@@ -57,6 +58,11 @@ The error reports failure to obtain the outer allocation. Failures inside an
 initializer retain their existing behavior: for example, owning-string runtime
 allocation failure terminates the process, and bounds traps do not unwind.
 There is no constructor-exception or partial-construction protocol.
+
+For `new<[]T>`, success packages `{data, count}` in the owning buffer; failure
+packages `{null, 0}`. A successful zero-count allocation remains non-null and
+releasable. An explicitly expected legacy `*T` may receive the data pointer,
+consuming the buffer owner and dropping its visible count.
 
 ## Supported values
 

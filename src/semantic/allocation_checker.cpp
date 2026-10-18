@@ -16,6 +16,11 @@ using core::OwnershipContract;
 using diagnostics::DiagnosticCode;
 using Identity = const core::AstNode*;
 
+bool IsHeapHandle(SemanticType type) {
+    return type.Kind() == SemanticTypeKind::Pointer ||
+           type.Kind() == SemanticTypeKind::OwnedBuffer;
+}
+
 enum class ValueKind {
     Unknown,
     Null,
@@ -108,18 +113,18 @@ class AllocationChecker final {
                         node.memoryExpression &&
                         node.memoryExpression->Kind() ==
                             AstNodeKind::IndexExpression &&
-                        _model.TypeOf(static_cast<const core::IndexExpression&>(
-                                          *node.memoryExpression)
-                                          .Receiver())
-                                .Kind() == SemanticTypeKind::Pointer;
+                        IsHeapHandle(_model.TypeOf(
+                            static_cast<const core::IndexExpression&>(
+                                *node.memoryExpression)
+                                .Receiver()));
                     const bool heapSlice =
                         node.memoryExpression &&
                         node.memoryExpression->Kind() ==
                             AstNodeKind::SliceExpression &&
-                        _model.TypeOf(static_cast<const core::SliceExpression&>(
-                                          *node.memoryExpression)
-                                          .Receiver())
-                                .Kind() == SemanticTypeKind::Pointer;
+                        IsHeapHandle(_model.TypeOf(
+                            static_cast<const core::SliceExpression&>(
+                                *node.memoryExpression)
+                                .Receiver()));
                     if (node.allocation || heapIndex || heapSlice ||
                         (callee &&
                          callee->BuiltIn() == BuiltInFunction::Free) ||
@@ -191,7 +196,7 @@ class AllocationChecker final {
         for (const auto& parameter : function.Parameters()) {
             const Symbol* symbol = _model.DeclaredSymbol(*parameter);
             Value argument;
-            if (symbol && symbol->Type().Kind() == SemanticTypeKind::Pointer) {
+            if (symbol && IsHeapHandle(symbol->Type())) {
                 argument = {ValueKind::Pointer, parameter.get()};
                 const auto contract = parameter->Type().Contract();
                 state.resources[parameter.get()] = {
@@ -497,8 +502,7 @@ class AllocationChecker final {
         if (target.Kind() == AstNodeKind::IndexExpression) {
             const auto& index =
                 static_cast<const core::IndexExpression&>(target);
-            Value receiver = _model.TypeOf(index.Receiver()).Kind() ==
-                                     SemanticTypeKind::Pointer
+            Value receiver = IsHeapHandle(_model.TypeOf(index.Receiver()))
                                  ? Get(state, index.Receiver())
                                  : Address(state, index.Receiver());
             if (receiver.identity) receiver.kind = ValueKind::Interior;
@@ -516,8 +520,7 @@ class AllocationChecker final {
         if (unwrapped.Kind() == AstNodeKind::IndexExpression) {
             const auto& index =
                 static_cast<const core::IndexExpression&>(unwrapped);
-            if (_model.TypeOf(index.Receiver()).Kind() !=
-                    SemanticTypeKind::Pointer &&
+            if (!IsHeapHandle(_model.TypeOf(index.Receiver())) &&
                 Owns(state, Get(state, index.Receiver())))
                 Report(DiagnosticCode::UnverifiedOwnership, target,
                        "cannot verify mutation of an aggregate containing "
@@ -625,7 +628,7 @@ class AllocationChecker final {
         if (!function) return false;
         if (function->BuiltIn() == BuiltInFunction::Free) return true;
         for (const SemanticType& type : function->ParameterTypes())
-            if (type.Kind() == SemanticTypeKind::Pointer) return true;
+            if (IsHeapHandle(type)) return true;
         const auto found = _functions.find(function);
         if (found == _functions.end()) return false;
         // Calls that allocate are interpreted even without pointer arguments,
@@ -1180,8 +1183,7 @@ class AllocationChecker final {
                 const auto& slice =
                     static_cast<const core::SliceExpression&>(expression);
                 const Value receiver = Get(state, slice.Receiver());
-                if (_model.TypeOf(slice.Receiver()).Kind() ==
-                    SemanticTypeKind::Pointer) {
+                if (IsHeapHandle(_model.TypeOf(slice.Receiver()))) {
                     CheckUse(state, receiver, expression, true);
                     const auto resource =
                         state.resources.find(receiver.identity);
@@ -1216,11 +1218,9 @@ class AllocationChecker final {
                 Value receiver = Get(state, index.Receiver());
                 const Value subscript = Get(state, index.Index());
                 if (receiver.kind == ValueKind::Address &&
-                    _model.TypeOf(index.Receiver()).Kind() !=
-                        SemanticTypeKind::Pointer)
+                    !IsHeapHandle(_model.TypeOf(index.Receiver())))
                     receiver = Binding(state, receiver.address);
-                const bool heap = _model.TypeOf(index.Receiver()).Kind() ==
-                                  SemanticTypeKind::Pointer;
+                const bool heap = IsHeapHandle(_model.TypeOf(index.Receiver()));
                 CheckUse(state, receiver, expression, heap);
                 if (heap && (receiver.kind == ValueKind::Address ||
                              receiver.kind == ValueKind::Interior))

@@ -650,7 +650,8 @@ fields, construction limits, examples, and diagnostics.
 
 Flecha should not require a garbage collector. Stack allocation is the ordinary default. The implemented explicit raw allocation API is `new<T>(value)` returning `(*T, error)`, paired with unsafe `free(ptr)`. It uses the system allocation service; custom allocators remain future work.
 Runtime-sized scalar and supported trivially copyable structure storage uses
-`new<[]T>(count)` and checked unsafe `pointer[index]` access. See
+`new<[]T>(count)`, returning a move-only `*[]T` owner whose `{data, length}`
+representation supports checked unsafe indexing without allocator queries. See
 [dynamic arrays](docs/dynamic_arrays.md) for the implemented limits and the
 Flecha `RawArray<T>` library and its safe `Array<T>` wrapper.
 On failure, new returns null and `AllocationError.OutOfMemory` without evaluating

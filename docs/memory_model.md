@@ -466,8 +466,9 @@ unsafe {
 `new<T>(none)` initializes to T's defined zero value, when one exists; it
 does not mean uninitialized storage. Success produces a live allocation and
 no error; failure assigns null and `AllocationError.OutOfMemory`, without
-evaluating the initializer. Fixed arrays use `new<[N]T>(value)`; runtime-sized scalar buffers use
-`new<[]T>(count)`. Their count is evaluated before allocation and their elements
+evaluating the initializer. Fixed arrays use `new<[N]T>(value)`; runtime-sized
+scalar buffers use `new<[]T>(count)` and return a move-only `*[]T` owner carrying
+`{data, length}`. Their count is evaluated before allocation and their elements
 start zeroed. See [dynamic arrays](dynamic_arrays.md). `free(null)` is a no-op.
 
 Raw allocation and free require an unsafe function or block. Allocations are
