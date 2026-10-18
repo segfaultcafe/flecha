@@ -43,6 +43,12 @@ llvm::Instruction* TerminatorOrNull(llvm::BasicBlock* block) {
 #endif
 }
 
+bool CaptureStoredByValue(core::AnonymousFunctionExpression::CaptureMode mode) {
+    using CaptureMode = core::AnonymousFunctionExpression::CaptureMode;
+    return mode == CaptureMode::Copy || mode == CaptureMode::Lend ||
+           mode == CaptureMode::Own;
+}
+
 }  // namespace
 
 LlvmCodeGenerator::LlvmCodeGenerator() : _builder(_context) {}
@@ -1246,12 +1252,9 @@ llvm::StructType* LlvmCodeGenerator::ClosureEnvironmentType(
     for (const auto& capture : function.Captures()) {
         const bool borrowedValue =
             capture.variable->Type().HasBorrowedLifetime();
-        fields.push_back(
-            capture.mode ==
-                        core::AnonymousFunctionExpression::CaptureMode::Copy ||
-                    borrowedValue
-                ? MapType(capture.variable->Type())
-                : llvm::PointerType::getUnqual(_context));
+        fields.push_back(CaptureStoredByValue(capture.mode) || borrowedValue
+                             ? MapType(capture.variable->Type())
+                             : llvm::PointerType::getUnqual(_context));
     }
     environment->setBody(fields);
     return environment;
@@ -1280,8 +1283,15 @@ llvm::Function* LlvmCodeGenerator::ClosureDestroyer(
     for (std::size_t index = function.Captures().size(); index > 0; --index) {
         const auto& capture = function.Captures()[index - 1];
         if (capture.mode ==
-                core::AnonymousFunctionExpression::CaptureMode::Copy &&
-            capture.variable->Type().OwnsStorage())
+            core::AnonymousFunctionExpression::CaptureMode::Own) {
+            llvm::Value* field = _builder.CreateStructGEP(
+                environmentType, environment, index - 1);
+            EmitFree(_builder.CreateLoad(MapType(capture.variable->Type()),
+                                         field, "owned.capture"),
+                     capture.variable->Type());
+        } else if (capture.mode ==
+                       core::AnonymousFunctionExpression::CaptureMode::Copy &&
+                   capture.variable->Type().OwnsStorage())
             EmitDestroyAt(_builder.CreateStructGEP(environmentType, environment,
                                                    index - 1),
                           capture.variable->Type());
@@ -1344,8 +1354,7 @@ llvm::Value* LlvmCodeGenerator::EmitClosure(
     for (std::size_t index = 0; index < expression.Captures().size(); ++index) {
         const auto& capture = expression.Captures()[index];
         llvm::Value* value = nullptr;
-        if (capture.mode ==
-                core::AnonymousFunctionExpression::CaptureMode::Copy ||
+        if (CaptureStoredByValue(capture.mode) ||
             capture.variable->Type().HasBorrowedLifetime()) {
             value = EmitExpression(*capture.value);
             if (value != nullptr &&
@@ -1447,8 +1456,7 @@ bool LlvmCodeGenerator::EmitFunction(
                 llvm::Value* field = _builder.CreateStructGEP(
                     environmentType, &argument, captureIndex);
                 llvm::Value* storage = field;
-                if (capture.mode !=
-                        core::AnonymousFunctionExpression::CaptureMode::Copy &&
+                if (!CaptureStoredByValue(capture.mode) &&
                     !capture.variable->Type().HasBorrowedLifetime())
                     storage = _builder.CreateLoad(
                         llvm::PointerType::getUnqual(_context), field,
