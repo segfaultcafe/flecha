@@ -71,10 +71,15 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::StructType* StringViewType();
     [[nodiscard]] llvm::StructType* StringType();
     [[nodiscard]] llvm::FunctionType* MapFunctionType(
-        const semantic::FunctionSymbol& function);
+        const lowering::BoundFunction& function);
     [[nodiscard]] llvm::FunctionType* MapCallableInvokeType(
         const semantic::CallableSignature& signature);
     llvm::Function* CallableAdapter(const semantic::FunctionSymbol& symbol);
+    [[nodiscard]] llvm::StructType* ClosureEnvironmentType(
+        const lowering::BoundFunction& function);
+    llvm::Function* ClosureDestroyer(const lowering::BoundFunction& function);
+    llvm::Value* EmitClosure(
+        const lowering::BoundFunctionExpression& expression);
     [[nodiscard]] std::optional<llvm::Attribute::AttrKind>
     ExternIntegerExtension(semantic::SemanticType type) const;
     void ApplyExternAttributes(const semantic::FunctionSymbol& symbol,
@@ -182,6 +187,13 @@ class LlvmCodeGenerator final {
         _functions;
     std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
         _callableAdapters;
+    std::unordered_map<const semantic::FunctionSymbol*,
+                       const lowering::BoundFunction*>
+        _boundFunctions;
+    std::unordered_map<const semantic::FunctionSymbol*, llvm::StructType*>
+        _closureEnvironmentTypes;
+    std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
+        _closureDestroyers;
     std::unordered_map<const semantic::VariableSymbol*, llvm::Value*>
         _variables;
     std::unordered_map<std::string, llvm::BasicBlock*> _positions;
@@ -201,6 +213,7 @@ class LlvmCodeGenerator final {
     // Fresh owned results already have independent storage. The first owning
     // destination can transfer them instead of cloning their contents.
     std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedStrings;
+    std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedValues;
     llvm::Value* _returnStorage = nullptr;
     llvm::Function* _currentFunction = nullptr;
     semantic::SemanticType _currentReturnType{semantic::SemanticTypeKind::Void};

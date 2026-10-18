@@ -347,11 +347,23 @@ class Dumper final {
                         .Value());
                 break;
             case BoundNodeKind::FunctionExpression:
-                _stream << "function_ref "
-                        << static_cast<const BoundFunctionExpression&>(
-                               expression)
-                               .Symbol()
-                               .Name();
+                {
+                    const auto& function =
+                        static_cast<const BoundFunctionExpression&>(
+                            expression);
+                    _stream << "function_ref " << function.Symbol().Name();
+                    if (!function.Captures().empty()) {
+                        _stream << " [";
+                        bool first = true;
+                        for (const auto& capture : function.Captures()) {
+                            if (!first) _stream << ", ";
+                            first = false;
+                            _stream << "copy ";
+                            WriteExpression(*capture.value);
+                        }
+                        _stream << "]";
+                    }
+                }
                 break;
             case BoundNodeKind::IncrementExpression:
                 _stream << "(post-increment ";

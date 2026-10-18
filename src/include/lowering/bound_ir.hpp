@@ -382,21 +382,32 @@ class BoundDirectExpression final : public BoundExpression {
     std::unique_ptr<BoundExpression> _value;
 };
 
+struct BoundClosureCapture final {
+    const semantic::VariableSymbol* variable;
+    std::unique_ptr<BoundExpression> value;
+};
+
 class BoundFunctionExpression final : public BoundExpression {
    public:
     BoundFunctionExpression(source::SourceRange range,
-                            const semantic::FunctionSymbol& symbol)
+                            const semantic::FunctionSymbol& symbol,
+                            std::vector<BoundClosureCapture> captures = {})
         : BoundExpression(range, symbol.Type().WithoutConst()),
-          _symbol(symbol) {}
+          _symbol(symbol),
+          _captures(std::move(captures)) {}
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::FunctionExpression;
     }
     [[nodiscard]] const semantic::FunctionSymbol& Symbol() const {
         return _symbol;
     }
+    [[nodiscard]] const std::vector<BoundClosureCapture>& Captures() const {
+        return _captures;
+    }
 
    private:
     const semantic::FunctionSymbol& _symbol;
+    std::vector<BoundClosureCapture> _captures;
 };
 
 class BoundUnaryExpression final : public BoundExpression {
@@ -811,13 +822,19 @@ class BoundBuildExpression final : public BoundExpression {
 class BoundFunction final {
    public:
     BoundFunction(const semantic::FunctionSymbol& symbol,
+                  std::vector<const semantic::VariableSymbol*> captures,
                   std::vector<const semantic::VariableSymbol*> parameters,
                   std::unique_ptr<BoundBlockStatement> body)
         : _symbol(symbol),
+          _captures(std::move(captures)),
           _parameters(std::move(parameters)),
           _body(std::move(body)) {}
     [[nodiscard]] const semantic::FunctionSymbol& Symbol() const {
         return _symbol;
+    }
+    [[nodiscard]] const std::vector<const semantic::VariableSymbol*>&
+    Captures() const {
+        return _captures;
     }
     [[nodiscard]] const std::vector<const semantic::VariableSymbol*>&
     Parameters() const {
@@ -828,6 +845,7 @@ class BoundFunction final {
 
    private:
     const semantic::FunctionSymbol& _symbol;
+    std::vector<const semantic::VariableSymbol*> _captures;
     std::vector<const semantic::VariableSymbol*> _parameters;
     std::unique_ptr<BoundBlockStatement> _body;
 };
