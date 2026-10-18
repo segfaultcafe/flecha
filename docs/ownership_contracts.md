@@ -47,6 +47,50 @@ ownership does not guarantee non-nullness. Visible factory return paths preserve
 allocation-error/null relationships, including `new<T>` failure paths. An arbitrary
 error result does not imply that an accompanying owning pointer is null.
 
+## Anonymous-function captures
+
+Raw allocations use explicit capture contracts, parallel to parameter
+contracts but tied to the closure environment:
+
+```flecha
+unsafe func Reader() => (i32);
+
+unsafe i32 use() {
+    borrowed, borrowError := new<i32>(20);
+    if borrowError != none { return 1; }
+    i32 result = 0;
+    {
+        Reader reader = unsafe [lend borrowed]() => { return *borrowed; };
+        result = reader();
+    }
+    free(borrowed);
+
+    retained, retainError := new<i32>(22);
+    if retainError != none { return 2; }
+    Reader owner = unsafe [own retained]() => { return *retained; };
+    return result + owner();
+}
+```
+
+Both capture modes require an `unsafe` anonymous function and a raw pointer or
+runtime-sized buffer. A tracked allocation cannot use `copy`, because copying
+the address does not say which value owns cleanup. Captured bindings are
+read-only; mutation through a mutable pointer remains possible.
+
+`lend name` copies the raw handle without transferring its cleanup obligation.
+The closure keeps that allocation lent until the callable leaves its creation
+scope, so the owner cannot be freed or passed to an `own` consumer in the
+meantime. A lending closure cannot be returned or stored into a longer-lived
+binding or container.
+
+`own name` consumes the source owner's cleanup obligation when the closure is
+created. Moving the callable moves that obligation. Its destroy thunk releases
+the captured allocation in reverse capture order, then frees the environment.
+Null remains valid and needs no cleanup. The callable may be invoked repeatedly,
+so its body cannot free the capture or pass it to an `own` parameter; otherwise
+the next invocation could use released storage. Such consuming bodies require a
+future single-use callable design.
+
 ## Owning fields and tear
 
 ```flecha

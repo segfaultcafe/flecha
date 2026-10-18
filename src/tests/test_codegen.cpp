@@ -156,6 +156,29 @@ TEST(LlvmCodeGeneratorTests, EmitsHeapBackedCopyCaptureEnvironments) {
     EXPECT_NE(ir.find("flecha_runtime_v1_free"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, EmitsOwnedRawResourceCaptureCleanup) {
+    GeneratedSource result = Generate(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Reader reader = unsafe [own pointer]() => { return *pointer; };
+            return reader();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("owned.capture"), std::string::npos);
+    EXPECT_NE(ir.find("$closure.destroy"), std::string::npos);
+    EXPECT_NE(ir.find("free.release"), std::string::npos);
+    EXPECT_NE(ir.find("flecha_runtime_v1_free"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsForwardAndRecursiveCalls) {
     GeneratedSource result = Generate(
         "i32 main() { return Add(Factorial(3), 36); } "
@@ -921,6 +944,110 @@ TEST(NativeCompilerTests, RunsUnsafeRawPointerCopyCaptures) {
     ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
                                          "native_raw_capture_test",
                                          executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsLentAndOwnedRawResourceCaptures) {
+    GeneratedSource result = Generate(R"(
+        unsafe func Reader() => (i32);
+
+        structure Probe { *i32 tears; i32 value; };
+        unsafe Probe Probe::init(*i32 tears, i32 value) override {
+            return build Probe {
+                self.tears = tears;
+                self.value = value;
+            };
+        }
+        void Probe::tear(&self) override {
+            unsafe { *self->tears = *self->tears + 1; }
+        }
+
+        unsafe i32 main() {
+            borrowed, borrowFailure := new<i32>(20);
+            if borrowFailure != none { return 1; }
+            i32 borrowedValue = 0;
+            {
+                Reader reader = unsafe [lend borrowed]() => {
+                    return *borrowed;
+                };
+                borrowedValue = reader();
+            }
+            free(borrowed);
+
+            i32 tears = 0;
+            probe, ownFailure := new<Probe>(Probe::init(&raw tears, 22));
+            if ownFailure != none { return 2; }
+            {
+                Reader owner = unsafe [own probe]() => {
+                    return probe->value;
+                };
+                if owner() != 22 { return 3; }
+                if owner() != 22 { return 4; }
+                if tears != 0 { return 5; }
+            }
+            if tears != 1 { return 6; }
+            return borrowedValue + 22;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_raw_resource_capture_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_raw_resource_capture_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, ReturnsOwnedRawResourceCaptures) {
+    GeneratedSource result = Generate(R"(
+        unsafe func Reader() => (i32);
+
+        unsafe Reader bind(own *i32 pointer) {
+            return unsafe [own pointer]() => { return *pointer; };
+        }
+
+        unsafe i32 main() {
+            pointer, pointerFailure := new<i32>(20);
+            if pointerFailure != none { return 1; }
+            Reader returned = bind(pointer);
+
+            buffer, bufferFailure := new<[]i32>(2);
+            if bufferFailure != none { return 2; }
+            buffer[0] = 22;
+            Reader dynamic = unsafe [own buffer]() => { return buffer[0]; };
+            return returned() + dynamic();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_returned_raw_resource_capture_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "native_returned_raw_resource_capture_test",
+        executablePath.string()))
         << compiler.Error();
     const std::string executablePathText = executablePath.string();
     const llvm::StringRef arguments[] = {executablePathText};
