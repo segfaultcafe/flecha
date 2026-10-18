@@ -3,16 +3,16 @@
 A module is one `.fl` file. Its declaration comes first and matches the filename:
 
 ```flecha
-module factorial;
+module formatting;
 
-export i32 factorial(i32 n) {
-    if n <= 1 { return 1; }
-    return n * factorial(n - 1);
+export void print_result(usize index) {
+    stdout("Found at index: ");
+    stdoutln(index);
 }
 ```
 
-For `src/parser/math/factorial.fl`, the import path is
-`root::parser::math::factorial`. Directories supply the namespace path; the module
+For `src/ui/formatting.fl`, the import path is
+`root::ui::formatting`. Directories supply the namespace path; the module
 declaration contains only the filename stem.
 
 ## Import blocks
@@ -21,12 +21,16 @@ declaration contains only the filename stem.
 module main;
 
 @imports
-    :: root::parser::math::factorial
-    :: root::parser::tokens as parser_tokens
-    :: lib::std::containers;
+    :: lib::std::containers::algorithms;
 
-void main() {
-    stdoutln(factorial::factorial(5));
+i32 main() {
+    [5]i32 values = [10, 20, 30, 20, 40];
+    index, found := algorithms::index_of<i32>(values[:], 30);
+    if found {
+        stdoutln(index);
+        return 0;
+    }
+    return 1;
 }
 ```
 
@@ -42,8 +46,8 @@ a top-level declaration in the same module.
 resolves against a configured library's source root. When that library imports
 `root::helper`, it resolves its own helper, not the application's helper.
 The final path segment becomes the local namespace unless an alias is supplied.
-Imported functions use `factorial::factorial(5)`. Imported types use
-`containers::Box`; static methods use `containers::Box::init(...)`. Existing
+Imported functions use `algorithms::index_of<i32>(values[:], 30)`. Imported
+types use `containers::Box`; static methods use `containers::Box::init(...)`. Existing
 instance member syntax is unchanged. Qualified error types and variants work as
 `containers::ContainerError.Empty`.
 
@@ -55,14 +59,14 @@ Directory imports support all immediate modules or selected module names:
 
 ```flecha
 @imports
-    :: root::parser::math::*
-    :: lib::std::containers::{array, linked_list};
+    :: root::ui::*
+    :: lib::std::containers::{array, algorithms};
 ```
 
 `*` imports every `.fl` file directly in the directory, in filename order; it does
 not recurse into subdirectories. An existing empty directory imports nothing.
 Braces select module files, not declarations within a module. Each module keeps
-its filename as its namespace, so calls still use `factorial::factorial(2)`.
+its filename as its namespace, so calls still use `algorithms::contains<i32>(values[:], 2)`.
 Duplicate namespaces are errors; use separate explicit imports with `as` to
 resolve collisions. A wildcard or brace group cannot take a collective alias.
 
