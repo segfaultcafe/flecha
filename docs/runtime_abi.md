@@ -113,7 +113,9 @@ Closure environments use the same allocator. Because creating a callable value
 has no language-level error result, a null environment allocation calls
 `flecha_runtime_v1_allocation_failure()`, which prints a runtime diagnostic and
 terminates. Copy-captured owning fields are recursively torn down in reverse
-capture order before `flecha_runtime_v1_free`. Checked-reference fields are
+capture order before `flecha_runtime_v1_free`. An `own` raw-resource field is
+also released in reverse capture order, using its pointee's typed teardown
+before the runtime free. `lend` raw-resource and checked-reference fields are
 non-owning pointers or borrowed descriptors and are not torn down; compile-time
 lifetime validation ensures their targets remain live.
 

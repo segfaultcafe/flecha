@@ -75,6 +75,8 @@ module highlighting;
 func Mapper(i32) => (i32);
 Mapper copied = [copy factor](value) => { return value + factor; };
 Mapper borrowed = [&factor, &const limit](value) => { return value + factor + limit; };
+Mapper lent = unsafe [lend pointer](value) => { return value + *pointer; };
+Mapper owned = unsafe [own owner](value) => { return value + *owner; };
 test gold_keyword(&testing::UnitTest t) {}
 export i32 exported_function() { return 42; }
 

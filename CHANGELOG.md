@@ -4,6 +4,10 @@
 
 ### Language
 
+- Unsafe anonymous functions can capture tracked raw resources with `lend` or
+  `own`. Lending closures cannot escape or overlap a free/transfer, while owned
+  captures move cleanup into the closure and release exactly once when its
+  environment is destroyed.
 - Anonymous functions can explicitly borrow outer storage with `&name` or
   `&const name`. Callable moves, returns, and containers preserve borrow
   origins, and invalid storage or return escapes are diagnosed.

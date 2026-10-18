@@ -49,10 +49,12 @@ borrow checker rejects storage and return escapes, keeps loans active until the
 closure's last use, and uses `<- parameter` contracts to describe borrowing
 callable results across function boundaries.
 
-The remaining planned capture modes are `lend` and `own`. Raw-pointer
-parameters, results, and copy captures require an `unsafe` literal. Future
-`lend` closures cannot escape. `own` transfers cleanup into the closure, but a
-reusable closure cannot consume that capture from its body. `once func` stays
+Raw-resource captures use `lend name` and `own name`, and require an `unsafe`
+literal. `lend` preserves the current owner's cleanup obligation, prevents
+conflicting free or transfer while the closure is live, and cannot escape its
+creation scope. `own` transfers cleanup into the closure environment, whose
+destroy thunk releases it exactly once. A reusable closure may read or mutate
+through an owned pointer but cannot consume it from its body. `once func` stays
 on the future radar.
 
 ## Implementation sequence
@@ -70,8 +72,9 @@ on the future radar.
 4. **Checked-reference captures — implemented.** `&` and `&const`,
    explicit-capture-only name resolution, last-use borrow liveness, callable
    return-origin propagation, and storage/return/container escape diagnostics.
-5. **Raw-resource captures.** Add unsafe `lend` and `own`, nonescape checking,
-   allocation-obligation transfer, and exactly-once cleanup.
+5. **Raw-resource captures — implemented.** Unsafe `lend` and `own`, lexical
+   nonescape checking, allocation-obligation transfer, conflict diagnostics,
+   and exactly-once cleanup.
 6. **Integration and release hardening.** Standard-library callbacks,
    examples, editor support, sanitizer/leak/failure-injection coverage, package
    validation, and indirect-call benchmarks.
@@ -82,7 +85,9 @@ environment and typed destroy thunk without changing callable storage layout.
 The environment initializes captures in source order. Copy fields own their
 snapshots and are released in reverse order. Checked-reference fields are
 non-owning and are never destroyed; the borrow checker proves their storage is
-live. The destroy thunk then releases the environment allocation.
+live. Lent raw resources are also non-owning. Owned raw resources are released
+in reverse capture order before the destroy thunk releases the environment
+allocation.
 
 ## Language tests (implemented before 0.2.0)
 

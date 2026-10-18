@@ -198,8 +198,28 @@ not affect the captured value. Captured state belongs to the closure and may be
 mutated independently when its source binding was writable.
 
 Copy captures reject borrowed handles, callable values, and other noncopyable
-values. A raw pointer may be copied only by an `unsafe` anonymous function;
-owning and lending raw-resource contracts remain future capture modes.
+values. A raw pointer may be copied only by an `unsafe` anonymous function.
+Tracked raw allocations require an explicit resource capture instead:
+
+```flecha
+unsafe Reader inspect(lend *const i32 pointer) {
+    return unsafe [lend pointer]() => { return *pointer; }; // rejected: escape
+}
+
+unsafe Reader retain(own *i32 pointer) {
+    return unsafe [own pointer]() => { return *pointer; };
+}
+```
+
+`lend name` keeps the tracked allocation with its current owner and prevents
+freeing or transferring that allocation while the closure is live. A lending
+closure cannot leave the lexical scope in which it was created. `own name`
+transfers cleanup responsibility into the closure environment; its destroy
+thunk releases the allocation exactly once. Both forms require an `unsafe`
+anonymous function and a raw pointer or runtime-sized buffer. Their captured
+bindings are read-only. Because ordinary callables are reusable, their bodies
+may access an owned capture but cannot free or transfer it. Consuming a capture
+from the body remains reserved for a future `once func` design.
 
 `&name` creates an exclusive checked borrow of writable storage. `&const name`
 creates a shared, read-only borrow. The loan lasts until the closure's last use,
