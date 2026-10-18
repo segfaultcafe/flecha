@@ -107,6 +107,29 @@ bool RequiresBorrowSource(SemanticType type) {
                        RequiresBorrowSource);
 }
 
+bool CanCarryBorrow(SemanticType type) {
+    std::unordered_set<const StructureType*> structures;
+    const auto carries = [&](const auto& self, SemanticType candidate) -> bool {
+        if (candidate.HasBorrowedLifetime() ||
+            candidate.Kind() == SemanticTypeKind::Function)
+            return true;
+        if (candidate.Kind() == SemanticTypeKind::Tuple)
+            return std::any_of(
+                candidate.Elements().begin(), candidate.Elements().end(),
+                [&](SemanticType element) { return self(self, element); });
+        if (candidate.Kind() == SemanticTypeKind::Array ||
+            candidate.Kind() == SemanticTypeKind::OwnedBuffer)
+            return self(self, *candidate.Target());
+        if (candidate.Kind() == SemanticTypeKind::Structure) {
+            if (!structures.insert(candidate.Structure()).second) return false;
+            for (const StructureField& field : candidate.Structure()->fields)
+                if (self(self, field.type)) return true;
+        }
+        return false;
+    };
+    return carries(carries, type);
+}
+
 bool ContainsRawPointer(SemanticType type) {
     std::unordered_set<const StructureType*> structures;
     std::unordered_set<const CallableSignature*> callables;
@@ -684,7 +707,6 @@ void SemanticAnalyzer::ResolveCallableTypes(const core::CompilationUnit& unit) {
             : results.size() == 1 ? results.front()
                                   : SemanticType(std::move(results));
 
-        const bool hasBorrowedResult = HasBorrowedResult(signature.result);
         const bool requiresBorrowSource =
             RequiresBorrowSource(signature.result);
         if (requiresBorrowSource && !syntax.HasBorrowSource())
@@ -692,11 +714,11 @@ void SemanticAnalyzer::ResolveCallableTypes(const core::CompilationUnit& unit) {
                    syntax.Range(),
                    "reference and slice callable results require a '<- "
                    "parameter>' borrow contract");
-        else if (!hasBorrowedResult && syntax.HasBorrowSource())
+        else if (!CanCarryBorrow(signature.result) && syntax.HasBorrowSource())
             Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                    syntax.BorrowSourceRange(),
-                   "a borrow contract requires a reference, slice, or "
-                   "stringv result");
+                   "a borrow contract requires a result that can carry a "
+                   "borrow");
         else if (syntax.HasBorrowSource()) {
             for (std::size_t index = 0; index < syntax.Parameters().size();
                  ++index)
@@ -710,12 +732,12 @@ void SemanticAnalyzer::ResolveCallableTypes(const core::CompilationUnit& unit) {
                        syntax.BorrowSourceRange(),
                        "borrow source '" + syntax.BorrowSource() +
                            "' is not a named callable parameter");
-            else if (!signature.parameters[*signature.borrowSourceIndex]
-                          .HasBorrowedLifetime()) {
+            else if (!CanCarryBorrow(
+                         signature.parameters[*signature.borrowSourceIndex])) {
                 Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                        syntax.BorrowSourceRange(),
-                       "a callable borrow source must be a checked reference, "
-                       "slice, or stringv parameter");
+                       "a callable borrow source must be a parameter that can "
+                       "carry a borrow");
                 signature.borrowSourceIndex.reset();
             }
         }
@@ -1249,7 +1271,6 @@ void SemanticAnalyzer::RegisterFunction(
                    "a test must be declared in a '_test.fl' module and take "
                    "exactly one mutable '&testing::UnitTest' parameter");
     }
-    const bool hasBorrowedResult = HasBorrowedResult(returnType);
     const bool requiresBorrowSource = RequiresBorrowSource(returnType);
     std::optional<std::size_t> borrowSourceIndex;
     if (returnType.Kind() == SemanticTypeKind::Tuple &&
@@ -1266,11 +1287,10 @@ void SemanticAnalyzer::RegisterFunction(
                function.ReturnType().Range(),
                "reference and slice results require a '<- parameter>' "
                "borrow contract");
-    } else if (!hasBorrowedResult && function.HasBorrowSource()) {
+    } else if (!CanCarryBorrow(returnType) && function.HasBorrowSource()) {
         Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                function.BorrowSourceRange(),
-               "a borrow contract requires a reference, slice, or stringv "
-               "result");
+               "a borrow contract requires a result that can carry a borrow");
     } else if (function.HasBorrowSource()) {
         for (std::size_t index = 0; index < function.Parameters().size();
              ++index) {
@@ -1285,12 +1305,11 @@ void SemanticAnalyzer::RegisterFunction(
                    function.BorrowSourceRange(),
                    "borrow source '" + function.BorrowSource() +
                        "' is not a parameter");
-        } else if (!parameterTypes[*borrowSourceIndex].HasBorrowedLifetime()) {
+        } else if (!CanCarryBorrow(parameterTypes[*borrowSourceIndex])) {
             Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                    function.BorrowSourceRange(),
                    "borrow source '" + function.BorrowSource() +
-                       "' must be a checked reference, slice, or stringv "
-                       "parameter");
+                       "' must be a parameter that can carry a borrow");
             borrowSourceIndex.reset();
         }
     }
@@ -1643,10 +1662,10 @@ void SemanticAnalyzer::AnalyzeFunction(
     _currentScope = &AddScope(previousScope);
     for (const ClosureCapture& capture : _model.Captures(function)) {
         if (!_currentScope->Declare(*capture.variable))
-            Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
-                   capture.syntax->NameRange(),
-                   "duplicate declaration of '" + capture.variable->Name() +
-                       "'");
+            Report(
+                diagnostics::DiagnosticCode::DuplicateDeclaration,
+                capture.syntax->NameRange(),
+                "duplicate declaration of '" + capture.variable->Name() + "'");
     }
     std::size_t parameterIndex = 0;
     for (const std::unique_ptr<core::Parameter>& parameter :
@@ -2463,15 +2482,20 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
         }
         _model._captureSources.emplace(capture.get(), source);
         const SemanticType type = source->Type().WithoutConst();
+        const bool byCopy =
+            capture->Mode() ==
+            core::AnonymousFunctionExpression::CaptureMode::Copy;
+        const bool mutableReference =
+            capture->Mode() ==
+            core::AnonymousFunctionExpression::CaptureMode::Reference;
         if (source->Kind() != SymbolKind::Parameter &&
             source->Kind() != SymbolKind::LocalVariable) {
             Report(diagnostics::DiagnosticCode::NonCopyableValue,
                    capture->NameRange(),
-                   "'" + capture->Name() +
-                       "' is not a variable that can be captured by copy");
+                   "'" + capture->Name() + "' is not a capturable variable");
             continue;
         }
-        if (HasBorrowedResult(type)) {
+        if (byCopy && HasBorrowedResult(type)) {
             Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                    capture->NameRange(),
                    "borrowed value '" + capture->Name() +
@@ -2485,16 +2509,32 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
                        "' requires an unsafe anonymous function");
             continue;
         }
-        if (!type.IsCopyable()) {
+        if (byCopy && !type.IsCopyable()) {
             Report(diagnostics::DiagnosticCode::NonCopyableValue,
                    capture->NameRange(),
-                   "value '" + capture->Name() + "' of type '" +
-                       type.Name() + "' cannot be captured by copy");
+                   "value '" + capture->Name() + "' of type '" + type.Name() +
+                       "' cannot be captured by copy");
             continue;
         }
+        if (mutableReference &&
+            (!source->Writable() || source->Type().IsConst())) {
+            Report(diagnostics::DiagnosticCode::SymbolNotWritable,
+                   capture->NameRange(),
+                   "cannot mutably capture read-only variable '" +
+                       capture->Name() + "'");
+            continue;
+        }
+        SemanticType capturedType = type;
+        if (capture->Mode() == core::AnonymousFunctionExpression::CaptureMode::
+                                   ConstReference &&
+            (type.Kind() == SemanticTypeKind::Reference ||
+             type.Kind() == SemanticTypeKind::Slice))
+            capturedType = SemanticType(type.Kind(), type.Target()->WithConst(),
+                                        type.IsConst(), type.Length());
         auto variable = std::make_unique<VariableSymbol>(
-            SymbolKind::LocalVariable, capture->Name(), type,
-            capture->NameRange(), source->Writable());
+            SymbolKind::LocalVariable, capture->Name(), capturedType,
+            capture->NameRange(),
+            byCopy ? source->Writable() : mutableReference);
         const auto* capturedVariable = variable.get();
         _model._symbols.push_back(std::move(variable));
         _model._declarations.emplace(capture.get(), capturedVariable);
