@@ -14,6 +14,12 @@ class SemanticAnalyzer;
 
 enum class TransferKind { Copy, Move, Direct };
 
+struct ClosureCapture final {
+    const core::AnonymousFunctionExpression::Capture* syntax;
+    const Symbol* source;
+    const VariableSymbol* variable;
+};
+
 class SemanticModel final {
    public:
     SemanticModel() = default;
@@ -45,6 +51,10 @@ class SemanticModel final {
     }
     const auto& GeneratedFunctions() const { return _generatedFunctions; }
     const auto& AnonymousFunctions() const { return _anonymousFunctions; }
+    [[nodiscard]] const std::vector<ClosureCapture>& Captures(
+        const core::FunctionDeclaration& function) const;
+    [[nodiscard]] const Symbol* CaptureSource(
+        const core::AnonymousFunctionExpression::Capture& capture) const;
     const auto& Structures() const { return _structures; }
     const auto& Enums() const { return _enums; }
     [[nodiscard]] const Scope& GlobalScope() const { return *_scopes.front(); }
@@ -61,6 +71,12 @@ class SemanticModel final {
     std::vector<std::unique_ptr<EnumType>> _enums;
     std::vector<std::unique_ptr<core::FunctionDeclaration>> _generatedFunctions;
     std::vector<const core::FunctionDeclaration*> _anonymousFunctions;
+    std::unordered_map<const core::FunctionDeclaration*,
+                       std::vector<ClosureCapture>>
+        _closureCaptures;
+    std::unordered_map<const core::AnonymousFunctionExpression::Capture*,
+                       const Symbol*>
+        _captureSources;
     std::unordered_map<const core::MemberAccessExpression*,
                        const StructureField*>
         _fields;

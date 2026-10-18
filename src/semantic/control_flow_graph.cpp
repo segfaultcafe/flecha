@@ -276,6 +276,18 @@ class GraphBuilder final {
     NodeId BuildExpressionBody(const core::Expression& expression,
                                NodeId next) {
         switch (expression.Kind()) {
+            case core::AstNodeKind::AnonymousFunctionExpression: {
+                const auto& function =
+                    static_cast<const core::AnonymousFunctionExpression&>(
+                        expression);
+                for (auto capture = function.Captures().rbegin();
+                     capture != function.Captures().rend(); ++capture) {
+                    const NodeId read = AddNode({next});
+                    _graph.nodes[read].captureRead = capture->get();
+                    next = read;
+                }
+                return next;
+            }
             case core::AstNodeKind::BuildExpression: {
                 const auto& build =
                     static_cast<const core::BuildExpression&>(expression);

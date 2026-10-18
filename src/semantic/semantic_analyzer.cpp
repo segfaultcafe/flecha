@@ -1641,6 +1641,13 @@ void SemanticAnalyzer::AnalyzeFunction(
 
     Scope* previousScope = _currentScope;
     _currentScope = &AddScope(previousScope);
+    for (const ClosureCapture& capture : _model.Captures(function)) {
+        if (!_currentScope->Declare(*capture.variable))
+            Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                   capture.syntax->NameRange(),
+                   "duplicate declaration of '" + capture.variable->Name() +
+                       "'");
+    }
     std::size_t parameterIndex = 0;
     for (const std::unique_ptr<core::Parameter>& parameter :
          function.Parameters()) {
@@ -2437,11 +2444,70 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
 
     Scope* enclosingScope = _currentScope;
     const std::string enclosingModule = _currentModule;
+    std::vector<ClosureCapture> captures;
+    std::unordered_set<std::string> captureNames;
+    captures.reserve(expression.Captures().size());
+    for (const auto& capture : expression.Captures()) {
+        if (!captureNames.insert(capture->Name()).second) {
+            Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                   capture->NameRange(),
+                   "duplicate capture of '" + capture->Name() + "'");
+            continue;
+        }
+        const Symbol* source = enclosingScope->Lookup(capture->Name());
+        if (source == nullptr) {
+            Report(diagnostics::DiagnosticCode::UnknownName,
+                   capture->NameRange(),
+                   "unknown captured name '" + capture->Name() + "'");
+            continue;
+        }
+        _model._captureSources.emplace(capture.get(), source);
+        const SemanticType type = source->Type().WithoutConst();
+        if (source->Kind() != SymbolKind::Parameter &&
+            source->Kind() != SymbolKind::LocalVariable) {
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   capture->NameRange(),
+                   "'" + capture->Name() +
+                       "' is not a variable that can be captured by copy");
+            continue;
+        }
+        if (HasBorrowedResult(type)) {
+            Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                   capture->NameRange(),
+                   "borrowed value '" + capture->Name() +
+                       "' cannot be captured by copy");
+            continue;
+        }
+        if (ContainsRawPointer(type)) {
+            Report(diagnostics::DiagnosticCode::UnsafeOperation,
+                   capture->NameRange(),
+                   "raw-pointer value '" + capture->Name() +
+                       "' requires a future lend or own capture");
+            continue;
+        }
+        if (!type.IsCopyable()) {
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   capture->NameRange(),
+                   "value '" + capture->Name() + "' of type '" +
+                       type.Name() + "' cannot be captured by copy");
+            continue;
+        }
+        auto variable = std::make_unique<VariableSymbol>(
+            SymbolKind::LocalVariable, capture->Name(), type,
+            capture->NameRange(), source->Writable());
+        const auto* capturedVariable = variable.get();
+        _model._symbols.push_back(std::move(variable));
+        _model._declarations.emplace(capture.get(), capturedVariable);
+        captures.push_back({capture.get(), source, capturedVariable});
+    }
     RegisterFunction(function, true);
     _currentScope = enclosingScope;
     _currentModule = enclosingModule;
     const Symbol* symbol = _model.DeclaredSymbol(function);
     if (symbol == nullptr) return SemanticType::Error();
+    _model._closureCaptures.emplace(&function, std::move(captures));
+    if (_currentFunction && !expression.Captures().empty())
+        _forbiddenZeroEffects.insert(_currentFunction);
     if (ContainsRawPointer(symbol->Type()) && !function.IsUnsafe())
         Report(diagnostics::DiagnosticCode::UnsafeOperation, expression.Range(),
                "raw pointer anonymous function signatures require 'unsafe'");

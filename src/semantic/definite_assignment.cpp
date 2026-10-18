@@ -16,6 +16,8 @@ void AnalyzeDefiniteAssignment(const core::FunctionDeclaration& function,
         const Symbol* symbol = model.DeclaredSymbol(*parameter);
         if (symbol != nullptr) parameters.insert(symbol);
     }
+    for (const ClosureCapture& capture : model.Captures(function))
+        parameters.insert(capture.variable);
     const NodeId entry = graph.entry;
     std::deque<NodeId> worklist;
     for (NodeId index = 0; index < graph.nodes.size(); ++index) {
@@ -97,12 +99,28 @@ void AnalyzeDefiniteAssignment(const core::FunctionDeclaration& function,
     std::vector<InvalidRead> uninitialized;
     for (NodeId index = 0; index < graph.nodes.size(); ++index) {
         const FlowNode& node = graph.nodes[index];
-        if (!node.reachable || node.read == nullptr) continue;
-        const Symbol* symbol = model.SymbolFor(*node.read);
+        if (!node.reachable ||
+            (node.read == nullptr && node.captureRead == nullptr))
+            continue;
+        const Symbol* symbol =
+            node.read != nullptr ? model.SymbolFor(*node.read)
+                                 : model.CaptureSource(*node.captureRead);
         if (symbol != nullptr && symbol->Kind() != SymbolKind::Function &&
             !incomingStates[index].contains(symbol)) {
-            uninitialized.push_back(
-                {node.read, movedIncoming[index].contains(symbol)});
+            if (node.read != nullptr) {
+                uninitialized.push_back(
+                    {node.read, movedIncoming[index].contains(symbol)});
+            } else {
+                diagnostics.Report(
+                    movedIncoming[index].contains(symbol)
+                        ? diagnostics::DiagnosticCode::MovedValue
+                        : diagnostics::DiagnosticCode::UninitializedVariable,
+                    node.captureRead->NameRange(),
+                    "variable '" + node.captureRead->Name() +
+                        (movedIncoming[index].contains(symbol)
+                             ? "' may have been moved"
+                             : "' may be read before it is initialized"));
+            }
         }
     }
     std::sort(uninitialized.begin(), uninitialized.end(),

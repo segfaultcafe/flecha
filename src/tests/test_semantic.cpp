@@ -205,6 +205,93 @@ TEST(SemanticCallableTests, DiagnosesMissingContextAndCaptures) {
               nullptr);
 }
 
+TEST(SemanticCallableTests, ResolvesExplicitCopyCaptures) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 main() {
+            i32 factor = 2;
+            string label = "scale";
+            Mapper callback = [copy factor, copy label](value) => {
+                label = "used";
+                return value * factor;
+            };
+            factor = 10;
+            return callback(21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.AnonymousFunctions().size(), 1);
+    const auto& captures =
+        result.model.Captures(*result.model.AnonymousFunctions().front());
+    ASSERT_EQ(captures.size(), 2);
+    EXPECT_EQ(captures[0].source->Name(), "factor");
+    EXPECT_EQ(captures[0].variable->Name(), "factor");
+    EXPECT_EQ(captures[0].variable->Type().Name(), "i32");
+    EXPECT_EQ(captures[1].variable->Type().Name(), "string");
+}
+
+TEST(SemanticCallableTests, RequiresEveryOuterLocalToBeCaptured) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 main() {
+            i32 captured = 1;
+            i32 omitted = 2;
+            Mapper callback = [copy captured](value) => {
+                return value + captured + omitted;
+            };
+            return callback(1);
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnknownName),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsInvalidCopyCaptures) {
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { i32 x = 1; "
+                          "Mapper f = [copy x, copy x](v) => { return v; }; "
+                          "return 0; }"),
+                  DiagnosticCode::DuplicateDeclaration),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { Mapper f = "
+                          "[copy missing](v) => { return v; }; return 0; }"),
+                  DiagnosticCode::UnknownName),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { Mapper "
+                          "original = (v) => { return v; }; Mapper f = [copy "
+                          "original](v) => { return original(v); }; return 0; "
+                          "}"),
+                  DiagnosticCode::NonCopyableValue),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { i32 x = 1; "
+                          "&const i32 r = &x; Mapper f = [copy r](v) => { "
+                          "return v; }; return 0; }"),
+                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); unsafe i32 main() { i32 "
+                          "x = 1; *i32 p = &raw x; Mapper f = [copy p](v) => { "
+                          "return v; }; return 0; }"),
+                  DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, ChecksCopyCaptureSourceInitialization) {
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { i32 x; "
+                          "Mapper f = [copy x](v) => { return v + x; }; return "
+                          "0; }"),
+                  DiagnosticCode::UninitializedVariable),
+              nullptr);
+}
+
 TEST(SemanticCallableTests, EnforcesAnonymousFunctionPointerSafety) {
     Analysis valid = Analyze(R"(
         unsafe func Reader(*const i32) => (i32);

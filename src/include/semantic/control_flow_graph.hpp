@@ -15,6 +15,7 @@ struct FlowNode final {
     std::vector<const core::BlockStatement*> scopes;
     // Ordered read/write events used by definite assignment.
     const core::NameExpression* read = nullptr;
+    const core::AnonymousFunctionExpression::Capture* captureRead = nullptr;
     const Symbol* write = nullptr;
     const Symbol* reset = nullptr;
     const Symbol* move = nullptr;

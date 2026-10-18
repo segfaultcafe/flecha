@@ -241,6 +241,7 @@ void Walk(const AstNode& input, const Callback& callback) {
             break;
         }
         case AstNodeKind::CompilationUnit:
+        case AstNodeKind::AnonymousCapture:
         case AstNodeKind::ErrorDeclaration:
         case AstNodeKind::ProceedStatement:
         case AstNodeKind::BreakStatement:

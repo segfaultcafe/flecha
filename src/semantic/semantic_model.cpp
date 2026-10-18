@@ -25,6 +25,19 @@ const std::vector<const Symbol*>& SemanticModel::DeferredCaptures(
     return found == _deferredCaptures.end() ? EMPTY : found->second;
 }
 
+const std::vector<ClosureCapture>& SemanticModel::Captures(
+    const core::FunctionDeclaration& function) const {
+    static const std::vector<ClosureCapture> EMPTY;
+    const auto found = _closureCaptures.find(&function);
+    return found == _closureCaptures.end() ? EMPTY : found->second;
+}
+
+const Symbol* SemanticModel::CaptureSource(
+    const core::AnonymousFunctionExpression::Capture& capture) const {
+    const auto found = _captureSources.find(&capture);
+    return found == _captureSources.end() ? nullptr : found->second;
+}
+
 const Symbol* SemanticModel::DestructureTarget(
     const core::DestructureBinding& binding) const {
     const auto found = _destructureTargets.find(&binding);
