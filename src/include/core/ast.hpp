@@ -523,7 +523,7 @@ class FunctionDeclaration final : public Declaration {
 
 class AnonymousFunctionExpression final : public Expression {
    public:
-    enum class CaptureMode { Copy };
+    enum class CaptureMode { Copy, Reference, ConstReference };
 
     class Capture final : public AstNode {
        public:
@@ -567,7 +567,8 @@ class AnonymousFunctionExpression final : public Expression {
         return *_function;
     }
     [[nodiscard]] FunctionDeclaration& Function() { return *_function; }
-    [[nodiscard]] const std::vector<std::unique_ptr<Capture>>& Captures() const {
+    [[nodiscard]] const std::vector<std::unique_ptr<Capture>>& Captures()
+        const {
         return _captures;
     }
     [[nodiscard]] bool HasInferredSignature() const {

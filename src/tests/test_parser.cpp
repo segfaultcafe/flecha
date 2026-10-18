@@ -226,6 +226,36 @@ TEST(ParserTests, ParsesCopyCaptureLists) {
               AnonymousFunctionExpression::CaptureMode::Copy);
 }
 
+TEST(ParserTests, ParsesCheckedReferenceCaptureLists) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        func Mapper() => (i32);
+        void main() {
+            Mapper callback = [&value, &const limit]() => {
+                return value + limit;
+            };
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& variable = static_cast<const VariableDeclarationStatement&>(
+        *main.Body().Statements()[0]);
+    const auto& function = static_cast<const AnonymousFunctionExpression&>(
+        *variable.Initializer());
+    ASSERT_EQ(function.Captures().size(), 2);
+    EXPECT_EQ(function.Captures()[0]->Name(), "value");
+    EXPECT_EQ(function.Captures()[0]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::Reference);
+    EXPECT_EQ(function.Captures()[1]->Name(), "limit");
+    EXPECT_EQ(function.Captures()[1]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::ConstReference);
+}
+
 TEST(ParserTests, ParsesTestDeclarationsWithMutableContexts) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

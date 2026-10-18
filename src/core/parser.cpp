@@ -1714,18 +1714,27 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
     const source::SourceLocation start = first.range.start;
     const bool isUnsafe = Match(TokenType::Unsafe);
     const bool explicitCaptureList = Match(TokenType::LBracket);
-    std::vector<std::unique_ptr<AnonymousFunctionExpression::Capture>>
-        captures;
+    std::vector<std::unique_ptr<AnonymousFunctionExpression::Capture>> captures;
     if (explicitCaptureList) {
         while (!Check(TokenType::RBracket) && !IsAtEnd()) {
-            const Token* mode =
-                Consume(TokenType::Identifier,
-                        "'copy' before a captured name");
-            if (mode == nullptr) return nullptr;
-            if (mode->value != "copy") {
+            AnonymousFunctionExpression::CaptureMode captureMode;
+            const Token* mode = nullptr;
+            if (Check(TokenType::Identifier) && Current().value == "copy") {
+                mode = &Advance();
+                captureMode = AnonymousFunctionExpression::CaptureMode::Copy;
+            } else if (Check(TokenType::Ampersand)) {
+                mode = &Advance();
+                captureMode =
+                    Match(TokenType::Const)
+                        ? AnonymousFunctionExpression::CaptureMode::
+                              ConstReference
+                        : AnonymousFunctionExpression::CaptureMode::Reference;
+            } else {
                 _diagnostics.Report(
-                    diagnostics::DiagnosticCode::UnexpectedToken, mode->range,
-                    "expected 'copy' before a captured name");
+                    diagnostics::DiagnosticCode::UnexpectedToken,
+                    Current().range,
+                    "expected 'copy', '&', or '&const' before a captured "
+                    "name");
                 return nullptr;
             }
             const Token* name =
@@ -1734,8 +1743,7 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
             captures.push_back(
                 std::make_unique<AnonymousFunctionExpression::Capture>(
                     source::SourceRange{mode->range.start, name->range.end},
-                    AnonymousFunctionExpression::CaptureMode::Copy,
-                    name->value, name->range));
+                    captureMode, name->value, name->range));
             if (!Match(TokenType::Comma)) break;
         }
         if (Consume(TokenType::RBracket,
