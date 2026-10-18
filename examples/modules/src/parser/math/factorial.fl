@@ -1,6 +1,0 @@
-module factorial;
-
-export i32 factorial(i32 n) {
-    if n <= 1 { return 1; }
-    return n * factorial(n - 1);
-}
