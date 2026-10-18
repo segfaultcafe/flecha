@@ -283,6 +283,35 @@ TEST(SemanticCallableTests, RejectsInvalidCopyCaptures) {
               nullptr);
 }
 
+TEST(SemanticCallableTests, AllowsRawCopyCapturesOnlyOnUnsafeFunctions) {
+    Analysis valid = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader read = unsafe [copy pointer]() => (i32) {
+                return *pointer;
+            };
+            return read();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis invalid = Analyze(R"(
+        func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader read = [copy pointer]() => (i32) { return 0; };
+            return read();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
 TEST(SemanticCallableTests, ChecksCopyCaptureSourceInitialization) {
     EXPECT_NE(FindErrorDiagnostic(
                   Analyze("func Mapper(i32) => (i32); i32 main() { i32 x; "

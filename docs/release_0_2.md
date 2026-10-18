@@ -38,14 +38,15 @@ Mapper scaled = [copy factor](value) => { return value * factor; };
 remain valid elsewhere. Captures are explicit: an outer local omitted from the
 list is not visible in the body. Copyable scalars and aggregates are captured
 by value, owning fields are cloned, and the snapshot remains valid after the
-creating scope exits. Borrowed handles, raw pointers, callable values, and
-other noncopyable values are rejected by this mode.
+creating scope exits. Borrowed handles, callable values, and other noncopyable
+values are rejected by this mode. A raw pointer may be copied only by an
+`unsafe` anonymous function.
 
 The remaining planned capture modes are `&`, `&const`, `lend`, and `own`.
-Raw-pointer parameters and results require an `unsafe` literal; raw pointers
-are never accepted by `copy`. Future `lend` closures cannot escape. `own`
-transfers cleanup into the closure, but a reusable closure cannot consume that
-capture from its body. `once func` stays on the future radar.
+Raw-pointer parameters, results, and copy captures require an `unsafe` literal.
+Future `lend` closures cannot escape. `own` transfers cleanup into the closure,
+but a reusable closure cannot consume that capture from its body. `once func`
+stays on the future radar.
 
 ## Implementation sequence
 

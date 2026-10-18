@@ -191,11 +191,11 @@ and owning fields are deep-copied. Reassigning or leaving the source scope does
 not affect the captured value. Captured state belongs to the closure and may be
 mutated independently when its source binding was writable.
 
-Copy captures reject borrowed handles, raw pointers, callable values, and other
-noncopyable values. Raw resources will use the later `lend` and `own` capture
-modes. Callable values remain move-only, and moving a closure transfers its
-environment and cleanup responsibility exactly once. `once` functions remain
-future work.
+Copy captures reject borrowed handles, callable values, and other noncopyable
+values. A raw pointer may be copied only by an `unsafe` anonymous function;
+owning and lending raw-resource contracts remain future capture modes. Callable
+values remain move-only, and moving a closure transfers its environment and
+cleanup responsibility exactly once. `once` functions remain future work.
 
 ## 6. Return and yield
 

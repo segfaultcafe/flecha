@@ -2478,11 +2478,11 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
                        "' cannot be captured by copy");
             continue;
         }
-        if (ContainsRawPointer(type)) {
+        if (ContainsRawPointer(type) && !function.IsUnsafe()) {
             Report(diagnostics::DiagnosticCode::UnsafeOperation,
                    capture->NameRange(),
                    "raw-pointer value '" + capture->Name() +
-                       "' requires a future lend or own capture");
+                       "' requires an unsafe anonymous function");
             continue;
         }
         if (!type.IsCopyable()) {

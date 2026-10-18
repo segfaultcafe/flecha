@@ -828,6 +828,39 @@ TEST(NativeCompilerTests, RunsNestedCopyCaptures) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsUnsafeRawPointerCopyCaptures) {
+    GeneratedSource result = Generate(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader read = unsafe [copy pointer]() => (i32) {
+                return *pointer;
+            };
+            return read();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_raw_capture_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_raw_capture_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsUnsafeCallableOwnershipContracts) {
     GeneratedSource result = Generate(R"(
         unsafe func Reader(lend *const i32 source) => (i32);
