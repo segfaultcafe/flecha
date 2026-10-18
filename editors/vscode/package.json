@@ -49,6 +49,12 @@
             "settings": {
               "foreground": "#FFD700"
             }
+          },
+          {
+            "scope": "storage.type.function.flecha",
+            "settings": {
+              "foreground": "#569CD6"
+            }
           }
         ]
       }

@@ -72,6 +72,7 @@ unsafe void inspect(lend *const i32 pointer) {}
 stringv directive = "@imports string";
 
 module highlighting;
+func Mapper(i32) => (i32);
 test gold_keyword(&testing::UnitTest t) {}
 export i32 exported_function() { return 42; }
 
