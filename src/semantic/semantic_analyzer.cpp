@@ -1589,6 +1589,12 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                 static_cast<const core::FunctionDeclaration&>(*declaration));
         }
     }
+    // Anonymous functions are discovered while their enclosing bodies are
+    // analyzed. Keep using an index because analyzing one anonymous function
+    // can discover another nested anonymous function.
+    for (std::size_t index = 0; index < _model._anonymousFunctions.size();
+         ++index)
+        AnalyzeFunction(*_model._anonymousFunctions[index]);
     ClassifyTrivialZeros(unit);
     _zeroTrivialityKnown = true;
     for (const auto& structure : _model._structures)
@@ -2133,6 +2139,12 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
     const core::Expression& expression, SemanticType expected) {
     SemanticType type = SemanticType::Error();
     switch (expression.Kind()) {
+        case core::AstNodeKind::AnonymousFunctionExpression:
+            type = AnalyzeAnonymousFunction(
+                static_cast<const core::AnonymousFunctionExpression&>(
+                    expression),
+                expected);
+            break;
         case core::AstNodeKind::TupleExpression:
             type = AnalyzeTuple(
                 static_cast<const core::TupleExpression&>(expression),
@@ -2216,6 +2228,225 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
          expression.Kind() == core::AstNodeKind::BuildExpression))
         RecordCleanupEffects(type);
     return type;
+}
+
+std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
+    SemanticType type, source::SourceRange range,
+    core::OwnershipContract contract) {
+    using core::PrimitiveType;
+    using core::TypeKind;
+
+    const auto primitive = [&](PrimitiveType value) {
+        return std::make_unique<core::TypeNode>(range, value, type.IsConst());
+    };
+    const auto visibleName = [&](SymbolKind kind) {
+        for (const auto& symbol : _model._symbols)
+            if (symbol->Kind() == kind && symbol->Type() == type)
+                if (const auto name = _currentScope->NameFor(*symbol))
+                    return *name;
+        return type.Name();
+    };
+    std::unique_ptr<core::TypeNode> result;
+    switch (type.Kind()) {
+        case SemanticTypeKind::I8:
+            result = primitive(PrimitiveType::I8);
+            break;
+        case SemanticTypeKind::I16:
+            result = primitive(PrimitiveType::I16);
+            break;
+        case SemanticTypeKind::I32:
+            result = primitive(PrimitiveType::I32);
+            break;
+        case SemanticTypeKind::I64:
+            result = primitive(PrimitiveType::I64);
+            break;
+        case SemanticTypeKind::ISize:
+            result = primitive(PrimitiveType::ISize);
+            break;
+        case SemanticTypeKind::U8:
+            result = primitive(PrimitiveType::U8);
+            break;
+        case SemanticTypeKind::U16:
+            result = primitive(PrimitiveType::U16);
+            break;
+        case SemanticTypeKind::U32:
+            result = primitive(PrimitiveType::U32);
+            break;
+        case SemanticTypeKind::U64:
+            result = primitive(PrimitiveType::U64);
+            break;
+        case SemanticTypeKind::USize:
+            result = primitive(PrimitiveType::USize);
+            break;
+        case SemanticTypeKind::F32:
+            result = primitive(PrimitiveType::F32);
+            break;
+        case SemanticTypeKind::F64:
+            result = primitive(PrimitiveType::F64);
+            break;
+        case SemanticTypeKind::Bool:
+            result = primitive(PrimitiveType::Bool);
+            break;
+        case SemanticTypeKind::Char:
+            result = primitive(PrimitiveType::Char);
+            break;
+        case SemanticTypeKind::Void:
+            result = primitive(PrimitiveType::Void);
+            break;
+        case SemanticTypeKind::String:
+            result = primitive(PrimitiveType::String);
+            break;
+        case SemanticTypeKind::StringView:
+            result = primitive(PrimitiveType::StringView);
+            break;
+        case SemanticTypeKind::ErrorValue:
+            result = primitive(PrimitiveType::ErrorValue);
+            break;
+        case SemanticTypeKind::NamedError:
+            result = std::make_unique<core::TypeNode>(
+                range, visibleName(SymbolKind::ErrorType), type.IsConst());
+            break;
+        case SemanticTypeKind::Enum:
+            result = std::make_unique<core::TypeNode>(
+                range, visibleName(SymbolKind::EnumType), type.IsConst());
+            break;
+        case SemanticTypeKind::Structure:
+            result = std::make_unique<core::TypeNode>(
+                range, visibleName(SymbolKind::StructureType), type.IsConst());
+            break;
+        case SemanticTypeKind::Function:
+            result = std::make_unique<core::TypeNode>(
+                range, visibleName(SymbolKind::CallableType), type.IsConst());
+            break;
+        case SemanticTypeKind::Pointer:
+            result = std::make_unique<core::TypeNode>(
+                range, TypeKind::Pointer, TypeSyntax(*type.Target(), range),
+                type.IsConst());
+            break;
+        case SemanticTypeKind::OwnedBuffer: {
+            auto slice = std::make_unique<core::TypeNode>(
+                range, TypeKind::Slice, TypeSyntax(*type.Target(), range));
+            result = std::make_unique<core::TypeNode>(
+                range, TypeKind::Pointer, std::move(slice), type.IsConst());
+            break;
+        }
+        case SemanticTypeKind::Reference:
+            result = std::make_unique<core::TypeNode>(
+                range, TypeKind::Reference, TypeSyntax(*type.Target(), range),
+                type.IsConst());
+            break;
+        case SemanticTypeKind::Array:
+            result = std::make_unique<core::TypeNode>(
+                range, TypeKind::Array, TypeSyntax(*type.Target(), range),
+                type.IsConst(), source::SourceRange{}, type.Length());
+            break;
+        case SemanticTypeKind::Slice:
+            result = std::make_unique<core::TypeNode>(
+                range, TypeKind::Slice, TypeSyntax(*type.Target(), range),
+                type.IsConst());
+            break;
+        case SemanticTypeKind::Tuple: {
+            std::vector<std::unique_ptr<core::TypeNode>> elements;
+            elements.reserve(type.Elements().size());
+            for (const auto element : type.Elements())
+                elements.push_back(TypeSyntax(element, range));
+            result = std::make_unique<core::TypeNode>(
+                range, std::move(elements), type.IsConst());
+            break;
+        }
+        case SemanticTypeKind::Null:
+        case SemanticTypeKind::None:
+        case SemanticTypeKind::Error:
+            result = primitive(PrimitiveType::Void);
+            break;
+    }
+    result->SetContract(contract);
+    return result;
+}
+
+SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
+    const core::AnonymousFunctionExpression& expression,
+    SemanticType expected) {
+    auto& function =
+        const_cast<core::FunctionDeclaration&>(expression.Function());
+    if (const Symbol* existing = _model.DeclaredSymbol(function))
+        return existing->Type();
+
+    function.moduleId = _currentModule;
+    if (expression.HasInferredSignature()) {
+        if (expected.Kind() != SemanticTypeKind::Function) {
+            Report(diagnostics::DiagnosticCode::CannotInferType,
+                   expression.Range(),
+                   "anonymous function signature requires an expected "
+                   "callable type");
+            return SemanticType::Error();
+        }
+        const CallableSignature& signature = expected.Signature();
+        if (function.Parameters().size() != signature.parameters.size()) {
+            Report(diagnostics::DiagnosticCode::IncompatibleType,
+                   expression.Range(),
+                   "expected " + std::to_string(signature.parameters.size()) +
+                       " anonymous function parameters, found " +
+                       std::to_string(function.Parameters().size()));
+            return SemanticType::Error();
+        }
+        for (std::size_t index = 0; index < signature.parameters.size();
+             ++index) {
+            const core::OwnershipContract contract =
+                index < signature.parameterContracts.size()
+                    ? signature.parameterContracts[index]
+                    : core::OwnershipContract::None;
+            function.Parameters()[index]->SetType(
+                TypeSyntax(signature.parameters[index],
+                           function.Parameters()[index]->Range(), contract));
+        }
+
+        if (signature.result.Kind() == SemanticTypeKind::Tuple) {
+            std::vector<std::unique_ptr<core::TypeNode>> elements;
+            elements.reserve(signature.result.Elements().size());
+            for (std::size_t index = 0;
+                 index < signature.result.Elements().size(); ++index) {
+                const core::OwnershipContract contract =
+                    index < signature.resultContracts.size()
+                        ? signature.resultContracts[index]
+                        : core::OwnershipContract::None;
+                elements.push_back(
+                    TypeSyntax(signature.result.Elements()[index],
+                               expression.Range(), contract));
+            }
+            function.SetReturnType(std::make_unique<core::TypeNode>(
+                expression.Range(), std::move(elements)));
+        } else {
+            const core::OwnershipContract contract =
+                signature.resultContracts.empty()
+                    ? core::OwnershipContract::None
+                    : signature.resultContracts.front();
+            function.SetReturnType(
+                TypeSyntax(signature.result, expression.Range(), contract));
+        }
+        if (signature.isUnsafe)
+            function.AddModifier(core::FunctionModifier::Unsafe);
+        if (signature.borrowSourceIndex.has_value()) {
+            const std::size_t source = *signature.borrowSourceIndex;
+            if (source < function.Parameters().size())
+                function.SetBorrowSource(
+                    function.Parameters()[source]->Name(),
+                    function.Parameters()[source]->NameRange());
+        }
+    }
+
+    Scope* enclosingScope = _currentScope;
+    const std::string enclosingModule = _currentModule;
+    RegisterFunction(function, true);
+    _currentScope = enclosingScope;
+    _currentModule = enclosingModule;
+    const Symbol* symbol = _model.DeclaredSymbol(function);
+    if (symbol == nullptr) return SemanticType::Error();
+    if (ContainsRawPointer(symbol->Type()) && !function.IsUnsafe())
+        Report(diagnostics::DiagnosticCode::UnsafeOperation, expression.Range(),
+               "raw pointer anonymous function signatures require 'unsafe'");
+    _model._anonymousFunctions.push_back(&function);
+    return symbol->Type();
 }
 
 SemanticType SemanticAnalyzer::AnalyzeMatch(
@@ -4299,7 +4530,8 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
         return;
     }
     if (expression.Kind() == core::AstNodeKind::BuildExpression ||
-        expression.Kind() == core::AstNodeKind::CallExpression) {
+        expression.Kind() == core::AstNodeKind::CallExpression ||
+        expression.Kind() == core::AstNodeKind::AnonymousFunctionExpression) {
         _model._transfers.insert_or_assign(&expression, TransferKind::Direct);
         return;
     }

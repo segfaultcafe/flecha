@@ -160,6 +160,77 @@ TEST(SemanticCallableTests, TreatsCallableVariablesAsMoveOnly) {
     EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
 }
 
+TEST(SemanticCallableTests,
+     InfersCapturelessAnonymousFunctionsFromAssignmentsArgumentsAndReturns) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 apply(Mapper callback, i32 value) { return callback(value); }
+        Mapper make() { return (value) => { return value + 1; }; }
+        i32 main() {
+            explicit := [](i32 value) => (i32) { return value * 2; };
+            Mapper inferred = (value) => { return value + 2; };
+            Mapper assigned = [](i32 value) => (i32) { return value; };
+            assigned = (value) => { return value + 3; };
+            return apply(explicit, 10) + apply(inferred, 10) +
+                   apply([](value) => { return value; }, 10) + make()(0);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    EXPECT_EQ(result.model.AnonymousFunctions().size(), 6);
+    for (const auto* function : result.model.AnonymousFunctions()) {
+        const auto* symbol = result.model.DeclaredSymbol(*function);
+        ASSERT_NE(symbol, nullptr);
+        EXPECT_EQ(symbol->Kind(), SymbolKind::Function);
+        EXPECT_EQ(symbol->Type().Name(), "func(i32) => (i32)");
+    }
+}
+
+TEST(SemanticCallableTests, DiagnosesMissingContextAndCaptures) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 main() {
+            outer := 41;
+            inferred := (value) => { return value; };
+            Mapper capturing = (value) => { return value + outer; };
+            return 0;
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::CannotInferType),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnknownName),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, EnforcesAnonymousFunctionPointerSafety) {
+    Analysis valid = Analyze(R"(
+        unsafe func Reader(*const i32) => (i32);
+        i32 main() {
+            Reader inferred = (source) => { return *source; };
+            explicit := unsafe [](*const i32 source) => (i32) {
+                return *source;
+            };
+            return 0;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+    EXPECT_EQ(valid.model.AnonymousFunctions().size(), 2);
+
+    Analysis invalid = Analyze(R"(
+        i32 main() {
+            callback := [](*const i32 source) => (i32) { return 0; };
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
 TEST(SemanticMatchTests, AcceptsExhaustiveAndWildcardEnumMatches) {
     Analysis result = Analyze(R"(
         enum TokenKind: u8 { Identifier = 1, Number = 4, End = 9, }

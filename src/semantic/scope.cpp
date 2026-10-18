@@ -24,4 +24,10 @@ const Symbol* Scope::Lookup(std::string_view name) const {
     return _parent == nullptr ? nullptr : _parent->Lookup(name);
 }
 
+std::optional<std::string> Scope::NameFor(const Symbol& symbol) const {
+    for (const auto& [name, candidate] : _symbols)
+        if (candidate == &symbol) return name;
+    return _parent == nullptr ? std::nullopt : _parent->NameFor(symbol);
+}
+
 }  // namespace flecha::semantic

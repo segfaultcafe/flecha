@@ -96,6 +96,8 @@ class AllocationChecker final {
                     *declaration));
         for (const auto& function : model.GeneratedFunctions())
             Register(*function);
+        for (const auto* function : model.AnonymousFunctions())
+            Register(*function);
     }
 
     void Analyze() {

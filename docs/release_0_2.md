@@ -13,20 +13,26 @@ func Logger(stringv) => ();
 unsafe func Reader(lend *const u8 source) => (i32);
 ```
 
-Anonymous functions will use the same signature shape:
+Captureless anonymous functions use the same signature shape:
 
 ```flecha
-func(i32 value) => (i32) { return value * 2; }
-func[copy factor, &counter, &const limit](i32 value) => (i32) { ... }
+[](i32 value) => (i32) { return value * 2; }
+(i32 value) => (i32) { return value * 2; }
+Mapper inferred = (value) => { return value * 2; };
 ```
 
-The empty capture list is omitted; `func[](...)` is invalid. A literal either
-spells its complete signature or receives its complete signature from context.
-Partial signature inference is invalid. Named aliases are structural, while
-all callable values are move-only.
+The empty capture list can be written as `[]` or omitted. An explicit literal
+spells its complete signature. A contextually inferred literal uses bare
+parameter names, omits the result list, and receives its complete signature
+from a typed initializer, argument, or return context. Partial signature
+inference is invalid. Named aliases are structural, while all callable values
+are move-only.
+
+Nonempty capture lists are reserved for the closure phases. Their planned
+shape is `[copy factor, &counter, &const limit](...) => (...) { ... }`.
 
 Capture modes are `copy`, `&`, `&const`, `lend`, and `own`. Raw-pointer
-parameters, results, and captures require `unsafe func`. `lend` closures cannot
+parameters, results, and captures require an `unsafe` literal. `lend` closures cannot
 escape. `own` transfers cleanup into the closure, but a reusable closure cannot
 consume that capture from its body. `once func` stays on the future radar.
 
@@ -36,8 +42,9 @@ consume that capture from its body. `once func` stays on the future radar.
    signatures, structural type checking, captureless named-function values,
    move-only transfer, indirect calls, ownership/borrow contracts, unsafe
    propagation, and a uniform `{invoke, environment, destroy}` compiler ABI.
-2. **Captureless anonymous functions.** Add explicit literals and complete
-   contextual signature inference; reject partial forms.
+2. **Captureless anonymous functions — implemented.** Explicit `[](...)` and
+   simplified `(...)` literals, complete contextual signature inference, and
+   rejection of partial forms and local captures.
 3. **Closure environments and `copy`.** Heap environments, invoke and destroy
    thunks, snapshot captures, and deterministic reverse-order cleanup.
 4. **Checked-reference captures.** Add `&` and `&const`, explicit-capture-only

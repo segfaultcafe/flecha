@@ -27,6 +27,8 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
     }
     for (const auto& function : semanticModel.GeneratedFunctions())
         functions.push_back(LowerFunction(*function));
+    for (const auto* function : semanticModel.AnonymousFunctions())
+        functions.push_back(LowerFunction(*function));
     _semanticModel = nullptr;
     return std::make_unique<BoundProgram>(std::move(functions));
 }
@@ -293,6 +295,15 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                                                        std::move(value));
     }
     switch (expression.Kind()) {
+        case core::AstNodeKind::AnonymousFunctionExpression: {
+            const auto& anonymous =
+                static_cast<const core::AnonymousFunctionExpression&>(
+                    expression);
+            return std::make_unique<BoundFunctionExpression>(
+                expression.Range(),
+                static_cast<const semantic::FunctionSymbol&>(
+                    *_semanticModel->DeclaredSymbol(anonymous.Function())));
+        }
         case core::AstNodeKind::BuildExpression: {
             const auto& build =
                 static_cast<const core::BuildExpression&>(expression);

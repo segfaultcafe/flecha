@@ -153,6 +153,70 @@ TEST(ParserTests, ParsesNamedCallableSignatures) {
     EXPECT_EQ(reader.Results()[0]->Contract(), OwnershipContract::Own);
 }
 
+TEST(ParserTests, ParsesCapturelessAnonymousFunctionForms) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        func Mapper(i32) => (i32);
+        void main() {
+            Mapper explicit = [](i32 value) => (i32) { return value; };
+            Mapper inferred = (value) => { return value; };
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(main.Body().Statements().size(), 2);
+
+    const auto& explicitVariable =
+        static_cast<const VariableDeclarationStatement&>(
+            *main.Body().Statements()[0]);
+    const auto& explicitFunction =
+        static_cast<const AnonymousFunctionExpression&>(
+            *explicitVariable.Initializer());
+    EXPECT_TRUE(explicitFunction.HasExplicitCaptureList());
+    EXPECT_FALSE(explicitFunction.HasInferredSignature());
+    ASSERT_EQ(explicitFunction.Function().Parameters().size(), 1);
+    EXPECT_EQ(explicitFunction.Function().Parameters()[0]->Name(), "value");
+    EXPECT_EQ(explicitFunction.Function().Parameters()[0]->Type().Type(),
+              PrimitiveType::I32);
+    EXPECT_EQ(explicitFunction.Function().ReturnType().Type(),
+              PrimitiveType::I32);
+
+    const auto& inferredVariable =
+        static_cast<const VariableDeclarationStatement&>(
+            *main.Body().Statements()[1]);
+    const auto& inferredFunction =
+        static_cast<const AnonymousFunctionExpression&>(
+            *inferredVariable.Initializer());
+    EXPECT_FALSE(inferredFunction.HasExplicitCaptureList());
+    EXPECT_TRUE(inferredFunction.HasInferredSignature());
+    EXPECT_EQ(inferredFunction.Function().Parameters()[0]->Name(), "value");
+}
+
+TEST(ParserTests, ReservesNonemptyAnonymousFunctionCaptureLists) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        func Mapper(i32) => (i32);
+        void main() {
+            Mapper callback = [copy factor](value) => { return value; };
+        }
+    )",
+                            diagnostics);
+
+    ASSERT_NE(unit, nullptr);
+    ASSERT_TRUE(diagnostics.HasErrors());
+    ASSERT_FALSE(diagnostics.Diagnostics().empty());
+    EXPECT_EQ(diagnostics.Diagnostics().front().code,
+              DiagnosticCode::UnexpectedToken);
+    EXPECT_NE(diagnostics.Diagnostics().front().message.find("empty '[]'"),
+              std::string::npos);
+}
+
 TEST(ParserTests, ParsesTestDeclarationsWithMutableContexts) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(
