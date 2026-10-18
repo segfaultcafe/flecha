@@ -174,6 +174,8 @@ std::optional<std::uint64_t> StorageSize(SemanticType type,
         case SemanticTypeKind::USize:
         case SemanticTypeKind::Pointer:
             return sizeof(void*);
+        case SemanticTypeKind::OwnedBuffer:
+            return 2 * sizeof(void*);
         case SemanticTypeKind::Slice:
             return allowBorrowed
                        ? std::optional<std::uint64_t>(2 * sizeof(void*))
@@ -527,6 +529,13 @@ SemanticType SemanticAnalyzer::ResolveTypeSyntax(const core::TypeNode& type) {
             elements.push_back(ResolveTypeSyntax(*element));
         return SemanticType(std::move(elements), type.IsConst());
     }
+    const bool ownedBuffer = type.TypeForm() == core::TypeKind::Pointer &&
+                             type.Target() &&
+                             type.Target()->TypeForm() == core::TypeKind::Slice;
+    if (ownedBuffer)
+        return SemanticType(SemanticTypeKind::OwnedBuffer,
+                            ResolveTypeSyntax(*type.Target()->Target()),
+                            type.IsConst());
     const SemanticTypeKind kind =
         type.TypeForm() == core::TypeKind::Pointer ? SemanticTypeKind::Pointer
         : type.TypeForm() == core::TypeKind::Reference
@@ -546,7 +555,8 @@ SemanticType SemanticAnalyzer::ResolveType(const core::TypeNode& type,
             (void)ResolveType(*element, allowBorrowedTuple);
     const SemanticType result = ResolveTypeSyntax(type);
     const SemanticType* layer = &result;
-    if (layer->Kind() == SemanticTypeKind::Slice) {
+    if (layer->Kind() == SemanticTypeKind::Slice ||
+        layer->Kind() == SemanticTypeKind::OwnedBuffer) {
         if (!IsArrayElement(layer->Target()->WithoutConst()))
             Report(diagnostics::DiagnosticCode::UnsupportedCompoundType,
                    type.Range(),
@@ -606,6 +616,7 @@ void SemanticAnalyzer::ValidateTupleType(SemanticType type,
                  element.Kind() != SemanticTypeKind::Bool &&
                  element.Kind() != SemanticTypeKind::Char &&
                  element.Kind() != SemanticTypeKind::Pointer &&
+                 element.Kind() != SemanticTypeKind::OwnedBuffer &&
                  element.Kind() != SemanticTypeKind::String &&
                  !(allowBorrowed && element.HasBorrowedLifetime()))
             Report(diagnostics::DiagnosticCode::InvalidTuple, range,
@@ -2383,7 +2394,8 @@ void SemanticAnalyzer::ClassifyTrivialZeros(const core::CompilationUnit& unit) {
                     return expected.Kind() == SemanticTypeKind::Char &&
                            literal.Value() == std::string(1, '\0');
                 case TokenType::Null:
-                    return expected.Kind() == SemanticTypeKind::Pointer;
+                    return expected.Kind() == SemanticTypeKind::Pointer ||
+                           expected.Kind() == SemanticTypeKind::OwnedBuffer;
                 case TokenType::None:
                     return trivialType(expected);
                 default:
@@ -2816,7 +2828,8 @@ SemanticType SemanticAnalyzer::PlaceType(
             return SemanticType::Error();
         const SemanticType value = _model.TypeOf(call.Receiver());
         if (value.Kind() == SemanticTypeKind::Slice ||
-            value.Kind() == SemanticTypeKind::Pointer)
+            value.Kind() == SemanticTypeKind::Pointer ||
+            value.Kind() == SemanticTypeKind::OwnedBuffer)
             return *value.Target();
         const SemanticType place = PlaceType(call.Receiver());
         if (place.Kind() == SemanticTypeKind::Array)
@@ -2839,7 +2852,8 @@ SemanticType SemanticAnalyzer::PlaceType(
             static_cast<const core::IndexExpression&>(expression);
         const SemanticType value = _model.TypeOf(index.Receiver());
         if (value.Kind() == SemanticTypeKind::Slice ||
-            value.Kind() == SemanticTypeKind::Pointer)
+            value.Kind() == SemanticTypeKind::Pointer ||
+            value.Kind() == SemanticTypeKind::OwnedBuffer)
             return *value.Target();
         const SemanticType receiver = PlaceType(index.Receiver());
         if (receiver.Kind() == SemanticTypeKind::Array)
@@ -3014,6 +3028,14 @@ SemanticType SemanticAnalyzer::AnalyzeBinary(
     const bool rightNone = right.Kind() == SemanticTypeKind::None;
     const bool leftEnum = left.Kind() == SemanticTypeKind::Enum;
     const bool rightEnum = right.Kind() == SemanticTypeKind::Enum;
+    const bool leftOwner = left.Kind() == SemanticTypeKind::OwnedBuffer;
+    const bool rightOwner = right.Kind() == SemanticTypeKind::OwnedBuffer;
+    const bool equality =
+        operation == TokenType::Equal || operation == TokenType::NotEqual;
+    if (equality &&
+        ((leftOwner && (right.Kind() == SemanticTypeKind::Null || rightNone)) ||
+         (rightOwner && (left.Kind() == SemanticTypeKind::Null || leftNone))))
+        return SemanticType(SemanticTypeKind::Bool);
     if (strictEquality && ((leftEnum && rightNone) || (leftNone && rightEnum)))
         return SemanticType(SemanticTypeKind::Bool);
     if (((valueEquality || strictEquality) && leftEnum && rightEnum &&
@@ -3323,14 +3345,17 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
     SemanticType result(SemanticTypeKind::Void);
     if (allocate) {
         result = SemanticType(std::vector<SemanticType>{
-            SemanticType(SemanticTypeKind::Pointer, element),
+            SemanticType(dynamic ? SemanticTypeKind::OwnedBuffer
+                                 : SemanticTypeKind::Pointer,
+                         element),
             SemanticType(SemanticTypeKind::ErrorValue)});
     } else {
         if (argument.Kind() == SemanticTypeKind::Null ||
             argument.Kind() == SemanticTypeKind::None)
             parameter = SemanticType(SemanticTypeKind::Pointer,
                                      SemanticType(SemanticTypeKind::U8));
-        else if (argument.Kind() == SemanticTypeKind::Pointer &&
+        else if ((argument.Kind() == SemanticTypeKind::Pointer ||
+                  argument.Kind() == SemanticTypeKind::OwnedBuffer) &&
                  StorageSize(*argument.Target()))
             parameter = argument;
         else if (!argument.IsError())
@@ -3619,6 +3644,8 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
     if (receiver.IsError()) return SemanticType::Error();
     if (receiver.IsSequence() &&
         (expression.Member() == "front" || expression.Member() == "back")) {
+        if (receiver.Kind() == SemanticTypeKind::OwnedBuffer)
+            RequireUnsafe(expression.Range());
         if (!arguments.empty())
             Report(diagnostics::DiagnosticCode::WrongArgumentCount,
                    expression.Range(), "front/back expect no arguments");
@@ -3630,6 +3657,8 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
         return receiver.Target()->WithoutConst();
     }
     if (receiver.IsSequence() && expression.Member() == "len") {
+        if (receiver.Kind() == SemanticTypeKind::OwnedBuffer)
+            RequireUnsafe(expression.Range());
         if (!arguments.empty())
             Report(diagnostics::DiagnosticCode::WrongArgumentCount,
                    expression.Range(), "array/slice len expects no arguments");
@@ -3712,7 +3741,8 @@ SemanticType SemanticAnalyzer::AnalyzeSlice(
                    bound->Range(), "slice bounds must have type 'usize'");
     }
     if (receiver.IsError()) return receiver;
-    const bool heap = receiver.Kind() == SemanticTypeKind::Pointer;
+    const bool heap = receiver.Kind() == SemanticTypeKind::Pointer ||
+                      receiver.Kind() == SemanticTypeKind::OwnedBuffer;
     if (heap) {
         RequireUnsafe(expression.Range());
         if (!StorageSize(*receiver.Target()))
@@ -3762,7 +3792,8 @@ SemanticType SemanticAnalyzer::AnalyzeSlice(
 SemanticType SemanticAnalyzer::AnalyzeIndex(
     const core::IndexExpression& expression) {
     const SemanticType receiver = AnalyzeExpression(expression.Receiver());
-    const bool heap = receiver.Kind() == SemanticTypeKind::Pointer;
+    const bool heap = receiver.Kind() == SemanticTypeKind::Pointer ||
+                      receiver.Kind() == SemanticTypeKind::OwnedBuffer;
     if (heap) {
         RequireUnsafe(expression.Range());
         if (!StorageSize(*receiver.Target()))
@@ -3856,7 +3887,9 @@ void SemanticAnalyzer::ResolveStructureFields() {
     }
     std::unordered_set<const StructureType*> visiting;
     std::function<bool(SemanticType)> validate = [&](SemanticType type) {
-        if (type.Kind() == SemanticTypeKind::Pointer) return true;
+        if (type.Kind() == SemanticTypeKind::Pointer ||
+            type.Kind() == SemanticTypeKind::OwnedBuffer)
+            return true;
         if (type.Kind() == SemanticTypeKind::Structure) {
             auto* structure = const_cast<StructureType*>(type.Structure());
             if (structure->validLayout) return true;
@@ -4031,13 +4064,16 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
         source =
             &static_cast<const core::ParenthesizedExpression&>(*source).Inner();
     const bool semanticDefault = IsNoneLiteral(*source);
+    const SemanticType sourceType = _model.TypeOf(expression);
+    if (sourceType.ContainsOwnedBuffer()) type = sourceType;
     if (_currentFunction && CopyMayAllocate(type) &&
         source->Kind() != core::AstNodeKind::BuildExpression &&
         source->Kind() != core::AstNodeKind::CallExpression &&
         source->Kind() != core::AstNodeKind::MemberCallExpression &&
         !semanticDefault)
         _forbiddenZeroEffects.insert(_currentFunction);
-    if (!type.ContainsStructure() || type.IsCopyable()) {
+    if ((!type.ContainsStructure() && !type.ContainsOwnedBuffer()) ||
+        type.IsCopyable()) {
         _model._transfers.insert_or_assign(&expression, TransferKind::Copy);
         return;
     }

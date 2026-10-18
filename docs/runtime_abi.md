@@ -112,7 +112,10 @@ production code has no failure-injection setting or test-only global state.
 Runtime scalar arrays use `flecha_runtime_v1_alloc_array(count, element_size,
 alignment)`, which checks multiplication before allocating zeroed storage.
 `flecha_runtime_v1_allocation_count(pointer)` returns the recorded count (zero
-for null); it requires a Flecha allocation base. Ordinary allocations record a
-count of one. The hidden allocator header now stores both the original base
-and element count. Previously built objects and runtime libraries should be
-rebuilt together. `free` retains the same public ABI and accepts either form.
+for null); it requires a Flecha allocation base. New generated code carries an
+array owner's count in its `*[]T` value and does not call this function for owner
+indexing or slicing. The query and hidden count remain in ABI v1 for legacy raw
+`*T` indexing and source-compatibility conversions. Ordinary allocations record
+a count of one. The hidden allocator header stores both the original base and
+element count. Previously built objects and runtime libraries should be rebuilt
+together. `free` retains the same public ABI and accepts either form.

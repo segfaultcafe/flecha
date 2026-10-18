@@ -213,6 +213,34 @@ TEST(LlvmCodeGeneratorTests, DefaultConstructsRuntimeEnumArrays) {
     EXPECT_NE(ir.find("store i8 3"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, CarriesRuntimeArrayLengthInTheOwningValue) {
+    GeneratedSource result = Generate(
+        "unsafe i32 main() { values, failure := new<[]i32>(4); "
+        "if failure != none { return 1; } owner := values; defer free(owner); "
+        "owner[3] = 42; return owner[3]; }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("allocation.owner"), std::string::npos);
+    EXPECT_NE(ir.find("moved.value"), std::string::npos);
+    EXPECT_NE(ir.find("free.data"), std::string::npos);
+    EXPECT_EQ(ir.find("flecha_runtime_v1_allocation_count"), std::string::npos);
+}
+
+TEST(LlvmCodeGeneratorTests, TransfersFreshStringConcatenationResults) {
+    GeneratedSource result =
+        Generate("void f() { string text = \"\"; text = text + \"x\"; }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("flecha_runtime_v1_string_concat"), std::string::npos);
+    EXPECT_EQ(ir.find("flecha_runtime_v1_string_clone"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsExternCallsWithoutFunctionBodies) {
     GeneratedSource result = Generate(
         "extern unsafe i32 native_add(i32 left, i32 right); "

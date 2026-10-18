@@ -106,7 +106,7 @@ class LlvmCodeGenerator final {
         const lowering::BoundPlaceExpression& place);
     llvm::Value* EmitAllocation(
         const lowering::BoundAllocationExpression& expression);
-    llvm::Value* EmitFree(llvm::Value* pointer, semantic::SemanticType target);
+    llvm::Value* EmitFree(llvm::Value* owner, semantic::SemanticType ownerType);
     llvm::Value* EmitExpression(const lowering::BoundExpression& expression);
     [[nodiscard]] llvm::Value* EmitLiteral(
         const lowering::BoundLiteralExpression& expression);
@@ -190,6 +190,9 @@ class LlvmCodeGenerator final {
     std::unordered_map<const semantic::StructureType*, llvm::StructType*>
         _structureTypes;
     std::unordered_map<llvm::Value*, llvm::AllocaInst*> _lifetimeFlags;
+    // Fresh owned results already have independent storage. The first owning
+    // destination can transfer them instead of cloning their contents.
+    std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedStrings;
     llvm::Value* _returnStorage = nullptr;
     llvm::Function* _currentFunction = nullptr;
     semantic::SemanticType _currentReturnType{semantic::SemanticTypeKind::Void};

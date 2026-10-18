@@ -2,7 +2,8 @@
 
 Runtime-sized storage uses `new<[]T>(count)` in an unsafe context. `count` has type
 `usize` and is evaluated exactly once, before attempting allocation. The result is
-`(*T, error)`, matching the existing pointer/error convention. Numeric, boolean,
+`(*[]T, error)`: `*[]T` is a move-only owning buffer containing the allocation
+base and its `usize` element count. Numeric, boolean,
 character, and defaultable enum elements are supported. Runtime arrays also
 accept copyable, default-constructible structures whose recursively stored
 fields are numbers, booleans, characters, enums, raw pointers, fixed arrays, or
@@ -22,20 +23,28 @@ unsafe {
 }
 ```
 
-The allocator records the element count. Multiplication overflow or allocation
-failure returns null and `AllocationError.OutOfMemory`. A zero count can succeed
-with a non-null, releasable handle; no element may be accessed. Allocation metadata
-is private to the runtime and does not change the raw-pointer representation.
-`const` controls mutation as before: `new<[]const i32>(count)` produces `*const i32`.
+Multiplication overflow or allocation failure returns `{null, 0}` and
+`AllocationError.OutOfMemory`. A zero count can succeed with a non-null,
+releasable handle whose length is zero; no element may be accessed. `const`
+controls mutation as before: `new<[]const i32>(count)` produces `*[]const i32`.
 
-Raw `pointer[index]` requires unsafe permission and a base pointer from Flecha's
-allocator. The index has type `usize` and is checked against the recorded count
-before forming an element address. Out-of-bounds access traps. Known stack and
+Owning-buffer indexing, slicing, `front`, `back`, and `len` use the count carried
+in the value and require unsafe permission. Indexing is bounds checked before an
+element address is formed. Slicing produces an ordinary borrowed `[]T` descriptor.
+Moves, consuming arguments and returns, and `take` invalidate the source owner;
+`free(buffer)` consumes the live allocation obligation.
+
+Legacy raw `*T` indexing still requires unsafe permission and a base pointer from
+Flecha's allocator. The index has type `usize` and is checked against allocator
+metadata before forming an element address. Out-of-bounds access traps. Known stack and
 interior addresses, known null pointers, and tracked freed/transferred aliases are
 rejected. Arbitrary external pointer provenance remains an unsafe caller obligation:
 indexing a foreign allocation or interior address cannot read Flecha's metadata.
-This does not add pointer arithmetic, checked references into the heap, or raw-to-
-slice conversions. Ordinary raw dereference `*pointer` retains its unsafe validity
+For source compatibility, an owning buffer may transfer into an explicitly typed
+raw `*T` destination; this consumes the owner and drops its visible length. New
+code should retain `*[]T` so checked access does not consult hidden metadata.
+This does not add pointer arithmetic or checked references into the heap. Ordinary
+raw dereference `*pointer` retains its unsafe validity
 obligations, including requiring a live element for a zero-capacity allocation.
 
 `free(pointer)` releases the complete buffer. The supported element types need no

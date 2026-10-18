@@ -2328,7 +2328,6 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
           "void f([][]u8 s) {}",
           "void f([2][]u8 a) {}",
           "void f(&[]u8 s) {}",
-          "void f(*[]u8 s) {}",
           "[]u8 f() { [1]u8 a = [1]; return a[:]; }",
           "unsafe void f(*[2]u8 p) { s := (*p)[:]; }",
           "void f() { a := [1]; s := a[:]; unsafe { p := &raw s; } }",
@@ -2341,6 +2340,21 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+}
+
+TEST(SemanticMemoryTests, RuntimeArrayOwnersPreserveLengthAndMoveOwnership) {
+    auto valid = Analyze(
+        "unsafe (own *[]i32, error) make(usize count) { return "
+        "new<[]i32>(count); } "
+        "unsafe usize f() { p, e := make(3); if e != none { return 0; } "
+        "q := p; defer free(q); q[0] = 42; length := q.len(); values := q[:]; "
+        "return length + values.len(); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    EXPECT_TRUE(Analyze("unsafe void f() { p, e := new<[]i32>(2); q := p; "
+                        "free(p); free(q); }")
+                    .diagnostics.HasErrors());
 }
 
 TEST(SemanticSliceTests, EnforcesReadOnlyElementsAndFixedHandles) {
