@@ -55,6 +55,7 @@ class Parser {
     std::optional<std::uint64_t> ParseArrayLength();
     std::unique_ptr<Expression> ParseArrayExpression();
     std::unique_ptr<Expression> ParseMatchExpression();
+    std::unique_ptr<Expression> ParseAnonymousFunctionExpression();
     std::unique_ptr<Parameter> ParseParameter();
     std::unique_ptr<Parameter> ParseCallableParameter();
     std::unique_ptr<BlockStatement> ParseBlockStatement(bool isUnsafe = false);
@@ -84,6 +85,7 @@ class Parser {
     std::vector<std::unique_ptr<Expression>> ParseArgumentList(
         source::SourceLocation& end);
     std::unique_ptr<Expression> ParsePrimaryExpression();
+    [[nodiscard]] bool IsAnonymousFunctionStart() const;
     [[nodiscard]] int BinaryPrecedence(TokenType type) const;
     [[nodiscard]] int UnaryPrecedence(TokenType type) const;
     void ReportUnexpectedToken(std::string_view context);

@@ -1680,6 +1680,162 @@ std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
     return arguments;
 }
 
+bool Parser::IsAnonymousFunctionStart() const {
+    std::size_t offset = 0;
+    if (Peek(offset).type == TokenType::Unsafe) ++offset;
+    if (Peek(offset).type == TokenType::LBracket) {
+        std::size_t depth = 0;
+        do {
+            const TokenType token = Peek(offset).type;
+            if (token == TokenType::EOF_TOKEN) return false;
+            if (token == TokenType::LBracket) ++depth;
+            if (token == TokenType::RBracket && --depth == 0) {
+                ++offset;
+                break;
+            }
+            ++offset;
+        } while (true);
+    }
+    if (Peek(offset).type != TokenType::LParen) return false;
+
+    std::size_t depth = 0;
+    do {
+        const TokenType token = Peek(offset).type;
+        if (token == TokenType::EOF_TOKEN) return false;
+        if (token == TokenType::LParen) ++depth;
+        if (token == TokenType::RParen && --depth == 0)
+            return Peek(offset + 1).type == TokenType::FatArrow;
+        ++offset;
+    } while (true);
+}
+
+std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
+    const Token& first = Current();
+    const source::SourceLocation start = first.range.start;
+    const bool isUnsafe = Match(TokenType::Unsafe);
+    const bool explicitCaptureList = Match(TokenType::LBracket);
+    if (explicitCaptureList) {
+        if (!Check(TokenType::RBracket)) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::UnexpectedToken, Current().range,
+                "captureless anonymous functions require an empty '[]' "
+                "capture list");
+            while (!IsAtEnd() && !Check(TokenType::RBracket) &&
+                   !Check(TokenType::LParen))
+                Advance();
+        }
+        if (Consume(TokenType::RBracket,
+                    "']' after anonymous function capture list") == nullptr)
+            return nullptr;
+    }
+    if (Consume(TokenType::LParen,
+                "'(' before anonymous function parameters") == nullptr)
+        return nullptr;
+
+    std::vector<std::unique_ptr<Parameter>> parameters;
+    std::optional<bool> typedParameters;
+    while (!Check(TokenType::RParen) && !IsAtEnd()) {
+        std::size_t typeEnd = 0;
+        const bool typed =
+            ScanType(typeEnd) && Peek(typeEnd).type == TokenType::Identifier;
+        if (typedParameters.has_value() && *typedParameters != typed)
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::UnexpectedToken, Current().range,
+                "anonymous function parameters must be either all typed or "
+                "all inferred");
+        typedParameters = typedParameters.value_or(typed);
+
+        const source::SourceLocation parameterStart = Current().range.start;
+        std::unique_ptr<TypeNode> type;
+        if (typed)
+            type = ParseType(true, true, true);
+        else
+            type = std::make_unique<TypeNode>(Current().range,
+                                              PrimitiveType::Void);
+        if (type == nullptr) return nullptr;
+        const Token* name =
+            Consume(TokenType::Identifier, "anonymous function parameter name");
+        if (name == nullptr) return nullptr;
+        parameters.push_back(std::make_unique<Parameter>(
+            source::SourceRange{parameterStart, name->range.end},
+            std::move(type), name->value, name->range));
+        if (!Match(TokenType::Comma)) break;
+    }
+    if (Consume(TokenType::RParen, "')' after anonymous function parameters") ==
+            nullptr ||
+        Consume(TokenType::FatArrow,
+                "'=>' after anonymous function parameters") == nullptr)
+        return nullptr;
+
+    std::vector<std::unique_ptr<TypeNode>> results;
+    source::SourceRange resultRange = Current().range;
+    const bool inferredSignature = !Check(TokenType::LParen);
+    if (!inferredSignature) {
+        const Token& open = Advance();
+        resultRange = open.range;
+        while (!Check(TokenType::RParen) && !IsAtEnd()) {
+            auto result = ParseType(true, false, true);
+            if (result == nullptr) return nullptr;
+            results.push_back(std::move(result));
+            if (!Match(TokenType::Comma)) break;
+        }
+        const Token* close =
+            Consume(TokenType::RParen, "')' after anonymous function results");
+        if (close == nullptr) return nullptr;
+        resultRange.end = close->range.end;
+    }
+
+    if ((inferredSignature && typedParameters.value_or(false)) ||
+        (!inferredSignature && typedParameters.has_value() &&
+         !*typedParameters))
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::UnexpectedToken, first.range,
+            inferredSignature
+                ? "contextually inferred anonymous functions use bare "
+                  "parameter names"
+                : "explicit anonymous functions require a type for every "
+                  "parameter");
+
+    std::string borrowSource;
+    source::SourceRange borrowSourceRange;
+    if (Match(TokenType::LeftArrow)) {
+        const Token* source =
+            Consume(TokenType::Identifier, "borrow source after '<-'");
+        if (source == nullptr) return nullptr;
+        borrowSource = source->value;
+        borrowSourceRange = source->range;
+        if (inferredSignature)
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::UnexpectedToken, source->range,
+                "a contextually inferred anonymous function inherits its "
+                "borrow contract");
+    }
+
+    auto body = ParseBlockStatement();
+    if (body == nullptr) return nullptr;
+    const source::SourceRange range{start, body->Range().end};
+    std::unique_ptr<TypeNode> returnType;
+    if (inferredSignature || results.empty()) {
+        returnType =
+            std::make_unique<TypeNode>(resultRange, PrimitiveType::Void);
+    } else if (results.size() == 1) {
+        returnType = std::move(results.front());
+    } else {
+        returnType =
+            std::make_unique<TypeNode>(resultRange, std::move(results));
+    }
+
+    std::vector<FunctionModifier> modifiers;
+    if (isUnsafe) modifiers.push_back(FunctionModifier::Unsafe);
+    const std::string name = "$anon" + std::to_string(_rangeId++);
+    auto function = std::make_unique<FunctionDeclaration>(
+        range, std::move(modifiers), std::move(returnType), name,
+        std::move(parameters), std::move(body), first.range, "",
+        std::move(borrowSource), borrowSourceRange);
+    return std::make_unique<AnonymousFunctionExpression>(
+        range, std::move(function), inferredSignature, explicitCaptureList);
+}
+
 std::optional<std::uint64_t> Parser::ParseArrayLength() {
     const Token* count = Consume(TokenType::NumberLiteral,
                                  "nonnegative integer literal array length");
@@ -1785,6 +1941,7 @@ std::unique_ptr<Expression> Parser::ParseMatchExpression() {
 
 std::unique_ptr<Expression> Parser::ParsePrimaryExpression() {
     const Token& token = Current();
+    if (IsAnonymousFunctionStart()) return ParseAnonymousFunctionExpression();
     switch (token.type) {
         case TokenType::Build: {
             Advance();

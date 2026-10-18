@@ -44,6 +44,7 @@ class SemanticModel final {
         return found == _methods.end() ? nullptr : found->second;
     }
     const auto& GeneratedFunctions() const { return _generatedFunctions; }
+    const auto& AnonymousFunctions() const { return _anonymousFunctions; }
     const auto& Structures() const { return _structures; }
     const auto& Enums() const { return _enums; }
     [[nodiscard]] const Scope& GlobalScope() const { return *_scopes.front(); }
@@ -59,6 +60,7 @@ class SemanticModel final {
     std::vector<std::unique_ptr<StructureType>> _structures;
     std::vector<std::unique_ptr<EnumType>> _enums;
     std::vector<std::unique_ptr<core::FunctionDeclaration>> _generatedFunctions;
+    std::vector<const core::FunctionDeclaration*> _anonymousFunctions;
     std::unordered_map<const core::MemberAccessExpression*,
                        const StructureField*>
         _fields;

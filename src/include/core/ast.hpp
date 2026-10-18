@@ -24,6 +24,7 @@ enum class AstNodeKind {
     StructureDeclaration,
     StructureField,
     BuildExpression,
+    AnonymousFunctionExpression,
     Parameter,
     Type,
     BlockStatement,
@@ -370,6 +371,7 @@ class Parameter final : public AstNode {
         return AstNodeKind::Parameter;
     }
     [[nodiscard]] const TypeNode& Type() const { return *_type; }
+    void SetType(std::unique_ptr<TypeNode> type) { _type = std::move(type); }
     [[nodiscard]] const std::string& Name() const { return _name; }
     [[nodiscard]] const source::SourceRange& NameRange() const {
         return _nameRange;
@@ -475,6 +477,12 @@ class FunctionDeclaration final : public Declaration {
         return false;
     }
     [[nodiscard]] const TypeNode& ReturnType() const { return *_returnType; }
+    void SetReturnType(std::unique_ptr<TypeNode> type) {
+        _returnType = std::move(type);
+    }
+    void AddModifier(FunctionModifier modifier) {
+        if (!HasModifier(modifier)) _modifiers.push_back(modifier);
+    }
     [[nodiscard]] const std::string& Name() const { return _name; }
     [[nodiscard]] const source::SourceRange& NameRange() const {
         return _nameRange;
@@ -493,6 +501,10 @@ class FunctionDeclaration final : public Declaration {
     [[nodiscard]] const source::SourceRange& BorrowSourceRange() const {
         return _borrowSourceRange;
     }
+    void SetBorrowSource(std::string source, source::SourceRange range) {
+        _borrowSource = std::move(source);
+        _borrowSourceRange = range;
+    }
 
    private:
     std::string _owner;
@@ -506,6 +518,37 @@ class FunctionDeclaration final : public Declaration {
     source::SourceRange _borrowSourceRange;
     bool _isTest = false;
     bool _isTestHarness = false;
+};
+
+class AnonymousFunctionExpression final : public Expression {
+   public:
+    AnonymousFunctionExpression(source::SourceRange range,
+                                std::unique_ptr<FunctionDeclaration> function,
+                                bool inferredSignature,
+                                bool explicitCaptureList)
+        : Expression(range),
+          _function(std::move(function)),
+          _inferredSignature(inferredSignature),
+          _explicitCaptureList(explicitCaptureList) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::AnonymousFunctionExpression;
+    }
+    [[nodiscard]] const FunctionDeclaration& Function() const {
+        return *_function;
+    }
+    [[nodiscard]] FunctionDeclaration& Function() { return *_function; }
+    [[nodiscard]] bool HasInferredSignature() const {
+        return _inferredSignature;
+    }
+    [[nodiscard]] bool HasExplicitCaptureList() const {
+        return _explicitCaptureList;
+    }
+
+   private:
+    std::unique_ptr<FunctionDeclaration> _function;
+    bool _inferredSignature;
+    bool _explicitCaptureList;
 };
 
 class CallableTypeDeclaration final : public Declaration {

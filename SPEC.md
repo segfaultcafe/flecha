@@ -160,9 +160,23 @@ move-only and use a uniform compiler ABI containing invoke, environment, and
 destroy pointers. Captureless named functions use null environment and destroy
 pointers.
 
-Anonymous `func(...) => (...) { ... }` expressions and explicit capture lists
-remain later v0.2.0 work. `once func` remains future work beyond the initial
-closure implementation.
+Captureless anonymous functions use the same signature shape. The empty square
+brackets may be written explicitly or omitted:
+
+```flecha
+Mapper explicit = [](i32 value) => (i32) { return value * 2; };
+Mapper inferred = (value) => { return value * 2; };
+```
+
+An explicit literal spells every parameter type and its complete result list.
+A contextually inferred literal uses bare parameter names and omits the result
+list; its entire signature comes from the expected callable type. Inference is
+available in typed initializers, arguments, and returns, but not in `:=`
+declarations without an expected type. Partial inference is rejected.
+
+These functions are captureless: names in the body resolve from module scope,
+not the surrounding local scope. Nonempty capture lists and `once` functions
+remain later v0.2.0 work.
 
 ## 6. Return and yield
 

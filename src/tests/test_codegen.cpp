@@ -680,6 +680,50 @@ TEST(NativeCompilerTests, RunsCallableParametersReturnsAndAggregateResults) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsCapturelessAnonymousFunctions) {
+    GeneratedSource result = Generate(R"(
+        func Mapper(i32) => (i32);
+        func Split(i32) => (i32, i32);
+        i32 apply(Mapper callback, i32 value) { return callback(value); }
+        Mapper make() { return (value) => { return value + 1; }; }
+
+        i32 main() {
+            explicit := [](i32 value) => (i32) {
+                return value * 2;
+            };
+            Mapper inferred = (value) => { return value + 2; };
+            Mapper assigned = [](i32 value) => (i32) { return value; };
+            assigned = (value) => { return value + 3; };
+            Split split = (i32 value) => (i32, i32) {
+                return (value, value + 1);
+            };
+            left, right := split(3);
+            return apply(explicit, 10) + apply(inferred, 5) +
+                   apply([](value) => { return value; }, 6) + make()(1) +
+                   left + right;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_anonymous_functions_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_anonymous_functions_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsUnsafeCallableOwnershipContracts) {
     GeneratedSource result = Generate(R"(
         unsafe func Reader(lend *const i32 source) => (i32);

@@ -36,6 +36,12 @@ class SemanticAnalyzer final {
                               SemanticType expected);
     SemanticType AnalyzeMatch(const core::MatchExpression& expression,
                               SemanticType expected);
+    SemanticType AnalyzeAnonymousFunction(
+        const core::AnonymousFunctionExpression& expression,
+        SemanticType expected);
+    std::unique_ptr<core::TypeNode> TypeSyntax(
+        SemanticType type, source::SourceRange range,
+        core::OwnershipContract contract = core::OwnershipContract::None);
     void AnalyzeDestructure(const core::DestructureStatement& statement);
     SemanticType AnalyzeTuple(const core::TupleExpression& expression,
                               SemanticType expected);

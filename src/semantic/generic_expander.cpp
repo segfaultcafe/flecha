@@ -46,6 +46,11 @@ void Walk(const AstNode& input, const Callback& callback) {
             visit(n.Body());
             break;
         }
+        case AstNodeKind::AnonymousFunctionExpression: {
+            NODE(AnonymousFunctionExpression);
+            visit(n.Function());
+            break;
+        }
         case AstNodeKind::CallableTypeDeclaration: {
             NODE(CallableTypeDeclaration);
             list(n.Parameters());
