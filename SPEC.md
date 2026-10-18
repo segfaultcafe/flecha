@@ -176,12 +176,18 @@ declarations without an expected type. Partial inference is rejected.
 
 An omitted or empty capture list is captureless: names in the body resolve from
 module scope, not the surrounding local scope. Local values must be listed
-explicitly. The implemented capture mode is `copy`:
+explicitly. Snapshot and checked-reference captures are supported:
 
 ```flecha
 i32 factor = 2;
 Mapper scaled = [copy factor](value) => {
     return value * factor;
+};
+
+i32 count = 0;
+Mapper incremented = [&count, &const factor](value) => {
+    count = count + 1;
+    return value * factor + count;
 };
 ```
 
@@ -193,9 +199,21 @@ mutated independently when its source binding was writable.
 
 Copy captures reject borrowed handles, callable values, and other noncopyable
 values. A raw pointer may be copied only by an `unsafe` anonymous function;
-owning and lending raw-resource contracts remain future capture modes. Callable
-values remain move-only, and moving a closure transfers its environment and
-cleanup responsibility exactly once. `once` functions remain future work.
+owning and lending raw-resource contracts remain future capture modes.
+
+`&name` creates an exclusive checked borrow of writable storage. `&const name`
+creates a shared, read-only borrow. The loan lasts until the closure's last use,
+including when the closure moves into another variable or a callable-containing
+array, tuple, or structure. A closure cannot be stored somewhere that outlives
+the captured storage. Returning a borrowing closure requires a matching
+`<- parameter` contract, and calls propagate that origin into the returned
+callable value. Borrowed reference, slice, and string-view parameters are
+stored in the environment by value so returned closures retain the underlying
+borrow rather than the creator's parameter slot.
+
+Callable values remain move-only, and moving a closure transfers its
+environment and cleanup responsibility exactly once. `once` functions remain
+future work.
 
 ## 6. Return and yield
 

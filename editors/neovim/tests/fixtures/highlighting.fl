@@ -74,6 +74,7 @@ stringv directive = "@imports string";
 module highlighting;
 func Mapper(i32) => (i32);
 Mapper copied = [copy factor](value) => { return value + factor; };
+Mapper borrowed = [&factor, &const limit](value) => { return value + factor + limit; };
 test gold_keyword(&testing::UnitTest t) {}
 export i32 exported_function() { return 42; }
 
