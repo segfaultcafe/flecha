@@ -198,23 +198,32 @@ TEST(ParserTests, ParsesCapturelessAnonymousFunctionForms) {
     EXPECT_EQ(inferredFunction.Function().Parameters()[0]->Name(), "value");
 }
 
-TEST(ParserTests, ReservesNonemptyAnonymousFunctionCaptureLists) {
+TEST(ParserTests, ParsesCopyCaptureLists) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(R"(
         func Mapper(i32) => (i32);
         void main() {
-            Mapper callback = [copy factor](value) => { return value; };
+            Mapper callback = [copy factor, copy offset](value) => {
+                return value + factor + offset;
+            };
         }
     )",
                             diagnostics);
 
-    ASSERT_NE(unit, nullptr);
-    ASSERT_TRUE(diagnostics.HasErrors());
-    ASSERT_FALSE(diagnostics.Diagnostics().empty());
-    EXPECT_EQ(diagnostics.Diagnostics().front().code,
-              DiagnosticCode::UnexpectedToken);
-    EXPECT_NE(diagnostics.Diagnostics().front().message.find("empty '[]'"),
-              std::string::npos);
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& variable = static_cast<const VariableDeclarationStatement&>(
+        *main.Body().Statements()[0]);
+    const auto& function = static_cast<const AnonymousFunctionExpression&>(
+        *variable.Initializer());
+    ASSERT_EQ(function.Captures().size(), 2);
+    EXPECT_EQ(function.Captures()[0]->Name(), "factor");
+    EXPECT_EQ(function.Captures()[1]->Name(), "offset");
+    EXPECT_EQ(function.Captures()[0]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::Copy);
 }
 
 TEST(ParserTests, ParsesTestDeclarationsWithMutableContexts) {
