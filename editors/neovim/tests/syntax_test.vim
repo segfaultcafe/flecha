@@ -124,6 +124,7 @@ call assert_equal('117', synIDattr(hlID('flechaImports'), 'fg', 'cterm'))
 
 call assert_equal('flechaStatement', s:HighlightAt('module highlighting', 0))
 call assert_equal('flechaModifier', s:HighlightAt('export i32', 0))
+call assert_equal('flechaModifier', s:HighlightAt('quiver i32', 0))
 
 " Exercise actual Enter/closing-brace typing, not just the '=' operator.
 enew

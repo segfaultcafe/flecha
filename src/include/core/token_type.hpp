@@ -78,6 +78,7 @@ enum class TokenType {
     Func,
     Unsafe,
     Export,
+    Quiver,
     Extern,
     Inline,
     Comptime,

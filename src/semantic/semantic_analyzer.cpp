@@ -435,9 +435,21 @@ void SemanticAnalyzer::SetModule(const std::string& id) {
     if (found != _moduleScopes.end()) _currentScope = found->second;
 }
 
-bool SemanticAnalyzer::CanAccessPrivateOf(const std::string& id) const {
-    const auto pair = _testPairs.find(_currentModule);
-    return pair != _testPairs.end() && pair->second == id;
+bool SemanticAnalyzer::ReportInaccessibleImport(const std::string& name,
+                                                source::SourceRange range) {
+    const auto module = _inaccessibleImports.find(_currentModule);
+    if (module == _inaccessibleImports.end()) return false;
+    const auto found = module->second.find(name);
+    if (found == module->second.end()) return false;
+    const auto quiver = _quiverNames.find(found->second->quiverId);
+    Report(diagnostics::DiagnosticCode::PrivateAccess, range,
+           "'" + name +
+               "' is quiver-visible and can only be accessed from modules "
+               "in '" +
+               (quiver == _quiverNames.end() ? found->second->quiverId
+                                             : quiver->second) +
+               "'");
+    return true;
 }
 
 std::string SemanticAnalyzer::TopName(const core::Declaration& declaration,
@@ -459,11 +471,12 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
             const bool privileged =
                 module.test && module.testPair == import.resolvedModule;
             for (const auto& declaration : unit.Declarations()) {
-                if (declaration->moduleId != import.resolvedModule ||
-                    (!declaration->exported && !privileged))
-                    continue;
-                const Symbol* symbol = _model.DeclaredSymbol(*declaration);
-                if (!symbol) continue;
+                const bool sameQuiver =
+                    declaration->quiverId == module.quiverId;
+                const bool accessible =
+                    declaration->exported ||
+                    (declaration->quiverVisible && sameQuiver) || privileged;
+                if (declaration->moduleId != import.resolvedModule) continue;
                 std::string name;
                 if (declaration->Kind() ==
                     core::AstNodeKind::FunctionDeclaration) {
@@ -492,6 +505,14 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                     name = static_cast<const core::CallableTypeDeclaration&>(
                                *declaration)
                                .Name();
+                if (!accessible) {
+                    if (declaration->quiverVisible && !name.empty())
+                        _inaccessibleImports[module.id].insert_or_assign(
+                            import.alias + "::" + name, declaration.get());
+                    continue;
+                }
+                const Symbol* symbol = _model.DeclaredSymbol(*declaration);
+                if (!symbol) continue;
                 if (!name.empty())
                     (void)scope->DeclareAs(import.alias + "::" + name, *symbol);
             }
@@ -505,97 +526,125 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
     std::unordered_set<const Symbol*> specializedFunctions;
     for (const auto& declaration : unit.Declarations())
         if (_testModules.contains(declaration->moduleId) &&
-            declaration->exported)
+            (declaration->exported || declaration->quiverVisible))
             Report(diagnostics::DiagnosticCode::PrivateAccess,
                    declaration->Range(),
-                   "test modules cannot export declarations");
+                   "test modules cannot export or quiver declarations");
     for (const auto& declaration : unit.Declarations())
         if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration &&
             !declaration->instantiationOrigins.empty())
             specializedFunctions.insert(_model.DeclaredSymbol(*declaration));
-    std::unordered_set<const ErrorFamily*> privateErrors;
-    std::unordered_set<const EnumType*> privateEnums;
+    std::unordered_map<const ErrorFamily*, const core::Declaration*> errors;
+    std::unordered_map<const EnumType*, const core::Declaration*> enums;
     for (const auto& declaration : unit.Declarations())
-        if (declaration->Kind() == core::AstNodeKind::ErrorDeclaration &&
-            !declaration->exported) {
+        if (declaration->Kind() == core::AstNodeKind::ErrorDeclaration) {
             const auto* symbol = _model.DeclaredSymbol(*declaration);
-            if (symbol) privateErrors.insert(&symbol->Type().Family());
+            if (symbol)
+                errors.emplace(&symbol->Type().Family(), declaration.get());
         }
     for (const auto& declaration : unit.Declarations())
-        if (declaration->Kind() == core::AstNodeKind::EnumDeclaration &&
-            !declaration->exported) {
+        if (declaration->Kind() == core::AstNodeKind::EnumDeclaration) {
             const auto* symbol = _model.DeclaredSymbol(*declaration);
-            if (symbol) privateEnums.insert(symbol->Type().Enum());
+            if (symbol) enums.emplace(symbol->Type().Enum(), declaration.get());
         }
-    std::function<bool(SemanticType)> visible = [&](SemanticType type) {
-        if (type.Kind() == SemanticTypeKind::Structure)
-            return type.Structure()->syntax->exported;
-        if (type.Kind() == SemanticTypeKind::NamedError)
-            return !privateErrors.contains(&type.Family());
-        if (type.Kind() == SemanticTypeKind::Enum)
-            return !privateEnums.contains(type.Enum());
-        if (type.Kind() == SemanticTypeKind::Tuple) {
-            for (const auto& element : type.Elements())
-                if (!visible(element)) return false;
-        }
-        if (type.Kind() == SemanticTypeKind::Function) {
-            if (!visible(type.Signature().result)) return false;
-            for (const auto& parameter : type.Signature().parameters)
-                if (!visible(parameter)) return false;
-        }
-        return !type.Target() || visible(*type.Target());
+    const auto declarationVisible = [](const core::Declaration& api,
+                                       const core::Declaration& type) {
+        if (api.exported) return type.exported;
+        if (api.quiverVisible)
+            return type.exported ||
+                   (type.quiverVisible && type.quiverId == api.quiverId);
+        return true;
     };
-    const auto check = [&](SemanticType type, source::SourceRange range) {
-        if (!visible(type))
-            Report(diagnostics::DiagnosticCode::PrivateAccess, range,
-                   "exported APIs cannot expose private types; export the type "
-                   "or make the member private");
+    std::function<bool(SemanticType, const core::Declaration&)> visible =
+        [&](SemanticType type, const core::Declaration& api) {
+            if (type.Kind() == SemanticTypeKind::Structure)
+                return declarationVisible(api, *type.Structure()->syntax);
+            if (type.Kind() == SemanticTypeKind::NamedError) {
+                const auto found = errors.find(&type.Family());
+                return found == errors.end() ||
+                       declarationVisible(api, *found->second);
+            }
+            if (type.Kind() == SemanticTypeKind::Enum) {
+                const auto found = enums.find(type.Enum());
+                return found == enums.end() ||
+                       declarationVisible(api, *found->second);
+            }
+            if (type.Kind() == SemanticTypeKind::Tuple) {
+                for (const auto& element : type.Elements())
+                    if (!visible(element, api)) return false;
+            }
+            if (type.Kind() == SemanticTypeKind::Function) {
+                if (!visible(type.Signature().result, api)) return false;
+                for (const auto& parameter : type.Signature().parameters)
+                    if (!visible(parameter, api)) return false;
+            }
+            return !type.Target() || visible(*type.Target(), api);
+        };
+    const auto check = [&](SemanticType type, source::SourceRange range,
+                           const core::Declaration& api) {
+        if (!visible(type, api)) {
+            const std::string message =
+                api.exported
+                    ? "exported APIs cannot expose non-exported types; export "
+                      "the type or make the member private"
+                    : "quiver APIs cannot expose module-private types; mark "
+                      "the type quiver or export it, or make the member "
+                      "private";
+            Report(diagnostics::DiagnosticCode::PrivateAccess, range, message);
+        }
     };
     for (const auto& structure : _model._structures) {
-        if (!structure->syntax->exported) continue;
+        if (!structure->syntax->exported && !structure->syntax->quiverVisible)
+            continue;
         for (const auto& field : structure->fields)
             if (!field.syntax->IsPrivate())
-                check(field.type, field.syntax->Range());
+                check(field.type, field.syntax->Range(), *structure->syntax);
         for (const auto& [name, method] : structure->methods) {
             if (method->IsPrivate() || name == "tear" ||
                 specializedFunctions.contains(method))
                 continue;
-            check(method->ReturnType(), method->DeclarationRange());
+            check(method->ReturnType(), method->DeclarationRange(),
+                  *structure->syntax);
             for (const auto& parameter : method->ParameterTypes())
-                check(parameter, method->DeclarationRange());
+                check(parameter, method->DeclarationRange(),
+                      *structure->syntax);
         }
     }
     for (const auto& enumeration : _model._enums) {
-        if (!enumeration->syntax->exported) continue;
+        if (!enumeration->syntax->exported &&
+            !enumeration->syntax->quiverVisible)
+            continue;
         for (const auto& [name, method] : enumeration->methods) {
             if (method->IsPrivate()) continue;
-            check(method->ReturnType(), method->DeclarationRange());
+            check(method->ReturnType(), method->DeclarationRange(),
+                  *enumeration->syntax);
             for (const auto& parameter : method->ParameterTypes())
-                check(parameter, method->DeclarationRange());
+                check(parameter, method->DeclarationRange(),
+                      *enumeration->syntax);
         }
     }
     for (const auto& declaration : unit.Declarations()) {
-        if (!declaration->exported ||
+        if ((!declaration->exported && !declaration->quiverVisible) ||
             declaration->Kind() != core::AstNodeKind::FunctionDeclaration)
             continue;
         const auto* function = static_cast<const FunctionSymbol*>(
             _model.DeclaredSymbol(*declaration));
         if (!function) continue;
-        check(function->ReturnType(), declaration->Range());
+        check(function->ReturnType(), declaration->Range(), *declaration);
         for (const auto& parameter : function->ParameterTypes())
-            check(parameter, declaration->Range());
+            check(parameter, declaration->Range(), *declaration);
     }
     for (const auto& declaration : unit.Declarations()) {
-        if (!declaration->exported ||
+        if ((!declaration->exported && !declaration->quiverVisible) ||
             declaration->Kind() != core::AstNodeKind::CallableTypeDeclaration)
             continue;
         const auto* symbol = _model.DeclaredSymbol(*declaration);
         if (!symbol || symbol->Type().Kind() != SemanticTypeKind::Function)
             continue;
         const auto& signature = symbol->Type().Signature();
-        check(signature.result, declaration->Range());
+        check(signature.result, declaration->Range(), *declaration);
         for (const auto& parameter : signature.parameters)
-            check(parameter, declaration->Range());
+            check(parameter, declaration->Range(), *declaration);
     }
 }
 
@@ -641,8 +690,9 @@ SemanticType SemanticAnalyzer::ResolveTypeSyntax(const core::TypeNode& type) {
                                   symbol->Kind() != SymbolKind::EnumType &&
                                   symbol->Kind() != SymbolKind::StructureType &&
                                   symbol->Kind() != SymbolKind::CallableType)) {
-            Report(diagnostics::DiagnosticCode::UnknownType, type.Range(),
-                   "unknown type '" + type.Name() + "'");
+            if (!ReportInaccessibleImport(type.Name(), type.Range()))
+                Report(diagnostics::DiagnosticCode::UnknownType, type.Range(),
+                       "unknown type '" + type.Name() + "'");
             return SemanticType::Error();
         }
         return type.IsConst() ? symbol->Type().WithConst() : symbol->Type();
@@ -1443,6 +1493,10 @@ void SemanticAnalyzer::RegisterFunction(
     if ((owner || enumOwner) && function.exported)
         Report(diagnostics::DiagnosticCode::InvalidMember, function.Range(),
                "export the owning type, not individual member functions");
+    if ((owner || enumOwner) && function.quiverVisible)
+        Report(diagnostics::DiagnosticCode::InvalidMember, function.Range(),
+               "member functions cannot be marked quiver; visibility comes "
+               "from the owning type");
     if (owner && owner->syntax->moduleId != function.moduleId)
         Report(diagnostics::DiagnosticCode::PrivateAccess, function.Range(),
                "methods must be defined in their structure's module");
@@ -1524,19 +1578,19 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     _currentScope = &AddScope(nullptr);
     RegisterBuiltIns();
     _moduleScopes.clear();
+    _inaccessibleImports.clear();
+    _quiverNames.clear();
     _entryModules.clear();
     _testModules.clear();
-    _testPairs.clear();
     _testingModule = unit.testingModule;
     _currentModule.clear();
     Scope* builtins = _currentScope;
     _moduleScopes[""] = builtins;
     for (const auto& module : unit.modules) {
+        _quiverNames.insert_or_assign(module.quiverId, module.quiverName);
         if (!module.id.empty()) _moduleScopes[module.id] = &AddScope(builtins);
         if (module.entry) _entryModules.insert(module.id);
         if (module.test) _testModules.insert(module.id);
-        if (!module.testPair.empty())
-            _testPairs.emplace(module.id, module.testPair);
         for (const auto& import : module.imports)
             for (const auto& declaration : unit.Declarations()) {
                 if (declaration->moduleId != module.id) continue;
@@ -3192,8 +3246,9 @@ SemanticType SemanticAnalyzer::AnalyzeName(
     const core::NameExpression& expression) {
     const Symbol* symbol = _currentScope->Lookup(expression.Name());
     if (symbol == nullptr) {
-        Report(diagnostics::DiagnosticCode::UnknownName, expression.Range(),
-               "unknown name '" + expression.Name() + "'");
+        if (!ReportInaccessibleImport(expression.Name(), expression.Range()))
+            Report(diagnostics::DiagnosticCode::UnknownName, expression.Range(),
+                   "unknown name '" + expression.Name() + "'");
         return SemanticType::Error();
     }
     if (symbol == _buildSelf && !_allowBuildSelf)
@@ -3286,8 +3341,7 @@ SemanticType SemanticAnalyzer::AnalyzeMemberAccess(
         for (const auto& field : receiver.Structure()->fields)
             if (field.name == expression.Member()) {
                 if (field.syntax->IsPrivate() &&
-                    CurrentOwner() != receiver.Structure() &&
-                    !CanAccessPrivateOf(receiver.Structure()->syntax->moduleId))
+                    CurrentOwner() != receiver.Structure())
                     Report(diagnostics::DiagnosticCode::PrivateAccess,
                            expression.MemberRange(),
                            "field '" + field.name + "' is private");
@@ -4668,11 +4722,8 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
     if (function.IsPrivate() &&
         ((function.Owner() && CurrentOwner() != function.Owner()) ||
          (function.EnumOwner() && CurrentEnumOwner() != function.EnumOwner())))
-        if (!CanAccessPrivateOf(function.Owner()
-                                    ? function.Owner()->syntax->moduleId
-                                    : function.EnumOwner()->syntax->moduleId))
-            Report(diagnostics::DiagnosticCode::PrivateAccess, range,
-                   "method '" + function.Name() + "' is private");
+        Report(diagnostics::DiagnosticCode::PrivateAccess, range,
+               "method '" + function.Name() + "' is private");
     if (function.IsUnsafe() || function.ReturnType().IsImmovable())
         RequireUnsafe(range);
 }

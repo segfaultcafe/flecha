@@ -61,7 +61,7 @@ endif()
 
 file(READ "${EDITOR_ROOT}/syntaxes/flecha.tmLanguage.json" grammar)
 foreach(required IN ITEMS
-        enum match test func copy own lend
+        enum match test func copy own lend quiver
         "storage.type.function.flecha" "=>")
     string(FIND "${grammar}" "${required}" position)
     if(position EQUAL -1)

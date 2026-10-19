@@ -1593,3 +1593,34 @@ TEST(ParserTests, ParsesModuleImportsAndExportsOnOneLineOrMultipleLines) {
                   "math::answer");
     }
 }
+
+TEST(ParserTests, ParsesQuiverVisibilityOnTopLevelDeclarations) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "quiver i32 value() { return 42; } quiver structure Box { i32 n; }; "
+        "quiver enum State { On } quiver error Failure { Failed } quiver "
+        "func Callback(i32) => (i32);",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 5);
+    for (const auto& declaration : unit->Declarations()) {
+        EXPECT_TRUE(declaration->quiverVisible);
+        EXPECT_FALSE(declaration->exported);
+    }
+}
+
+TEST(ParserTests, RejectsDuplicateAndConflictingVisibilityModifiers) {
+    for (const std::string& source :
+         {"export quiver void value() {}", "quiver export void value() {}",
+          "quiver quiver void value() {}"}) {
+        DiagnosticBag diagnostics;
+        (void)ParseSource(source, diagnostics);
+        ASSERT_TRUE(diagnostics.HasErrors()) << source;
+        ASSERT_FALSE(diagnostics.Diagnostics().empty());
+        EXPECT_NE(diagnostics.Diagnostics()[0].message.find(
+                      "duplicate or conflicting visibility modifier"),
+                  std::string::npos)
+            << source;
+    }
+}
