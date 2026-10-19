@@ -679,7 +679,8 @@ class Expander {
             return nullptr;
         }
         tokens.emplace_back(TokenType::EOF_TOKEN, "", origin.Range());
-        Parser parser(std::move(tokens), diagnostics);
+        Parser parser(std::move(tokens), diagnostics,
+                      "$generic" + std::to_string(generatedDeclarations) + "$");
         if (modules.contains(origin.moduleId))
             parser.SetImports(modules[origin.moduleId]->imports);
         auto parsed = parser.Parse()->TakeDeclarations();

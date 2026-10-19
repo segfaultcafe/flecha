@@ -41,8 +41,11 @@ source::SourceRange EndOfInputRange(const std::vector<Token>& tokens) {
 }  // namespace
 
 Parser::Parser(std::vector<Token> tokens,
-               diagnostics::DiagnosticBag& diagnostics)
-    : _tokens(std::move(tokens)), _diagnostics(diagnostics) {
+               diagnostics::DiagnosticBag& diagnostics,
+               std::string anonymousFunctionPrefix)
+    : _tokens(std::move(tokens)),
+      _anonymousFunctionPrefix(std::move(anonymousFunctionPrefix)),
+      _diagnostics(diagnostics) {
     if (_tokens.empty() || _tokens.back().type != TokenType::EOF_TOKEN) {
         _tokens.emplace_back(TokenType::EOF_TOKEN, "",
                              EndOfInputRange(_tokens));
@@ -1868,7 +1871,8 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
 
     std::vector<FunctionModifier> modifiers;
     if (isUnsafe) modifiers.push_back(FunctionModifier::Unsafe);
-    const std::string name = "$anon" + std::to_string(_rangeId++);
+    const std::string name =
+        "$anon" + _anonymousFunctionPrefix + std::to_string(_rangeId++);
     auto function = std::make_unique<FunctionDeclaration>(
         range, std::move(modifiers), std::move(returnType), name,
         std::move(parameters), std::move(body), first.range, "",

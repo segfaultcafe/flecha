@@ -222,6 +222,32 @@ TEST(SemanticCallableTests, StoresGenericCallablesInGenericAggregates) {
     ASSERT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticCallableTests,
+     GivesAnonymousFunctionsUniqueNamesAcrossSpecializations) {
+    Analysis result = Analyze(R"(
+        func Mapper<T>(T) => (T);
+        func Less<T>(&const T, &const T) => (bool);
+        Mapper<T> identity<T>() {
+            return (value) => { return value; };
+        }
+        Less<T> less<T>() {
+            return [](&const T left, &const T right) => (bool) {
+                return *left < *right;
+            };
+        }
+        void main() {
+            first := identity<i32>();
+            second := identity<i64>();
+            less32 := less<i32>();
+            less64 := less<i64>();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
 TEST(SemanticCallableTests, DiagnosesInvalidGenericCallableApplications) {
     const std::vector<std::string> sources = {
         "func Mapper<T>(T) => (T); void use(Mapper callback) {}",
