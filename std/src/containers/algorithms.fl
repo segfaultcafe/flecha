@@ -2,6 +2,18 @@ module algorithms;
 
 export func Action<T>(&const T) => ();
 export func Less<T>(&const T left, &const T right) => (bool);
+export func Predicate<T>(&const T value) => (bool);
+export func Folder<T, A>(A accumulator, &const T value) => (A);
+
+export (usize, bool) find_if<T>([]const T values, Predicate<T> predicate) {
+    loop usize index = 0; index < values.len(); index++ {
+        if predicate(&values[index]) {
+            return (index, true);
+        }
+    }
+
+    return (none, false);
+}
 
 export (usize, bool) index_of<T>([]const T values, T needle) {
     for (i, val) := range values {
@@ -10,7 +22,7 @@ export (usize, bool) index_of<T>([]const T values, T needle) {
         }
     }
 
-    return (0, false);
+    return (none, false);
 }
 
 export bool contains<T>([]const T values, T needle) {
