@@ -120,7 +120,7 @@ in dependency order.
    };
    ```
 
-8. **Generic callable signatures — required
+8. **Generic callable signatures — implemented
    ([#66](https://github.com/segfaultcafe/flecha/issues/66)).** Callable aliases
    may declare type parameters. A specialization is an ordinary structural
    callable signature, with parameter and result substitution plus the same

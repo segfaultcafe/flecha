@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -16,7 +17,8 @@ namespace flecha::core {
 
 class Parser {
    public:
-    Parser(std::vector<Token> tokens, diagnostics::DiagnosticBag& diagnostics);
+    Parser(std::vector<Token> tokens, diagnostics::DiagnosticBag& diagnostics,
+           std::string anonymousFunctionPrefix = {});
 
     void ParseHeader();
     const std::vector<Import>& Imports() const { return _imports; }
@@ -93,6 +95,7 @@ class Parser {
     void SynchronizeStatement();
 
     std::vector<Token> _tokens;
+    std::string _anonymousFunctionPrefix;
     std::size_t _position = 0;
     std::size_t _rangeId = 0;
     diagnostics::DiagnosticBag& _diagnostics;

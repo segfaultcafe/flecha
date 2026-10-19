@@ -1,8 +1,9 @@
 # Generics
 
-Flecha implements compile-time specialization of functions and structures. Type
-parameters are ordinary identifiers declared between `<` and `>`; `T` is not a
-keyword or a wildcard type. Every use supplies explicit concrete type arguments.
+Flecha implements compile-time specialization of functions, structures, and
+callable signatures. Type parameters are ordinary identifiers declared between
+`<` and `>`; `T` is not a keyword or a wildcard type. Every use supplies explicit
+concrete type arguments.
 
 ```flecha
 T identity<T>(T value) { return value; }
@@ -11,6 +12,8 @@ T identity<T>(T value) { return value; }
 structure Box<T> { T value; };
 T Box<T>::get(&const self) { return self->value; }
 void Box<T>::set(&self, T value) { self->value = value; }
+
+func Mapper<T>(T value) => (T);
 
 i32 main() {
     box := Box<i32>::init();
@@ -23,6 +26,28 @@ A method repeats its owner's parameter names in the same order. It may declare
 additional parameters: `U Box<T>::convert<U>(&const self)`. Such a method is called
 as `box.convert<i32>()`. Lifecycle methods cannot add type parameters of their
 own. Method declarations remain outside the structure body.
+
+## Callable signatures
+
+A generic callable alias specializes to the same structural callable type that
+could be written as a nongeneric alias. Substitution applies to parameter and
+result types, including nested types, and preserves `unsafe`, `own`, `lend`, and
+borrowed-result contracts.
+
+```flecha
+func Mapper<T>(T value) => (T);
+func Fold<T, U>([]const T values, U initial) => (U);
+func Borrower<T>(&T value) => (&T) <- value;
+
+Mapper<i32> increment = (value) => { return value + 1; };
+```
+
+Specialized callable aliases work in function parameters and results, aggregate
+fields and containers, imported module APIs, and other generic declarations.
+They also provide the expected type for inferred anonymous functions. Callable
+aliases are structural, so independently declared aliases with identical
+specialized signatures are compatible. Type arguments are never inferred for
+the alias itself: missing, extra, and unresolved arguments are diagnosed.
 
 ## Types and references
 
@@ -78,7 +103,7 @@ AST declarations, caches specializations, and preserves source/module identity.
 The normal semantic, allocation, lowering, and native code generation passes
 then process those declarations. Generic templates themselves emit no code.
 
-There is no argument inference, default type argument, variadic parameter pack,
+There is no generic-argument inference, default type argument, variadic parameter pack,
 constant generic parameter, user specialization override, or separate compiled
 generic interface yet. The standard library provides [`RawArray<T>`](dynamic_arrays.md),
 implemented in Flecha. Its runtime storage currently supports numeric, boolean,

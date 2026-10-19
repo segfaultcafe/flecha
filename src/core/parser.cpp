@@ -41,8 +41,11 @@ source::SourceRange EndOfInputRange(const std::vector<Token>& tokens) {
 }  // namespace
 
 Parser::Parser(std::vector<Token> tokens,
-               diagnostics::DiagnosticBag& diagnostics)
-    : _tokens(std::move(tokens)), _diagnostics(diagnostics) {
+               diagnostics::DiagnosticBag& diagnostics,
+               std::string anonymousFunctionPrefix)
+    : _tokens(std::move(tokens)),
+      _anonymousFunctionPrefix(std::move(anonymousFunctionPrefix)),
+      _diagnostics(diagnostics) {
     if (_tokens.empty() || _tokens.back().type != TokenType::EOF_TOKEN) {
         _tokens.emplace_back(TokenType::EOF_TOKEN, "",
                              EndOfInputRange(_tokens));
@@ -458,12 +461,16 @@ std::unique_ptr<Parameter> Parser::ParseCallableParameter() {
 
 std::unique_ptr<CallableTypeDeclaration>
 Parser::ParseCallableTypeDeclaration() {
+    const auto tokenStart = _position;
     const source::SourceLocation start = Current().range.start;
     const bool isUnsafe = Match(TokenType::Unsafe);
     if (Consume(TokenType::Func, "'func'") == nullptr) return nullptr;
     const Token* name = Consume(TokenType::Identifier, "callable type name");
-    if (name == nullptr ||
-        Consume(TokenType::LParen, "'(' after callable type name") == nullptr)
+    if (name == nullptr) return nullptr;
+    const auto parameterStart = _position;
+    auto genericParameters = ParseGenericParameters();
+    const auto parameterEnd = _position;
+    if (Consume(TokenType::LParen, "'(' after callable type name") == nullptr)
         return nullptr;
 
     std::vector<std::unique_ptr<Parameter>> parameters;
@@ -503,10 +510,19 @@ Parser::ParseCallableTypeDeclaration() {
     const Token* semicolon =
         Consume(TokenType::SemiColon, "';' after callable type declaration");
     if (semicolon == nullptr) return nullptr;
-    return std::make_unique<CallableTypeDeclaration>(
+    auto declaration = std::make_unique<CallableTypeDeclaration>(
         source::SourceRange{start, semicolon->range.end}, name->value,
         name->range, std::move(parameters), std::move(results), isUnsafe,
         std::move(borrowSource), borrowSourceRange);
+    declaration->genericParameters = std::move(genericParameters);
+    if (parameterStart != parameterEnd)
+        declaration->parameterTokenRanges.emplace_back(
+            parameterStart - tokenStart, parameterEnd - tokenStart);
+    declaration->nameTokenIndex =
+        static_cast<std::size_t>(name - _tokens.data()) - tokenStart;
+    declaration->templateTokens.assign(_tokens.begin() + tokenStart,
+                                       _tokens.begin() + _position);
+    return declaration;
 }
 
 std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
@@ -1855,7 +1871,8 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
 
     std::vector<FunctionModifier> modifiers;
     if (isUnsafe) modifiers.push_back(FunctionModifier::Unsafe);
-    const std::string name = "$anon" + std::to_string(_rangeId++);
+    const std::string name =
+        "$anon" + _anonymousFunctionPrefix + std::to_string(_rangeId++);
     auto function = std::make_unique<FunctionDeclaration>(
         range, std::move(modifiers), std::move(returnType), name,
         std::move(parameters), std::move(body), first.range, "",

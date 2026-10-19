@@ -6,7 +6,7 @@ brackets, and highlights the language syntax implemented by the compiler.
 Callable declarations and capture lists are highlighted in examples such as:
 
 ```flecha
-func Mapper(i32) => (i32);
+func Mapper<T>(T) => (T);
 Mapper doubled = [](i32 value) => (i32) { return value * 2; };
 Mapper offset = [copy amount](value) => { return value + amount; };
 Mapper nested = [own offset](value) => { return offset(value) + 1; };

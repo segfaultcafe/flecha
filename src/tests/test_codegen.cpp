@@ -132,6 +132,31 @@ TEST(LlvmCodeGeneratorTests, EmitsUniformCallableValuesAndIndirectCalls) {
     EXPECT_NE(ir.find("twice.$callable"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, EmitsGenericCallableSpecializationsWithSameAbi) {
+    GeneratedSource result = Generate(R"(
+        func Mapper<T>(T) => (T);
+        i32 twice(i32 value) { return value * 2; }
+        i32 apply(Mapper<i32> callback, i32 value) {
+            return callback(value);
+        }
+        i32 main() {
+            Mapper<i32> callback = twice;
+            return apply(callback, 21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("{ ptr, ptr, ptr }"), std::string::npos);
+    EXPECT_NE(ir.find("call i32 %function.invoke(ptr %function.environment"),
+              std::string::npos);
+    EXPECT_NE(ir.find("twice.$callable"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsHeapBackedCopyCaptureEnvironments) {
     GeneratedSource result = Generate(R"(
         func Mapper(i32) => (i32);
@@ -719,6 +744,41 @@ TEST(NativeCompilerTests, RunsCallableParametersReturnsAndAggregateResults) {
     ASSERT_TRUE(compiler.Ready()) << compiler.Error();
     ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
                                          "native_callable_values_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsGenericCallablesWithCapturingClosures) {
+    GeneratedSource result = Generate(R"(
+        func Mapper<T>(T) => (T);
+        T apply<T>(Mapper<T> callback, T value) {
+            return callback(value);
+        }
+        i32 main() {
+            i32 offset = 20;
+            Mapper<i32> callback = [copy offset](value) => {
+                return value + offset;
+            };
+            return apply<i32>(callback, 22);
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_generic_callable_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_generic_callable_test",
                                          executablePath.string()))
         << compiler.Error();
     const std::string executablePathText = executablePath.string();

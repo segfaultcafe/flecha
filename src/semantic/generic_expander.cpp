@@ -471,9 +471,11 @@ class Expander {
             if (!type.typeArguments.empty()) {
                 auto arguments = ResolveArguments(type.typeArguments, module);
                 if (!declaration ||
-                    declaration->Kind() != AstNodeKind::StructureDeclaration) {
+                    (declaration->Kind() != AstNodeKind::StructureDeclaration &&
+                     declaration->Kind() !=
+                         AstNodeKind::CallableTypeDeclaration)) {
                     Error(type.Range(),
-                          "unknown generic structure '" + type.Name() + "'");
+                          "unknown generic type '" + type.Name() + "'");
                     return result;
                 }
                 declaration =
@@ -581,6 +583,15 @@ class Expander {
                                        parameters);
             }
         }
+        if (declaration.Kind() == AstNodeKind::CallableTypeDeclaration &&
+            declaration.exported) {
+            const auto& callable =
+                static_cast<const CallableTypeDeclaration&>(declaration);
+            for (const auto& parameter : callable.Parameters())
+                ValidatePublicType(parameter->Type(), declaration, parameters);
+            for (const auto& result : callable.Results())
+                ValidatePublicType(*result, declaration, parameters);
+        }
         Walk(declaration, [&](AstNode& node, bool enter) {
             if (!enter) return;
             std::string name;
@@ -668,7 +679,8 @@ class Expander {
             return nullptr;
         }
         tokens.emplace_back(TokenType::EOF_TOKEN, "", origin.Range());
-        Parser parser(std::move(tokens), diagnostics);
+        Parser parser(std::move(tokens), diagnostics,
+                      "$generic" + std::to_string(generatedDeclarations) + "$");
         if (modules.contains(origin.moduleId))
             parser.SetImports(modules[origin.moduleId]->imports);
         auto parsed = parser.Parse()->TakeDeclarations();

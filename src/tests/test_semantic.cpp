@@ -116,6 +116,154 @@ TEST(SemanticCallableTests, ResolvesStructuralSignaturesAndFunctionValues) {
     EXPECT_TRUE(symbol->Type().OwnsStorage());
 }
 
+TEST(SemanticCallableTests, SpecializesGenericCallableSignaturesStructurally) {
+    Analysis result = Analyze(R"(
+        func Mapper<T>(T) => (T);
+        i32 identity(i32 value) { return value; }
+        i32 apply(Mapper<i32> callback, i32 value) {
+            return callback(value);
+        }
+        i32 main() {
+            Mapper<i32> named = identity;
+            Mapper<i32> inferred = (value) => { return value + 1; };
+            return apply(named, 20) + inferred(1);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const FunctionDeclaration* apply = nullptr;
+    for (const auto& declaration : result.unit->Declarations())
+        if (declaration->Kind() == AstNodeKind::FunctionDeclaration) {
+            const auto* function =
+                static_cast<const FunctionDeclaration*>(declaration.get());
+            if (function->Name() == "apply") apply = function;
+        }
+    ASSERT_NE(apply, nullptr);
+    const auto* symbol =
+        static_cast<const FunctionSymbol*>(result.model.DeclaredSymbol(*apply));
+    ASSERT_NE(symbol, nullptr);
+    ASSERT_EQ(symbol->ParameterTypes().size(), 2);
+    EXPECT_EQ(symbol->ParameterTypes()[0].Name(), "func(i32) => (i32)");
+}
+
+TEST(SemanticCallableTests,
+     GenericCallableSpecializationsPreserveCompleteContracts) {
+    Analysis result = Analyze(R"(
+        unsafe func Transfer<T>(lend *const T source) => (own *T, error);
+        unsafe (own *i32, error) transfer(lend *const i32 source) {
+            return (null, none);
+        }
+        unsafe void main() {
+            Transfer<i32> callback = transfer;
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests,
+     GenericCallableSpecializationsPreserveBorrowContracts) {
+    Analysis result = Analyze(R"(
+        func Borrower<T>(&T source) => (&T) <- source;
+        &i32 borrow(&i32 source) <- source { return source; }
+        i32 main() {
+            value := 42;
+            Borrower<i32> callback = borrow;
+            reference := callback(&value);
+            *reference = *reference + 1;
+            return value;
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, SpecializesNestedGenericCallableTypes) {
+    Analysis result = Analyze(R"(
+        func Fold<T, U>([]const T values, U initial) => (U);
+        i32 sum([]const i32 values, i32 initial) {
+            result := initial;
+            for (_, value) := range values { result = result + value; }
+            return result;
+        }
+        void use(Fold<i32, i32> callback) {
+            [2]i32 values = [20, 22];
+            result := callback(values[:], 0);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, StoresGenericCallablesInGenericAggregates) {
+    Analysis result = Analyze(R"(
+        func Mapper<T>(T) => (T);
+        structure Handler<T> { Mapper<T> callback; };
+        T Handler<T>::run(&const self, T value) {
+            return (self->callback)(value);
+        }
+        i32 twice(i32 value) { return value * 2; }
+        i32 main() {
+            handler := build Handler<i32> { self.callback = twice; };
+            return handler.run(21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests,
+     GivesAnonymousFunctionsUniqueNamesAcrossSpecializations) {
+    Analysis result = Analyze(R"(
+        func Mapper<T>(T) => (T);
+        func Less<T>(&const T, &const T) => (bool);
+        Mapper<T> identity<T>() {
+            return (value) => { return value; };
+        }
+        Less<T> less<T>() {
+            return [](&const T left, &const T right) => (bool) {
+                return *left < *right;
+            };
+        }
+        void main() {
+            first := identity<i32>();
+            second := identity<i64>();
+            less32 := less<i32>();
+            less64 := less<i64>();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, DiagnosesInvalidGenericCallableApplications) {
+    const std::vector<std::string> sources = {
+        "func Mapper<T>(T) => (T); void use(Mapper callback) {}",
+        "func Mapper<T>(T) => (T); void use(Mapper<i32, i64> callback) {}",
+        "func Mapper<T>(T) => (T); void use(Mapper<Missing> callback) {}",
+        "func Mapper(i32) => (i32); void use(Mapper<i32> callback) {}",
+    };
+
+    for (const std::string& source : sources) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(FindErrorDiagnostic(Analyze(source),
+                                      DiagnosticCode::InvalidGeneric),
+                  nullptr);
+    }
+}
+
 TEST(SemanticCallableTests, DiagnosesSignatureAndSafetyMismatches) {
     Analysis result = Analyze(R"(
         func Mapper(i32) => (i32);

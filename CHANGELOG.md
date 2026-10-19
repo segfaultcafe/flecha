@@ -4,6 +4,11 @@
 
 ### Language
 
+- Callable signatures may now declare type parameters, for example
+  `func Mapper<T>(T) => (T);`. Explicit specializations work across modules,
+  aggregates, containers, and other generic declarations while preserving
+  structural compatibility, contextual anonymous-function inference, safety,
+  ownership, and borrowed-result contracts.
 - `own` captures now move callable values and movable noncopyable safe
   aggregates into closure environments. Nested closures and callable
   containers retain borrow origins and run recursive teardown exactly once;
