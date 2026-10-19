@@ -1,0 +1,159 @@
+module file_test;
+
+@imports
+    :: root::io::file
+    :: root::io::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test open_option_constructors_select_the_expected_modes(&testing::UnitTest t) {
+    readOnly := file::OpenOptions::readOnly();
+    asserts::is_true(t, readOnly.read, "readOnly enables reading");
+    asserts::is_false(t, readOnly.write, "readOnly does not enable writing");
+
+    writeOnly := file::OpenOptions::writeOnly();
+    asserts::is_true(t, writeOnly.write, "writeOnly enables writing");
+    asserts::is_true(t, writeOnly.create, "writeOnly creates a missing file");
+    asserts::is_true(t, writeOnly.truncate, "writeOnly truncates an existing file");
+    asserts::is_false(t, writeOnly.read, "writeOnly does not enable reading");
+
+    appendOnly := file::OpenOptions::appendOnly();
+    asserts::is_true(t, appendOnly.write, "appendOnly enables writing");
+    asserts::is_true(t, appendOnly.append, "appendOnly writes at the end");
+    asserts::is_true(t, appendOnly.create, "appendOnly creates a missing file");
+    asserts::is_false(t, appendOnly.truncate, "appendOnly preserves existing contents");
+}
+
+test open_rejects_options_before_touching_the_path(&testing::UnitTest t) {
+    invalid := build file::OpenOptions {
+        self.append = true;
+    };
+
+    opened, err := file::File::open("", invalid);
+    asserts::is_true(t, err == errors::IoError.InvalidOptions, "append requires write access");
+    asserts::is_false(t, opened.isOpen(), "a rejected open returns a closed File");
+}
+
+test option_validation_covers_every_write_modifier(&testing::UnitTest t) {
+    noAccess := build file::OpenOptions {};
+    appendWithoutWrite := build file::OpenOptions {
+        self.append = true;
+    };
+    truncateWithoutWrite := build file::OpenOptions {
+        self.truncate = true;
+    };
+    createWithoutWrite := build file::OpenOptions {
+        self.create = true;
+    };
+    createNewWithoutWrite := build file::OpenOptions {
+        self.createNew = true;
+    };
+
+    asserts::is_true(
+        t,
+        file::validate_options(noAccess) == errors::IoError.InvalidOptions,
+        "at least one access mode is required"
+    );
+    asserts::is_true(
+        t,
+        file::validate_options(appendWithoutWrite) == errors::IoError.InvalidOptions,
+        "append requires write access"
+    );
+    asserts::is_true(
+        t,
+        file::validate_options(truncateWithoutWrite) == errors::IoError.InvalidOptions,
+        "truncate requires write access"
+    );
+    asserts::is_true(
+        t,
+        file::validate_options(createWithoutWrite) == errors::IoError.InvalidOptions,
+        "create requires write access"
+    );
+    asserts::is_true(
+        t,
+        file::validate_options(createNewWithoutWrite) == errors::IoError.InvalidOptions,
+        "createNew requires write access"
+    );
+    asserts::is_true(
+        t,
+        file::validate_options(file::OpenOptions::readOnly()) == none,
+        "readOnly is valid"
+    );
+    asserts::is_true(
+        t,
+        file::validate_options(file::OpenOptions::writeOnly()) == none,
+        "writeOnly is valid"
+    );
+    asserts::is_true(
+        t,
+        file::validate_options(file::OpenOptions::appendOnly()) == none,
+        "appendOnly is valid"
+    );
+}
+
+test open_rejects_invalid_paths(&testing::UnitTest t) {
+    empty, emptyError := file::File::open("", file::OpenOptions::readOnly());
+    asserts::is_true(t, emptyError == errors::IoError.InvalidPath, "an empty path is invalid");
+    asserts::is_false(t, empty.isOpen(), "an invalid path returns a closed File");
+
+    string embeddedNullPath = "bad" + '\0'.string() + "path";
+    embeddedNull, embeddedNullError := file::File::open(
+        embeddedNullPath.view(),
+        file::OpenOptions::readOnly()
+    );
+    asserts::is_true(
+        t,
+        embeddedNullError == errors::IoError.InvalidPath,
+        "an embedded null is invalid"
+    );
+    asserts::is_false(t, embeddedNull.isOpen(), "a failed open does not retain a handle");
+}
+
+test closed_files_reject_every_operation(&testing::UnitTest t) {
+    closed, openError := file::File::open("", file::OpenOptions::readOnly());
+    asserts::is_true(t, openError == errors::IoError.InvalidPath, "the setup File is closed");
+
+    [0]u8 empty = none;
+    bytesRead, readError := closed.read(empty[:]);
+    asserts::is_true(
+        t,
+        bytesRead == 0 and readError == errors::IoError.Closed,
+        "read rejects a closed File"
+    );
+    asserts::is_true(
+        t,
+        closed.readExact(empty[:]) == errors::IoError.Closed,
+        "readExact rejects a closed File"
+    );
+
+    bytesWritten, writeError := closed.write(empty[:]);
+    asserts::is_true(
+        t,
+        bytesWritten == 0 and writeError == errors::IoError.Closed,
+        "write rejects a closed File"
+    );
+    asserts::is_true(
+        t,
+        closed.writeAll(empty[:]) == errors::IoError.Closed,
+        "writeAll rejects a closed File"
+    );
+
+    position, seekError := closed.seek(0, file::SeekFrom.Start);
+    asserts::is_true(
+        t,
+        position == 0 and seekError == errors::IoError.Closed,
+        "seek rejects a closed File"
+    );
+    asserts::is_true(t, closed.flush() == errors::IoError.Closed, "flush rejects a closed File");
+    asserts::is_true(t, closed.close() == errors::IoError.Closed, "close rejects a closed File");
+}
+
+test seek_origins_have_stable_native_values(&testing::UnitTest t) {
+    start := file::SeekFrom.Start;
+    current := file::SeekFrom.Current;
+    end := file::SeekFrom.End;
+
+    asserts::is_true(t, start.number() == 0, "Start maps to zero");
+    asserts::is_true(t, current.number() == 1, "Current maps to one");
+    asserts::is_true(t, end.number() == 2, "End maps to two");
+}
