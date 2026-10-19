@@ -36,3 +36,18 @@ The implementation is an ordinary safe Flecha wrapper around the versioned
 string before passing its address, and the runtime either transfers exactly one
 compatible allocation into that slot or leaves it empty. Generated string
 cleanup therefore owns and destroys the result exactly once.
+
+## File streams
+
+Import `lib::std::io::file` for incremental binary I/O. `File::open` accepts an
+`OpenOptions` value; the `readOnly`, `writeOnly`, and `appendOnly` constructors
+cover the common modes. `writeOnly` creates and truncates, while `appendOnly`
+creates and preserves existing contents. Custom options can request combined
+read/write access, non-truncating creation, or atomic `createNew` behavior.
+
+`File` owns its opaque native handle and closes it during teardown. Explicit
+`close` consumes the handle even when closing reports an error. `read` and
+`write` accept checked byte slices, return the transferred byte count, and
+preserve partial counts alongside errors. A successful read of zero bytes means
+end of file. `seek`, `flush`, `close`, and operations on a closed handle report
+through the `IoError` family.
