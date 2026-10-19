@@ -153,6 +153,24 @@ i32 main() {
 }
 ```
 
+Callable signatures may be generic. Type arguments are explicit when the alias
+is used, and specialization substitutes parameters and results before ordinary
+structural compatibility, safety, ownership, and borrow-contract checking:
+
+```flecha
+func Predicate<T>(&const T value) => (bool);
+func Transform<T, U>(T value) => (U);
+
+Transform<i32, i64> widen = (value) => {
+    return value.cast<i64>;
+};
+```
+
+A specialized alias is an ordinary callable type. It can be used in parameters,
+results, fields, containers, and other generic declarations, and it supplies the
+complete expected signature for contextual anonymous-function inference.
+Generic callable declarations do not infer omitted type arguments.
+
 Callable aliases are structural rather than nominal: two complete signatures
 with identical parameter, result, safety, ownership, and borrow contracts are
 compatible regardless of their declaration names. Callable values are
@@ -935,10 +953,13 @@ i32 main() {
 
 ## Generics
 
-Generic functions and structures use explicit type parameters and arguments:
+Generic functions, structures, and callable signatures use explicit type
+parameters and arguments:
 `T identity<T>(T value)`, `structure Box<T> { T value; };`, and
-`identity<i32>(42)`. Methods inherit owner parameters through `Box<T>::method`.
-Specializations have distinct nominal identities and are checked on use.
+`func Mapper<T>(T) => (T);`. Methods inherit owner parameters through
+`Box<T>::method`. Structure specializations have distinct nominal identities;
+callable specializations remain structural. All specializations are checked on
+use.
 References remain valid function parameters and cannot be stored in structure
 fields. Existing ownership, const, visibility, and lifecycle rules apply.
 See [generics](docs/generics.md) for the implemented rules and limits.

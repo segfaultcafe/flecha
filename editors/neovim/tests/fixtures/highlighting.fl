@@ -72,7 +72,8 @@ unsafe void inspect(lend *const i32 pointer) {}
 stringv directive = "@imports string";
 
 module highlighting;
-func Mapper(i32) => (i32);
+func Mapper<T>(T) => (T);
+Mapper<i32> integerMapper = (value) => { return value; };
 Mapper copied = [copy factor](value) => { return value + factor; };
 Mapper borrowed = [&factor, &const limit](value) => { return value + factor + limit; };
 Mapper lent = unsafe [lend pointer](value) => { return value + *pointer; };
