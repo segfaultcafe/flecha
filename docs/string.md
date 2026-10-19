@@ -6,8 +6,10 @@ Flecha has two complementary text types:
 - `string` is an immutable value that owns its backing allocation.
 
 The initial string model is byte-oriented. Lengths and indices count bytes,
-and `char` is a `u8`. Unicode decoding and code-point iteration belong in a
-later text library and do not change the storage contract described here.
+and `char` has the same representation as `u8`. A `char` converts implicitly to
+`u8`, including in byte-array initializers and function arguments. The reverse
+conversion remains explicit. Unicode decoding and code-point iteration belong
+in a later text library and do not change the storage contract described here.
 
 ## Literals and ownership
 
@@ -71,7 +73,9 @@ text.substr(0, 3);       // allocation-free stringv
 Unsafe runtime bridges may also call `text.data()` to obtain a borrowed
 `*const char`. The pointer is paired with the explicit byte length, may be null
 for an empty value, and must not be retained beyond the string or view's
-lifetime. This operation is intentionally unavailable in safe code.
+lifetime. Extern calls may pass it to a `*const u8` parameter without an
+additional pointer operation. This operation is intentionally unavailable in
+safe code.
 
 Following Flecha library API style, member names use `camelCase`. Existing
 single-word members such as `len`, `at`, and `substr` already follow that rule;

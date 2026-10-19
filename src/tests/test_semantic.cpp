@@ -88,6 +88,10 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                              SemanticType(SemanticTypeKind::None)));
     EXPECT_FALSE(IsAssignable(SemanticType(SemanticTypeKind::I32),
                               SemanticType(SemanticTypeKind::I64)));
+    EXPECT_TRUE(IsAssignable(SemanticType(SemanticTypeKind::U8),
+                             SemanticType(SemanticTypeKind::Char)));
+    EXPECT_FALSE(IsAssignable(SemanticType(SemanticTypeKind::Char),
+                              SemanticType(SemanticTypeKind::U8)));
 }
 
 TEST(SemanticCallableTests, ResolvesStructuralSignaturesAndFunctionValues) {
@@ -1185,6 +1189,40 @@ TEST(SemanticExternTests, RawStringDataRequiresUnsafePermission) {
     EXPECT_FALSE(Analyze("unsafe *const char good(stringv value) { return "
                          "value.data(); }")
                      .diagnostics.HasErrors());
+}
+
+TEST(SemanticExternTests, AcceptsStringDataForBytePointerParameters) {
+    Analysis result = Analyze(
+        "extern unsafe void native_write(*const u8 data, usize length); "
+        "void write(stringv text) { unsafe { native_write(text.data(), "
+        "text.len().cast<usize>); } }");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+
+    Analysis nonExtern = Analyze(
+        "unsafe void consume(*const u8 data) {} "
+        "void write(stringv text) { unsafe { consume(text.data()); } }");
+    EXPECT_NE(FindDiagnostic(nonExtern, DiagnosticCode::IncompatibleArgument),
+              nullptr);
+
+    Analysis mutableTarget = Analyze(
+        "extern unsafe void native_write(*u8 data); "
+        "void write(stringv text) { unsafe { native_write(text.data()); } }");
+    EXPECT_NE(
+        FindDiagnostic(mutableTarget, DiagnosticCode::IncompatibleArgument),
+        nullptr);
+
+    Analysis reverse = Analyze(
+        "extern unsafe void native_write(*const char data); "
+        "unsafe void write(*const u8 data) { native_write(data); }");
+    EXPECT_NE(FindDiagnostic(reverse, DiagnosticCode::IncompatibleArgument),
+              nullptr);
+}
+
+TEST(SemanticConversionTests, ConvertsCharactersToBytesImplicitly) {
+    Analysis result = Analyze(
+        "u8 identity(u8 value) { return value; } "
+        "u8 first() { [2]u8 bytes = ['h', 'i']; return identity(bytes[0]); }");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
 TEST(SemanticExternTests, DoesNotBypassTrackedAllocationContracts) {

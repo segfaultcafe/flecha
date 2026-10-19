@@ -4272,8 +4272,12 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
             ? argumentTypes.size()
             : signature->parameters.size();
     for (std::size_t index = 0; index < count; ++index) {
-        if (!IsAssignable(signature->parameters[index], argumentTypes[index]) &&
-            !CanReborrow(signature->parameters[index], argumentTypes[index])) {
+        const SemanticType expected = signature->parameters[index];
+        const bool assignable =
+            function && function->IsExtern()
+                ? IsExternAssignable(expected, argumentTypes[index])
+                : IsAssignable(expected, argumentTypes[index]);
+        if (!assignable && !CanReborrow(expected, argumentTypes[index])) {
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                    expression.Arguments()[index]->Range(),
                    "argument " + std::to_string(index + 1) + ": " +
