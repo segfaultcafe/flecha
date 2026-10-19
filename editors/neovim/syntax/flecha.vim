@@ -11,7 +11,7 @@ syntax keyword flechaType u8 u16 u32 u64 usize
 syntax keyword flechaType f32 f64 bool char void string stringv error AllocationError
 syntax match flechaType /\<[A-Z][A-Za-z0-9_]*\>/
 
-syntax keyword flechaModifier unsafe export extern inline comptime copy own lend const constptr constref volatile private override
+syntax keyword flechaModifier unsafe export quiver extern inline comptime copy own lend const constptr constref volatile private override
 syntax keyword flechaFuncKeyword func
 syntax keyword flechaTest test
 syntax keyword flechaConditional if else also match

@@ -84,6 +84,12 @@ class Declaration : public AstNode {
     using AstNode::AstNode;
     std::string moduleId;
     bool exported = false;
+    bool quiverVisible = false;
+    // The source-root-qualified directory that contains this declaration.
+    // Generic nominal specializations may inherit another declaration's
+    // visibility boundary, so this lives on the declaration rather than being
+    // inferred exclusively from moduleId.
+    std::string quiverId;
     // Token spans let specialization preserve source ranges and parser
     // desugaring.
     std::vector<std::string> genericParameters;
@@ -649,6 +655,8 @@ struct Module final {
     std::string id;
     std::string name;
     std::string file;
+    std::string quiverId;
+    std::string quiverName;
     bool entry = false;
     bool test = false;
     std::string testPair;

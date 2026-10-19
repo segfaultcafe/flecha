@@ -4,6 +4,11 @@
 
 ### Language
 
+- Top-level declarations now support `quiver` visibility for sibling modules in
+  the same immediate directory and source-root or library identity. Imports,
+  wildcard directory imports, generics, API exposure validation, and generated
+  nominal specializations preserve the boundary; private members remain limited
+  to methods of their exact owning type.
 - Callable signatures may now declare type parameters, for example
   `func Mapper<T>(T) => (T);`. Explicit specializations work across modules,
   aggregates, containers, and other generic declarations while preserving

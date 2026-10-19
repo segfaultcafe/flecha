@@ -28,11 +28,18 @@ class ModuleTests : public ::testing::Test {
     }
     std::string Check(flecha::core::ModuleLoadMode mode =
                           flecha::core::ModuleLoadMode::Runtime) {
+        return CheckAt("main.fl", mode);
+    }
+    std::string CheckAt(const std::string& entry,
+                        flecha::core::ModuleLoadMode mode =
+                            flecha::core::ModuleLoadMode::Runtime) {
         flecha::diagnostics::DiagnosticBag diagnostics;
         flecha::core::ModuleLoader loader(diagnostics);
-        auto unit = loader.Load(
-            root / "main.fl", root,
-            {{"fixture", root / "library"}, {"std", root / "std"}}, mode);
+        auto unit = loader.Load(root / entry, root,
+                                {{"fixture", root / "library"},
+                                 {"mirror", root / "library"},
+                                 {"std", root / "std"}},
+                                mode);
         if (!diagnostics.HasErrors()) {
             flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
             auto model = analyzer.Analyze(*unit);
@@ -113,7 +120,8 @@ TEST_F(ModuleTests, GenericCallableExportsRespectTypeVisibility) {
           "Transform<T>(Hidden, T) => (T);");
     Write("main.fl",
           "module main; @imports :: root::callbacks; void main() {}");
-    EXPECT_NE(Check().find("private type"), std::string::npos);
+    EXPECT_NE(Check().find("cannot expose non-exported types"),
+              std::string::npos);
 }
 TEST_F(ModuleTests, PrivateDeclarationsAndTransitiveImportsDoNotLeak) {
     Write("hidden.fl",
@@ -228,7 +236,12 @@ TEST_F(ModuleTests, ValidatesAndPrivilegesPairedTestModules) {
     ASSERT_FALSE(diagnostics.HasErrors());
     flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
     auto model = analyzer.Analyze(*unit);
-    EXPECT_FALSE(diagnostics.HasErrors());
+    ASSERT_TRUE(diagnostics.HasErrors());
+    std::string messages;
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        messages += diagnostic.message + "\n";
+    EXPECT_NE(messages.find("method '$m1$Box::hidden' is private"),
+              std::string::npos);
 }
 
 TEST_F(ModuleTests, RejectsInvalidTestModulesAndSignatures) {
@@ -277,15 +290,18 @@ TEST_F(ModuleTests, RejectsPrivateTypesInExportedApis) {
     Write("main.fl",
           "module main; structure Secret { i32 n; }; export Secret leak() { "
           "return Secret::init(); }");
-    EXPECT_NE(Check().find("cannot expose private types"), std::string::npos);
+    EXPECT_NE(Check().find("cannot expose non-exported types"),
+              std::string::npos);
     Write("main.fl",
           "module main; error Secret { Failed } export Secret leak() { return "
           "Secret.Failed; }");
-    EXPECT_NE(Check().find("cannot expose private types"), std::string::npos);
+    EXPECT_NE(Check().find("cannot expose non-exported types"),
+              std::string::npos);
     Write("main.fl",
           "module main; structure Secret { i32 n; }; export structure Public { "
           "Secret value; };");
-    EXPECT_NE(Check().find("cannot expose private types"), std::string::npos);
+    EXPECT_NE(Check().find("cannot expose non-exported types"),
+              std::string::npos);
     Write("main.fl",
           "module main; structure Secret { i32 n; }; export structure Public { "
           "private Secret value; };");
@@ -442,12 +458,12 @@ TEST_F(ModuleTests, GenericVisibilityIsCheckedAtDefinitionAndUse) {
     Write("main.fl",
           "module main; @imports :: root::helper; i32 main() { return "
           "helper::secret<i32>(42); }");
-    EXPECT_NE(Check().find("private"), std::string::npos);
+    EXPECT_NE(Check().find("module-private"), std::string::npos);
     Write("helper.fl",
           "module helper; structure Secret { i32 value; }; export Secret "
           "reveal<T>(T value) { return Secret::init(); }");
     Write("main.fl", "module main; @imports :: root::helper; void main() {}");
-    EXPECT_NE(Check().find("private"), std::string::npos);
+    EXPECT_NE(Check().find("non-exported"), std::string::npos);
 }
 
 TEST_F(ModuleTests, OrdinaryExportsCanExposePublicSpecializations) {
@@ -498,4 +514,199 @@ TEST_F(ModuleTests, MoveOnlyValuesTransferAcrossModuleBoundaries) {
         }
     )");
     EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, QuiverDeclarationsReachSiblingModulesAndTheirMembers) {
+    Write("api.fl", R"(module api;
+        quiver i32 value() { return 40; }
+        quiver structure Box { i32 number; };
+        Box Box::init() override { return build Box { self.number = 1; }; }
+        i32 Box::read(&const self) { return self->number; }
+        quiver enum State { On, Off }
+        quiver error Failure { Failed }
+        quiver func Mapper(i32) => (i32);
+    )");
+    Write("main.fl", R"(module main; @imports :: root::api;
+        i32 main() {
+            box := api::Box::init();
+            api::State state = api::State.On;
+            error failure = api::Failure.Failed;
+            api::Mapper mapper = (value) => { return value + 1; };
+            return api::value() + box.number + box.read() + mapper(0);
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, QuiverBoundariesRejectParentNestedAndLibraryModules) {
+    Write("pack/api.fl", "module api; quiver i32 value() { return 42; }");
+    Write("main.fl", R"(module main; @imports :: root::pack::api;
+        i32 main() { return api::value(); }
+    )");
+    std::string errors = Check();
+    EXPECT_NE(errors.find("'api::value' is quiver-visible"), std::string::npos);
+    EXPECT_NE(errors.find("modules in 'root::pack'"), std::string::npos);
+    EXPECT_EQ(errors.find("unknown name"), std::string::npos);
+
+    Write("pack/nested/main.fl", R"(module main;
+        @imports :: root::pack::api;
+        i32 main() { return api::value(); }
+    )");
+    errors = CheckAt("pack/nested/main.fl");
+    EXPECT_NE(errors.find("'api::value' is quiver-visible"), std::string::npos);
+
+    Write("library/api.fl", "module api; quiver i32 value() { return 42; }");
+    Write("main.fl", R"(module main; @imports :: lib::fixture::api;
+        i32 main() { return api::value(); }
+    )");
+    errors = Check();
+    EXPECT_NE(errors.find("'api::value' is quiver-visible"), std::string::npos);
+    EXPECT_NE(errors.find("modules in 'lib::fixture'"), std::string::npos);
+
+    Write("library/shared/api.fl",
+          "module api; quiver i32 value() { return 42; }");
+    Write("shared/main.fl", R"(module main;
+        @imports :: lib::fixture::shared::api;
+        i32 main() { return api::value(); }
+    )");
+    errors = CheckAt("shared/main.fl");
+    EXPECT_NE(errors.find("'api::value' is quiver-visible"), std::string::npos);
+    EXPECT_NE(errors.find("modules in 'lib::fixture::shared'"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, FullQuiverWildcardDoesNotBypassVisibility) {
+    Write("pack/hidden.fl", "module hidden; quiver i32 value() { return 42; }");
+    Write("pack/public.fl", "module public; export i32 value() { return 1; }");
+    Write("main.fl", R"(module main; @imports :: root::pack::*;
+        i32 main() { return hidden::value() + public::value(); }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("'hidden::value' is quiver-visible"),
+              std::string::npos);
+    EXPECT_EQ(errors.find("public::value"), std::string::npos);
+}
+
+TEST_F(ModuleTests, LibraryModulesShareOnlyTheirLibraryQuiver) {
+    Write("library/secret.fl",
+          "module secret; quiver i32 value() { return 42; }");
+    Write("library/facade.fl", R"(module facade;
+        @imports :: root::secret;
+        export i32 value() { return secret::value(); }
+    )");
+    Write("main.fl", R"(module main; @imports :: lib::fixture::facade;
+        i32 main() { return facade::value(); }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main;
+        @imports :: lib::fixture::facade :: lib::mirror::secret;
+        i32 main() { return facade::value() + secret::value(); }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("modules in 'lib::mirror'"), std::string::npos);
+}
+
+TEST_F(ModuleTests, QuiverApisEnforceNominalTypeExposure) {
+    Write("main.fl", R"(module main;
+        quiver structure Shared { i32 value; };
+        structure Hidden { i32 value; };
+        quiver Shared accepted(Shared value) { return value; }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main;
+        quiver structure Shared { i32 value; };
+        export Shared leaked(Shared value) { return value; }
+    )");
+    EXPECT_NE(Check().find("exported APIs cannot expose non-exported types"),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        structure Hidden { i32 value; };
+        quiver Hidden leaked(Hidden value) { return value; }
+    )");
+    EXPECT_NE(Check().find("quiver APIs cannot expose module-private types"),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        structure Hidden { i32 value; };
+        quiver structure Shared { Hidden value; };
+    )");
+    EXPECT_NE(Check().find("quiver APIs cannot expose module-private types"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, OwnerVisibilityControlsMethodApiExposure) {
+    Write("main.fl", R"(module main;
+        structure Hidden { i32 value; };
+        quiver structure Shared { i32 value; };
+        Hidden Shared::leak(&const self) { return Hidden::init(); }
+    )");
+    EXPECT_NE(Check().find("quiver APIs cannot expose module-private types"),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        structure Hidden { i32 value; };
+        quiver structure Shared { private Hidden value; };
+        private Hidden Shared::hidden(&const self) { return self->value; }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, QuiverGenericDeclarationsRespectInstantiationBoundary) {
+    Write("generic.fl", R"(module generic;
+        quiver T identity<T>(T value) { return value; }
+        quiver structure Box<T> { T value; };
+        quiver func Mapper<T>(T) => (T);
+    )");
+    Write("main.fl", R"(module main; @imports :: root::generic;
+        i32 main() {
+            box := generic::Box<i32>::init();
+            generic::Mapper<i32> mapper = (value) => { return value; };
+            return generic::identity<i32>(mapper(box.value));
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("nested/main.fl", R"(module main; @imports :: root::generic;
+        i32 main() { return generic::identity<i32>(42); }
+    )");
+    const std::string errors = CheckAt("nested/main.fl");
+    EXPECT_NE(errors.find("'generic::identity' is quiver-visible"),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        quiver structure Shared { i32 value; };
+        export structure Box<T> { T value; };
+        export Box<Shared> leak() { return Box<Shared>::init(); }
+    )");
+    EXPECT_NE(Check().find("exported APIs cannot expose non-exported types"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, RejectsVisibilityModifiersOnMemberFunctions) {
+    Write("main.fl", R"(module main;
+        quiver structure Box { i32 value; };
+        quiver i32 Box::value(&const self) { return self->value; }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("member functions cannot be marked quiver"),
+              std::string::npos);
+    EXPECT_NE(errors.find("visibility comes from the owning type"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, PrivateMembersRequireTheExactOwningType) {
+    Write("main.fl", R"(module main;
+        structure First { private i32 value; };
+        private i32 First::hidden(&const self) { return self->value; }
+        structure Second { i32 value; };
+        i32 Second::read(&const self, &const First other) {
+            return other->value + other->hidden();
+        }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("field 'value' is private"), std::string::npos);
+    EXPECT_NE(errors.find("hidden' is private"), std::string::npos);
 }

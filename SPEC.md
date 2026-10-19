@@ -886,9 +886,15 @@ The compiler should eventually be self-hosted in Flecha, but self-hosting is not
 Modules declare `module name;`, matching their filename. Import blocks use
 `@imports :: root::path::module :: lib::library::module as alias;`, with a
 multiline form preferred. `root` and `lib` are reserved in import paths.
-Top-level declarations require `export` for access through imports. Exported
-structures and enums bundle non-private member functions; existing field
-privacy and compiler-only tear rules remain unchanged. Directory imports use
+Top-level declarations use `export` for access from every importing module,
+`quiver` for access from modules in the same immediate directory and the same
+source-root or library identity, and no modifier for module-only access.
+Wildcard imports do not bypass these boundaries. Exported and quiver
+structures and enums bundle non-private member functions; member functions do
+not take declaration-visibility modifiers, and private members remain limited
+to methods of the exact owning type. Exported APIs may expose only exported
+nominal types. Quiver APIs may also expose quiver types from the same quiver,
+but never module-private types. Directory imports use
 `root::path::*`
 for immediate module files or `root::path::{first, second}` for selected modules.
 Each imported module retains its namespace. See [modules](docs/modules.md).

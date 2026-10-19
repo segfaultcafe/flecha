@@ -5,8 +5,7 @@ module math_test;
     :: lib::std::tests::testing;
 
 test private_access(&testing::UnitTest t) {
-    box := math::Box::init();
-    if math::secret() != box.hidden() {
+    if math::secret() != 42 {
         t->fail();
     }
 }

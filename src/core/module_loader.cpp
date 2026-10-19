@@ -144,7 +144,8 @@ std::unique_ptr<CompilationUnit> ModuleLoader::Load(
             if (directory == directory.parent_path()) break;
         }
     }
-    Visit(entry, fs::weakly_canonical(root), true);
+    root = fs::weakly_canonical(root);
+    Visit(entry, root, true);
     auto unit = std::make_unique<CompilationUnit>(source::SourceRange{},
                                                   std::move(_declarations));
     unit->modules = std::move(_modules);
@@ -152,21 +153,26 @@ std::unique_ptr<CompilationUnit> ModuleLoader::Load(
     return unit;
 }
 std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
-                                bool entry, source::SourceRange importRange) {
+                                bool entry, source::SourceRange importRange,
+                                std::string sourceIdentity) {
     const fs::path file = fs::weakly_canonical(input);
-    if (std::find(_active.begin(), _active.end(), file) != _active.end()) {
+    const auto loadKey = std::make_pair(file, sourceIdentity);
+    if (std::find(_active.begin(), _active.end(), loadKey) != _active.end()) {
         std::string cycle;
-        for (const auto& path : _active) cycle += path.string() + " -> ";
+        for (const auto& active : _active)
+            cycle += active.first.string() + " -> ";
         Report(importRange, "module import cycle: " + cycle + file.string());
         return {};
     }
-    if (const auto found = _loaded.find(file); found != _loaded.end()) {
-        if (_roots.at(file) != root)
-            Report(importRange,
-                   "module is imported with conflicting source roots: " +
-                       file.string());
-        return found->second;
+    if (const auto previousRoot = _roots.find(file);
+        previousRoot != _roots.end() && previousRoot->second != root) {
+        Report(importRange,
+               "module is imported with conflicting source roots: " +
+                   file.string());
+        return {};
     }
+    if (const auto found = _loaded.find(loadKey); found != _loaded.end())
+        return found->second;
     if (_active.size() >= 256) {
         Report(importRange, "module import depth exceeds 256");
         return {};
@@ -287,14 +293,29 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
     const std::string id = unit->moduleName.empty() && entry
                                ? ""
                                : "$m" + std::to_string(_loaded.size()) + "$";
-    _loaded.emplace(file, id);
+    _loaded.emplace(loadKey, id);
     _roots.emplace(file, root);
-    _active.push_back(file);
-    Module module{id, unit->moduleName,        file.string(), entry, testFile,
-                  {}, std::move(unit->imports)};
+    _active.push_back(loadKey);
+    const fs::path directory = file.parent_path();
+    const fs::path relativeDirectory = directory.lexically_relative(root);
+    const std::string quiverId = sourceIdentity + "\n" + root.generic_string() +
+                                 "\n" + relativeDirectory.generic_string();
+    std::string quiverName = sourceIdentity;
+    for (const auto& segment : relativeDirectory)
+        if (segment != ".") quiverName += "::" + segment.string();
+    Module module{id,
+                  unit->moduleName,
+                  file.string(),
+                  quiverId,
+                  quiverName,
+                  entry,
+                  testFile,
+                  {},
+                  std::move(unit->imports)};
     for (auto& import : module.imports) {
         if (import.path.empty()) continue;
         fs::path sourceRoot = root;
+        std::string targetIdentity = sourceIdentity;
         std::size_t start = 1;
         if (import.path[0] == "lib") {
             if (import.path.size() < 3) continue;
@@ -307,6 +328,7 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
                 continue;
             }
             sourceRoot = fs::weakly_canonical(library->second);
+            targetIdentity = "lib::" + import.path[1];
             start = 2;
         } else if (import.path[0] != "root" || import.path.size() < 2)
             continue;
@@ -320,7 +342,8 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
             Report(import.range, "module path escapes its source root");
             continue;
         }
-        import.resolvedModule = Visit(target, sourceRoot, false, import.range);
+        import.resolvedModule = Visit(target, sourceRoot, false, import.range,
+                                      std::move(targetIdentity));
         if (IsStandardTestingImport(import))
             _testingModule = import.resolvedModule;
         if (testFile && !testPair.empty() &&
@@ -357,6 +380,7 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
     }
     for (auto& declaration : unit->TakeDeclarations()) {
         declaration->moduleId = id;
+        declaration->quiverId = quiverId;
         _declarations.push_back(std::move(declaration));
     }
     _modules.push_back(std::move(module));
