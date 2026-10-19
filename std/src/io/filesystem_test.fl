@@ -57,4 +57,10 @@ test path_operations_reject_invalid_paths(&testing::UnitTest t) {
         filesystem::create_directory("") == errors::IoError.InvalidPath,
         "create_directory rejects an empty path"
     );
+    asserts::is_true(
+        t,
+        filesystem::remove_directory(embeddedNullPath.view(), false) ==
+            errors::IoError.InvalidPath,
+        "remove_directory rejects an embedded null"
+    );
 }

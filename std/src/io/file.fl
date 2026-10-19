@@ -2,7 +2,8 @@ module file;
 
 @imports
     :: root::io::errors
-    :: root::io::runtime;
+    :: root::io::runtime
+    :: root::io::utils;
 
 export enum SeekFrom: u8 {
     default Start,
@@ -84,12 +85,12 @@ File File::zero() override {
             &raw handle,
             path.data(),
             path.len().cast<usize>,
-            bool_byte(opts.read),
-            bool_byte(opts.write),
-            bool_byte(opts.append),
-            bool_byte(opts.truncate),
-            bool_byte(opts.create),
-            bool_byte(opts.createNew)
+            utils::bool_byte(opts.read),
+            utils::bool_byte(opts.write),
+            utils::bool_byte(opts.append),
+            utils::bool_byte(opts.truncate),
+            utils::bool_byte(opts.create),
+            utils::bool_byte(opts.createNew)
         );
 
         err = errors::from_runtime(status, errors::IoError.OpenFailed);
@@ -265,12 +266,4 @@ error validate_options(OpenOptions options) {
     }
 
     return none;
-}
-
-u8 bool_byte(bool value) {
-    if value {
-        return 1;
-    }
-
-    return 0;
 }

@@ -80,6 +80,13 @@ large `5`, out of memory `6`, invalid options `7`, and operation failure `8`.
 `remove_file` does not remove directories. Directory creation is non-recursive
 and uses mode `0777` through the process umask on POSIX.
 
+`flecha_runtime_v1_remove_directory` accepts independent byte booleans for
+force and recursive behavior. Non-recursive removal requires an empty
+directory. Recursive removal never treats a top-level file as a directory.
+Force suppresses `NotFound`; recursive traversal otherwise preserves the same
+status mapping. `DirectoryNotEmpty` is status `9`, leaving generic operation
+failure at its established status `8`.
+
 ## File streams
 
 The `flecha_runtime_v1_file_stream_*` entry points expose unbuffered binary file

@@ -52,6 +52,11 @@ creates one directory level with permissions filtered through the process
 umask on POSIX. It reports `AlreadyExists` for an existing path and `NotFound`
 when a parent component is missing.
 
+`remove_directory(path, false)` removes an empty directory and reports
+`DirectoryNotEmpty` when it still contains entries. Passing `true` recursively
+removes the directory tree and treats an already-missing path as success. A
+non-forced removal of a missing directory reports `NotFound`.
+
 ## File streams
 
 Import `lib::std::io::file` for incremental binary I/O. `File::open` accepts an

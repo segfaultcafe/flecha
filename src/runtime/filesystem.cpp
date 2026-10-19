@@ -4,7 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <limits>
+#include <new>
+#include <system_error>
 
 #include "runtime/runtime_abi.h"
 
@@ -86,6 +89,39 @@ bool IsMissingError(int error) {
     if (error == ENOTDIR) return true;
 #endif
     return false;
+}
+
+bool IsDirectoryNotEmptyError(int error) {
+#if defined(ENOTEMPTY)
+    if (error == ENOTEMPTY) return true;
+#endif
+#if defined(EEXIST)
+    if (error == EEXIST) return true;
+#endif
+    return false;
+}
+
+int32_t MapFilesystemError(const std::error_code& error) {
+    const std::error_condition condition = error.default_error_condition();
+    if (condition == std::errc::no_such_file_or_directory ||
+        condition == std::errc::not_a_directory)
+        return FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND;
+    if (condition == std::errc::permission_denied ||
+        condition == std::errc::read_only_file_system)
+        return FLECHA_RUNTIME_FILESYSTEM_PERMISSION_DENIED;
+    if (condition == std::errc::file_exists)
+        return FLECHA_RUNTIME_FILESYSTEM_ALREADY_EXISTS;
+    if (condition == std::errc::invalid_argument ||
+        condition == std::errc::filename_too_long)
+        return FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH;
+    if (condition == std::errc::file_too_large ||
+        condition == std::errc::value_too_large)
+        return FLECHA_RUNTIME_FILESYSTEM_TOO_LARGE;
+    if (condition == std::errc::not_enough_memory)
+        return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    if (condition == std::errc::directory_not_empty)
+        return FLECHA_RUNTIME_FILESYSTEM_DIRECTORY_NOT_EMPTY;
+    return FLECHA_RUNTIME_FILESYSTEM_FAILED;
 }
 
 #ifdef _WIN32
@@ -361,4 +397,68 @@ extern "C" int32_t flecha_runtime_v1_create_directory(const char* path,
     std::free(nativePath);
     return result == 0 ? FLECHA_RUNTIME_FILESYSTEM_OK
                        : MapFilesystemError(operationError);
+}
+
+extern "C" int32_t flecha_runtime_v1_remove_directory(const char* path,
+                                                      size_t pathLength,
+                                                      uint8_t force,
+                                                      uint8_t recursive) {
+    if (force > 1 || recursive > 1)
+        return FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS;
+
+    NativePathCharacter* nativePath = nullptr;
+    const int32_t pathStatus = CopyNativePath(path, pathLength, &nativePath);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) return pathStatus;
+
+    if (recursive == 0) {
+        errno = 0;
+#ifdef _WIN32
+        const int result = _wrmdir(nativePath);
+#else
+        const int result = ::rmdir(nativePath);
+#endif
+        const int operationError = errno;
+        std::free(nativePath);
+        if (result == 0) return FLECHA_RUNTIME_FILESYSTEM_OK;
+        if (force != 0 && IsMissingError(operationError))
+            return FLECHA_RUNTIME_FILESYSTEM_OK;
+        if (IsDirectoryNotEmptyError(operationError))
+            return FLECHA_RUNTIME_FILESYSTEM_DIRECTORY_NOT_EMPTY;
+        return MapFilesystemError(operationError);
+    }
+
+    int32_t resultStatus = FLECHA_RUNTIME_FILESYSTEM_FAILED;
+    try {
+        const std::filesystem::path directory(nativePath);
+        std::error_code error;
+        const std::filesystem::file_status status =
+            std::filesystem::symlink_status(directory, error);
+        if (error) {
+            resultStatus =
+                force != 0 && error.default_error_condition() ==
+                                  std::errc::no_such_file_or_directory
+                    ? FLECHA_RUNTIME_FILESYSTEM_OK
+                    : MapFilesystemError(error);
+        } else if (status.type() == std::filesystem::file_type::not_found) {
+            resultStatus = force != 0 ? FLECHA_RUNTIME_FILESYSTEM_OK
+                                      : FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND;
+        } else if (!std::filesystem::is_directory(status)) {
+            resultStatus = FLECHA_RUNTIME_FILESYSTEM_FAILED;
+        } else {
+            (void)std::filesystem::remove_all(directory, error);
+            if (!error)
+                resultStatus = FLECHA_RUNTIME_FILESYSTEM_OK;
+            else if (force != 0 && error.default_error_condition() ==
+                                       std::errc::no_such_file_or_directory)
+                resultStatus = FLECHA_RUNTIME_FILESYSTEM_OK;
+            else
+                resultStatus = MapFilesystemError(error);
+        }
+    } catch (const std::bad_alloc&) {
+        resultStatus = FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    } catch (...) {
+        resultStatus = FLECHA_RUNTIME_FILESYSTEM_FAILED;
+    }
+    std::free(nativePath);
+    return resultStatus;
 }

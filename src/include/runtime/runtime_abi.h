@@ -48,6 +48,7 @@ typedef enum FlechaRuntimeFilesystemStatus {
     FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY = 6,
     FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS = 7,
     FLECHA_RUNTIME_FILESYSTEM_FAILED = 8,
+    FLECHA_RUNTIME_FILESYSTEM_DIRECTORY_NOT_EMPTY = 9,
 } FlechaRuntimeFilesystemStatus;
 
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
@@ -140,6 +141,8 @@ int32_t flecha_runtime_v1_rename(const char* source, size_t source_length,
                                  size_t destination_length);
 int32_t flecha_runtime_v1_create_directory(const char* path,
                                            size_t path_length);
+int32_t flecha_runtime_v1_remove_directory(const char* path, size_t path_length,
+                                           uint8_t force, uint8_t recursive);
 
 // Opens an unbuffered binary file stream. Paths follow read_file's platform
 // rules. Every option is a byte boolean and must be zero or one. On success,

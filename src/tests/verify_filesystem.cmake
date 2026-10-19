@@ -123,11 +123,41 @@ i32 main() {
         renamed[2] != 'B' or renamed[3] != '\\n' {
         return 23;
     }
+    if filesystem::remove_directory(\"${createdDirectory}\", false) !=
+        errors::IoError.DirectoryNotEmpty {
+        return 24;
+    }
     if filesystem::remove_file(\"${renameDestination}\") != none {
         return 17;
     }
     if filesystem::remove_file(\"${renameDestination}\") != errors::IoError.NotFound {
         return 18;
+    }
+    if filesystem::remove_directory(\"${createdDirectory}\", false) != none {
+        return 25;
+    }
+    present, exists_error = filesystem::exists(\"${createdDirectory}\");
+    if exists_error != none or present {
+        return 26;
+    }
+    if filesystem::remove_directory(\"${createdDirectory}\", false) !=
+        errors::IoError.NotFound {
+        return 27;
+    }
+    if filesystem::remove_directory(\"${createdDirectory}\", true) != none {
+        return 28;
+    }
+
+    if filesystem::create_directory(\"${createdDirectory}\") != none or
+        filesystem::write_file(\"${renameSource}\", bytes[:]) != none {
+        return 29;
+    }
+    if filesystem::remove_directory(\"${createdDirectory}\", true) != none {
+        return 30;
+    }
+    present, exists_error = filesystem::exists(\"${createdDirectory}\");
+    if exists_error != none or present {
+        return 31;
     }
 
     return 42;

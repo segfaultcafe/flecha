@@ -19,6 +19,8 @@ export error IoError {
     RemoveFailed,
     RenameFailed,
     CreateDirectoryFailed,
+    RemoveDirectoryFailed,
+    DirectoryNotEmpty,
 }
 
 quiver error from_runtime(i32 status, IoError fallback) {
@@ -45,6 +47,9 @@ quiver error from_runtime(i32 status, IoError fallback) {
     }
     if status == 7 {
         return IoError.InvalidOptions;
+    }
+    if status == 9 {
+        return IoError.DirectoryNotEmpty;
     }
     return fallback;
 }

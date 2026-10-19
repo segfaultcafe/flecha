@@ -3,6 +3,7 @@ module filesystem;
 @imports
     :: root::io::errors
     :: root::io::file
+    :: root::io::utils
     :: root::io::runtime;
 
 export (string, error) read_file(stringv path) {
@@ -13,26 +14,14 @@ export (string, error) read_file(stringv path) {
             path.data(),
             path.len().cast<usize>
         );
-        if status == 0 {
-            return (output, none);
+
+        err := errors::from_runtime(status, errors::IoError.ReadFailed);
+        if err != none {
+            return (none, err);
         }
-        if status == 1 {
-            return (none, errors::IoError.NotFound);
-        }
-        if status == 2 {
-            return (none, errors::IoError.PermissionDenied);
-        }
-        if status == 3 {
-            return (none, errors::IoError.InvalidPath);
-        }
-        if status == 5 {
-            return (none, errors::IoError.TooLarge);
-        }
-        if status == 6 {
-            return (none, AllocationError.OutOfMemory);
-        }
-        return (none, errors::IoError.ReadFailed);
     }
+
+    return (output, none);
 }
 
 export error write_file(stringv path, []const u8 contents) {
@@ -105,5 +94,20 @@ export error create_directory(stringv path) {
         );
 
         return errors::from_runtime(status, errors::IoError.CreateDirectoryFailed);
+    }
+}
+
+export error remove_directory(stringv path, bool force) {
+    u8 forceByte = utils::bool_byte(force);
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_remove_directory(
+            path.data(),
+            path.len().cast<usize>,
+            forceByte,
+            forceByte
+        );
+
+        return errors::from_runtime(status, errors::IoError.RemoveDirectoryFailed);
     }
 }

@@ -234,6 +234,49 @@ TEST_F(RuntimeFilesystemMutationTests, RejectsInvalidPathsAndOutputs) {
               FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
     EXPECT_EQ(flecha_runtime_v1_rename(nullptr, 0, "destination", 11),
               FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(
+        flecha_runtime_v1_remove_directory(invalid, sizeof(invalid), 0, 0),
+        FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(flecha_runtime_v1_remove_directory("path", 4, 2, 0),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+    EXPECT_EQ(flecha_runtime_v1_remove_directory("path", 4, 0, 2),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+}
+
+TEST_F(RuntimeFilesystemMutationTests, RemovesEmptyAndRecursiveDirectories) {
+    const std::string directory = Root().string();
+    ASSERT_EQ(
+        flecha_runtime_v1_create_directory(directory.data(), directory.size()),
+        FLECHA_RUNTIME_FILESYSTEM_OK);
+
+    const auto childPath = Root() / "child.bin";
+    {
+        std::ofstream child(childPath, std::ios::binary);
+        ASSERT_TRUE(child.good());
+        child << "data";
+    }
+    EXPECT_EQ(flecha_runtime_v1_remove_directory(directory.data(),
+                                                 directory.size(), 0, 0),
+              FLECHA_RUNTIME_FILESYSTEM_DIRECTORY_NOT_EMPTY);
+    EXPECT_EQ(flecha_runtime_v1_remove_directory(directory.data(),
+                                                 directory.size(), 0, 1),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_FALSE(std::filesystem::exists(Root()));
+
+    EXPECT_EQ(flecha_runtime_v1_remove_directory(directory.data(),
+                                                 directory.size(), 0, 0),
+              FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND);
+    EXPECT_EQ(flecha_runtime_v1_remove_directory(directory.data(),
+                                                 directory.size(), 1, 1),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+
+    ASSERT_EQ(
+        flecha_runtime_v1_create_directory(directory.data(), directory.size()),
+        FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(flecha_runtime_v1_remove_directory(directory.data(),
+                                                 directory.size(), 0, 0),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_FALSE(std::filesystem::exists(Root()));
 }
 
 class RuntimeFileStreamTests : public ::testing::Test {
