@@ -153,6 +153,34 @@ TEST(ParserTests, ParsesNamedCallableSignatures) {
     EXPECT_EQ(reader.Results()[0]->Contract(), OwnershipContract::Own);
 }
 
+TEST(ParserTests, ParsesGenericCallableSignatures) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "export func Predicate<T>(&const T value) => (bool); "
+        "func Transform<T, U>(T) => (U);",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& predicate =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_TRUE(predicate.exported);
+    ASSERT_EQ(predicate.genericParameters.size(), 1);
+    EXPECT_EQ(predicate.genericParameters[0], "T");
+    EXPECT_EQ(predicate.Parameters()[0]->Type().Target()->Name(), "T");
+    EXPECT_EQ(predicate.Parameters()[0]->Name(), "value");
+    EXPECT_FALSE(predicate.templateTokens.empty());
+    ASSERT_EQ(predicate.parameterTokenRanges.size(), 1);
+
+    const auto& transform =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(transform.genericParameters.size(), 2);
+    EXPECT_EQ(transform.genericParameters[0], "T");
+    EXPECT_EQ(transform.genericParameters[1], "U");
+    EXPECT_EQ(transform.Parameters()[0]->Type().Name(), "T");
+    EXPECT_EQ(transform.Results()[0]->Name(), "U");
+}
+
 TEST(ParserTests, ParsesCapturelessAnonymousFunctionForms) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(R"(

@@ -458,12 +458,16 @@ std::unique_ptr<Parameter> Parser::ParseCallableParameter() {
 
 std::unique_ptr<CallableTypeDeclaration>
 Parser::ParseCallableTypeDeclaration() {
+    const auto tokenStart = _position;
     const source::SourceLocation start = Current().range.start;
     const bool isUnsafe = Match(TokenType::Unsafe);
     if (Consume(TokenType::Func, "'func'") == nullptr) return nullptr;
     const Token* name = Consume(TokenType::Identifier, "callable type name");
-    if (name == nullptr ||
-        Consume(TokenType::LParen, "'(' after callable type name") == nullptr)
+    if (name == nullptr) return nullptr;
+    const auto parameterStart = _position;
+    auto genericParameters = ParseGenericParameters();
+    const auto parameterEnd = _position;
+    if (Consume(TokenType::LParen, "'(' after callable type name") == nullptr)
         return nullptr;
 
     std::vector<std::unique_ptr<Parameter>> parameters;
@@ -503,10 +507,19 @@ Parser::ParseCallableTypeDeclaration() {
     const Token* semicolon =
         Consume(TokenType::SemiColon, "';' after callable type declaration");
     if (semicolon == nullptr) return nullptr;
-    return std::make_unique<CallableTypeDeclaration>(
+    auto declaration = std::make_unique<CallableTypeDeclaration>(
         source::SourceRange{start, semicolon->range.end}, name->value,
         name->range, std::move(parameters), std::move(results), isUnsafe,
         std::move(borrowSource), borrowSourceRange);
+    declaration->genericParameters = std::move(genericParameters);
+    if (parameterStart != parameterEnd)
+        declaration->parameterTokenRanges.emplace_back(
+            parameterStart - tokenStart, parameterEnd - tokenStart);
+    declaration->nameTokenIndex =
+        static_cast<std::size_t>(name - _tokens.data()) - tokenStart;
+    declaration->templateTokens.assign(_tokens.begin() + tokenStart,
+                                       _tokens.begin() + _position);
+    return declaration;
 }
 
 std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {

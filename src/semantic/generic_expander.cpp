@@ -471,9 +471,11 @@ class Expander {
             if (!type.typeArguments.empty()) {
                 auto arguments = ResolveArguments(type.typeArguments, module);
                 if (!declaration ||
-                    declaration->Kind() != AstNodeKind::StructureDeclaration) {
+                    (declaration->Kind() != AstNodeKind::StructureDeclaration &&
+                     declaration->Kind() !=
+                         AstNodeKind::CallableTypeDeclaration)) {
                     Error(type.Range(),
-                          "unknown generic structure '" + type.Name() + "'");
+                          "unknown generic type '" + type.Name() + "'");
                     return result;
                 }
                 declaration =
@@ -580,6 +582,15 @@ class Expander {
                     ValidatePublicType(parameter->Type(), declaration,
                                        parameters);
             }
+        }
+        if (declaration.Kind() == AstNodeKind::CallableTypeDeclaration &&
+            declaration.exported) {
+            const auto& callable =
+                static_cast<const CallableTypeDeclaration&>(declaration);
+            for (const auto& parameter : callable.Parameters())
+                ValidatePublicType(parameter->Type(), declaration, parameters);
+            for (const auto& result : callable.Results())
+                ValidatePublicType(*result, declaration, parameters);
         }
         Walk(declaration, [&](AstNode& node, bool enter) {
             if (!enter) return;

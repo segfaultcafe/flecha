@@ -97,6 +97,24 @@ TEST_F(ModuleTests, GenericDiagnosticsUseSourceTypeNames) {
               std::string::npos);
     EXPECT_EQ(errors.find("$specialization"), std::string::npos);
 }
+TEST_F(ModuleTests, ExportedGenericCallableSignaturesCrossModuleBoundaries) {
+    Write("callbacks.fl",
+          "module callbacks; export func Mapper<T>(T) => (T); export T "
+          "apply<T>(Mapper<T> callback, T value) { return callback(value); }");
+    Write("main.fl",
+          "module main; @imports :: root::callbacks; i32 main() { "
+          "callbacks::Mapper<i32> increment = (value) => { return value + 1; "
+          "}; return callbacks::apply<i32>(increment, 41); }");
+    EXPECT_EQ(Check(), "");
+}
+TEST_F(ModuleTests, GenericCallableExportsRespectTypeVisibility) {
+    Write("callbacks.fl",
+          "module callbacks; structure Hidden { i32 value; }; export func "
+          "Transform<T>(Hidden, T) => (T);");
+    Write("main.fl",
+          "module main; @imports :: root::callbacks; void main() {}");
+    EXPECT_NE(Check().find("private type"), std::string::npos);
+}
 TEST_F(ModuleTests, PrivateDeclarationsAndTransitiveImportsDoNotLeak) {
     Write("hidden.fl",
           "module hidden; i32 secret() { return 42; } structure Secret { i32 "
