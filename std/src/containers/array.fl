@@ -5,9 +5,22 @@ module array;
     :: root::containers::errors
     :: root::containers::algorithms;
 
+
 export structure Array<T> {
     private raw_array::RawArray<T> inner; 
 };
+
+void Array<T>::sort(&self) {
+    algorithms::sort<T>(self->viewRef());
+}
+
+void Array<T>::sortBy(&self, algorithms::Less<T> less) {
+    algorithms::sort_by<T>(self->viewRef(), less);
+}
+
+void Array<T>::forEach(&const self, algorithms::Action<T> action) {
+    algorithms::for_each<T>(self->view(), action); 
+}
 
 (Array<T>, error) Array<T>::fromSlice([]const T source) {
     res := Array<T>::init();

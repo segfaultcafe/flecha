@@ -1,5 +1,8 @@
 module algorithms;
 
+export func Action<T>(&const T) => ();
+export func Less<T>(&const T left, &const T right) => (bool);
+
 export (usize, bool) index_of<T>([]const T values, T needle) {
     for (i, val) := range values {
         if val == needle {
@@ -37,4 +40,73 @@ export void fill<T>([]T values, T value) {
     loop usize index = 0; index < values.len(); index++ {
         values[index] = value;
     }
+}
+
+export void for_each<T>(const []T values, Action<T> action) {
+    loop usize index = 0; index < values.len(); index++ {
+        action(&values[index]);
+    }
+}
+
+export void sort_by<T>([]T values, Less<T> less) {
+    const usize LEN = values.len();
+
+    if LEN < 2 {
+        return;
+    }
+
+    usize root = LEN / 2;
+    while root > 0 {
+        root--;
+
+        usize current = root;
+        arrange_sort_terms<T>(values, less, LEN, current);
+    }
+
+    usize heapLen = LEN;
+    while heapLen > 1 {
+        heapLen = heapLen - 1;
+
+        T temporary = values[0];
+        values[0] = values[heapLen];
+        values[heapLen] = temporary;
+
+        usize current = 0;
+        arrange_sort_terms<T>(values, less, heapLen, current);
+    }
+}
+
+export void sort<T>([]T values) {
+    sort_by<T>(
+        values,
+        [](&const T left, &const T right) => (bool) {
+            return *left < *right;
+        }
+    );
+}
+
+void arrange_sort_terms<T>(
+    []T values,
+    Less<T> less,
+    usize length,
+    usize current
+) {
+    while current < length / 2 {
+        usize child = current * 2 + 1;
+        if child + 1 < length and less(&values[child], &values[child + 1]) {
+            child++;
+        }
+
+        // The current node is already later than both children.
+        if !less(&values[current], &values[child]) {
+            break;
+        }
+
+
+        T temporary = values[current];
+        values[current] = values[child];
+        values[child] = temporary;
+           
+        current = child;
+    }   
 }
