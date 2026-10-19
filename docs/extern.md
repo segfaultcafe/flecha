@@ -51,6 +51,10 @@ explicit lengths instead.
 String byte storage can be exposed with `data()` only in unsafe code. It returns
 `*const char`; the pointer is borrowed, may be null for an empty value, and must
 not be retained beyond the source value's lifetime. Length remains explicit.
+An extern parameter of type `*const u8` accepts this pointer because `char` and
+`u8` have identical byte representations. This compatibility is one-way,
+preserves const protection, and applies only at the extern argument boundary;
+it does not introduce general raw-pointer reinterpretation.
 
 The C or C++ definition must use C linkage and exactly matching fixed-width
 types:

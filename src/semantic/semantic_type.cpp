@@ -359,6 +359,9 @@ SemanticType SemanticType::FromSyntax(core::PrimitiveType type) {
 bool IsAssignable(SemanticType destination, SemanticType source) {
     if (destination.IsError() || source.IsError()) return true;
     if (destination.WithoutConst() == source.WithoutConst()) return true;
+    if (destination.Kind() == SemanticTypeKind::U8 &&
+        source.Kind() == SemanticTypeKind::Char)
+        return true;
     if (destination.Kind() == SemanticTypeKind::ErrorValue &&
         source.Kind() == SemanticTypeKind::NamedError)
         return true;
@@ -416,6 +419,19 @@ bool IsAssignable(SemanticType destination, SemanticType source) {
            destination.Kind() != SemanticTypeKind::Void &&
            destination.Kind() != SemanticTypeKind::Function &&
            !destination.IsBorrowed();
+}
+
+bool IsExternAssignable(SemanticType destination, SemanticType source) {
+    if (IsAssignable(destination, source)) return true;
+    if (destination.Kind() != SemanticTypeKind::Pointer ||
+        source.Kind() != SemanticTypeKind::Pointer)
+        return false;
+
+    const SemanticType destinationTarget = *destination.Target();
+    const SemanticType sourceTarget = *source.Target();
+    return destinationTarget.Kind() == SemanticTypeKind::U8 &&
+           sourceTarget.Kind() == SemanticTypeKind::Char &&
+           (destinationTarget.IsConst() || !sourceTarget.IsConst());
 }
 
 bool CanReborrow(SemanticType destination, SemanticType source) {
