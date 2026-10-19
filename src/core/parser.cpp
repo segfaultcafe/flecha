@@ -799,14 +799,23 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
 }
 
 std::unique_ptr<Declaration> Parser::ParseDeclaration() {
-    if (Match(TokenType::Export)) {
+    if (Check(TokenType::Export) || Check(TokenType::Quiver)) {
+        const Token modifier = Advance();
         auto declaration = ParseDeclaration();
         if (declaration) {
-            if (declaration->exported)
+            if (declaration->exported || declaration->quiverVisible) {
+                const std::string visibility =
+                    modifier.type == TokenType::Export ? "export" : "quiver";
                 _diagnostics.Report(
                     diagnostics::DiagnosticCode::UnexpectedToken,
-                    declaration->Range(), "duplicate export modifier");
-            declaration->exported = true;
+                    declaration->Range(),
+                    "duplicate or conflicting visibility modifier '" +
+                        visibility + "'");
+            } else if (modifier.type == TokenType::Export) {
+                declaration->exported = true;
+            } else {
+                declaration->quiverVisible = true;
+            }
         }
         return declaration;
     }

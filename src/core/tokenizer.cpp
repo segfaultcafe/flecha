@@ -37,6 +37,7 @@ const KeywordMap KEYWORDS = {
     {"func", TokenType::Func},
     {"unsafe", TokenType::Unsafe},
     {"export", TokenType::Export},
+    {"quiver", TokenType::Quiver},
     {"extern", TokenType::Extern},
     {"inline", TokenType::Inline},
     {"comptime", TokenType::Comptime},
