@@ -1,0 +1,55 @@
+module main;
+
+@imports :: root::pipeline;
+
+i32 main() {
+    first := pipeline::offset(20);
+    if first.run(2) != 22 { return 1; }
+
+    i32 base = 0;
+    pipeline::Mapper generic = pipeline::relay<pipeline::Mapper>(
+        [copy base](value) => { return value + base; });
+
+    pipeline::Mapper combined = pipeline::combine(10, 12);
+    (pipeline::Mapper, i32) pair = (combined, 20);
+    callback, input := pair;
+    if callback(input) != 42 { return 2; }
+
+    pipeline::Mapper addTwo = pipeline::combine(1, 1);
+    pipeline::Mapper addFour = pipeline::combine(2, 2);
+    [2]pipeline::Mapper pending = [addTwo, addFour];
+    [2]pipeline::Mapper callbacks = pending;
+    if (callbacks[0])(40) != 42 { return 7; }
+    if (callbacks[1])(38) != 42 { return 8; }
+
+    i32 observed = 0;
+    {
+        pipeline::Mapper borrowed = [&observed](value) => {
+            observed = value;
+            return observed;
+        };
+        borrowedPipeline := pipeline::Pipeline::init(borrowed);
+        if borrowedPipeline.run(42) != 42 { return 3; }
+    }
+    if observed != 42 { return 4; }
+
+    i32 cycles = 0;
+    loop i32 index = 0; index < 256; index++ {
+        current := pipeline::offset(index);
+        pipeline::Mapper relayed = pipeline::relay<pipeline::Mapper>(
+            pipeline::combine(index, 1));
+        if current.run(42 - index) != 42 { return 9; }
+        if relayed(41 - index) != 42 { return 10; }
+        cycles++;
+    }
+    if cycles != 256 { return 11; }
+
+    unsafe {
+        pointer, failure := new<i32>(42);
+        if failure != none { return 5; }
+        pipeline::Reader owner = pipeline::retain(pointer);
+        if owner() != 42 { return 6; }
+    }
+
+    return generic(42);
+}

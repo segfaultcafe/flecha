@@ -3,6 +3,14 @@
 This runtime plugin provides `.fl` filetype detection, syntax highlighting, and
 brace-aware indentation, and basic buffer settings for the currently implemented Flecha language.
 
+Callable declarations and capture lists are highlighted in examples such as:
+
+```flecha
+func Mapper(i32) => (i32);
+Mapper doubled = [](i32 value) => (i32) { return value * 2; };
+Mapper offset = [copy amount](value) => { return value + amount; };
+```
+
 ## Install
 
 From an extracted Flecha release archive on Linux or macOS, copy the bundled

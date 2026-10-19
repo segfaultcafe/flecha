@@ -523,7 +523,7 @@ class FunctionDeclaration final : public Declaration {
 
 class AnonymousFunctionExpression final : public Expression {
    public:
-    enum class CaptureMode { Copy, Reference, ConstReference };
+    enum class CaptureMode { Copy, Reference, ConstReference, Lend, Own };
 
     class Capture final : public AstNode {
        public:

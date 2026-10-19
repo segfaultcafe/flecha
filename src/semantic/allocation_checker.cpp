@@ -33,7 +33,9 @@ enum class ValueKind {
     Dangling,
     Transferred,
     Address,
-    Aggregate
+    Aggregate,
+    Callable,
+    LentCapture
 };
 struct Value final {
     ValueKind kind = ValueKind::Unknown;
@@ -41,6 +43,7 @@ struct Value final {
     const Symbol* address = nullptr;
     std::uint64_t integer = 0;
     std::vector<Value> elements;
+    const core::BlockStatement* scope = nullptr;
     bool operator==(const Value&) const = default;
 };
 struct Resource final {
@@ -79,6 +82,15 @@ const core::Expression& Unwrap(const core::Expression& expression) {
             static_cast<const core::ParenthesizedExpression&>(expression)
                 .Inner());
     return expression;
+}
+
+bool IsOwnedClosureCapture(Identity identity) {
+    if (identity == nullptr ||
+        identity->Kind() != AstNodeKind::AnonymousCapture)
+        return false;
+    return static_cast<const core::AnonymousFunctionExpression::Capture*>(
+               identity)
+               ->Mode() == core::AnonymousFunctionExpression::CaptureMode::Own;
 }
 
 // Keep paths separate: merging a successful new with its failure loses the
@@ -127,7 +139,17 @@ class AllocationChecker final {
                             static_cast<const core::SliceExpression&>(
                                 *node.memoryExpression)
                                 .Receiver()));
+                    const bool resourceClosure =
+                        node.memoryExpression &&
+                        node.memoryExpression->Kind() ==
+                            AstNodeKind::AnonymousFunctionExpression &&
+                        HasResourceCaptures(
+                            static_cast<
+                                const core::AnonymousFunctionExpression&>(
+                                *node.memoryExpression)
+                                .Function());
                     if (node.allocation || heapIndex || heapSlice ||
+                        resourceClosure ||
                         (callee &&
                          callee->BuiltIn() == BuiltInFunction::Free) ||
                         (found != _functions.end() &&
@@ -143,7 +165,8 @@ class AllocationChecker final {
             // 2^N and rejects otherwise valid test modules at modest sizes.
             if (function->IsTestHarness()) continue;
             if (!_resourceFunctions.contains(function) &&
-                !HasContracts(*function) && !HasOwningFields(*function))
+                !HasContracts(*function) && !HasOwningFields(*function) &&
+                !HasResourceCaptures(*function))
                 continue;
             Verify(*function);
         }
@@ -181,6 +204,7 @@ class AllocationChecker final {
             arguments.push_back(value);
         }
         SeedFields(function, state);
+        SeedCaptures(function, state);
         const auto savedSteps = _steps;
         _steps = 0;
         for (auto& outcome : Run(function, std::move(state), arguments))
@@ -208,6 +232,7 @@ class AllocationChecker final {
             arguments.push_back(argument);
         }
         SeedFields(function, state);
+        SeedCaptures(function, state);
 
         auto outcomes = Run(function, std::move(state), arguments);
         for (auto& outcome : outcomes)
@@ -227,6 +252,15 @@ class AllocationChecker final {
         if (HasContract(function.ReturnType())) return true;
         for (const auto& parameter : function.Parameters())
             if (HasContract(parameter->Type())) return true;
+        return false;
+    }
+    bool HasResourceCaptures(const core::FunctionDeclaration& function) const {
+        for (const ClosureCapture& capture : _model.Captures(function)) {
+            const auto mode = capture.syntax->Mode();
+            if (mode == core::AnonymousFunctionExpression::CaptureMode::Lend ||
+                mode == core::AnonymousFunctionExpression::CaptureMode::Own)
+                return true;
+        }
         return false;
     }
     const FunctionSymbol* Function(
@@ -254,9 +288,42 @@ class AllocationChecker final {
                                                field.syntax};
         }
     }
+    void SeedCaptures(const core::FunctionDeclaration& function, State& state) {
+        for (const ClosureCapture& capture : _model.Captures(function)) {
+            const auto mode = capture.syntax->Mode();
+            if (mode != core::AnonymousFunctionExpression::CaptureMode::Lend &&
+                mode != core::AnonymousFunctionExpression::CaptureMode::Own)
+                continue;
+            state.resources[capture.syntax] = {true, false, true, true};
+            state.bindings[capture.variable] = {ValueKind::Pointer,
+                                                capture.syntax};
+        }
+    }
+    bool HasLentCapture(const Value& value, Identity identity = nullptr) const {
+        if (value.kind == ValueKind::LentCapture &&
+            (identity == nullptr || value.identity == identity))
+            return true;
+        return std::any_of(value.elements.begin(), value.elements.end(),
+                           [&](const Value& child) {
+                               return HasLentCapture(child, identity);
+                           });
+    }
+    bool ActiveLend(const State& state, Identity identity) const {
+        for (const auto& [symbol, value] : state.bindings)
+            if (HasLentCapture(value, identity)) return true;
+        for (const auto& [expression, value] : state.values)
+            if (HasLentCapture(value, identity)) return true;
+        for (const Deferred& deferred : state.deferred)
+            for (const Value& value : deferred.arguments)
+                if (HasLentCapture(value, identity)) return true;
+        return false;
+    }
     bool Lent(const State& state, const Value& value) const {
+        if (value.kind == ValueKind::LentCapture) return true;
         const auto found = state.resources.find(value.identity);
-        if (found != state.resources.end() && found->second.lent) return true;
+        if (found != state.resources.end() &&
+            (found->second.lent || ActiveLend(state, value.identity)))
+            return true;
         for (const auto& child : value.elements)
             if (Lent(state, child)) return true;
         return false;
@@ -271,10 +338,13 @@ class AllocationChecker final {
         const auto found = state.resources.find(value.identity);
         if (value.kind != ValueKind::Pointer ||
             found == state.resources.end() || !found->second.live ||
-            !found->second.owned || found->second.lent) {
+            !found->second.owned || Lent(state, value)) {
             Report(DiagnosticCode::UnverifiedOwnership, at,
-                   "own requires a live allocation with cleanup "
-                   "responsibility, or null",
+                   IsOwnedClosureCapture(value.identity)
+                       ? "an own capture in a reusable closure cannot be "
+                         "consumed"
+                       : "own requires a live allocation with cleanup "
+                         "responsibility, or null",
                    value.identity);
             return false;
         }
@@ -301,9 +371,14 @@ class AllocationChecker final {
             static_cast<const FunctionSymbol*>(_model.DeclaredSymbol(function));
         if (!symbol) return;
         _functions[symbol] = &function;
-        _graphs.emplace(&function, BuildControlFlowGraph(function, _model));
+        auto graph = BuildControlFlowGraph(function, _model);
+        for (const FlowNode& node : graph.nodes)
+            if (node.memoryExpression != nullptr && !node.scopes.empty())
+                _expressionScopes[node.memoryExpression] = node.scopes.back();
+        _graphs.emplace(&function, std::move(graph));
         _ordered.push_back(&function);
-        if (HasContracts(function) || HasOwningFields(function))
+        if (HasContracts(function) || HasOwningFields(function) ||
+            HasResourceCaptures(function))
             _resourceFunctions.insert(&function);
     }
 
@@ -389,7 +464,11 @@ class AllocationChecker final {
         if (value.kind == ValueKind::Null) return;
         if (Lent(state, value)) {
             Report(DiagnosticCode::UnverifiedOwnership, at,
-                   "a lent pointer cannot be freed", value.identity);
+                   IsOwnedClosureCapture(value.identity)
+                       ? "an own capture in a reusable closure cannot be "
+                         "freed"
+                       : "a lent pointer cannot be freed",
+                   value.identity);
             return;
         }
         if (value.kind == ValueKind::Transferred) {
@@ -1070,12 +1149,77 @@ class AllocationChecker final {
                 }
             }
             case AstNodeKind::NameExpression: {
-                Value value = Binding(
-                    state,
-                    _model.SymbolFor(
-                        static_cast<const core::NameExpression&>(expression)));
+                const Symbol* symbol = _model.SymbolFor(
+                    static_cast<const core::NameExpression&>(expression));
+                Value value = Binding(state, symbol);
                 CheckUse(state, value, expression);
+                if (_model.TransferOf(expression) == TransferKind::Move &&
+                    (value.kind == ValueKind::Callable ||
+                     HasLentCapture(value)))
+                    state.bindings.erase(symbol);
                 return value;
+            }
+            case AstNodeKind::AnonymousFunctionExpression: {
+                const auto& function =
+                    static_cast<const core::AnonymousFunctionExpression&>(
+                        expression);
+                Value closure{ValueKind::Callable, &expression};
+                if (const auto scope = _expressionScopes.find(&expression);
+                    scope != _expressionScopes.end())
+                    closure.scope = scope->second;
+                std::set<Identity> lent;
+                for (const auto& capture : function.Captures()) {
+                    const Symbol* source = _model.CaptureSource(*capture);
+                    if (source == nullptr) continue;
+                    const Value value = Binding(state, source);
+                    const auto mode = capture->Mode();
+                    if (mode == core::AnonymousFunctionExpression::CaptureMode::
+                                    Copy &&
+                        IsHeapHandle(source->Type()) && Tracks(value)) {
+                        Report(DiagnosticCode::UnverifiedOwnership, *capture,
+                               "a tracked raw resource must be captured with "
+                               "lend or own, not copy",
+                               value.identity);
+                        continue;
+                    }
+                    if (mode != core::AnonymousFunctionExpression::CaptureMode::
+                                    Lend &&
+                        mode !=
+                            core::AnonymousFunctionExpression::CaptureMode::Own)
+                        continue;
+                    CheckUse(state, value, *capture);
+                    if (mode ==
+                        core::AnonymousFunctionExpression::CaptureMode::Lend) {
+                        if (value.kind == ValueKind::Null) continue;
+                        const auto resource =
+                            state.resources.find(value.identity);
+                        if (value.kind != ValueKind::Pointer ||
+                            resource == state.resources.end() ||
+                            !resource->second.live ||
+                            (!resource->second.owned &&
+                             !resource->second.lent)) {
+                            Report(DiagnosticCode::UnverifiedOwnership,
+                                   *capture,
+                                   "lend capture requires a live tracked "
+                                   "allocation or lending parameter",
+                                   value.identity);
+                            continue;
+                        }
+                        lent.insert(value.identity);
+                        closure.elements.push_back(
+                            {ValueKind::LentCapture, value.identity});
+                        continue;
+                    }
+                    if (lent.contains(value.identity)) {
+                        Report(DiagnosticCode::UnverifiedOwnership, *capture,
+                               "one closure cannot both lend and own the same "
+                               "allocation",
+                               value.identity);
+                        continue;
+                    }
+                    Transfer(state, value, *capture);
+                }
+                return closure;
             }
             case AstNodeKind::ParenthesizedExpression:
                 return Get(state,
@@ -1398,6 +1542,48 @@ class AllocationChecker final {
             default:
                 break;
         }
+    }
+
+    bool GraphContainsScope(const ControlFlowGraph& graph,
+                            const core::BlockStatement* scope) const {
+        if (scope == nullptr) return false;
+        if (graph.scopeParents.contains(scope)) return true;
+        for (const FlowNode& node : graph.nodes)
+            if (std::find(node.scopes.begin(), node.scopes.end(), scope) !=
+                node.scopes.end())
+                return true;
+        return false;
+    }
+
+    bool EscapedLend(
+        const Value& value, const ControlFlowGraph& graph,
+        const std::vector<const core::BlockStatement*>& activeScopes) const {
+        if (value.kind == ValueKind::Callable && value.scope != nullptr &&
+            HasLentCapture(value) && GraphContainsScope(graph, value.scope) &&
+            std::find(activeScopes.begin(), activeScopes.end(), value.scope) ==
+                activeScopes.end())
+            return true;
+        return std::any_of(value.elements.begin(), value.elements.end(),
+                           [&](const Value& child) {
+                               return EscapedLend(child, graph, activeScopes);
+                           });
+    }
+
+    void CheckLendEscapes(
+        const State& state, const ControlFlowGraph& graph,
+        const std::vector<const core::BlockStatement*>& activeScopes,
+        const core::AstNode& at) {
+        const auto check = [&](const Value& value) {
+            if (EscapedLend(value, graph, activeScopes))
+                Report(DiagnosticCode::UnverifiedOwnership, at,
+                       "a closure with a lend capture cannot escape its "
+                       "creating scope",
+                       value.identity);
+        };
+        for (const auto& [symbol, value] : state.bindings) check(value);
+        for (const auto& [expression, value] : state.values) check(value);
+        for (const Deferred& deferred : state.deferred)
+            for (const Value& value : deferred.arguments) check(value);
     }
 
     std::vector<State> Leave(
@@ -1757,6 +1943,8 @@ class AllocationChecker final {
                                 ? static_cast<const core::AstNode&>(
                                       *node.condition)
                                 : function.Body();
+                        CheckLendEscapes(next, graph,
+                                         graph.nodes[successor].scopes, loss);
                         CheckLost(next, loss);
                         pending.emplace_back(successor, std::move(next));
                     }
@@ -1770,6 +1958,7 @@ class AllocationChecker final {
     bool Owns(const State& state, const Value& value,
               std::size_t depth = 0) const {
         if (depth > 16) return true;
+        if (value.kind == ValueKind::LentCapture) return false;
         const auto resource = state.resources.find(value.identity);
         if (resource != state.resources.end() && resource->second.owned)
             return true;
@@ -1800,6 +1989,8 @@ class AllocationChecker final {
     std::map<const FunctionSymbol*, const core::FunctionDeclaration*>
         _functions;
     std::map<const core::FunctionDeclaration*, ControlFlowGraph> _graphs;
+    std::map<const core::Expression*, const core::BlockStatement*>
+        _expressionScopes;
     std::vector<const core::FunctionDeclaration*> _ordered;
     std::set<const core::FunctionDeclaration*> _resourceFunctions;
     std::vector<const core::FunctionDeclaration*> _active;

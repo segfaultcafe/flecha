@@ -223,6 +223,9 @@ destruction order, null free, and deferred release on control-flow exits. Its
 native harness uses linker wrapping to inject one allocator failure without a
 production runtime test hook. Runtime tests check zeroing, alignment, overflow,
 and invalid alignment. ASan/UBSan and native leak checks cover this fixture.
+Anonymous functions may preserve a temporary loan with `[lend pointer]` or
+transfer cleanup into their environment with `[own pointer]`; the complete
+rules are documented in [ownership contracts](ownership_contracts.md).
 See [runtime_abi.md](runtime_abi.md) for the storage ABI and
 [../examples/raw_allocation.fl](../examples/raw_allocation.fl) for a runnable
 example returning 42.

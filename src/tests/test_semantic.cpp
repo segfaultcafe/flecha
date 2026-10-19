@@ -160,6 +160,55 @@ TEST(SemanticCallableTests, TreatsCallableVariablesAsMoveOnly) {
     EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
 }
 
+TEST(SemanticCallableTests, TreatsCallableAggregatesAsMoveOnly) {
+    const std::vector<std::string> sources = {
+        R"(
+            func Mapper(i32) => (i32);
+            i32 twice(i32 value) { return value * 2; }
+            i32 main() {
+                Mapper callback = twice;
+                (Mapper, i32) first = (callback, 21);
+                (Mapper, i32) second = first;
+                (Mapper, i32) invalid = first;
+                return 0;
+            }
+        )",
+        R"(
+            func Mapper(i32) => (i32);
+            i32 twice(i32 value) { return value * 2; }
+            i32 main() {
+                Mapper callback = twice;
+                [1]Mapper first = [callback];
+                [1]Mapper second = first;
+                [1]Mapper invalid = first;
+                return 0;
+            }
+        )",
+        R"(
+            func Mapper(i32) => (i32);
+            structure Holder { Mapper callback; };
+            Holder Holder::init(Mapper callback) <- callback override {
+                return build Holder { self.callback = callback; };
+            }
+            i32 twice(i32 value) { return value * 2; }
+            i32 main() {
+                Mapper callback = twice;
+                Holder first = Holder::init(callback);
+                Holder second = first;
+                Holder invalid = first;
+                return 0;
+            }
+        )",
+    };
+
+    for (const std::string& source : sources) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(
+            FindErrorDiagnostic(Analyze(source), DiagnosticCode::MovedValue),
+            nullptr);
+    }
+}
+
 TEST(SemanticCallableTests,
      InfersCapturelessAnonymousFunctionsFromAssignmentsArgumentsAndReturns) {
     Analysis result = Analyze(R"(
@@ -309,6 +358,158 @@ TEST(SemanticCallableTests, AllowsRawCopyCapturesOnlyOnUnsafeFunctions) {
         }
     )");
     EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, ResolvesUnsafeRawResourceCaptures) {
+    Analysis result = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            i32 borrowed = 0;
+            {
+                Reader reader = unsafe [lend pointer]() => {
+                    return *pointer;
+                };
+                borrowed = reader();
+            }
+            free(pointer);
+
+            owned, secondFailure := new<i32>(7);
+            if secondFailure != none { return 2; }
+            Reader owner = unsafe [own owned]() => { return *owned; };
+            return borrowed + owner();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.AnonymousFunctions().size(), 2);
+    const auto& lent =
+        result.model.Captures(*result.model.AnonymousFunctions()[0]);
+    const auto& owned =
+        result.model.Captures(*result.model.AnonymousFunctions()[1]);
+    ASSERT_EQ(lent.size(), 1);
+    ASSERT_EQ(owned.size(), 1);
+    EXPECT_FALSE(lent[0].variable->Writable());
+    EXPECT_FALSE(owned[0].variable->Writable());
+}
+
+TEST(SemanticCallableTests, RequiresUnsafeRawResourceCaptureLiterals) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Reader reader = [lend pointer]() => { return *pointer; };
+            free(pointer);
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RequiresRawResourcesForLendAndOwnCaptures) {
+    Analysis result = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            Reader lent = unsafe [lend value]() => { return value; };
+            Reader owned = unsafe [own value]() => { return value; };
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::NonCopyableValue),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsInvalidRawResourceCaptureTransfers) {
+    Analysis copied = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Reader reader = unsafe [copy pointer]() => { return *pointer; };
+            free(pointer);
+            return reader();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(copied, DiagnosticCode::UnverifiedOwnership),
+              nullptr);
+
+    Analysis stackOwner = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader reader = unsafe [own pointer]() => { return *pointer; };
+            return reader();
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(stackOwner, DiagnosticCode::UnverifiedOwnership),
+        nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsLendCaptureEscapesAndOwnerConflicts) {
+    Analysis returned = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe Reader bind(lend *const i32 pointer) {
+            return unsafe [lend pointer]() => { return *pointer; };
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(returned, DiagnosticCode::UnverifiedOwnership),
+        nullptr);
+
+    Analysis stored = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Reader escaped = unsafe []() => (i32) { return 0; };
+            {
+                Reader local = unsafe [lend pointer]() => { return *pointer; };
+                escaped = local;
+            }
+            free(pointer);
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(stored, DiagnosticCode::UnverifiedOwnership),
+              nullptr);
+
+    Analysis freed = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Reader reader = unsafe [lend pointer]() => { return *pointer; };
+            free(pointer);
+            return reader();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(freed, DiagnosticCode::UnverifiedOwnership),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsConsumptionFromReusableOwnCapture) {
+    Analysis result = Analyze(R"(
+        unsafe func Consumer() => ();
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Consumer consumer = unsafe [own pointer]() => {
+                free(pointer);
+            };
+            consumer();
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnverifiedOwnership),
               nullptr);
 }
 

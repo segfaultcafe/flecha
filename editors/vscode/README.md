@@ -3,6 +3,14 @@
 This extension recognizes `.fl` files, supplies Flecha-aware comments and
 brackets, and highlights the language syntax implemented by the compiler.
 
+Callable declarations and capture lists are highlighted in examples such as:
+
+```flecha
+func Mapper(i32) => (i32);
+Mapper doubled = [](i32 value) => (i32) { return value * 2; };
+Mapper offset = [copy amount](value) => { return value + amount; };
+```
+
 ## Install a release
 
 Download `flecha-language-VERSION.vsix` from the matching Flecha GitHub Release,

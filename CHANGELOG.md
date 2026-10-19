@@ -4,6 +4,13 @@
 
 ### Language
 
+- Callable values now transfer correctly through structures, tuples, fixed
+  arrays, methods, modules, and generic functions without duplicating closure
+  ownership.
+- Unsafe anonymous functions can capture tracked raw resources with `lend` or
+  `own`. Lending closures cannot escape or overlap a free/transfer, while owned
+  captures move cleanup into the closure and release exactly once when its
+  environment is destroyed.
 - Anonymous functions can explicitly borrow outer storage with `&name` or
   `&const name`. Callable moves, returns, and containers preserve borrow
   origins, and invalid storage or return escapes are diagnosed.
@@ -28,6 +35,11 @@
 
 ### Tooling
 
+- Sanitizer validation now keeps leak detection enabled for compiler and native
+  callable tests, and release packages execute a cross-module callable ABI
+  smoke test on every supported platform.
+- A runnable callable example and editor documentation cover `func`,
+  captureless literals, inferred signatures, and `copy` captures.
 - Development builds of Flecha and Longbow now include the commit distance,
   abbreviated Git revision, and dirty-worktree state in `--version` output.
 

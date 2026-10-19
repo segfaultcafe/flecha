@@ -872,8 +872,13 @@ class BorrowChecker final {
                 Value result;
                 std::vector<std::size_t> temporaries;
                 for (const auto& capture : function.Captures()) {
-                    if (capture->Mode() ==
-                        core::AnonymousFunctionExpression::CaptureMode::Copy)
+                    const auto mode = capture->Mode();
+                    if (mode == core::AnonymousFunctionExpression::CaptureMode::
+                                    Copy ||
+                        mode == core::AnonymousFunctionExpression::CaptureMode::
+                                    Lend ||
+                        mode ==
+                            core::AnonymousFunctionExpression::CaptureMode::Own)
                         continue;
                     const Symbol* source = _model.CaptureSource(*capture);
                     if (source == nullptr) continue;

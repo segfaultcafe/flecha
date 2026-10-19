@@ -1,0 +1,6 @@
+func Reader() => (i32);
+
+void callable_allocation_failure_test() {
+    i32 value = 42;
+    Reader callback = [copy value]() => { return value; };
+}

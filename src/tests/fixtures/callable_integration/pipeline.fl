@@ -1,0 +1,29 @@
+module pipeline;
+
+export func Mapper(i32) => (i32);
+export unsafe func Reader() => (i32);
+
+export structure Pipeline { Mapper callback; };
+Pipeline Pipeline::init(Mapper callback) <- callback override {
+    return build Pipeline { self.callback = callback; };
+}
+i32 Pipeline::run(&const self, i32 value) {
+    return (self->callback)(value);
+}
+
+export T relay<T>(T value) <- value { return value; }
+
+export Pipeline offset(i32 amount) {
+    Mapper callback = [copy amount](value) => { return value + amount; };
+    return Pipeline::init(callback);
+}
+
+export Mapper combine(i32 left, i32 right) {
+    return [copy left, copy right](value) => {
+        return value + left + right;
+    };
+}
+
+export unsafe Reader retain(own *i32 pointer) {
+    return unsafe [own pointer]() => { return *pointer; };
+}
