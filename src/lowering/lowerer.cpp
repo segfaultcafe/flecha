@@ -308,12 +308,22 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             std::vector<BoundClosureCapture> captures;
             for (const semantic::ClosureCapture& capture :
                  _semanticModel->Captures(anonymous.Function())) {
-                captures.push_back(
-                    {capture.syntax->Mode(), capture.variable,
-                     std::make_unique<BoundVariableExpression>(
-                         capture.syntax->NameRange(),
-                         static_cast<const semantic::VariableSymbol&>(
-                             *capture.source))});
+                std::unique_ptr<BoundExpression> value =
+                    std::make_unique<BoundVariableExpression>(
+                        capture.syntax->NameRange(),
+                        static_cast<const semantic::VariableSymbol&>(
+                            *capture.source));
+                if (capture.syntax->Mode() ==
+                        core::AnonymousFunctionExpression::CaptureMode::Own &&
+                    !capture.source->Type().IsCopyable())
+                    value = std::make_unique<BoundMoveExpression>(
+                        capture.syntax->NameRange(),
+                        std::make_unique<BoundVariableExpression>(
+                            capture.syntax->NameRange(),
+                            static_cast<const semantic::VariableSymbol&>(
+                                *capture.source)));
+                captures.push_back({capture.syntax->Mode(), capture.variable,
+                                    std::move(value)});
             }
             return std::make_unique<BoundFunctionExpression>(
                 expression.Range(),

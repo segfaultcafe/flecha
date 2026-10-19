@@ -1014,6 +1014,64 @@ TEST(NativeCompilerTests, RunsLentAndOwnedRawResourceCaptures) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, NestsOwnedClosuresContainersAndNoncopyableState) {
+    GeneratedSource result = Generate(R"(
+        func Reader() => (i32);
+
+        structure State { *i32 tears; i32 value; };
+        unsafe State State::init(*i32 tears, i32 value) override {
+            return build State {
+                self.tears = tears;
+                self.value = value;
+            };
+        }
+        void State::tear(&self) override {
+            unsafe { *self->tears = *self->tears + 1; }
+        }
+        i32 State::read(&const self) { return self->value; }
+
+        unsafe i32 main() {
+            i32 tears = 0;
+            i32 result = 0;
+            {
+                State state = State::init(&raw tears, 20);
+                Reader stateful = [own state]() => { return state.read(); };
+                i32 offset = 2;
+                Reader captured = [copy offset]() => { return offset; };
+                [2]Reader callbacks = [stateful, captured];
+                Reader nested = [own callbacks]() => {
+                    return (callbacks[0])() + (callbacks[1])();
+                };
+                if nested() != 22 { return 1; }
+                if nested() != 22 { return 2; }
+                if tears != 0 { return 3; }
+                result = nested() + 20;
+            }
+            if tears != 1 { return 4; }
+            return result;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_generalized_own_capture_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_generalized_own_capture_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, ReturnsOwnedRawResourceCaptures) {
     GeneratedSource result = Generate(R"(
         unsafe func Reader() => (i32);

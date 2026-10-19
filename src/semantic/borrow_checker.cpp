@@ -876,12 +876,24 @@ class BorrowChecker final {
                     if (mode == core::AnonymousFunctionExpression::CaptureMode::
                                     Copy ||
                         mode == core::AnonymousFunctionExpression::CaptureMode::
-                                    Lend ||
-                        mode ==
-                            core::AnonymousFunctionExpression::CaptureMode::Own)
+                                    Lend)
                         continue;
                     const Symbol* source = _model.CaptureSource(*capture);
                     if (source == nullptr) continue;
+                    if (mode ==
+                        core::AnonymousFunctionExpression::CaptureMode::Own) {
+                        if (source->Type().Kind() ==
+                                SemanticTypeKind::Pointer ||
+                            source->Type().Kind() ==
+                                SemanticTypeKind::OwnedBuffer)
+                            continue;
+                        if (TracksBorrow(source)) {
+                            const Handle& handle = (*_state)[source];
+                            result.origins.insert(handle.origins.begin(),
+                                                  handle.origins.end());
+                        }
+                        continue;
+                    }
                     Value place;
                     if (source->Type().HasBorrowedLifetime()) {
                         const Handle& handle = (*_state)[source];

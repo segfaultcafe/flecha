@@ -257,8 +257,9 @@ class AllocationChecker final {
     bool HasResourceCaptures(const core::FunctionDeclaration& function) const {
         for (const ClosureCapture& capture : _model.Captures(function)) {
             const auto mode = capture.syntax->Mode();
-            if (mode == core::AnonymousFunctionExpression::CaptureMode::Lend ||
-                mode == core::AnonymousFunctionExpression::CaptureMode::Own)
+            if ((mode == core::AnonymousFunctionExpression::CaptureMode::Lend ||
+                 mode == core::AnonymousFunctionExpression::CaptureMode::Own) &&
+                IsHeapHandle(capture.variable->Type()))
                 return true;
         }
         return false;
@@ -291,8 +292,9 @@ class AllocationChecker final {
     void SeedCaptures(const core::FunctionDeclaration& function, State& state) {
         for (const ClosureCapture& capture : _model.Captures(function)) {
             const auto mode = capture.syntax->Mode();
-            if (mode != core::AnonymousFunctionExpression::CaptureMode::Lend &&
-                mode != core::AnonymousFunctionExpression::CaptureMode::Own)
+            if ((mode != core::AnonymousFunctionExpression::CaptureMode::Lend &&
+                 mode != core::AnonymousFunctionExpression::CaptureMode::Own) ||
+                !IsHeapHandle(capture.variable->Type()))
                 continue;
             state.resources[capture.syntax] = {true, false, true, true};
             state.bindings[capture.variable] = {ValueKind::Pointer,
@@ -1208,6 +1210,11 @@ class AllocationChecker final {
                         lent.insert(value.identity);
                         closure.elements.push_back(
                             {ValueKind::LentCapture, value.identity});
+                        continue;
+                    }
+                    if (!IsHeapHandle(source->Type())) {
+                        closure.elements.push_back(value);
+                        state.bindings.erase(source);
                         continue;
                     }
                     if (lent.contains(value.identity)) {

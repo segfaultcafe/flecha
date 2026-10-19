@@ -2496,10 +2496,12 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
         const bool lendsResource =
             capture->Mode() ==
             core::AnonymousFunctionExpression::CaptureMode::Lend;
-        const bool ownsResource =
+        const bool ownsValue =
             capture->Mode() ==
             core::AnonymousFunctionExpression::CaptureMode::Own;
-        const bool resourceCapture = lendsResource || ownsResource;
+        const bool rawResource = IsRawResource(type);
+        const bool resourceCapture =
+            lendsResource || (ownsValue && rawResource);
         if (source->Kind() != SymbolKind::Parameter &&
             source->Kind() != SymbolKind::LocalVariable) {
             Report(diagnostics::DiagnosticCode::NonCopyableValue,
@@ -2521,15 +2523,28 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
                        " capture requires an unsafe anonymous function");
             continue;
         }
-        if (resourceCapture && !IsRawResource(type)) {
+        if (lendsResource && !rawResource) {
             Report(diagnostics::DiagnosticCode::NonCopyableValue,
                    capture->NameRange(),
-                   std::string(lendsResource ? "lend" : "own") +
-                       " capture requires a raw pointer resource, found '" +
+                   "lend capture requires a raw pointer resource, found '" +
                        type.Name() + "'");
             continue;
         }
-        if (ContainsRawPointer(type) && !function.IsUnsafe()) {
+        if (ownsValue && !rawResource && type.IsCopyable()) {
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   capture->NameRange(),
+                   "value '" + capture->Name() + "' of type '" + type.Name() +
+                       "' is copyable; capture it with copy instead of own");
+            continue;
+        }
+        if (ownsValue && type.IsImmovable()) {
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   capture->NameRange(),
+                   "value '" + capture->Name() + "' of type '" + type.Name() +
+                       "' is immovable and cannot be captured with own");
+            continue;
+        }
+        if (!ownsValue && ContainsRawPointer(type) && !function.IsUnsafe()) {
             Report(diagnostics::DiagnosticCode::UnsafeOperation,
                    capture->NameRange(),
                    "raw-pointer value '" + capture->Name() +
@@ -2565,6 +2580,7 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
         const auto* capturedVariable = variable.get();
         _model._symbols.push_back(std::move(variable));
         _model._declarations.emplace(capture.get(), capturedVariable);
+        _model._captureVariables.emplace(capturedVariable, capture.get());
         captures.push_back({capture.get(), source, capturedVariable});
     }
     RegisterFunction(function, true);
@@ -4688,6 +4704,16 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
             return;
         }
         if (symbol != nullptr) {
+            const auto* capture = _model.CaptureFor(*symbol);
+            if (capture != nullptr &&
+                capture->Mode() ==
+                    core::AnonymousFunctionExpression::CaptureMode::Own) {
+                Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                       expression.Range(),
+                       "owned capture '" + symbol->Name() +
+                           "' cannot be consumed by a reusable closure");
+                return;
+            }
             _model._transfers.insert_or_assign(&expression, TransferKind::Move);
             return;
         }

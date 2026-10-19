@@ -326,6 +326,38 @@ TEST(LoweringTests, CarriesCheckedReferenceCaptureModes) {
               std::string::npos);
 }
 
+TEST(LoweringTests, MovesGeneralizedOwnCapturesIntoEnvironments) {
+    LoweredSource result = Lower(R"(
+        func Reader() => (i32);
+        i32 main() {
+            Reader inner = []() => (i32) { return 42; };
+            Reader outer = [own inner]() => { return inner(); };
+            return outer();
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const auto& declaration =
+        static_cast<const BoundVariableDeclarationStatement&>(
+            *result.program->Functions()[0]->Body().Statements()[1]);
+    const auto& direct =
+        static_cast<const BoundDirectExpression&>(*declaration.Initializer());
+    const auto& closure =
+        static_cast<const BoundFunctionExpression&>(direct.Value());
+    ASSERT_EQ(closure.Captures().size(), 1);
+    EXPECT_EQ(closure.Captures()[0].mode,
+              AnonymousFunctionExpression::CaptureMode::Own);
+    ASSERT_EQ(closure.Captures()[0].value->Kind(),
+              BoundNodeKind::MoveExpression);
+    const auto& move =
+        static_cast<const BoundMoveExpression&>(*closure.Captures()[0].value);
+    EXPECT_EQ(static_cast<const BoundVariableExpression&>(move.Source())
+                  .Symbol()
+                  .Name(),
+              "inner");
+}
+
 TEST(LoweringTests, PreservesDelayedDeclarationsAcrossTerminatingBranches) {
     LoweredSource result = Lower(
         "i32 main(bool c) { i32 value; string text; "

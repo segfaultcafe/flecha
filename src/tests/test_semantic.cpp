@@ -513,6 +513,127 @@ TEST(SemanticCallableTests, RejectsConsumptionFromReusableOwnCapture) {
               nullptr);
 }
 
+TEST(SemanticCallableTests, OwnsMovableCallablesAndSafeAggregates) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        structure State { i32 value; };
+        State State::init(i32 value) override {
+            return build State { self.value = value; };
+        }
+        void State::tear(&self) override {}
+
+        Reader wrap(i32 value) {
+            State state = State::init(value);
+            Reader inner = [own state]() => { return state.value; };
+            return [own inner]() => { return inner(); };
+        }
+        i32 main() {
+            Reader callback = wrap(42);
+            return callback();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.AnonymousFunctions().size(), 2);
+    for (const auto* function : result.model.AnonymousFunctions()) {
+        ASSERT_EQ(result.model.Captures(*function).size(), 1);
+        EXPECT_EQ(result.model.Captures(*function)[0].syntax->Mode(),
+                  AnonymousFunctionExpression::CaptureMode::Own);
+        EXPECT_FALSE(function->IsUnsafe());
+    }
+}
+
+TEST(SemanticCallableTests, MovesGeneralizedOwnCaptureSources) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            Reader inner = []() => (i32) { return 21; };
+            Reader outer = [own inner]() => { return inner() * 2; };
+            return inner() + outer();
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsInvalidGeneralizedOwnCaptures) {
+    Analysis copyable = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 42;
+            Reader callback = [own value]() => { return value; };
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(copyable, DiagnosticCode::NonCopyableValue),
+              nullptr);
+
+    Analysis immovable = Analyze(R"(
+        func Reader() => (i32);
+        structure State { i32 value; };
+        State State::init() override { return build State {}; }
+        unsafe void State::tear(&self) override {}
+        unsafe i32 main() {
+            State state = State::init();
+            Reader callback = [own state]() => { return state.value; };
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(immovable, DiagnosticCode::NonCopyableValue),
+              nullptr);
+}
+
+TEST(SemanticCallableTests,
+     RejectsConsumptionFromReusableGeneralizedOwnCapture) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        void consume(Reader callback) {}
+        i32 main() {
+            Reader inner = []() => (i32) { return 42; };
+            Reader outer = [own inner]() => {
+                consume(inner);
+                return 42;
+            };
+            return outer();
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::NonCopyableValue),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, PropagatesBorrowOriginsThroughOwnCaptures) {
+    Analysis valid = Analyze(R"(
+        func Reader() => (i32);
+        Reader wrap(&const i32 source) <- source {
+            Reader inner = [&const source]() => { return *source; };
+            return [own inner]() => { return inner(); };
+        }
+        i32 main() {
+            i32 value = 42;
+            Reader callback = wrap(&value);
+            return callback();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis escaped = Analyze(R"(
+        func Reader() => (i32);
+        Reader invalid() {
+            i32 local = 42;
+            Reader inner = [&const local]() => { return local; };
+            return [own inner]() => { return inner(); };
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(escaped, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+}
+
 TEST(SemanticCallableTests, ChecksCopyCaptureSourceInitialization) {
     EXPECT_NE(FindErrorDiagnostic(
                   Analyze("func Mapper(i32) => (i32); i32 main() { i32 x; "

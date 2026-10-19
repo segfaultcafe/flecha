@@ -38,6 +38,12 @@ const Symbol* SemanticModel::CaptureSource(
     return found == _captureSources.end() ? nullptr : found->second;
 }
 
+const core::AnonymousFunctionExpression::Capture* SemanticModel::CaptureFor(
+    const Symbol& variable) const {
+    const auto found = _captureVariables.find(&variable);
+    return found == _captureVariables.end() ? nullptr : found->second;
+}
+
 const Symbol* SemanticModel::DestructureTarget(
     const core::DestructureBinding& binding) const {
     const auto found = _destructureTargets.find(&binding);
