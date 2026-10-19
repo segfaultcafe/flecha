@@ -4,6 +4,7 @@
 #include <set>
 extern "C" void* __real_flecha_runtime_v1_alloc_array(std::size_t, std::size_t,
                                                       std::size_t);
+extern "C" void* __real_flecha_runtime_v1_alloc(std::size_t, std::size_t);
 extern "C" void __real_flecha_runtime_v1_free(void*);
 #ifndef FLECHA_ARRAY_FAIL_CALL
 #define FLECHA_ARRAY_FAIL_CALL 2
@@ -33,6 +34,12 @@ extern "C" void* __wrap_flecha_runtime_v1_alloc_array(std::size_t count,
         return nullptr;
     }
     void* data = __real_flecha_runtime_v1_alloc_array(count, size, alignment);
+    if (data) audit.live.insert(data);
+    return data;
+}
+extern "C" void* __wrap_flecha_runtime_v1_alloc(std::size_t size,
+                                                std::size_t alignment) {
+    void* data = __real_flecha_runtime_v1_alloc(size, alignment);
     if (data) audit.live.insert(data);
     return data;
 }

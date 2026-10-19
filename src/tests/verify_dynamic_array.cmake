@@ -16,7 +16,7 @@ execute_process(
     COMMAND "${FLECHA_LINKER}" "${FLECHA_HARNESS}" "${FLECHA_OUTPUT}.o"
         "-DFLECHA_ARRAY_FAIL_CALL=${FLECHA_ARRAY_FAIL_CALL}"
         "${FLECHA_RUNTIME}" ${sanitizerFlags}
-        -Wl,--wrap=flecha_runtime_v1_alloc_array,--wrap=flecha_runtime_v1_free
+        -Wl,--wrap=flecha_runtime_v1_alloc_array,--wrap=flecha_runtime_v1_alloc,--wrap=flecha_runtime_v1_free
         -o "${FLECHA_OUTPUT}"
     RESULT_VARIABLE result ERROR_VARIABLE errors TIMEOUT 30)
 if(NOT result EQUAL 0)
