@@ -587,6 +587,71 @@ TEST_F(ModuleTests, FullQuiverWildcardDoesNotBypassVisibility) {
     EXPECT_EQ(errors.find("public::value"), std::string::npos);
 }
 
+TEST_F(ModuleTests, PrivateModulesAreImportableOnlyWithinTheirQuiver) {
+    Write("pack/api.fl", R"(private module api;
+        export structure Answer { i32 value; };
+        Answer Answer::init() override {
+            return build Answer { self.value = 42; };
+        }
+        export Answer answer() { return Answer::init(); }
+        export T identity<T>(T value) { return value; }
+    )");
+    Write("pack/main.fl", R"(module main; @imports :: root::pack::api;
+        i32 main() {
+            return api::identity<api::Answer>(api::answer()).value;
+        }
+    )");
+    EXPECT_EQ(CheckAt("pack/main.fl"), "");
+
+    Write("main.fl", R"(module main; @imports :: root::pack::api;
+        i32 main() { return api::answer().value; }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("private module 'api'"), std::string::npos);
+    EXPECT_NE(errors.find("modules in quiver 'root::pack'"), std::string::npos);
+}
+
+TEST_F(ModuleTests, PrivateModuleExportsUseQuiverApiRules) {
+    Write("main.fl", R"(private module main;
+        structure Hidden { i32 value; };
+        export Hidden leak(Hidden value) { return value; }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("quiver APIs cannot expose module-private types"),
+              std::string::npos);
+    EXPECT_EQ(errors.find("exported APIs"), std::string::npos);
+}
+
+TEST_F(ModuleTests, WildcardsAndCachedImportsRespectPrivateModules) {
+    Write("pack/api.fl",
+          "private module api; export i32 value() { return 42; }");
+    Write("pack/facade.fl", R"(module facade; @imports :: root::pack::api;
+        export i32 value() { return api::value(); }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::pack::facade :: root::pack::api;
+        i32 main() { return facade::value(); }
+    )");
+    EXPECT_NE(Check().find("private module 'api'"), std::string::npos);
+
+    Write("main.fl", R"(module main; @imports :: root::pack::*;
+        i32 main() { return facade::value(); }
+    )");
+    EXPECT_NE(Check().find("private module 'api'"), std::string::npos);
+}
+
+TEST_F(ModuleTests, PrivateModulesDoNotCrossSourceIdentities) {
+    Write("library/shared/api.fl",
+          "private module api; export i32 value() { return 42; }");
+    Write("shared/main.fl", R"(module main;
+        @imports :: lib::fixture::shared::api;
+        i32 main() { return api::value(); }
+    )");
+    const std::string errors = CheckAt("shared/main.fl");
+    EXPECT_NE(errors.find("private module 'api'"), std::string::npos);
+    EXPECT_NE(errors.find("quiver 'lib::fixture::shared'"), std::string::npos);
+}
+
 TEST_F(ModuleTests, LibraryModulesShareOnlyTheirLibraryQuiver) {
     Write("library/secret.fl",
           "module secret; quiver i32 value() { return 42; }");

@@ -712,8 +712,10 @@ class Expander {
         tokens.emplace_back(TokenType::EOF_TOKEN, "", origin.Range());
         Parser parser(std::move(tokens), diagnostics,
                       "$generic" + std::to_string(generatedDeclarations) + "$");
-        if (modules.contains(origin.moduleId))
+        if (modules.contains(origin.moduleId)) {
             parser.SetImports(modules[origin.moduleId]->imports);
+            parser.SetPrivateModule(modules[origin.moduleId]->privateModule);
+        }
         auto parsed = parser.Parse()->TakeDeclarations();
         if (parsed.size() != 1) {
             Error(at, "could not specialize '" + Name(origin) + "'");

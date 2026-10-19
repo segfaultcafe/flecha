@@ -23,11 +23,15 @@ class Parser {
     void ParseHeader();
     const std::vector<Import>& Imports() const { return _imports; }
     void SetImports(std::vector<Import> imports);
+    void SetPrivateModule(bool privateModule) {
+        _modulePrivate = privateModule;
+    }
     [[nodiscard]] std::unique_ptr<CompilationUnit> Parse();
 
    private:
     bool _headerParsed = false;
     std::string _moduleName;
+    bool _modulePrivate = false;
     std::vector<Import> _imports;
     std::set<std::string> _importAliases;
     [[nodiscard]] const Token& Current() const;
