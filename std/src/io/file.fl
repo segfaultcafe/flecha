@@ -73,7 +73,7 @@ File File::zero() override {
 }
 
 (File, error) File::open(stringv path, OpenOptions opts) {
-    err := validate_options(opts); 
+    err := validate_options(opts);
     if err != none {
         return (none, err);
     }
@@ -99,7 +99,7 @@ File File::zero() override {
     }
 
     return (build File {
-        self.handle = handle; 
+        self.handle = handle;
     }, none);
 }
 
@@ -199,7 +199,7 @@ error File::writeAll(&self, []const u8 source) {
 (u64, error) File::seek(&self, i64 offset, SeekFrom origin) {
     if self->handle == null {
         return (none, errors::IoError.Closed);
-    } 
+    }
 
     u64 position = 0;
     unsafe {
