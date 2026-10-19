@@ -80,6 +80,11 @@ owning captures and single-use callables are specified separately below.
    editor coverage, leak-sanitized ownership regressions, and packaged-compiler
    ABI validation on every release platform. Indirect-call benchmarks remain a
    performance follow-up rather than a release gate.
+7. **Quiver visibility — implemented.** Module declarations distinguish
+   global `export`, directory-and-root-scoped `quiver`, and unmarked
+   module-private reach. Import binding, generic expansion, nominal
+   specialization boundaries, API exposure checks, exact-owner member privacy,
+   diagnostics, and editor grammars enforce the same model.
 
 The uniform callable ABI stores `{invoke, environment, destroy}`. A captureless
 value keeps the latter two pointers null. A capturing value stores a heap
@@ -253,9 +258,10 @@ them. Additional injected parameters are postponed beyond the initial design.
 ## Test visibility
 
 Test visibility is paired by basename and directory. A `<filename>_test.fl`
-module and all helpers declared within it may access all declarations and
-members, including private ones, from the sibling `<filename>.fl` module. For
-example:
+module and all helpers declared within it may access module-private top-level
+declarations from the sibling `<filename>.fl` module. This privilege never
+bypasses private structure or enum members, which remain accessible only to
+methods of their exact owning type. For example:
 
 ```text
 math.fl       <- private declarations
