@@ -55,6 +55,8 @@ class SemanticModel final {
         const core::FunctionDeclaration& function) const;
     [[nodiscard]] const Symbol* CaptureSource(
         const core::AnonymousFunctionExpression::Capture& capture) const;
+    [[nodiscard]] const core::AnonymousFunctionExpression::Capture* CaptureFor(
+        const Symbol& variable) const;
     const auto& Structures() const { return _structures; }
     const auto& Enums() const { return _enums; }
     [[nodiscard]] const Scope& GlobalScope() const { return *_scopes.front(); }
@@ -77,6 +79,9 @@ class SemanticModel final {
     std::unordered_map<const core::AnonymousFunctionExpression::Capture*,
                        const Symbol*>
         _captureSources;
+    std::unordered_map<const Symbol*,
+                       const core::AnonymousFunctionExpression::Capture*>
+        _captureVariables;
     std::unordered_map<const core::MemberAccessExpression*,
                        const StructureField*>
         _fields;

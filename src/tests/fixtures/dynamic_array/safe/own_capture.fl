@@ -1,0 +1,25 @@
+module own_capture;
+
+@imports :: lib::std::containers::array;
+
+func Reader() => (i32);
+
+Reader make_reader() {
+    values := array::Array<i32>::init();
+    if values.push(20) != none { return () => { return 1; }; }
+    if values.push(22) != none { return () => { return 2; }; }
+
+    return [own values]() => {
+        first, firstError := values.get(0);
+        if firstError != none { return 3; }
+        second, secondError := values.get(1);
+        if secondError != none { return 4; }
+        return first + second;
+    };
+}
+
+i32 main() {
+    Reader reader = make_reader();
+    if reader() != 42 { return 5; }
+    return reader();
+}

@@ -77,6 +77,7 @@ Mapper copied = [copy factor](value) => { return value + factor; };
 Mapper borrowed = [&factor, &const limit](value) => { return value + factor + limit; };
 Mapper lent = unsafe [lend pointer](value) => { return value + *pointer; };
 Mapper owned = unsafe [own owner](value) => { return value + *owner; };
+Mapper nested = [own copied](value) => { return copied(value); };
 test gold_keyword(&testing::UnitTest t) {}
 export i32 exported_function() { return 42; }
 

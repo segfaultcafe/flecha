@@ -24,6 +24,20 @@ export Mapper combine(i32 left, i32 right) {
     };
 }
 
+export Mapper decorate(Mapper callback) <- callback {
+    return [own callback](value) => { return callback(value) + 1; };
+}
+
+export Mapper combine_owned([2]Mapper callbacks) <- callbacks {
+    return [own callbacks](value) => {
+        return (callbacks[0])(value) + (callbacks[1])(0);
+    };
+}
+
 export unsafe Reader retain(own *i32 pointer) {
     return unsafe [own pointer]() => { return *pointer; };
+}
+
+export unsafe Reader nest_owned(Reader callback) <- callback {
+    return unsafe [own callback]() => { return callback(); };
 }

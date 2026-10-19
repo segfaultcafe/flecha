@@ -510,7 +510,8 @@ foreach(case IN ITEMS
         remove
         swap_remove
         structure_mutations
-        algorithms)
+        algorithms
+        own_capture)
     set(array_fail_call 0)
     if(case STREQUAL "main")
         set(array_fail_call 2)

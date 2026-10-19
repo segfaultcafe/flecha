@@ -1290,9 +1290,14 @@ llvm::Function* LlvmCodeGenerator::ClosureDestroyer(
             core::AnonymousFunctionExpression::CaptureMode::Own) {
             llvm::Value* field = _builder.CreateStructGEP(
                 environmentType, environment, index - 1);
-            EmitFree(_builder.CreateLoad(MapType(capture.variable->Type()),
-                                         field, "owned.capture"),
-                     capture.variable->Type());
+            const semantic::SemanticType type = capture.variable->Type();
+            if (type.Kind() == semantic::SemanticTypeKind::Pointer ||
+                type.Kind() == semantic::SemanticTypeKind::OwnedBuffer)
+                EmitFree(
+                    _builder.CreateLoad(MapType(type), field, "owned.capture"),
+                    type);
+            else if (type.OwnsStorage())
+                EmitDestroyAt(field, type);
         } else if (capture.mode ==
                        core::AnonymousFunctionExpression::CaptureMode::Copy &&
                    capture.variable->Type().OwnsStorage())

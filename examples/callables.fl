@@ -16,6 +16,12 @@ Mapper offset(i32 amount) {
     return [copy amount](value) => { return value + amount; };
 }
 
+Mapper combine([2]Mapper callbacks) <- callbacks {
+    return [own callbacks](value) => {
+        return (callbacks[0])(value) + (callbacks[1])(0);
+    };
+}
+
 i32 main() {
     Mapper explicit = [](i32 value) => (i32) { return value * 2; };
     Mapper inferred = (value) => { return value + 2; };
@@ -24,5 +30,8 @@ i32 main() {
     Mapper generic = relay<Mapper>(explicit);
     if generic(21) != 42 { return 1; }
     if inferred(40) != 42 { return 2; }
+    [2]Mapper pending = [offset(10), offset(12)];
+    Mapper nested = combine(pending);
+    if nested(20) != 42 { return 3; }
     return pipeline.run(22);
 }

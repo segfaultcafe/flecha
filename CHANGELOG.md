@@ -4,6 +4,10 @@
 
 ### Language
 
+- `own` captures now move callable values and movable noncopyable safe
+  aggregates into closure environments. Nested closures and callable
+  containers retain borrow origins and run recursive teardown exactly once;
+  copyable and immovable captures receive direct diagnostics.
 - Callable values now transfer correctly through structures, tuples, fixed
   arrays, methods, modules, and generic functions without duplicating closure
   ownership.

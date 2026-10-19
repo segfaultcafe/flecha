@@ -132,12 +132,14 @@ production code has no failure-injection setting or test-only global state.
 Closure environments use the same allocator. Because creating a callable value
 has no language-level error result, a null environment allocation calls
 `flecha_runtime_v1_allocation_failure()`, which prints a runtime diagnostic and
-terminates. Copy-captured owning fields are recursively torn down in reverse
-capture order before `flecha_runtime_v1_free`. An `own` raw-resource field is
-also released in reverse capture order, using its pointee's typed teardown
-before the runtime free. `lend` raw-resource and checked-reference fields are
-non-owning pointers or borrowed descriptors and are not torn down; compile-time
-lifetime validation ensures their targets remain live.
+terminates. Copy-captured owning fields and generalized `own` values are
+recursively torn down in reverse capture order before
+`flecha_runtime_v1_free`. This includes nested callable environments,
+structures, tuples, and fixed arrays. An `own` raw-resource field is released
+in the same order, using its pointee's typed teardown before the runtime free.
+`lend` raw-resource and checked-reference fields are non-owning pointers or
+borrowed descriptors and are not torn down; compile-time lifetime validation
+ensures their targets remain live.
 
 Runtime scalar arrays use `flecha_runtime_v1_alloc_array(count, element_size,
 alignment)`, which checks multiplication before allocating zeroed storage.

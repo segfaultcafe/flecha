@@ -211,15 +211,25 @@ unsafe Reader retain(own *i32 pointer) {
 }
 ```
 
-`lend name` keeps the tracked allocation with its current owner and prevents
+`lend name` keeps a tracked raw allocation with its current owner and prevents
 freeing or transferring that allocation while the closure is live. A lending
-closure cannot leave the lexical scope in which it was created. `own name`
-transfers cleanup responsibility into the closure environment; its destroy
-thunk releases the allocation exactly once. Both forms require an `unsafe`
-anonymous function and a raw pointer or runtime-sized buffer. Their captured
-bindings are read-only. Because ordinary callables are reusable, their bodies
-may access an owned capture but cannot free or transfer it. Consuming a capture
-from the body remains reserved for a future `once func` design.
+closure cannot leave the lexical scope in which it was created. It requires an
+`unsafe` anonymous function and a raw pointer or runtime-sized buffer.
+
+`own name` moves a value into the closure environment. For a raw pointer or
+runtime-sized buffer, it transfers cleanup responsibility and requires an
+`unsafe` anonymous function. It also accepts movable, noncopyable safe values,
+including callable values and aggregates containing callables or safe custom
+teardown. These captures do not make the anonymous function unsafe. Copyable
+values use `copy` instead, and values with unsafe teardown are immovable and
+rejected. The source binding becomes unavailable, borrow origins follow the
+moved value, and the environment destroy thunk recursively tears it down
+exactly once.
+
+All `own` captured bindings are read-only. Because ordinary callables are
+reusable, their bodies may access an owned capture but cannot transfer or
+otherwise consume it. Consuming a capture from the body remains reserved for a
+future `once func` design.
 
 `&name` creates an exclusive checked borrow of writable storage. `&const name`
 creates a shared, read-only borrow. The loan lasts until the closure's last use,

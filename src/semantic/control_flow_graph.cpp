@@ -284,6 +284,13 @@ class GraphBuilder final {
                      capture != function.Captures().rend(); ++capture) {
                     const NodeId read = AddNode({next});
                     _graph.nodes[read].captureRead = capture->get();
+                    const Symbol* source = _model.CaptureSource(**capture);
+                    if ((*capture)->Mode() ==
+                            core::AnonymousFunctionExpression::CaptureMode::
+                                Own &&
+                        source != nullptr && !source->Type().IsCopyable() &&
+                        source->Type().Kind() != SemanticTypeKind::Pointer)
+                        _graph.nodes[read].move = source;
                     next = read;
                 }
                 return next;

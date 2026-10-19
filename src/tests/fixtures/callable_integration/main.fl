@@ -44,10 +44,20 @@ i32 main() {
     }
     if cycles != 256 { return 11; }
 
+    pipeline::Mapper decorated = pipeline::decorate(
+        pipeline::combine(10, 10));
+    if decorated(21) != 42 { return 12; }
+
+    [2]pipeline::Mapper pendingOwned = [pipeline::combine(10, 0),
+                                        pipeline::combine(12, 0)];
+    pipeline::Mapper ownedContainer = pipeline::combine_owned(pendingOwned);
+    if ownedContainer(20) != 42 { return 13; }
+
     unsafe {
         pointer, failure := new<i32>(42);
         if failure != none { return 5; }
-        pipeline::Reader owner = pipeline::retain(pointer);
+        pipeline::Reader owner = pipeline::nest_owned(
+            pipeline::retain(pointer));
         if owner() != 42 { return 6; }
     }
 

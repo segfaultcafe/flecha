@@ -72,10 +72,11 @@ unsafe i32 use() {
 }
 ```
 
-Both capture modes require an `unsafe` anonymous function and a raw pointer or
-runtime-sized buffer. A tracked allocation cannot use `copy`, because copying
-the address does not say which value owns cleanup. Captured bindings are
-read-only; mutation through a mutable pointer remains possible.
+`lend` requires an `unsafe` anonymous function and a raw pointer or
+runtime-sized buffer. Raw-resource `own` has the same safety requirement. A
+tracked allocation cannot use `copy`, because copying the address does not say
+which value owns cleanup. Captured bindings are read-only; mutation through a
+mutable pointer remains possible.
 
 `lend name` copies the raw handle without transferring its cleanup obligation.
 The closure keeps that allocation lent until the callable leaves its creation
@@ -90,6 +91,25 @@ Null remains valid and needs no cleanup. The callable may be invoked repeatedly,
 so its body cannot free the capture or pass it to an `own` parameter; otherwise
 the next invocation could use released storage. Such consuming bodies require a
 future single-use callable design.
+
+The same `own name` syntax moves noncopyable safe values into an environment:
+
+```flecha
+func Mapper(i32) => (i32);
+
+Mapper decorate(Mapper inner) <- inner {
+    return [own inner](value) => { return inner(value) + 1; };
+}
+```
+
+Callable values, mutable checked handles, and movable aggregates such as tuples,
+fixed arrays, structures, and safe containers are accepted. Copyable values use
+`copy` instead. A structure with unsafe teardown is immovable and rejected. Safe
+owning captures do not require an unsafe literal, even when an aggregate hides
+raw storage behind safe teardown. The move invalidates the source binding,
+retains any checked-reference origins, and recursively destroys the value in
+reverse capture order. A reusable closure may call or inspect this state but may
+not move it out or pass it to a consuming parameter.
 
 ## Owning fields and tear
 
