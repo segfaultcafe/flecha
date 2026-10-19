@@ -386,6 +386,20 @@ TEST(LlvmCodeGeneratorTests, EmitsOwnedStringConversionsAndCleanup) {
               std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, CoercesCharactersAndExternBytePointers) {
+    GeneratedSource result = Generate(
+        "extern unsafe void native_write(*const u8 data, usize length); "
+        "void write(stringv text) { unsafe { native_write(text.data(), "
+        "text.len().cast<usize>); } } "
+        "u8 first() { [2]u8 bytes = ['h', 'i']; return bytes[0]; }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("call void @native_write(ptr"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsLengthAwareStandardOutput) {
     GeneratedSource result = Generate(
         "i32 main() { stdout(\"Flecha\"); "

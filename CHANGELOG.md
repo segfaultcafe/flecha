@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Character values convert implicitly to `u8`, and borrowed string data can be
+  passed to compatible byte-pointer parameters at the external ABI boundary.
+
 ## 0.1.2 - 2026-10-17
 
 Flecha 0.1.2 is a patch release correcting zero-construction triviality.

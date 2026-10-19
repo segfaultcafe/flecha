@@ -3294,10 +3294,14 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
             ? argumentTypes.size()
             : function->ParameterTypes().size();
     for (std::size_t index = 0; index < count; ++index) {
-        if (!IsAssignable(function->ParameterTypes()[index],
-                          argumentTypes[index]) &&
-            !CanReborrow(function->ParameterTypes()[index],
-                         argumentTypes[index])) {
+        const bool assignable =
+            function->IsExtern()
+                ? IsExternAssignable(function->ParameterTypes()[index],
+                                     argumentTypes[index])
+                : IsAssignable(function->ParameterTypes()[index],
+                               argumentTypes[index]);
+        if (!assignable && !CanReborrow(function->ParameterTypes()[index],
+                                        argumentTypes[index])) {
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                    expression.Arguments()[index]->Range(),
                    "argument " + std::to_string(index + 1) + ": " +

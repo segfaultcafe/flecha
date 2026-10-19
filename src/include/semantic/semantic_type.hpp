@@ -146,6 +146,8 @@ class SemanticType final {
 };
 
 [[nodiscard]] bool IsAssignable(SemanticType destination, SemanticType source);
+[[nodiscard]] bool IsExternAssignable(SemanticType destination,
+                                      SemanticType source);
 [[nodiscard]] bool CanReborrow(SemanticType destination, SemanticType source);
 [[nodiscard]] bool CanExplicitlyCast(SemanticType source,
                                      SemanticType destination);
