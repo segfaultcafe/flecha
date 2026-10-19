@@ -19,15 +19,19 @@ class SemanticAnalyzer final {
 
    private:
     void SetModule(const std::string& id);
-    [[nodiscard]] bool CanAccessPrivateOf(const std::string& id) const;
     void BindImports(const core::CompilationUnit& unit);
     void ValidateExports(const core::CompilationUnit& unit);
+    bool ReportInaccessibleImport(const std::string& name,
+                                  source::SourceRange range);
     std::string TopName(const core::Declaration& declaration,
                         const std::string& name) const;
     std::unordered_map<std::string, Scope*> _moduleScopes;
+    std::unordered_map<
+        std::string, std::unordered_map<std::string, const core::Declaration*>>
+        _inaccessibleImports;
+    std::unordered_map<std::string, std::string> _quiverNames;
     std::unordered_set<std::string> _entryModules;
     std::unordered_set<std::string> _testModules;
-    std::unordered_map<std::string, std::string> _testPairs;
     std::string _currentModule;
     std::string _testingModule;
     bool IsSafePlace(const core::Expression& expression) const;
