@@ -80,11 +80,13 @@ owning captures and single-use callables are specified separately below.
    editor coverage, leak-sanitized ownership regressions, and packaged-compiler
    ABI validation on every release platform. Indirect-call benchmarks remain a
    performance follow-up rather than a release gate.
-7. **Quiver visibility — implemented.** Module declarations distinguish
+7. **Quiver visibility — implemented.** Top-level declarations distinguish
    global `export`, directory-and-root-scoped `quiver`, and unmarked
-   module-private reach. Import binding, generic expansion, nominal
-   specialization boundaries, API exposure checks, exact-owner member privacy,
-   diagnostics, and editor grammars enforce the same model.
+   module-private reach. A `private module` can be imported only from its
+   quiver, where its `export` declarations have quiver rather than global
+   reach. Import binding, generic expansion, nominal specialization boundaries,
+   API exposure checks, exact-owner member privacy, diagnostics, and editor
+   grammars enforce the same model.
 
 The uniform callable ABI stores `{invoke, environment, destroy}`. A captureless
 value keeps the latter two pointers null. A capturing value stores a heap

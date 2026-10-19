@@ -4,6 +4,10 @@
 
 ### Language
 
+- Modules may now be declared with `private module name;`, restricting imports
+  to the same quiver. Within a private module, `export` exposes a declaration to
+  that quiver rather than globally; wildcard imports and separate source or
+  library identities preserve the boundary.
 - Top-level declarations now support `quiver` visibility for sibling modules in
   the same immediate directory and source-root or library identity. Imports,
   wildcard directory imports, generics, API exposure validation, and generated

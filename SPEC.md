@@ -886,6 +886,9 @@ The compiler should eventually be self-hosted in Flecha, but self-hosting is not
 Modules declare `module name;`, matching their filename. Import blocks use
 `@imports :: root::path::module :: lib::library::module as alias;`, with a
 multiline form preferred. `root` and `lib` are reserved in import paths.
+`private module name;` restricts importing the module to its quiver. In a
+private module, `export` has quiver visibility rather than global visibility;
+unmarked declarations remain module-only.
 Top-level declarations use `export` for access from every importing module,
 `quiver` for access from modules in the same immediate directory and the same
 source-root or library identity, and no modifier for module-only access.

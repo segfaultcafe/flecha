@@ -812,7 +812,10 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
                     "duplicate or conflicting visibility modifier '" +
                         visibility + "'");
             } else if (modifier.type == TokenType::Export) {
-                declaration->exported = true;
+                if (_modulePrivate)
+                    declaration->quiverVisible = true;
+                else
+                    declaration->exported = true;
             } else {
                 declaration->quiverVisible = true;
             }
@@ -2107,6 +2110,10 @@ void Parser::ParseHeader() {
     _headerParsed = true;
     auto& moduleName = _moduleName;
     auto& imports = _imports;
+    if (Check(TokenType::Private) && Peek(1).type == TokenType::Module) {
+        Advance();
+        _modulePrivate = true;
+    }
     if (Match(TokenType::Module)) {
         const Token* name = Consume(TokenType::Identifier, "module name");
         if (name) moduleName = name->value;
@@ -2215,6 +2222,7 @@ std::unique_ptr<CompilationUnit> Parser::Parse() {
         source::SourceRange{start, Current().range.end},
         std::move(declarations));
     unit->moduleName = std::move(_moduleName);
+    unit->privateModule = _modulePrivate;
     unit->imports = std::move(_imports);
     return unit;
 }
