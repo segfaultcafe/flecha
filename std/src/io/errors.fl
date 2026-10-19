@@ -15,6 +15,10 @@ export error IoError {
     FlushFailed,
     TooLarge,
     UnexpectedEof,
+    ExistsFailed,
+    RemoveFailed,
+    RenameFailed,
+    CreateDirectoryFailed,
 }
 
 quiver error from_runtime(i32 status, IoError fallback) {

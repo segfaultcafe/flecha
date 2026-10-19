@@ -53,3 +53,57 @@ export error write_file(stringv path, []const u8 contents) {
 
     return output.close();
 }
+
+export (bool, error) exists(stringv path) {
+    u8 present = 0;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_path_exists(
+            &raw present,
+            path.data(),
+            path.len().cast<usize>
+        );
+
+        err := errors::from_runtime(status, errors::IoError.ExistsFailed);
+        if err != none {
+            return (false, err);
+        }
+    }
+
+    return (present != 0, none);
+}
+
+export error remove_file(stringv path) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_remove_file(
+            path.data(),
+            path.len().cast<usize>
+        );
+
+        return errors::from_runtime(status, errors::IoError.RemoveFailed);
+    }
+}
+
+export error rename(stringv source, stringv destination) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_rename(
+            source.data(),
+            source.len().cast<usize>,
+            destination.data(),
+            destination.len().cast<usize>
+        );
+
+        return errors::from_runtime(status, errors::IoError.RenameFailed);
+    }
+}
+
+export error create_directory(stringv path) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_create_directory(
+            path.data(),
+            path.len().cast<usize>
+        );
+
+        return errors::from_runtime(status, errors::IoError.CreateDirectoryFailed);
+    }
+}

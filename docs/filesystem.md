@@ -44,6 +44,14 @@ Opening, writing, flushing, and closing failures are returned to the caller.
 Empty slices create an empty file, and binary data is written without newline
 or encoding conversion.
 
+`exists` returns `(false, none)` when a path is absent and reserves errors for
+invalid paths or operating-system failures. `remove_file` removes files but not
+directories. `rename` accepts files or directories and follows the platform's
+replacement rules when the destination already exists. `create_directory`
+creates one directory level with permissions filtered through the process
+umask on POSIX. It reports `AlreadyExists` for an existing path and `NotFound`
+when a parent component is missing.
+
 ## File streams
 
 Import `lib::std::io::file` for incremental binary I/O. `File::open` accepts an

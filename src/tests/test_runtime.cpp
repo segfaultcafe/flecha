@@ -127,6 +127,115 @@ TEST(RuntimeFilesystemTests, RejectsInvalidAndMissingPaths) {
     EXPECT_EQ(output.data, nullptr);
 }
 
+class RuntimeFilesystemMutationTests : public ::testing::Test {
+   protected:
+    void SetUp() override { std::filesystem::remove_all(Root()); }
+    void TearDown() override { std::filesystem::remove_all(Root()); }
+
+    static std::filesystem::path Root() {
+        return std::filesystem::temp_directory_path() /
+               "flecha_runtime_filesystem_mutation_test";
+    }
+};
+
+TEST_F(RuntimeFilesystemMutationTests, CreatesRenamesAndRemovesPaths) {
+    const std::string directory = Root().string();
+    uint8_t present = 99;
+    EXPECT_EQ(flecha_runtime_v1_path_exists(&present, directory.data(),
+                                            directory.size()),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(present, 0);
+
+    ASSERT_EQ(
+        flecha_runtime_v1_create_directory(directory.data(), directory.size()),
+        FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(
+        flecha_runtime_v1_create_directory(directory.data(), directory.size()),
+        FLECHA_RUNTIME_FILESYSTEM_ALREADY_EXISTS);
+    EXPECT_EQ(flecha_runtime_v1_path_exists(&present, directory.data(),
+                                            directory.size()),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(present, 1);
+
+    const auto sourcePath = Root() / "source.bin";
+    const auto destinationPath = Root() / "destination.bin";
+    {
+        std::ofstream source(sourcePath, std::ios::binary);
+        ASSERT_TRUE(source.good());
+        source << "flecha";
+    }
+    const std::string source = sourcePath.string();
+    const std::string destination = destinationPath.string();
+    EXPECT_EQ(
+        flecha_runtime_v1_path_exists(&present, source.data(), source.size()),
+        FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(present, 1);
+    EXPECT_EQ(flecha_runtime_v1_create_directory(source.data(), source.size()),
+              FLECHA_RUNTIME_FILESYSTEM_ALREADY_EXISTS);
+
+    ASSERT_EQ(flecha_runtime_v1_rename(source.data(), source.size(),
+                                       destination.data(), destination.size()),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_FALSE(std::filesystem::exists(sourcePath));
+    EXPECT_TRUE(std::filesystem::exists(destinationPath));
+    {
+        std::ifstream destinationFile(destinationPath, std::ios::binary);
+        ASSERT_TRUE(destinationFile.good());
+        std::string contents;
+        destinationFile >> contents;
+        EXPECT_EQ(contents, "flecha");
+    }
+
+    const std::string missingParent = (Root() / "missing" / "child").string();
+    EXPECT_EQ(flecha_runtime_v1_create_directory(missingParent.data(),
+                                                 missingParent.size()),
+              FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND);
+    const std::string missingSource = (Root() / "missing.bin").string();
+    EXPECT_EQ(
+        flecha_runtime_v1_rename(missingSource.data(), missingSource.size(),
+                                 source.data(), source.size()),
+        FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND);
+
+    ASSERT_EQ(
+        flecha_runtime_v1_remove_file(destination.data(), destination.size()),
+        FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(flecha_runtime_v1_path_exists(&present, destination.data(),
+                                            destination.size()),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(present, 0);
+    EXPECT_EQ(
+        flecha_runtime_v1_remove_file(destination.data(), destination.size()),
+        FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND);
+}
+
+TEST_F(RuntimeFilesystemMutationTests, RejectsInvalidPathsAndOutputs) {
+    const char invalid[] = {'a', '\0', 'b'};
+    uint8_t present = 99;
+    EXPECT_EQ(flecha_runtime_v1_path_exists(&present, invalid, sizeof(invalid)),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(present, 0);
+    EXPECT_EQ(flecha_runtime_v1_path_exists(nullptr, "path", 4),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+    present = 99;
+    EXPECT_EQ(flecha_runtime_v1_path_exists(&present, nullptr, 0),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(present, 0);
+    EXPECT_EQ(flecha_runtime_v1_path_exists(&present, "", 0),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(flecha_runtime_v1_remove_file(invalid, sizeof(invalid)),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(flecha_runtime_v1_remove_file(nullptr, 0),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(flecha_runtime_v1_create_directory(invalid, sizeof(invalid)),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(flecha_runtime_v1_create_directory(nullptr, 0),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(flecha_runtime_v1_rename("source", 6, invalid, sizeof(invalid)),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(flecha_runtime_v1_rename(nullptr, 0, "destination", 11),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+}
+
 class RuntimeFileStreamTests : public ::testing::Test {
    protected:
     void SetUp() override { std::filesystem::remove(Path()); }

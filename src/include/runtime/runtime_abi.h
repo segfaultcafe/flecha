@@ -38,6 +38,18 @@ typedef enum FlechaRuntimeFileStreamStatus {
     FLECHA_RUNTIME_FILE_STREAM_FAILED = 8,
 } FlechaRuntimeFileStreamStatus;
 
+typedef enum FlechaRuntimeFilesystemStatus {
+    FLECHA_RUNTIME_FILESYSTEM_OK = 0,
+    FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND = 1,
+    FLECHA_RUNTIME_FILESYSTEM_PERMISSION_DENIED = 2,
+    FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH = 3,
+    FLECHA_RUNTIME_FILESYSTEM_ALREADY_EXISTS = 4,
+    FLECHA_RUNTIME_FILESYSTEM_TOO_LARGE = 5,
+    FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY = 6,
+    FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS = 7,
+    FLECHA_RUNTIME_FILESYSTEM_FAILED = 8,
+} FlechaRuntimeFilesystemStatus;
+
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.
@@ -116,6 +128,18 @@ void flecha_runtime_v1_string_from_char(FlechaRuntimeString* output,
 // null-terminated buffer. On failure output is empty.
 int32_t flecha_runtime_v1_read_file(FlechaRuntimeString* output,
                                     const char* path, size_t path_length);
+
+// Filesystem paths follow read_file's platform rules. path_exists reports a
+// missing path as successful false; the mutation operations report it as
+// NOT_FOUND. Every path is validated before an operating-system call.
+int32_t flecha_runtime_v1_path_exists(uint8_t* output, const char* path,
+                                      size_t path_length);
+int32_t flecha_runtime_v1_remove_file(const char* path, size_t path_length);
+int32_t flecha_runtime_v1_rename(const char* source, size_t source_length,
+                                 const char* destination,
+                                 size_t destination_length);
+int32_t flecha_runtime_v1_create_directory(const char* path,
+                                           size_t path_length);
 
 // Opens an unbuffered binary file stream. Paths follow read_file's platform
 // rules. Every option is a byte boolean and must be zero or one. On success,

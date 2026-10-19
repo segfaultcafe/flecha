@@ -9,7 +9,13 @@
 #include "runtime/runtime_abi.h"
 
 #ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#include <sys/stat.h>
 #include <windows.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -34,6 +40,100 @@ int32_t MapOpenError(int error) {
         default:
             return FLECHA_RUNTIME_READ_FILE_FAILED;
     }
+}
+
+int32_t MapFilesystemError(int error) {
+    switch (error) {
+        case ENOENT:
+#if defined(ENOTDIR) && ENOTDIR != ENOENT
+        case ENOTDIR:
+#endif
+            return FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND;
+        case EACCES:
+#if defined(EPERM) && EPERM != EACCES
+        case EPERM:
+#endif
+#if defined(EROFS) && EROFS != EACCES && EROFS != EPERM
+        case EROFS:
+#endif
+            return FLECHA_RUNTIME_FILESYSTEM_PERMISSION_DENIED;
+        case EEXIST:
+            return FLECHA_RUNTIME_FILESYSTEM_ALREADY_EXISTS;
+#if defined(ENAMETOOLONG) && ENAMETOOLONG != EINVAL
+        case ENAMETOOLONG:
+#endif
+        case EINVAL:
+            return FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH;
+#if defined(EFBIG)
+        case EFBIG:
+#endif
+#if defined(EOVERFLOW) && EOVERFLOW != EFBIG
+        case EOVERFLOW:
+#endif
+            return FLECHA_RUNTIME_FILESYSTEM_TOO_LARGE;
+#if defined(ENOMEM)
+        case ENOMEM:
+            return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+#endif
+        default:
+            return FLECHA_RUNTIME_FILESYSTEM_FAILED;
+    }
+}
+
+bool IsMissingError(int error) {
+    if (error == ENOENT) return true;
+#if defined(ENOTDIR) && ENOTDIR != ENOENT
+    if (error == ENOTDIR) return true;
+#endif
+    return false;
+}
+
+#ifdef _WIN32
+using NativePathCharacter = wchar_t;
+#else
+using NativePathCharacter = char;
+#endif
+
+int32_t CopyNativePath(const char* path, size_t pathLength,
+                       NativePathCharacter** output) {
+    *output = nullptr;
+    if (path == nullptr || pathLength == 0 ||
+        std::memchr(path, '\0', pathLength) != nullptr)
+        return FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH;
+
+#ifdef _WIN32
+    if (pathLength > static_cast<size_t>(INT_MAX))
+        return FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH;
+    const int wideLength =
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path,
+                            static_cast<int>(pathLength), nullptr, 0);
+    if (wideLength <= 0) return FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH;
+    const size_t characters = static_cast<size_t>(wideLength) + 1;
+    if (characters >
+        std::numeric_limits<size_t>::max() / sizeof(NativePathCharacter))
+        return FLECHA_RUNTIME_FILESYSTEM_TOO_LARGE;
+    auto* copied = static_cast<NativePathCharacter*>(
+        std::malloc(characters * sizeof(NativePathCharacter)));
+    if (copied == nullptr) return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path,
+                            static_cast<int>(pathLength), copied,
+                            wideLength) != wideLength) {
+        std::free(copied);
+        return FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH;
+    }
+    copied[wideLength] = L'\0';
+#else
+    if (pathLength == std::numeric_limits<size_t>::max())
+        return FLECHA_RUNTIME_FILESYSTEM_TOO_LARGE;
+    auto* copied =
+        static_cast<NativePathCharacter*>(std::malloc(pathLength + 1));
+    if (copied == nullptr) return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    std::memcpy(copied, path, pathLength);
+    copied[pathLength] = '\0';
+#endif
+
+    *output = copied;
+    return FLECHA_RUNTIME_FILESYSTEM_OK;
 }
 
 FILE* OpenBinary(const char* path, size_t path_length, int32_t* status) {
@@ -168,4 +268,97 @@ extern "C" int32_t flecha_runtime_v1_read_file(FlechaRuntimeString* output,
     data[length] = '\0';
     *output = {data, length, capacity};
     return FLECHA_RUNTIME_READ_FILE_OK;
+}
+
+extern "C" int32_t flecha_runtime_v1_path_exists(uint8_t* output,
+                                                 const char* path,
+                                                 size_t pathLength) {
+    if (output == nullptr) return FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS;
+    *output = 0;
+
+    NativePathCharacter* nativePath = nullptr;
+    const int32_t pathStatus = CopyNativePath(path, pathLength, &nativePath);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) return pathStatus;
+
+    errno = 0;
+#ifdef _WIN32
+    struct _stat64 information{};
+    const int result = _wstat64(nativePath, &information);
+#else
+    struct stat information{};
+    const int result = ::stat(nativePath, &information);
+#endif
+    const int operationError = errno;
+    std::free(nativePath);
+    if (result == 0) {
+        *output = 1;
+        return FLECHA_RUNTIME_FILESYSTEM_OK;
+    }
+    return IsMissingError(operationError) ? FLECHA_RUNTIME_FILESYSTEM_OK
+                                          : MapFilesystemError(operationError);
+}
+
+extern "C" int32_t flecha_runtime_v1_remove_file(const char* path,
+                                                 size_t pathLength) {
+    NativePathCharacter* nativePath = nullptr;
+    const int32_t pathStatus = CopyNativePath(path, pathLength, &nativePath);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) return pathStatus;
+
+    errno = 0;
+#ifdef _WIN32
+    const int result = _wunlink(nativePath);
+#else
+    const int result = ::unlink(nativePath);
+#endif
+    const int operationError = errno;
+    std::free(nativePath);
+    return result == 0 ? FLECHA_RUNTIME_FILESYSTEM_OK
+                       : MapFilesystemError(operationError);
+}
+
+extern "C" int32_t flecha_runtime_v1_rename(const char* source,
+                                            size_t sourceLength,
+                                            const char* destination,
+                                            size_t destinationLength) {
+    NativePathCharacter* nativeSource = nullptr;
+    int32_t pathStatus = CopyNativePath(source, sourceLength, &nativeSource);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) return pathStatus;
+
+    NativePathCharacter* nativeDestination = nullptr;
+    pathStatus =
+        CopyNativePath(destination, destinationLength, &nativeDestination);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) {
+        std::free(nativeSource);
+        return pathStatus;
+    }
+
+    errno = 0;
+#ifdef _WIN32
+    const int result = _wrename(nativeSource, nativeDestination);
+#else
+    const int result = ::rename(nativeSource, nativeDestination);
+#endif
+    const int operationError = errno;
+    std::free(nativeDestination);
+    std::free(nativeSource);
+    return result == 0 ? FLECHA_RUNTIME_FILESYSTEM_OK
+                       : MapFilesystemError(operationError);
+}
+
+extern "C" int32_t flecha_runtime_v1_create_directory(const char* path,
+                                                      size_t pathLength) {
+    NativePathCharacter* nativePath = nullptr;
+    const int32_t pathStatus = CopyNativePath(path, pathLength, &nativePath);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) return pathStatus;
+
+    errno = 0;
+#ifdef _WIN32
+    const int result = _wmkdir(nativePath);
+#else
+    const int result = ::mkdir(nativePath, 0777);
+#endif
+    const int operationError = errno;
+    std::free(nativePath);
+    return result == 0 ? FLECHA_RUNTIME_FILESYSTEM_OK
+                       : MapFilesystemError(operationError);
 }

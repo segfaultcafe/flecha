@@ -4,6 +4,12 @@ set(textPath "${dataDirectory}/text.txt")
 set(emptyPath "${dataDirectory}/empty.bin")
 set(missingPath "${dataDirectory}/missing.txt")
 set(writePath "${dataDirectory}/written.bin")
+set(createdDirectory "${dataDirectory}/created")
+set(renameSource "${createdDirectory}/source.bin")
+set(renameDestination "${createdDirectory}/destination.bin")
+set(missingParentDirectory "${createdDirectory}/missing/child")
+set(missingRenameSource "${createdDirectory}/missing.bin")
+file(REMOVE_RECURSE "${createdDirectory}")
 file(WRITE "${textPath}" "flecha\n")
 file(WRITE "${emptyPath}" "")
 file(WRITE "${writePath}" "stale trailing contents")
@@ -65,6 +71,65 @@ i32 main() {
         return 9;
     }
 
+    present, exists_error := filesystem::exists(\"${missingPath}\");
+    if exists_error != none or present {
+        return 10;
+    }
+    present, exists_error = filesystem::exists(\"${textPath}\");
+    if exists_error != none or !present {
+        return 19;
+    }
+    if filesystem::create_directory(\"${textPath}\") !=
+        errors::IoError.AlreadyExists {
+        return 20;
+    }
+    if filesystem::create_directory(\"${createdDirectory}\") != none {
+        return 11;
+    }
+    if filesystem::create_directory(\"${createdDirectory}\") !=
+        errors::IoError.AlreadyExists {
+        return 12;
+    }
+    if filesystem::create_directory(\"${missingParentDirectory}\") !=
+        errors::IoError.NotFound {
+        return 21;
+    }
+    present, exists_error = filesystem::exists(\"${createdDirectory}\");
+    if exists_error != none or !present {
+        return 13;
+    }
+
+    if filesystem::write_file(\"${renameSource}\", bytes[:]) != none {
+        return 14;
+    }
+    if filesystem::rename(\"${renameSource}\", \"${renameDestination}\") != none {
+        return 15;
+    }
+    if filesystem::rename(\"${missingRenameSource}\", \"${renameSource}\") !=
+        errors::IoError.NotFound {
+        return 22;
+    }
+    source_present, source_exists_error := filesystem::exists(\"${renameSource}\");
+    destination_present, destination_exists_error := filesystem::exists(
+        \"${renameDestination}\"
+    );
+    if source_exists_error != none or source_present or
+        destination_exists_error != none or !destination_present {
+        return 16;
+    }
+    renamed, renamed_error := filesystem::read_file(\"${renameDestination}\");
+    if renamed_error != none or renamed.len() != 4 or
+        renamed[0] != 'A' or renamed[1] != '\\0' or
+        renamed[2] != 'B' or renamed[3] != '\\n' {
+        return 23;
+    }
+    if filesystem::remove_file(\"${renameDestination}\") != none {
+        return 17;
+    }
+    if filesystem::remove_file(\"${renameDestination}\") != errors::IoError.NotFound {
+        return 18;
+    }
+
     return 42;
 }
 ")
@@ -80,3 +145,4 @@ execute_process(COMMAND "${FLECHA_OUTPUT}" RESULT_VARIABLE runResult TIMEOUT 10)
 if(NOT runResult EQUAL 42)
     message(FATAL_ERROR "filesystem program returned ${runResult}, expected 42")
 endif()
+file(REMOVE_RECURSE "${createdDirectory}")

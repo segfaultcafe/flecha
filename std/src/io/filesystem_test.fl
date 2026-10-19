@@ -31,3 +31,30 @@ test write_file_rejects_invalid_paths_without_creating_files(&testing::UnitTest 
         "an embedded null is invalid"
     );
 }
+
+test path_operations_reject_invalid_paths(&testing::UnitTest t) {
+    present, existsError := filesystem::exists("");
+    asserts::is_false(t, present, "an invalid path does not exist");
+    asserts::is_true(
+        t,
+        existsError == errors::IoError.InvalidPath,
+        "exists rejects an empty path"
+    );
+
+    string embeddedNullPath = "bad" + '\0'.string() + "path";
+    asserts::is_true(
+        t,
+        filesystem::remove_file(embeddedNullPath.view()) == errors::IoError.InvalidPath,
+        "remove_file rejects an embedded null"
+    );
+    asserts::is_true(
+        t,
+        filesystem::rename("source", embeddedNullPath.view()) == errors::IoError.InvalidPath,
+        "rename rejects an embedded null"
+    );
+    asserts::is_true(
+        t,
+        filesystem::create_directory("") == errors::IoError.InvalidPath,
+        "create_directory rejects an empty path"
+    );
+}
