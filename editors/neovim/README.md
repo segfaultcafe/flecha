@@ -9,6 +9,7 @@ Callable declarations and capture lists are highlighted in examples such as:
 func Mapper(i32) => (i32);
 Mapper doubled = [](i32 value) => (i32) { return value * 2; };
 Mapper offset = [copy amount](value) => { return value + amount; };
+Mapper nested = [own offset](value) => { return offset(value) + 1; };
 ```
 
 ## Install

@@ -104,7 +104,7 @@ The implemented callable foundation is necessary but is not the complete
 v0.2.0 feature boundary. The release also requires the following four stages,
 in dependency order.
 
-7. **Generalized owning captures — required
+7. **Generalized owning captures — implemented
    ([#64](https://github.com/segfaultcafe/flecha/issues/64)).** `own` must
    transfer any movable, noncopyable safe value into a closure environment,
    including callable values and aggregates. The captured value keeps its
