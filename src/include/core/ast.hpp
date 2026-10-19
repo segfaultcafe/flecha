@@ -657,6 +657,7 @@ struct Module final {
     std::string file;
     std::string quiverId;
     std::string quiverName;
+    bool privateModule = false;
     bool entry = false;
     bool test = false;
     std::string testPair;
@@ -676,6 +677,7 @@ class CompilationUnit final : public AstNode {
         _declarations.push_back(std::move(declaration));
     }
     std::string moduleName;
+    bool privateModule = false;
     std::vector<Import> imports;
     std::vector<Module> modules;
     std::string testingModule;

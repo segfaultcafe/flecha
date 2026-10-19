@@ -1610,6 +1610,24 @@ TEST(ParserTests, ParsesQuiverVisibilityOnTopLevelDeclarations) {
     }
 }
 
+TEST(ParserTests, ParsesPrivateModulesAndScopesExportsToTheirQuiver) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "private module example; export i32 shared() { return 42; } "
+        "quiver structure Box { i32 value; }; i32 local() { return 0; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    EXPECT_EQ(unit->moduleName, "example");
+    EXPECT_TRUE(unit->privateModule);
+    ASSERT_EQ(unit->Declarations().size(), 3);
+    EXPECT_TRUE(unit->Declarations()[0]->quiverVisible);
+    EXPECT_FALSE(unit->Declarations()[0]->exported);
+    EXPECT_TRUE(unit->Declarations()[1]->quiverVisible);
+    EXPECT_FALSE(unit->Declarations()[2]->quiverVisible);
+    EXPECT_FALSE(unit->Declarations()[2]->exported);
+}
+
 TEST(ParserTests, RejectsDuplicateAndConflictingVisibilityModifiers) {
     for (const std::string& source :
          {"export quiver void value() {}", "quiver export void value() {}",

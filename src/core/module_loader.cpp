@@ -125,6 +125,7 @@ std::unique_ptr<CompilationUnit> ModuleLoader::Load(
     std::map<std::string, fs::path> libraries, ModuleLoadMode mode,
     bool verboseTests) {
     _loaded.clear();
+    _privateModules.clear();
     _roots.clear();
     _active.clear();
     _modules.clear();
@@ -154,9 +155,23 @@ std::unique_ptr<CompilationUnit> ModuleLoader::Load(
 }
 std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
                                 bool entry, source::SourceRange importRange,
-                                std::string sourceIdentity) {
+                                std::string sourceIdentity,
+                                std::string importingQuiverId) {
     const fs::path file = fs::weakly_canonical(input);
     const auto loadKey = std::make_pair(file, sourceIdentity);
+    const fs::path directory = file.parent_path();
+    const fs::path relativeDirectory = directory.lexically_relative(root);
+    const std::string quiverId = sourceIdentity + "\n" + root.generic_string() +
+                                 "\n" + relativeDirectory.generic_string();
+    std::string quiverName = sourceIdentity;
+    for (const auto& segment : relativeDirectory)
+        if (segment != ".") quiverName += "::" + segment.string();
+    const auto reportPrivateImport = [&] {
+        Report(importRange,
+               "private module '" + file.stem().string() +
+                   "' can only be imported from modules in quiver '" +
+                   quiverName + "'");
+    };
     if (std::find(_active.begin(), _active.end(), loadKey) != _active.end()) {
         std::string cycle;
         for (const auto& active : _active)
@@ -171,8 +186,13 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
                    file.string());
         return {};
     }
-    if (const auto found = _loaded.find(loadKey); found != _loaded.end())
+    if (const auto found = _loaded.find(loadKey); found != _loaded.end()) {
+        const auto privacy = _privateModules.find(loadKey);
+        if (!entry && privacy != _privateModules.end() && privacy->second &&
+            importingQuiverId != quiverId)
+            reportPrivateImport();
         return found->second;
+    }
     if (_active.size() >= 256) {
         Report(importRange, "module import depth exceeds 256");
         return {};
@@ -282,6 +302,9 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
     }
     parser.SetImports(std::move(expanded));
     auto unit = parser.Parse();
+    _privateModules.emplace(loadKey, unit->privateModule);
+    if (!entry && unit->privateModule && importingQuiverId != quiverId)
+        reportPrivateImport();
     if (unit->moduleName.empty() && !entry)
         Report(unit->Range(), "imported files require a module declaration");
     if (!unit->moduleName.empty() && unit->moduleName != file.stem().string())
@@ -296,22 +319,9 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
     _loaded.emplace(loadKey, id);
     _roots.emplace(file, root);
     _active.push_back(loadKey);
-    const fs::path directory = file.parent_path();
-    const fs::path relativeDirectory = directory.lexically_relative(root);
-    const std::string quiverId = sourceIdentity + "\n" + root.generic_string() +
-                                 "\n" + relativeDirectory.generic_string();
-    std::string quiverName = sourceIdentity;
-    for (const auto& segment : relativeDirectory)
-        if (segment != ".") quiverName += "::" + segment.string();
-    Module module{id,
-                  unit->moduleName,
-                  file.string(),
-                  quiverId,
-                  quiverName,
-                  entry,
-                  testFile,
-                  {},
-                  std::move(unit->imports)};
+    Module module{id,         unit->moduleName,        file.string(), quiverId,
+                  quiverName, unit->privateModule,     entry,         testFile,
+                  {},         std::move(unit->imports)};
     for (auto& import : module.imports) {
         if (import.path.empty()) continue;
         fs::path sourceRoot = root;
@@ -343,7 +353,7 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
             continue;
         }
         import.resolvedModule = Visit(target, sourceRoot, false, import.range,
-                                      std::move(targetIdentity));
+                                      std::move(targetIdentity), quiverId);
         if (IsStandardTestingImport(import))
             _testingModule = import.resolvedModule;
         if (testFile && !testPair.empty() &&

@@ -30,11 +30,14 @@ class ModuleLoader final {
     std::string Visit(const std::filesystem::path& file,
                       const std::filesystem::path& root, bool entry,
                       source::SourceRange importRange = {},
-                      std::string sourceIdentity = "root");
+                      std::string sourceIdentity = "root",
+                      std::string importingQuiverId = {});
     void Report(source::SourceRange range, const std::string& message);
     diagnostics::DiagnosticBag& _diagnostics;
     std::map<std::pair<std::filesystem::path, std::string>, std::string>
         _loaded;
+    std::map<std::pair<std::filesystem::path, std::string>, bool>
+        _privateModules;
     std::map<std::filesystem::path, std::filesystem::path> _roots;
     std::vector<std::pair<std::filesystem::path, std::string>> _active;
     std::map<std::string, std::filesystem::path> _libraries;

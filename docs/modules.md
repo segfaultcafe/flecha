@@ -11,6 +11,18 @@ export void print_result(usize index) {
 }
 ```
 
+A module may be restricted to its quiver:
+
+```flecha
+private module formatting;
+
+export void print_result(usize index) {}
+```
+
+Only modules in the same quiver may import a private module. Within a private
+module, `export` means quiver-wide visibility rather than global visibility;
+unmarked declarations remain visible only inside that module.
+
 For `src/ui/formatting.fl`, the import path is
 `root::ui::formatting`. Directories supply the namespace path; the module
 declaration contains only the filename stem.
@@ -80,6 +92,11 @@ quiver void shared_api() {}  // modules in the same quiver
 void module_api() {}         // this module only
 ```
 
+For an ordinary `module`, these meanings apply exactly as written. For a
+`private module`, both `export` and `quiver` declarations are quiver-visible.
+The module itself cannot be imported across its quiver boundary, including by
+wildcard imports.
+
 A module is one `.fl` file. A quiver is the set of modules in one immediate
 directory under the same source-root or library identity. A nested directory is
 a different quiver, and matching directory names in separate roots or libraries
@@ -108,8 +125,9 @@ The compiler loads the reachable source graph, gives each module a separate scop
 and compiles the graph together. The same canonical file reached through a diamond
 is loaded once. Different modules may use identical declaration names without
 sharing function, structure, or error-family identities. Cycles, missing modules,
-filename mismatches, duplicate aliases, and paths escaping a source root are
-errors. A file cannot be interpreted against two conflicting source roots.
+filename mismatches, private-module imports from a different quiver, duplicate
+aliases, and paths escaping a source root are errors. A file cannot be interpreted
+against two conflicting source roots.
 Import nesting is limited to 256 levels with a diagnostic rather than unbounded
 recursion.
 
