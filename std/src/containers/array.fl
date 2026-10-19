@@ -9,10 +9,6 @@ export structure Array<T> {
     private raw_array::RawArray<T> inner; 
 };
 
-void Array<T>::sort(&self) {
-    algorithms::sort<T>(self->viewRef());
-}
-
 void Array<T>::sortBy(&self, algorithms::Less<T> less) {
     algorithms::sort_by<T>(self->viewRef(), less);
 }
