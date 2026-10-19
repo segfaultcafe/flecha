@@ -4337,6 +4337,14 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
                    expression.Range(), "array/slice len expects no arguments");
         return SemanticType(SemanticTypeKind::USize);
     }
+    if (receiver.Kind() == SemanticTypeKind::Slice &&
+        expression.Member() == "data") {
+        RequireUnsafe(expression.Range());
+        if (!arguments.empty())
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(), "slice data expects no arguments");
+        return SemanticType(SemanticTypeKind::Pointer, *receiver.Target());
+    }
     const bool isView = receiver.Kind() == SemanticTypeKind::StringView;
     const bool isString = receiver.Kind() == SemanticTypeKind::String;
     const bool scalarToString = receiver.IsNumeric() ||

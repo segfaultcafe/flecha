@@ -1,0 +1,48 @@
+private module runtime;
+
+export extern unsafe i32 flecha_runtime_v1_read_file(
+    *string output,
+    *const char path,
+    usize path_length
+);
+
+export extern unsafe i32 flecha_runtime_v1_file_stream_open(
+    **void output,
+    *const char path,
+    usize path_length,
+    u8 read,
+    u8 write,
+    u8 append,
+    u8 truncate,
+    u8 create,
+    u8 create_new
+);
+
+export extern unsafe i32 flecha_runtime_v1_file_stream_close(
+    *void handle
+);
+
+export extern unsafe i32 flecha_runtime_v1_file_stream_read(
+    *void handle,
+    *u8 destination,
+    usize capacity,
+    *usize bytes_read
+);
+
+export extern unsafe i32 flecha_runtime_v1_file_stream_write(
+    *void handle,
+    *const u8 source,
+    usize length,
+    *usize bytes_written
+);
+
+export extern unsafe i32 flecha_runtime_v1_file_stream_seek(
+    *void handle,
+    i64 offset,
+    u8 origin,
+    *u64 position
+);
+
+export extern unsafe i32 flecha_runtime_v1_file_stream_flush(
+    *void handle
+);

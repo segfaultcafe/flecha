@@ -321,6 +321,28 @@ TEST(LlvmCodeGeneratorTests, CarriesRuntimeArrayLengthInTheOwningValue) {
     EXPECT_EQ(ir.find("flecha_runtime_v1_allocation_count"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, ExtractsCheckedSliceDataPointers) {
+    GeneratedSource result = Generate(R"(
+        unsafe i32 first([]const i32 values) { return *values.data(); }
+        unsafe i32 main() {
+            values := [42, 7];
+            slice := values[:];
+            *i32 data = slice.data();
+            *data = first(slice);
+            return values[0];
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("extractvalue { ptr,"), std::string::npos);
+    EXPECT_NE(ir.find("slice.data"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, TransfersFreshStringConcatenationResults) {
     GeneratedSource result =
         Generate("void f() { string text = \"\"; text = text + \"x\"; }");
@@ -1335,11 +1357,13 @@ TEST(NativeCompilerTests, RunsOwnerBackedCheckedSlices) {
                 empty := Buffer::init(null, 0);
                 emptyValues := empty.view();
                 if emptyValues.len() != 0 { return 2; }
+                emptyValues.data();
                 data, err := new<[]i32>(2);
                 if err != none { return 1; }
                 buffer := Buffer::init(data, 2);
                 values := buffer.view();
-                values[0] = 42;
+                *i32 raw = values.data();
+                *raw = 42;
                 return values[0];
             }
         }

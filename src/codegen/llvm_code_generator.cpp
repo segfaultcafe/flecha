@@ -2653,6 +2653,15 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
             return llvm::ConstantInt::get(MapType(expression.Type()),
                                           length.Receiver().Type().Length());
         }
+        case lowering::BoundNodeKind::SliceDataExpression: {
+            const auto& data =
+                static_cast<const lowering::BoundSliceDataExpression&>(
+                    expression);
+            llvm::Value* descriptor = EmitExpression(data.Receiver());
+            return descriptor == nullptr ? nullptr
+                                         : _builder.CreateExtractValue(
+                                               descriptor, 0, "slice.data");
+        }
         case lowering::BoundNodeKind::AddressExpression:
             return EmitAddress(
                 static_cast<const lowering::BoundAddressExpression&>(expression)

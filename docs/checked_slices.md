@@ -52,6 +52,7 @@ lifetime contract.
 | `slice[index]` | Checked element location |
 | `slice.front()` | Checked first element location |
 | `slice.back()` | Checked last element location |
+| `slice.data()` | Unsafe raw pointer to the first element position |
 
 `front()` and `back()` also work on fixed arrays. They take no arguments, support
 writes for mutable elements, and can be borrowed with `&`, just like indexing:
@@ -66,6 +67,13 @@ ref := &middle[0];
 Reading an element copies its value; these methods do not implicitly return a
 reference handle. Empty endpoint access traps, or is rejected statically for
 known-empty fixed arrays. `.len()` is safe on an initialized empty slice.
+
+`slice.data()` is the explicit unsafe bridge for synchronous native APIs. It
+returns `*T` for `[]T` and `*const T` for `[]const T`, requires an unsafe block,
+and does not check that the slice is non-empty. For an empty slice the pointer
+is only a position and must not be dereferenced. The pointer carries no checked
+lifetime or alias tracking; unsafe code is responsible for keeping the backing
+owner alive, respecting element constness, and preventing invalid aliasing.
 
 ## Bounds and evaluation
 
@@ -103,8 +111,9 @@ their parent borrow and prohibit conflicting parent access until their last
 possible use. A handle involved in a pending index/store/bounds evaluation cannot
 be moved or rebound during that evaluation. Scope checks prevent slices from
 outliving either their owner or a parent reborrow. These rules also apply through
-branches, loops, positions, and jumps. Raw-address conversion of slice handles
-or slice-derived element locations is rejected.
+branches, loops, positions, and jumps. General raw-address conversion of slice
+handles or slice-derived element locations remains rejected; unsafe `.data()`
+is the sole direct storage-pointer escape hatch.
 
 ## Iteration
 

@@ -1,17 +1,13 @@
 module filesystem;
 
-@imports :: root::io::errors;
-
-extern unsafe i32 flecha_runtime_v1_read_file(
-    *string output,
-    *const char path,
-    usize path_length
-);
+@imports 
+    :: root::io::errors
+    :: root::io::runtime;
 
 export (string, error) read_file(stringv path) {
     string output = none;
     unsafe {
-        i32 status = flecha_runtime_v1_read_file(
+        i32 status = runtime::flecha_runtime_v1_read_file(
             &raw output,
             path.data(),
             path.len().cast<usize>

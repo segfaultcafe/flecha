@@ -307,6 +307,13 @@ class Dumper final {
                         .Receiver());
                 _stream << ")";
                 break;
+            case BoundNodeKind::SliceDataExpression:
+                _stream << "(slice-data ";
+                WriteExpression(
+                    static_cast<const BoundSliceDataExpression&>(expression)
+                        .Receiver());
+                _stream << ")";
+                break;
             case BoundNodeKind::DereferenceExpression:
                 _stream << "(deref ";
                 WriteExpression(
