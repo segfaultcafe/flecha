@@ -583,6 +583,21 @@ TEST(SemanticCallableTests, RejectsInvalidGeneralizedOwnCaptures) {
     )");
     EXPECT_NE(FindErrorDiagnostic(immovable, DiagnosticCode::NonCopyableValue),
               nullptr);
+
+    Analysis transparentRaw = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader inner = unsafe []() => (i32) { return 0; };
+            (Reader, *i32) state = (inner, pointer);
+            Reader callback = unsafe [own state]() => { return 42; };
+            return callback();
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(transparentRaw, DiagnosticCode::NonCopyableValue),
+        nullptr);
 }
 
 TEST(SemanticCallableTests,

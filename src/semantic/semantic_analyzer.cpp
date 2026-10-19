@@ -168,6 +168,29 @@ bool IsRawResource(SemanticType type) {
            type.Kind() == SemanticTypeKind::OwnedBuffer;
 }
 
+bool ContainsUnencapsulatedRawResource(SemanticType type) {
+    std::unordered_set<const StructureType*> structures;
+    const auto contains = [&](const auto& self,
+                              SemanticType candidate) -> bool {
+        if (IsRawResource(candidate)) return true;
+        if (candidate.Kind() == SemanticTypeKind::Array)
+            return self(self, *candidate.Target());
+        if (candidate.Kind() == SemanticTypeKind::Tuple)
+            return std::any_of(
+                candidate.Elements().begin(), candidate.Elements().end(),
+                [&](SemanticType element) { return self(self, element); });
+        if (candidate.Kind() == SemanticTypeKind::Structure) {
+            if (!structures.insert(candidate.Structure()).second) return false;
+            const FunctionSymbol* tear = candidate.Structure()->tear;
+            if (tear != nullptr && !tear->IsUnsafe()) return false;
+            for (const StructureField& field : candidate.Structure()->fields)
+                if (self(self, field.type)) return true;
+        }
+        return false;
+    };
+    return contains(contains, type);
+}
+
 std::vector<core::OwnershipContract> ResultContracts(
     const core::TypeNode& type) {
     std::vector<core::OwnershipContract> result;
@@ -2542,6 +2565,14 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
                    capture->NameRange(),
                    "value '" + capture->Name() + "' of type '" + type.Name() +
                        "' is immovable and cannot be captured with own");
+            continue;
+        }
+        if (ownsValue && !rawResource &&
+            ContainsUnencapsulatedRawResource(type)) {
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   capture->NameRange(),
+                   "value '" + capture->Name() + "' of type '" + type.Name() +
+                       "' contains a raw resource without safe teardown");
             continue;
         }
         if (!ownsValue && ContainsRawPointer(type) && !function.IsUnsafe()) {

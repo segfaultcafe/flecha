@@ -888,7 +888,13 @@ class BorrowChecker final {
                                 SemanticTypeKind::OwnedBuffer)
                             continue;
                         if (TracksBorrow(source)) {
-                            const Handle& handle = (*_state)[source];
+                            const Handle handle = (*_state)[source];
+                            Value moved{handle.origins, source, 0};
+                            CheckAccess(moved, true, capture->NameRange());
+                            if (source->Type().HasBorrowedLifetime()) {
+                                CheckHandleChange(source, capture->NameRange());
+                                (*_state)[source] = {{}, true};
+                            }
                             result.origins.insert(handle.origins.begin(),
                                                   handle.origins.end());
                         }
