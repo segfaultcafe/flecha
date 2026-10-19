@@ -6,6 +6,42 @@ module algorithms_test;
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
+bool is_negative(&const i32 value) {
+    return *value < 0;
+}
+
+test find_if_returns_the_first_matching_index(&testing::UnitTest t) {
+    [5]i32 values = [1, 4, 8, 12, 16];
+    i32 threshold = 7;
+    usize visits = 0;
+
+    index, found := algorithms::find_if<i32>(
+        values[:],
+        [&const threshold, &visits](value) => {
+            visits++;
+            return *value > threshold;
+        }
+    );
+
+    asserts::is_true(t, found, "find_if reports a matching value");
+    asserts::is_true(t, index == 2, "find_if returns the first matching index");
+    asserts::is_true(t, visits == 3, "find_if stops after the first match");
+}
+
+test find_if_accepts_named_functions_and_empty_slices(&testing::UnitTest t) {
+    [4]i32 values = [3, 2, -5, -8];
+    index, found := algorithms::find_if<i32>(values[:], is_negative);
+    asserts::is_true(t, found and index == 2, "find_if accepts a named predicate");
+
+    [3]i32 positive = [1, 2, 3];
+    missingIndex, missing := algorithms::find_if<i32>(positive[:], is_negative);
+    asserts::is_true(t, !missing and missingIndex == 0, "find_if reports a missing value");
+
+    [0]i32 empty = [];
+    emptyIndex, foundEmpty := algorithms::find_if<i32>(empty[:], is_negative);
+    asserts::is_true(t, !foundEmpty and emptyIndex == 0, "find_if accepts an empty slice");
+}
+
 test index_of_finds_the_first_match(&testing::UnitTest t) {
     [5]i32 values = [10, 20, 30, 20, 40];
 

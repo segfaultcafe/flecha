@@ -185,6 +185,35 @@ test for_each_accepts_a_capturing_generic_callback(&testing::UnitTest t) {
     asserts::is_true(t, total == 42, "forEach invokes a capturing callback for every value");
 }
 
+test find_if_delegates_to_a_contextual_predicate(&testing::UnitTest t) {
+    [5]i32 source = [5, 2, 7, -3, 2];
+    values, createError := array::Array<i32>::fromSlice(source[:]);
+    if createError != none {
+        asserts::is_true(t, false, "the setup Array is constructed");
+        return;
+    }
+
+    index, found := values.findIf((value) => {
+        return *value < 0;
+    });
+    asserts::is_true(t, found and index == 3, "findIf returns the first matching index");
+
+    i32 limit = 10;
+    missingIndex, missing := values.findIf([copy limit](value) => {
+        return *value > limit;
+    });
+    asserts::is_true(t, !missing and missingIndex == 0, "findIf reports a missing value");
+}
+
+test find_if_accepts_an_empty_array(&testing::UnitTest t) {
+    values := array::Array<i32>::init();
+    index, found := values.findIf((value) => {
+        return *value == 42;
+    });
+
+    asserts::is_true(t, !found and index == 0, "findIf accepts an empty Array");
+}
+
 test sort_orders_values_and_handles_small_arrays(&testing::UnitTest t) {
     empty := array::Array<i32>::init();
     algorithms::sort<i32>(empty.viewRef());
