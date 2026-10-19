@@ -689,7 +689,7 @@ llvm::Value* LlvmCodeGenerator::CoerceValue(
         return value;
     if (sourceType.Kind() == semantic::SemanticTypeKind::Pointer &&
         destinationType.Kind() == semantic::SemanticTypeKind::Pointer &&
-        semantic::IsAssignable(destinationType, sourceType))
+        semantic::IsExternAssignable(destinationType, sourceType))
         return value;
     if (sourceType.Kind() == semantic::SemanticTypeKind::Pointer &&
         destinationType.Kind() == semantic::SemanticTypeKind::Reference &&
@@ -699,6 +699,9 @@ llvm::Value* LlvmCodeGenerator::CoerceValue(
         return value;
     if (semantic::CanReborrow(destinationType, sourceType)) return value;
     if (sourceType.WithoutConst() == destinationType.WithoutConst())
+        return value;
+    if (sourceType.Kind() == semantic::SemanticTypeKind::Char &&
+        destinationType.Kind() == semantic::SemanticTypeKind::U8)
         return value;
     if (sourceType.Kind() == semantic::SemanticTypeKind::Tuple &&
         destinationType.Kind() == semantic::SemanticTypeKind::Tuple) {

@@ -127,6 +127,35 @@ jobs:
       - name: Run Neovim syntax tests
         run: make test-neovim
 
+  standard-library-tests:
+    name: Standard library unit tests (Longbow)
+    needs: contribution-policy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-14 g++-14 llvm-18-dev ninja-build
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build-longbow-tests -G Ninja
+          -DBUILD_TESTING=ON
+          -DCMAKE_C_COMPILER=/usr/bin/gcc-14
+          -DCMAKE_CXX_COMPILER=/usr/bin/g++-14
+          "-DLLVM_DIR=$(/usr/bin/llvm-config-18 --cmakedir)"
+
+      - name: Build Flecha, Longbow, and test targets
+        run: cmake --build build-longbow-tests --parallel
+
+      - name: Run Longbow and standard library tests
+        run: >-
+          ctest --test-dir build-longbow-tests --output-on-failure
+          -R '^(LongbowTests|StandardLibraryTests)\.'
+
   sanitizers:
     name: AddressSanitizer and UBSan
     needs: contribution-policy
