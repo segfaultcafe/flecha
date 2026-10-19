@@ -61,6 +61,15 @@
 - Development builds of Flecha and Longbow now include the commit distance,
   abbreviated Git revision, and dirty-worktree state in `--version` output.
 
+## 0.1.3 - 2026-10-19
+
+Flecha 0.1.3 is a patch release improving character-byte interoperability.
+
+### Fixed
+
+- Character values convert implicitly to `u8`, and borrowed string data can be
+  passed to compatible byte-pointer parameters at the external ABI boundary.
+
 ## 0.1.2 - 2026-10-17
 
 Flecha 0.1.2 is a patch release correcting zero-construction triviality.
