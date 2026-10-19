@@ -5,7 +5,6 @@ module array;
     :: root::containers::errors
     :: root::containers::algorithms;
 
-
 export structure Array<T> {
     private raw_array::RawArray<T> inner; 
 };
@@ -19,7 +18,7 @@ void Array<T>::sortBy(&self, algorithms::Less<T> less) {
 }
 
 void Array<T>::forEach(&const self, algorithms::Action<T> action) {
-    algorithms::for_each<T>(self->view(), action); 
+    algorithms::for_each<T>(self->view(), action);
 }
 
 (Array<T>, error) Array<T>::fromSlice([]const T source) {
