@@ -20,13 +20,24 @@ i32 main() {
         return 1;
     }
 
-    [4]u8 bytes = [65, 0, 66, 10];
-    written, writeError := writer.write(bytes[:]);
-    if writeError != none or written != 4 {
+    [1]u8 prefix = [65];
+    written, writeError := writer.write(prefix[:]);
+    if writeError != none or written != 1 {
         return 2;
+    }
+    [3]u8 remainder = [0, 66, 10];
+    if writer.writeAll(remainder[:]) != none {
+        return 10;
+    }
+    [0]u8 empty = none;
+    if writer.writeAll(empty[:]) != none {
+        return 11;
     }
     if writer.flush() != none or writer.close() != none or writer.isOpen() {
         return 3;
+    }
+    if writer.writeAll(empty[:]) != errors::IoError.Closed {
+        return 12;
     }
 
     exclusiveOptions := build file::OpenOptions {
@@ -49,8 +60,7 @@ i32 main() {
         return 5;
     }
     [4]u8 output = none;
-    count, readError := reader.read(output[:]);
-    if readError != none or count != 4 or
+    if reader.readExact(output[:]) != none or
         output[0] != 65 or output[1] != 0 or
         output[2] != 66 or output[3] != 10 {
         return 6;
@@ -60,12 +70,33 @@ i32 main() {
         return 7;
     }
     [2]u8 tail = none;
-    count, readError = reader.read(tail[:]);
+    count, readError := reader.read(tail[:]);
     if readError != none or count != 2 or tail[0] != 66 or tail[1] != 10 {
         return 8;
     }
+    [1]u8 pastEnd = none;
+    if reader.readExact(pastEnd[:]) != errors::IoError.UnexpectedEof {
+        return 13;
+    }
+    position, seekError = reader.seek(0, file::SeekFrom.Start);
+    if seekError != none or position != 0 {
+        return 16;
+    }
+    [5]u8 oversized = none;
+    if reader.readExact(oversized[:]) != errors::IoError.UnexpectedEof or
+        oversized[0] != 65 or oversized[1] != 0 or
+        oversized[2] != 66 or oversized[3] != 10 {
+        return 17;
+    }
+    [0]u8 emptyRead = none;
+    if reader.readExact(emptyRead[:]) != none {
+        return 14;
+    }
     if reader.close() != none {
         return 9;
+    }
+    if reader.readExact(emptyRead[:]) != errors::IoError.Closed {
+        return 15;
     }
     return 42;
 }

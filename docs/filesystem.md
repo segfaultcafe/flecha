@@ -19,12 +19,13 @@ mode. The returned string preserves every byte, including embedded nulls and
 platform line endings. An empty file succeeds with an empty owned string. Safe
 callers do not need an unsafe block.
 
-The `errors` module exports the `IoError` family containing `NotFound`, `PermissionDenied`,
-`InvalidPath`, `ReadFailed`, and `TooLarge`. Allocation failure uses the shared
-`AllocationError.OutOfMemory` value. On every failure the returned string is
-empty. `InvalidPath` includes empty paths, embedded nulls, and invalid UTF-8 on
-Windows. `TooLarge` means the contents cannot fit the current byte-string
-length plus its required terminator.
+The `errors` module exports the `IoError` family containing `NotFound`,
+`PermissionDenied`, `InvalidPath`, `ReadFailed`, `UnexpectedEof`, and
+`TooLarge`. Allocation failure uses the shared `AllocationError.OutOfMemory`
+value. On every `read_file` failure the returned string is empty. `InvalidPath`
+includes empty paths, embedded nulls, and invalid UTF-8 on Windows. `TooLarge`
+means the contents cannot fit the current byte-string length plus its required
+terminator.
 
 POSIX paths are passed to the operating system as byte sequences. Windows paths
 must be UTF-8 and are converted to UTF-16 before opening. The function closes
@@ -37,6 +38,12 @@ string before passing its address, and the runtime either transfers exactly one
 compatible allocation into that slot or leaves it empty. Generated string
 cleanup therefore owns and destroys the result exactly once.
 
+`export error write_file(stringv path, []const u8 contents)` creates or
+truncates a file, writes the complete byte slice, flushes it, and closes it.
+Opening, writing, flushing, and closing failures are returned to the caller.
+Empty slices create an empty file, and binary data is written without newline
+or encoding conversion.
+
 ## File streams
 
 Import `lib::std::io::file` for incremental binary I/O. `File::open` accepts an
@@ -48,6 +55,10 @@ read/write access, non-truncating creation, or atomic `createNew` behavior.
 `File` owns its opaque native handle and closes it during teardown. Explicit
 `close` consumes the handle even when closing reports an error. `read` and
 `write` accept checked byte slices, return the transferred byte count, and
-preserve partial counts alongside errors. A successful read of zero bytes means
-end of file. `seek`, `flush`, `close`, and operations on a closed handle report
-through the `IoError` family.
+preserve partial counts alongside errors. `writeAll` repeatedly writes the
+unwritten suffix until the complete slice has been transferred. It reports
+`WriteFailed` if a successful write makes no progress, preventing an infinite
+loop. `readExact` similarly fills its complete destination and reports
+`UnexpectedEof` if the file ends first. A successful ordinary read of zero
+bytes means end of file. `seek`, `flush`, `close`, and operations on a closed
+handle report through the `IoError` family.

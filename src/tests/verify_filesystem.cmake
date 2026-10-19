@@ -3,8 +3,10 @@ file(MAKE_DIRECTORY "${dataDirectory}")
 set(textPath "${dataDirectory}/text.txt")
 set(emptyPath "${dataDirectory}/empty.bin")
 set(missingPath "${dataDirectory}/missing.txt")
+set(writePath "${dataDirectory}/written.bin")
 file(WRITE "${textPath}" "flecha\n")
 file(WRITE "${emptyPath}" "")
+file(WRITE "${writePath}" "stale trailing contents")
 
 set(sourceDirectory "${FLECHA_OUTPUT}_project")
 file(MAKE_DIRECTORY "${sourceDirectory}")
@@ -36,6 +38,31 @@ i32 main() {
     invalid, invalid_error := filesystem::read_file(invalid_path.view());
     if invalid_error != errors::IoError.InvalidPath or invalid.len() != 0 {
         return 4;
+    }
+
+    [4]u8 bytes = [65, 0, 66, 10];
+    if filesystem::write_file(\"${writePath}\", bytes[:]) != none {
+        return 5;
+    }
+    written, written_error := filesystem::read_file(\"${writePath}\");
+    if written_error != none or written.len() != 4 or
+        written[0] != 'A' or written[1] != '\\0' or
+        written[2] != 'B' or written[3] != '\\n' {
+        return 6;
+    }
+
+    [0]u8 no_bytes = none;
+    if filesystem::write_file(\"${writePath}\", no_bytes[:]) != none {
+        return 7;
+    }
+    truncated, truncated_error := filesystem::read_file(\"${writePath}\");
+    if truncated_error != none or truncated.len() != 0 {
+        return 8;
+    }
+
+    if filesystem::write_file(invalid_path.view(), no_bytes[:]) !=
+        errors::IoError.InvalidPath {
+        return 9;
     }
 
     return 42;

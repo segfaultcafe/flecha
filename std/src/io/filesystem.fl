@@ -2,6 +2,7 @@ module filesystem;
 
 @imports 
     :: root::io::errors
+    :: root::io::file
     :: root::io::runtime;
 
 export (string, error) read_file(stringv path) {
@@ -32,4 +33,23 @@ export (string, error) read_file(stringv path) {
         }
         return (none, errors::IoError.ReadFailed);
     }
+}
+
+export error write_file(stringv path, []const u8 contents) {
+    output, err := file::File::open(path, file::OpenOptions::writeOnly());
+    if err != none {
+        return err;
+    }
+
+    err = output.writeAll(contents);
+    if err != none {
+        return err;
+    }
+
+    err = output.flush();
+    if err != none {
+        return err;
+    }
+
+    return output.close();
 }

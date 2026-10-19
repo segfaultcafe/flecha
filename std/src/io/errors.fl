@@ -14,6 +14,7 @@ export error IoError {
     SeekFailed,
     FlushFailed,
     TooLarge,
+    UnexpectedEof,
 }
 
 quiver error from_runtime(i32 status, IoError fallback) {

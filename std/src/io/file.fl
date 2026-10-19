@@ -130,6 +130,27 @@ bool File::isOpen(&const self) {
     return (bytesRead, none);
 }
 
+error File::readExact(&self, []u8 destination) {
+    if self->handle == null {
+        return errors::IoError.Closed;
+    }
+
+    usize offset = 0;
+    while offset < destination.len() {
+        bytesRead, err := self->read(destination[offset:]);
+        if err != none {
+            return err;
+        }
+        if bytesRead == 0 {
+            return errors::IoError.UnexpectedEof;
+        }
+
+        offset = offset + bytesRead;
+    }
+
+    return none;
+}
+
 
 (usize, error) File::write(&self, []const u8 source) {
     if self->handle == null {
@@ -152,6 +173,27 @@ bool File::isOpen(&const self) {
     }
 
     return (bytesWritten, none);
+}
+
+error File::writeAll(&self, []const u8 source) {
+    if self->handle == null {
+        return errors::IoError.Closed;
+    }
+
+    usize offset = 0;
+    while offset < source.len() {
+        written, err := self->write(source[offset:]);
+        if err != none {
+            return err;
+        }
+        if written == 0 {
+            return errors::IoError.WriteFailed;
+        }
+
+        offset = offset + written;
+    }
+
+    return none;
 }
 
 (u64, error) File::seek(&self, i64 offset, SeekFrom origin) {

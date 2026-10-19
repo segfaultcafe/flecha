@@ -3,9 +3,10 @@ module std;
 @imports
     :: root::containers::raw_array
     :: root::containers::array
-    :: root::containers::errors
+    :: root::containers::errors as containers_errors
     :: root::containers::algorithms
     :: root::io::filesystem
-    :: root::io::errors
+    :: root::io::file
+    :: root::io::errors as io_errors
     :: root::tests::testing
     :: root::tests::asserts;
