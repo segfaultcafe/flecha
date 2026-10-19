@@ -1,0 +1,97 @@
+module file;
+
+export enum SeekFrom: u8 {
+    default Start,
+    Current,
+    End
+}
+
+export structure OpenOptions {
+    bool read;
+    bool write;
+    bool append;
+    bool truncate;
+    bool create;
+    bool createNew;
+};
+
+OpenOptions OpenOptions::readOnly() {
+    return build OpenOptions {
+        self.read = true;
+    };
+}
+
+OpenOptions OpenOptions::writeOnly() {
+    return build OpenOptions {
+        self.write = true;
+        self.create = true;
+        self.truncate = true;
+    };
+}
+
+OpenOptions OpenOptions::appendOnly() {
+    return build OpenOptions {
+        self.write = true;
+        self.append = true;
+        self.create = true;
+    };
+}
+
+export structure File {
+    private *void handle;
+};
+
+void File::tear(&self) override {
+    if self->handle == null {
+        return;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        flecha_runtime_v1_file_close(handle);
+    }
+}
+
+File File::zero() override {
+    return build File {
+        self.handle = null;
+    };
+}
+
+(File, error) File::open(stringv path, OpenOptions opts) {}
+
+bool File::isOpen(&const self);
+
+(usize, error) File::read(
+    &self,
+    []u8 destination
+);
+
+(usize, error) File::write(
+    &self,
+    []const u8 source
+);
+
+(u64, error) File::seek(
+    &self,
+    i64 offset,
+    SeekFrom origin
+);
+
+error File::flush(&self);
+
+error File::close(&self) {
+    if self->handle == null {
+        return errors::IoError.Closed;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        i32 status = flecha_runtime_v1_file_close(handle);
+        return map_file_error(status);
+    }
+}

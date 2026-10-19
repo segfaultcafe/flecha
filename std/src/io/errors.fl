@@ -3,7 +3,14 @@ module errors;
 export error IoError {
     NotFound,
     PermissionDenied,
+    AlreadyExists,
     InvalidPath,
+    InvalidOptions,
+    Closed,
+    OpenFailed,
     ReadFailed,
+    WriteFailed,
+    SeekFailed,
+    FlushFailed,
     TooLarge,
 }
