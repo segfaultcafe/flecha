@@ -788,6 +788,74 @@ TEST(NativeCompilerTests, RunsCallableParametersReturnsAndAggregateResults) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsOnceCallablesAndConsumesOwnedCaptures) {
+    GeneratedSource result = Generate(R"(
+        once func Action() => (i32);
+        unsafe once func UnsafeAction() => (i32);
+
+        structure Token { *i32 tears; i32 value; };
+        unsafe Token Token::init(*i32 tears, i32 value) override {
+            return build Token {
+                self.tears = tears;
+                self.value = value;
+            };
+        }
+        void Token::tear(&self) override {
+            unsafe { *self->tears = *self->tears + 1; }
+        }
+        i32 consume(Token token) { return token.value; }
+        i32 answer() { return 22; }
+
+        unsafe i32 main() {
+            i32 tears = 0;
+            {
+                Token token = Token::init(&raw tears, 20);
+                Action action = once [own token]() => (i32) {
+                    return consume(token);
+                };
+                if action() != 20 { return 1; }
+                if tears != 1 { return 2; }
+            }
+            if tears != 1 { return 3; }
+
+            {
+                Token token = Token::init(&raw tears, 1);
+                Action never = once [own token]() => (i32) {
+                    return consume(token);
+                };
+            }
+            pointer, failure := new<i32>(20);
+            if failure != none { return 4; }
+            UnsafeAction release = unsafe once [own pointer]() => (i32) {
+                i32 value = *pointer;
+                free(pointer);
+                return value;
+            };
+            Action direct = answer;
+            return release() + direct() + tears - 2;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_once_callable_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_once_callable_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsGenericCallablesWithCapturingClosures) {
     GeneratedSource result = Generate(R"(
         func Mapper<T>(T) => (T);
@@ -1939,18 +2007,18 @@ TEST(CodeGeneratorTests, EmitsAggregateValuesAndBoundsCheckedElementAddresses) {
 
 TEST(CodeGeneratorTests, EmitsRepeatLoopWithoutDuplicatingInitializerCalls) {
     GeneratedSource result = Generate(
-        "u8 once() { return 7; }"
-        "u8 f(usize i) { a := [once(); 4096]; return a[i]; }"
-        "usize g() { a := [once(); 0]; return a.len(); }");
+        "u8 item() { return 7; }"
+        "u8 f(usize i) { a := [item(); 4096]; return a[i]; }"
+        "usize g() { a := [item(); 0]; return a.len(); }");
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_NE(result.module, nullptr) << result.generator->Error();
     EXPECT_TRUE(VerifyModule(*result.module).empty());
     const std::string ir = ModuleText(*result.module);
-    const std::size_t first = ir.find("call i8 @once()");
-    const std::size_t second = ir.find("call i8 @once()", first + 1);
+    const std::size_t first = ir.find("call i8 @item()");
+    const std::size_t second = ir.find("call i8 @item()", first + 1);
     ASSERT_NE(first, std::string::npos);
     ASSERT_NE(second, std::string::npos);
-    EXPECT_EQ(ir.find("call i8 @once()", second + 1), std::string::npos);
+    EXPECT_EQ(ir.find("call i8 @item()", second + 1), std::string::npos);
     EXPECT_NE(ir.find("array.repeat.index = phi i64"), std::string::npos);
     EXPECT_LT(ir.size(), 10000);
 }

@@ -76,6 +76,7 @@ enum class TokenType {
     Override,
     Build,
     Func,
+    Once,
     Unsafe,
     Export,
     Quiver,

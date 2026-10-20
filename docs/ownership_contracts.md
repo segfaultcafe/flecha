@@ -89,8 +89,23 @@ created. Moving the callable moves that obligation. Its destroy thunk releases
 the captured allocation in reverse capture order, then frees the environment.
 Null remains valid and needs no cleanup. The callable may be invoked repeatedly,
 so its body cannot free the capture or pass it to an `own` parameter; otherwise
-the next invocation could use released storage. Such consuming bodies require a
-future single-use callable design.
+the next invocation could use released storage. A `once` anonymous function is
+single-use and may consume owned captures:
+
+```flecha
+unsafe once func Release() => ();
+
+Release release = unsafe once [own pointer]() => () {
+    free(pointer);
+};
+release();
+```
+
+Calling `release` moves the complete callable, invokes it, and destroys its
+environment immediately afterward. A consumed capture is cleared before the
+destroy thunk runs; captures that the body leaves untouched are still released
+normally. An uninvoked once callable follows the ordinary environment cleanup
+path.
 
 The same `own name` syntax moves noncopyable safe values into an environment:
 
@@ -109,7 +124,9 @@ owning captures do not require an unsafe literal, even when an aggregate hides
 raw storage behind safe teardown. The move invalidates the source binding,
 retains any checked-reference origins, and recursively destroys the value in
 reverse capture order. A reusable closure may call or inspect this state but may
-not move it out or pass it to a consuming parameter.
+not move it out or pass it to a consuming parameter. A once closure may consume
+it, including invoking an owned once callable or moving an owned structure into
+another function.
 
 ## Owning fields and tear
 

@@ -1,0 +1,44 @@
+once func Action() => (i32);
+unsafe once func UnsafeAction() => (i32);
+
+structure Token { *i32 tears; i32 value; };
+unsafe Token Token::init(*i32 tears, i32 value) override {
+    return build Token {
+        self.tears = tears;
+        self.value = value;
+    };
+}
+void Token::tear(&self) override {
+    unsafe { *self->tears = *self->tears + 1; }
+}
+i32 consume(Token token) { return token.value; }
+i32 answer() { return 22; }
+
+unsafe i32 main() {
+    i32 tears = 0;
+    {
+        Token token = Token::init(&raw tears, 20);
+        Action action = once [own token]() => (i32) {
+            return consume(token);
+        };
+        if action() != 20 { return 1; }
+        if tears != 1 { return 2; }
+    }
+    if tears != 1 { return 3; }
+
+    {
+        Token token = Token::init(&raw tears, 1);
+        Action never = once [own token]() => (i32) {
+            return consume(token);
+        };
+    }
+    pointer, failure := new<i32>(20);
+    if failure != none { return 4; }
+    UnsafeAction release = unsafe once [own pointer]() => (i32) {
+        i32 value = *pointer;
+        free(pointer);
+        return value;
+    };
+    Action direct = answer;
+    return release() + direct() + tears - 2;
+}

@@ -120,6 +120,88 @@ TEST(SemanticCallableTests, ResolvesStructuralSignaturesAndFunctionValues) {
     EXPECT_TRUE(symbol->Type().OwnsStorage());
 }
 
+TEST(SemanticCallableTests, ResolvesOnceCallableIdentityAndCompatibility) {
+    Analysis result = Analyze(R"(
+        func Reusable() => (i32);
+        once func SingleUse() => (i32);
+        i32 answer() { return 42; }
+        i32 main() {
+            SingleUse function = answer;
+            SingleUse closure = once []() => (i32) { return 0; };
+            return function() + closure();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const auto& reusable = static_cast<const CallableTypeDeclaration&>(
+        *result.unit->Declarations()[0]);
+    const auto& singleUse = static_cast<const CallableTypeDeclaration&>(
+        *result.unit->Declarations()[1]);
+    const SemanticType reusableType =
+        result.model.DeclaredSymbol(reusable)->Type();
+    const SemanticType onceType =
+        result.model.DeclaredSymbol(singleUse)->Type();
+    EXPECT_EQ(onceType.Name(), "once func() => (i32)");
+    EXPECT_NE(reusableType, onceType);
+    EXPECT_TRUE(IsAssignable(onceType, reusableType));
+    EXPECT_FALSE(IsAssignable(reusableType, onceType));
+}
+
+TEST(SemanticCallableTests, ConsumesOnceCallablesAndOwnedCaptures) {
+    Analysis valid = Analyze(R"(
+        once func Inner() => (i32);
+        once func Outer() => (i32);
+        i32 main() {
+            Inner inner = once []() => (i32) { return 42; };
+            Outer outer = once [own inner]() => (i32) { return inner(); };
+            return outer();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis releasesBorrow = Analyze(R"(
+        once func Reader() => (i32);
+        i32 main() {
+            i32 value = 1;
+            Reader reader = once [&const value]() => (i32) { return value; };
+            i32 previous = reader();
+            value = 41;
+            return previous + value;
+        }
+    )");
+    for (const auto& diagnostic : releasesBorrow.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(releasesBorrow.diagnostics.HasErrors());
+
+    Analysis invokedTwice = Analyze(R"(
+        once func Action() => ();
+        void main() {
+            Action action = once []() => () {};
+            action();
+            action();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invokedTwice, DiagnosticCode::MovedValue),
+              nullptr);
+
+    Analysis reusableBody = Analyze(R"(
+        once func Inner() => (i32);
+        func Outer() => (i32);
+        i32 main() {
+            Inner inner = once []() => (i32) { return 42; };
+            Outer outer = [own inner]() => (i32) { return inner(); };
+            return outer();
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(reusableBody, DiagnosticCode::NonCopyableValue),
+        nullptr);
+}
+
 TEST(SemanticCallableTests, SpecializesGenericCallableSignaturesStructurally) {
     Analysis result = Analyze(R"(
         func Mapper<T>(T) => (T);
@@ -150,6 +232,33 @@ TEST(SemanticCallableTests, SpecializesGenericCallableSignaturesStructurally) {
     ASSERT_NE(symbol, nullptr);
     ASSERT_EQ(symbol->ParameterTypes().size(), 2);
     EXPECT_EQ(symbol->ParameterTypes()[0].Name(), "func(i32) => (i32)");
+}
+
+TEST(SemanticCallableTests, SpecializesGenericOnceCallableSignatures) {
+    Analysis result = Analyze(R"(
+        once func Transform<T>(T) => (T);
+        i32 identity(i32 value) { return value; }
+        i32 main() {
+            Transform<i32> transform = identity;
+            return transform(42);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const FunctionDeclaration* main = nullptr;
+    for (const auto& declaration : result.unit->Declarations())
+        if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
+            static_cast<const FunctionDeclaration&>(*declaration).Name() ==
+                "main")
+            main = static_cast<const FunctionDeclaration*>(declaration.get());
+    ASSERT_NE(main, nullptr);
+    const auto& declaration = static_cast<const VariableDeclarationStatement&>(
+        *main->Body().Statements()[0]);
+    const auto* symbol = result.model.DeclaredSymbol(declaration);
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_TRUE(symbol->Type().Signature().isOnce);
 }
 
 TEST(SemanticCallableTests,

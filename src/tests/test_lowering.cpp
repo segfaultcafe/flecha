@@ -297,6 +297,26 @@ TEST(LoweringTests, CarriesCopyCapturesIntoClosureEnvironments) {
               std::string::npos);
 }
 
+TEST(LoweringTests, LowersOnceInvocationAsCalleeMove) {
+    LoweredSource result = Lower(R"(
+        once func Action() => (i32);
+        i32 main() {
+            Action action = once []() => (i32) { return 42; };
+            return action();
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const auto& returned = static_cast<const BoundReturnStatement&>(
+        *result.program->Functions()[0]->Body().Statements()[1]);
+    ASSERT_NE(returned.Expression(), nullptr);
+    const auto& call =
+        static_cast<const BoundIndirectCallExpression&>(*returned.Expression());
+    EXPECT_EQ(call.Callee().Kind(), BoundNodeKind::MoveExpression);
+    EXPECT_TRUE(call.Callee().Type().Signature().isOnce);
+}
+
 TEST(LoweringTests, CarriesCheckedReferenceCaptureModes) {
     LoweredSource result = Lower(R"(
         func Reader() => (i32);

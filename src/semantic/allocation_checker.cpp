@@ -291,13 +291,18 @@ class AllocationChecker final {
         }
     }
     void SeedCaptures(const core::FunctionDeclaration& function, State& state) {
+        const bool once = Function(function) && Function(function)->IsOnce();
         for (const ClosureCapture& capture : _model.Captures(function)) {
             const auto mode = capture.syntax->Mode();
             if ((mode != core::AnonymousFunctionExpression::CaptureMode::Lend &&
                  mode != core::AnonymousFunctionExpression::CaptureMode::Own) ||
                 !IsHeapHandle(capture.variable->Type()))
                 continue;
-            state.resources[capture.syntax] = {true, false, true, true};
+            const bool consumable =
+                once &&
+                mode == core::AnonymousFunctionExpression::CaptureMode::Own;
+            state.resources[capture.syntax] = {true, consumable, !consumable,
+                                               true};
             state.bindings[capture.variable] = {ValueKind::Pointer,
                                                 capture.syntax};
         }

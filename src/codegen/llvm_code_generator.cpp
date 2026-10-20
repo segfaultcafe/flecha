@@ -820,6 +820,10 @@ llvm::Value* LlvmCodeGenerator::CoerceValue(
             destinationType.Target()->WithoutConst())
         return value;
     if (semantic::CanReborrow(destinationType, sourceType)) return value;
+    if (sourceType.Kind() == semantic::SemanticTypeKind::Function &&
+        destinationType.Kind() == semantic::SemanticTypeKind::Function &&
+        semantic::IsAssignable(destinationType, sourceType))
+        return value;
     if (sourceType.WithoutConst() == destinationType.WithoutConst())
         return value;
     if (sourceType.Kind() == semantic::SemanticTypeKind::Char &&
@@ -1215,6 +1219,8 @@ llvm::Value* LlvmCodeGenerator::EmitIndirectCall(
                 signature.result.ContainsStructure()
             ? ""
             : "call.indirect");
+    if (signature.isOnce)
+        EmitValueDestroy(callable, expression.Callee().Type());
     return call;
 }
 
@@ -1308,7 +1314,7 @@ llvm::StructType* LlvmCodeGenerator::ClosureEnvironmentType(
         _context, "flecha.closure.env." + function.Symbol().LinkName());
     _closureEnvironmentTypes.emplace(&function.Symbol(), environment);
     std::vector<llvm::Type*> fields;
-    fields.reserve(function.Captures().size());
+    fields.reserve(function.Captures().size() * 2);
     for (const auto& capture : function.Captures()) {
         const bool borrowedValue =
             capture.variable->Type().HasBorrowedLifetime();
@@ -1316,9 +1322,33 @@ llvm::StructType* LlvmCodeGenerator::ClosureEnvironmentType(
                              ? MapType(capture.variable->Type())
                              : llvm::PointerType::getUnqual(_context));
     }
+    for (const auto& capture : function.Captures())
+        if (capture.mode ==
+                core::AnonymousFunctionExpression::CaptureMode::Own &&
+            capture.variable->Type().ContainsStructure())
+            fields.push_back(llvm::Type::getInt1Ty(_context));
     environment->setBody(fields);
     return environment;
 }
+
+namespace {
+
+std::optional<unsigned> ClosureLifetimeField(
+    const lowering::BoundFunction& function, std::size_t captureIndex) {
+    unsigned field = static_cast<unsigned>(function.Captures().size());
+    for (std::size_t index = 0; index < function.Captures().size(); ++index) {
+        const auto& capture = function.Captures()[index];
+        if (capture.mode !=
+                core::AnonymousFunctionExpression::CaptureMode::Own ||
+            !capture.variable->Type().ContainsStructure())
+            continue;
+        if (index == captureIndex) return field;
+        ++field;
+    }
+    return std::nullopt;
+}
+
+}  // namespace
 
 llvm::Function* LlvmCodeGenerator::ClosureDestroyer(
     const lowering::BoundFunction& function) {
@@ -1352,8 +1382,27 @@ llvm::Function* LlvmCodeGenerator::ClosureDestroyer(
                 EmitFree(
                     _builder.CreateLoad(MapType(type), field, "owned.capture"),
                     type);
-            else if (type.OwnsStorage())
-                EmitDestroyAt(field, type);
+            else if (type.OwnsStorage()) {
+                const auto lifetime = ClosureLifetimeField(function, index - 1);
+                if (lifetime.has_value()) {
+                    auto* destroy = llvm::BasicBlock::Create(
+                        _context, "capture.destroy", _currentFunction);
+                    auto* done = llvm::BasicBlock::Create(
+                        _context, "capture.destroy.done", _currentFunction);
+                    llvm::Value* live = _builder.CreateStructGEP(
+                        environmentType, environment, *lifetime);
+                    _builder.CreateCondBr(
+                        _builder.CreateLoad(llvm::Type::getInt1Ty(_context),
+                                            live),
+                        destroy, done);
+                    _builder.SetInsertPoint(destroy);
+                    EmitDestroyAt(field, type);
+                    _builder.CreateBr(done);
+                    _builder.SetInsertPoint(done);
+                } else {
+                    EmitDestroyAt(field, type);
+                }
+            }
         } else if (capture.mode ==
                        core::AnonymousFunctionExpression::CaptureMode::Copy &&
                    capture.variable->Type().OwnsStorage())
@@ -1434,6 +1483,10 @@ llvm::Value* LlvmCodeGenerator::EmitClosure(
         if (value == nullptr) return nullptr;
         _builder.CreateStore(value, _builder.CreateStructGEP(
                                         environmentType, environment, index));
+        if (const auto lifetime = ClosureLifetimeField(function, index))
+            _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
+                                 _builder.CreateStructGEP(
+                                     environmentType, environment, *lifetime));
     }
     callable = _builder.CreateInsertValue(callable, environment, 1);
     return _builder.CreateInsertValue(callable, ClosureDestroyer(function), 2,
@@ -1482,6 +1535,7 @@ bool LlvmCodeGenerator::EmitFunction(
     _currentFunction = _functions.at(&boundFunction.Symbol());
     _variables.clear();
     _lifetimeFlags.clear();
+    _ownedCaptureStorage.clear();
     _returnStorage = nullptr;
     _positions.clear();
     _positionScopePaths.clear();
@@ -1527,6 +1581,13 @@ bool LlvmCodeGenerator::EmitFunction(
                         llvm::PointerType::getUnqual(_context), field,
                         capture.variable->Name() + ".capture");
                 _variables.emplace(capture.variable, storage);
+                if (capture.mode ==
+                    core::AnonymousFunctionExpression::CaptureMode::Own)
+                    _ownedCaptureStorage.insert(storage);
+                if (const auto lifetime =
+                        ClosureLifetimeField(boundFunction, captureIndex))
+                    _lifetimeFlags[storage] = _builder.CreateStructGEP(
+                        environmentType, &argument, *lifetime);
             }
             continue;
         }
@@ -2790,9 +2851,10 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 _builder.CreateStore(llvm::ConstantInt::getFalse(_context),
                                      LifetimeFlag(storage));
             if (!expression.Type().ContainsStructure() &&
-                (expression.Type().OwnsStorage() ||
-                 expression.Type().ContainsOwnedBuffer()) &&
-                !expression.Type().IsCopyable())
+                (((expression.Type().OwnsStorage() ||
+                   expression.Type().ContainsOwnedBuffer()) &&
+                  !expression.Type().IsCopyable()) ||
+                 _ownedCaptureStorage.contains(storage)))
                 _builder.CreateStore(
                     llvm::Constant::getNullValue(MapType(expression.Type())),
                     storage);
@@ -3057,7 +3119,7 @@ llvm::Value* LlvmCodeGenerator::EmitMatch(
                                "match.value");
 }
 
-llvm::AllocaInst* LlvmCodeGenerator::LifetimeFlag(llvm::Value* storage) {
+llvm::Value* LlvmCodeGenerator::LifetimeFlag(llvm::Value* storage) {
     const auto found = _lifetimeFlags.find(storage);
     if (found != _lifetimeFlags.end()) return found->second;
     auto* flag = CreateEntryStorage(llvm::Type::getInt1Ty(_context),

@@ -153,6 +153,34 @@ TEST(ParserTests, ParsesNamedCallableSignatures) {
     EXPECT_EQ(reader.Results()[0]->Contract(), OwnershipContract::Own);
 }
 
+TEST(ParserTests, ParsesOnceCallableSignaturesAndLiterals) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        unsafe once func Task(i32) => (i32);
+        void main() {
+            Task task = once unsafe [copy value](i32 input) => (i32) {
+                return input + value;
+            };
+        }
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& task =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_TRUE(task.IsUnsafe());
+    EXPECT_TRUE(task.IsOnce());
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& declaration = static_cast<const VariableDeclarationStatement&>(
+        *main.Body().Statements()[0]);
+    const auto& literal = static_cast<const AnonymousFunctionExpression&>(
+        *declaration.Initializer());
+    EXPECT_TRUE(literal.Function().HasModifier(FunctionModifier::Unsafe));
+    EXPECT_TRUE(literal.Function().HasModifier(FunctionModifier::Once));
+}
+
 TEST(ParserTests, ParsesGenericCallableSignatures) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

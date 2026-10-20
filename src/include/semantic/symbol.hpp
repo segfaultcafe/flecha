@@ -122,6 +122,7 @@ class FunctionSymbol final : public Symbol {
         return *_signature;
     }
     [[nodiscard]] bool IsUnsafe() const { return _signature->isUnsafe; }
+    [[nodiscard]] bool IsOnce() const { return _signature->isOnce; }
     const StructureType* Owner() const { return _owner; }
     const EnumType* EnumOwner() const { return _enumOwner; }
     bool HasOwner() const { return _owner != nullptr || _enumOwner != nullptr; }

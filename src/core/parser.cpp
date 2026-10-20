@@ -463,7 +463,17 @@ std::unique_ptr<CallableTypeDeclaration>
 Parser::ParseCallableTypeDeclaration() {
     const auto tokenStart = _position;
     const source::SourceLocation start = Current().range.start;
-    const bool isUnsafe = Match(TokenType::Unsafe);
+    bool isUnsafe = false;
+    bool isOnce = false;
+    while (Check(TokenType::Unsafe) || Check(TokenType::Once)) {
+        const Token& modifier = Advance();
+        bool& present = modifier.type == TokenType::Unsafe ? isUnsafe : isOnce;
+        if (present)
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::UnexpectedToken, modifier.range,
+                "duplicate callable modifier '" + modifier.value + "'");
+        present = true;
+    }
     if (Consume(TokenType::Func, "'func'") == nullptr) return nullptr;
     const Token* name = Consume(TokenType::Identifier, "callable type name");
     if (name == nullptr) return nullptr;
@@ -513,7 +523,7 @@ Parser::ParseCallableTypeDeclaration() {
     auto declaration = std::make_unique<CallableTypeDeclaration>(
         source::SourceRange{start, semicolon->range.end}, name->value,
         name->range, std::move(parameters), std::move(results), isUnsafe,
-        std::move(borrowSource), borrowSourceRange);
+        isOnce, std::move(borrowSource), borrowSourceRange);
     declaration->genericParameters = std::move(genericParameters);
     if (parameterStart != parameterEnd)
         declaration->parameterTokenRanges.emplace_back(
@@ -828,9 +838,14 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
     if (Check(TokenType::Error) && Peek(1).type == TokenType::Identifier &&
         Peek(2).type == TokenType::LCurly)
         return ParseErrorDeclaration();
-    if (Check(TokenType::Func) ||
-        (Check(TokenType::Unsafe) && Peek(1).type == TokenType::Func))
-        return ParseCallableTypeDeclaration();
+    const bool callableType =
+        Check(TokenType::Func) ||
+        ((Check(TokenType::Unsafe) || Check(TokenType::Once)) &&
+         (Peek(1).type == TokenType::Func ||
+          ((Peek(1).type == TokenType::Unsafe ||
+            Peek(1).type == TokenType::Once) &&
+           Peek(2).type == TokenType::Func)));
+    if (callableType) return ParseCallableTypeDeclaration();
     if (StartsType() || Check(TokenType::Unsafe) || Check(TokenType::Private) ||
         Check(TokenType::Extern)) {
         return ParseFunctionDeclaration();
@@ -1710,7 +1725,9 @@ std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
 
 bool Parser::IsAnonymousFunctionStart() const {
     std::size_t offset = 0;
-    if (Peek(offset).type == TokenType::Unsafe) ++offset;
+    while (Peek(offset).type == TokenType::Unsafe ||
+           Peek(offset).type == TokenType::Once)
+        ++offset;
     if (Peek(offset).type == TokenType::LBracket) {
         std::size_t depth = 0;
         do {
@@ -1740,7 +1757,18 @@ bool Parser::IsAnonymousFunctionStart() const {
 std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
     const Token& first = Current();
     const source::SourceLocation start = first.range.start;
-    const bool isUnsafe = Match(TokenType::Unsafe);
+    bool isUnsafe = false;
+    bool isOnce = false;
+    while (Check(TokenType::Unsafe) || Check(TokenType::Once)) {
+        const Token& modifier = Advance();
+        bool& present = modifier.type == TokenType::Unsafe ? isUnsafe : isOnce;
+        if (present)
+            _diagnostics.Report(diagnostics::DiagnosticCode::UnexpectedToken,
+                                modifier.range,
+                                "duplicate anonymous function modifier '" +
+                                    modifier.value + "'");
+        present = true;
+    }
     const bool explicitCaptureList = Match(TokenType::LBracket);
     std::vector<std::unique_ptr<AnonymousFunctionExpression::Capture>> captures;
     if (explicitCaptureList) {
@@ -1883,6 +1911,7 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
 
     std::vector<FunctionModifier> modifiers;
     if (isUnsafe) modifiers.push_back(FunctionModifier::Unsafe);
+    if (isOnce) modifiers.push_back(FunctionModifier::Once);
     const std::string name =
         "$anon" + _anonymousFunctionPrefix + std::to_string(_rangeId++);
     auto function = std::make_unique<FunctionDeclaration>(
@@ -2090,8 +2119,9 @@ void Parser::SynchronizeTopLevel() {
     // Parse() guarantees progress if a failed declaration consumed nothing.
     // Keep a following declaration's first token after a partially parsed one.
     while (!IsAtEnd() && !StartsType() && !Check(TokenType::Func) &&
-           !Check(TokenType::Unsafe) && !Check(TokenType::Structure) &&
-           !Check(TokenType::Private) && !Check(TokenType::Test)) {
+           !Check(TokenType::Once) && !Check(TokenType::Unsafe) &&
+           !Check(TokenType::Structure) && !Check(TokenType::Private) &&
+           !Check(TokenType::Test)) {
         Advance();
     }
 }

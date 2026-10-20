@@ -4,6 +4,10 @@
 
 ### Language
 
+- Added single-use `once func` callable types and `once` anonymous functions.
+  Invocation consumes the callable, reusable callables can move into a
+  compatible once slot, and once bodies may consume owned captures without
+  double destruction.
 - `defer` now accepts callable values and structure methods in addition to
   direct functions. Indirect callees are moved into the deferred record, method
   receivers remain safely borrowed through scope exit, and all forms preserve

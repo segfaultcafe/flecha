@@ -171,6 +171,7 @@ struct CallableSignature final {
     std::vector<core::OwnershipContract> resultContracts;
     std::optional<std::size_t> borrowSourceIndex;
     bool isUnsafe = false;
+    bool isOnce = false;
 
     bool operator==(const CallableSignature& other) const;
 };

@@ -148,7 +148,7 @@ bool CallableSignature::operator==(const CallableSignature& other) const {
            parameterContracts == other.parameterContracts &&
            resultContracts == other.resultContracts &&
            borrowSourceIndex == other.borrowSourceIndex &&
-           isUnsafe == other.isUnsafe;
+           isUnsafe == other.isUnsafe && isOnce == other.isOnce;
 }
 
 SemanticType SemanticType::FromSyntax(const core::TypeNode& type) {
@@ -255,8 +255,9 @@ std::string SemanticType::Name() const {
         case SemanticTypeKind::Function:
             if (!_signature) return "function";
             {
-                std::string name =
-                    _signature->isUnsafe ? "unsafe func(" : "func(";
+                std::string name = _signature->isUnsafe ? "unsafe " : "";
+                if (_signature->isOnce) name += "once ";
+                name += "func(";
                 for (std::size_t i = 0; i < _signature->parameters.size();
                      ++i) {
                     if (i != 0) name += ", ";
@@ -359,6 +360,15 @@ SemanticType SemanticType::FromSyntax(core::PrimitiveType type) {
 bool IsAssignable(SemanticType destination, SemanticType source) {
     if (destination.IsError() || source.IsError()) return true;
     if (destination.WithoutConst() == source.WithoutConst()) return true;
+    if (destination.Kind() == SemanticTypeKind::Function &&
+        source.Kind() == SemanticTypeKind::Function &&
+        destination.Signature().isOnce && !source.Signature().isOnce) {
+        CallableSignature reusableDestination = destination.Signature();
+        CallableSignature reusableSource = source.Signature();
+        reusableDestination.isOnce = false;
+        reusableSource.isOnce = false;
+        if (reusableDestination == reusableSource) return true;
+    }
     if (destination.Kind() == SemanticTypeKind::U8 &&
         source.Kind() == SemanticTypeKind::Char)
         return true;
