@@ -9,10 +9,12 @@
 #include <optional>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "core/parser.hpp"
 #include "core/tokenizer.hpp"
 #include "flecha/version.hpp"
 
@@ -36,6 +38,20 @@ bool ValidName(const std::string& name) {
     return std::regex_match(name, std::regex("[a-z][a-z0-9_]*")) &&
            name != "root" && name != "lib" && tokens.size() == 2 &&
            tokens[0].type == TokenType::Identifier;
+}
+std::optional<std::string> DeclaredModule(const fs::path& file) {
+    std::ifstream stream(file);
+    if (!stream) return std::nullopt;
+    std::ostringstream buffer;
+    buffer << stream.rdbuf();
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::Parser parser(
+        flecha::core::Tokenizer(buffer.str(), diagnostics).Tokenize(),
+        diagnostics);
+    parser.ParseHeader();
+    if (diagnostics.HasErrors() || parser.ModuleName().empty())
+        return std::nullopt;
+    return parser.ModuleName();
 }
 std::string Trim(const std::string& text) {
     const auto start = text.find_first_not_of(" \t\r\n");
@@ -276,17 +292,29 @@ int Run(int argc, char** argv) {
         return 0;
     }
     if (command == "test") {
-        std::vector<fs::path> tests;
+        std::map<std::pair<fs::path, std::string>, fs::path> logicalTests;
         const fs::path sourceRoot = root / "src";
         if (fs::is_directory(sourceRoot))
             for (const auto& item :
                  fs::recursive_directory_iterator(sourceRoot)) {
                 if (!item.is_regular_file() ||
-                    item.path().extension() != ".fl" ||
-                    !item.path().stem().string().ends_with("_test"))
+                    item.path().extension() != ".fl")
                     continue;
-                tests.push_back(item.path());
+                const auto module = DeclaredModule(item.path());
+                if (!module || !module->ends_with("_test")) continue;
+                const auto key = std::make_pair(
+                    fs::weakly_canonical(item.path().parent_path()), *module);
+                auto [found, inserted] =
+                    logicalTests.emplace(key, fs::weakly_canonical(item.path()));
+                if (!inserted && item.path() < found->second)
+                    found->second = fs::weakly_canonical(item.path());
             }
+        std::vector<fs::path> tests;
+        tests.reserve(logicalTests.size());
+        for (const auto& [key, entry] : logicalTests) {
+            (void)key;
+            tests.push_back(entry);
+        }
         std::sort(tests.begin(), tests.end());
         std::size_t passed = 0;
         std::size_t failed = 0;
@@ -319,11 +347,11 @@ int Run(int argc, char** argv) {
             const std::size_t total = passed + failed;
             if (failed == 0)
                 std::cout << "\nOK [" << passed << "/" << total
-                          << "] test files passed\n";
+                          << "] test modules passed\n";
             else
                 std::cout << "\nFAIL [" << passed << "/" << total
                           << "] test files passed, but [" << failed << "/"
-                          << total << "] failed\n";
+                          << total << "] test modules failed\n";
         } else if (tests.empty())
             std::cout << "no test files found\n";
         return failed == 0 ? 0 : 1;

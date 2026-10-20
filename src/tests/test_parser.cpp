@@ -1642,6 +1642,8 @@ TEST(ParserTests, ParsesModuleImportsAndExportsOnOneLineOrMultipleLines) {
         EXPECT_EQ(unit->imports[0].path,
                   (std::vector<std::string>{"root", "math"}));
         EXPECT_EQ(unit->imports[1].alias, "collections");
+        EXPECT_FALSE(unit->imports[0].explicitAlias);
+        EXPECT_TRUE(unit->imports[1].explicitAlias);
         ASSERT_EQ(unit->Declarations().size(), 1);
         EXPECT_TRUE(unit->Declarations()[0]->exported);
         const auto& function =
@@ -1671,7 +1673,7 @@ TEST(ParserTests, ParsesQuiverVisibilityOnTopLevelDeclarations) {
     }
 }
 
-TEST(ParserTests, ParsesPrivateModulesAndScopesExportsToTheirQuiver) {
+TEST(ParserTests, PrivateModulesDoNotChangeDeclarationVisibility) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(
         "private module example; export i32 shared() { return 42; } "
@@ -1682,8 +1684,8 @@ TEST(ParserTests, ParsesPrivateModulesAndScopesExportsToTheirQuiver) {
     EXPECT_EQ(unit->moduleName, "example");
     EXPECT_TRUE(unit->privateModule);
     ASSERT_EQ(unit->Declarations().size(), 3);
-    EXPECT_TRUE(unit->Declarations()[0]->quiverVisible);
-    EXPECT_FALSE(unit->Declarations()[0]->exported);
+    EXPECT_FALSE(unit->Declarations()[0]->quiverVisible);
+    EXPECT_TRUE(unit->Declarations()[0]->exported);
     EXPECT_TRUE(unit->Declarations()[1]->quiverVisible);
     EXPECT_FALSE(unit->Declarations()[2]->quiverVisible);
     EXPECT_FALSE(unit->Declarations()[2]->exported);

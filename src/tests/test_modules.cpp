@@ -59,6 +59,93 @@ TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
           "i32 main() { return calc::value() + other::value(); }");
     EXPECT_EQ(Check(), "");
 }
+TEST_F(ModuleTests, ComposesLogicalModulesAcrossArbitraryFilenames) {
+    Write("first_piece.fl", R"(module shared;
+        i32 left() { return right(); }
+        export i32 answer() { return left(); }
+    )");
+    Write("second_piece.fl", R"(module shared;
+        i32 right() { return 42; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::shared;
+        i32 main() { return shared::answer(); }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main; @imports :: root::first_piece;
+        void main() {}
+    )");
+    EXPECT_NE(Check().find("cannot open module 'first_piece'"),
+              std::string::npos);
+}
+TEST_F(ModuleTests, KeepsImportsLocalToTheirSourceUnit) {
+    Write("dependency.fl", "module dependency; export i32 value() { return 42; }");
+    Write("one.fl", R"(module shared; @imports :: root::dependency;
+        export i32 one() { return dependency::value(); }
+    )");
+    Write("two.fl", R"(module shared;
+        export i32 two() { return dependency::value(); }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::shared;
+        i32 main() { return shared::one() + shared::two(); }
+    )");
+    const std::string missingImport = Check();
+    EXPECT_NE(missingImport.find("unknown"), std::string::npos)
+        << missingImport;
+    EXPECT_NE(missingImport.find((root / "two.fl").string()),
+              std::string::npos);
+
+    Write("two.fl", R"(module shared; @imports :: root::dependency;
+        export i32 two() { return dependency::value(); }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+TEST_F(ModuleTests, OverlapsSameNamedImportsAndDiagnosesOnlyCollisions) {
+    Write("first/implementation.fl", R"(module errors;
+        export i32 parse() { return 20; }
+        export i32 collision() { return 1; }
+        export T parse_value<T>(T value) { return value; }
+        export T select<T>(T value) { return value; }
+    )");
+    Write("second/implementation.fl", R"(module errors;
+        export i32 network() { return 22; }
+        export i32 collision() { return 2; }
+        export T network_value<T>(T value) { return value; }
+        export T select<T>(T value) { return value; }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::first::errors :: root::second::errors;
+        i32 main() { return errors::parse() + errors::network()
+            + errors::parse_value<i32>(0) + errors::network_value<i32>(0); }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main;
+        @imports :: root::first::errors :: root::second::errors;
+        i32 main() { return errors::collision(); }
+    )");
+    const std::string ambiguous = Check();
+    EXPECT_NE(ambiguous.find("ambiguous imported name 'errors::collision'"),
+              std::string::npos);
+    EXPECT_NE(ambiguous.find((root / "first/implementation.fl").string()),
+              std::string::npos);
+    EXPECT_NE(ambiguous.find((root / "second/implementation.fl").string()),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        @imports :: root::first::errors :: root::second::errors;
+        i32 main() { return errors::select<i32>(42); }
+    )");
+    EXPECT_NE(Check().find("ambiguous imported generic name 'errors::select'"),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        @imports :: root::first::errors as first
+                 :: root::second::errors as second;
+        i32 main() { return first::collision() + second::collision(); }
+    )");
+    EXPECT_EQ(Check(), "");
+}
 TEST_F(ModuleTests, LibrariesUseTheirOwnRootAndDiamondImportsShareIdentity) {
     Write("library/helper.fl",
           "module helper; export structure Box { i32 n; };");
@@ -143,20 +230,30 @@ TEST_F(ModuleTests, PrivateDeclarationsAndTransitiveImportsDoNotLeak) {
           "hidden::visible(); }");
     EXPECT_FALSE(Check().empty());
 }
-TEST_F(ModuleTests, RejectsCyclesMissingFilesAndModuleNameMismatches) {
+TEST_F(ModuleTests, RejectsCyclesAndMissingDeclaredModules) {
     Write("main.fl", "module main; @imports :: root::other; void main() {}");
     EXPECT_NE(Check().find("cannot open module"), std::string::npos);
     Write("other.fl", "module wrong; export i32 value() { return 42; }");
-    EXPECT_NE(Check().find("must match filename"), std::string::npos);
+    EXPECT_NE(Check().find("cannot open module 'other'"), std::string::npos);
+    Write("main.fl", R"(module main; @imports :: root::wrong;
+        i32 main() { return wrong::value(); }
+    )");
+    EXPECT_EQ(Check(), "");
+    Write("main.fl", "module main; @imports :: root::other; void main() {}");
     Write("other.fl", "module other; @imports :: root::main;");
     EXPECT_NE(Check().find("import cycle"), std::string::npos);
     Write("other.fl", "export i32 value() { return 42; }");
-    EXPECT_NE(Check().find("require a module declaration"), std::string::npos);
+    EXPECT_NE(Check().find("cannot open module 'other'"), std::string::npos);
 }
 TEST_F(ModuleTests, RejectsDuplicateAliasesAndLocalNameCollisions) {
     Write("a.fl", "module a; export i32 value() { return 1; }");
     Write("main.fl",
-          "module main; @imports :: root::a :: root::a; void main() {}");
+          "module main; @imports :: root::a :: root::a; i32 main() { return "
+          "a::value(); }");
+    EXPECT_EQ(Check(), "");
+    Write("main.fl",
+          "module main; @imports :: root::a as same :: root::a as same; "
+          "void main() {}");
     EXPECT_NE(Check().find("duplicate import alias"), std::string::npos);
     Write("main.fl",
           "module main; @imports :: root::a; void a() {} void main() {}");
@@ -220,16 +317,12 @@ TEST_F(ModuleTests, ValidatesAndPrivilegesPairedTestModules) {
           "lib::std::tests::testing; test private_access("
           "&testing::UnitTest t) { box := math::Box::init(); if "
           "math::secret() != box.hidden() { t->fail(); } }");
-    fs::rename(root / "main.fl", root / "saved_main.fl");
-    fs::rename(root / "math_test.fl", root / "main.fl");
-    EXPECT_NE(Check().find("must match filename"), std::string::npos);
-    fs::rename(root / "main.fl", root / "math_test.fl");
-    fs::rename(root / "saved_main.fl", root / "main.fl");
+    fs::rename(root / "math_test.fl", root / "arbitrary_cases.fl");
 
     flecha::diagnostics::DiagnosticBag diagnostics;
     flecha::core::ModuleLoader loader(diagnostics);
     auto unit =
-        loader.Load(root / "math_test.fl", root, {{"std", root / "std"}},
+        loader.Load(root / "arbitrary_cases.fl", root, {{"std", root / "std"}},
                     flecha::core::ModuleLoadMode::Test);
     for (const auto& diagnostic : diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
@@ -276,6 +369,44 @@ TEST_F(ModuleTests, RejectsInvalidTestModulesAndSignatures) {
           "lib::std::tests::testing; test extra(&testing::UnitTest t, i32 "
           "value) {}");
     EXPECT_NE(analyzeTestModule().find("exactly one"), std::string::npos);
+}
+TEST_F(ModuleTests, AggregatesTestsFromMultipleArbitrarilyNamedSources) {
+    Write("std/tests/testing.fl",
+          "module testing; export structure UnitTest { usize failures; }; "
+          "UnitTest UnitTest::init(stringv name, bool verbose) override { "
+          "return build UnitTest { self.failures = 0; }; } void "
+          "UnitTest::fail(&self) { self->failures++; } bool "
+          "UnitTest::failed(&const self) { return self->failures != 0; } "
+          "void UnitTest::printOutput(&const self) {}");
+    Write("implementation.fl", R"(module math;
+        i32 secret() { return 42; }
+    )");
+    Write("arithmetic_cases.fl", R"(module math_test;
+        @imports :: root::math :: lib::std::tests::testing;
+        test arithmetic(&testing::UnitTest t) {
+            if math::secret() != 42 { t->fail(); }
+        }
+    )");
+    Write("boundary_cases.fl", R"(module math_test;
+        @imports :: root::math :: lib::std::tests::testing;
+        test boundary(&testing::UnitTest t) {
+            if math::secret() < 0 { t->fail(); }
+        }
+    )");
+    EXPECT_EQ(CheckAt("boundary_cases.fl",
+                      flecha::core::ModuleLoadMode::Test),
+              "");
+}
+TEST_F(ModuleTests, RejectsDuplicateDeclarationsAndMixedModulePrivacy) {
+    Write("one.fl", "module shared; i32 value() { return 1; }");
+    Write("two.fl", "module shared; i32 value() { return 2; }");
+    Write("main.fl", "module main; @imports :: root::shared; void main() {}");
+    const std::string duplicate = Check();
+    EXPECT_NE(duplicate.find("duplicate"), std::string::npos) << duplicate;
+
+    Write("two.fl", "private module shared; i32 other() { return 2; }");
+    EXPECT_NE(Check().find("mixes ordinary and private module declarations"),
+              std::string::npos);
 }
 TEST_F(ModuleTests, RequiresImportsBeforeDeclarationsAndRejectsWrongDirective) {
     Write("main.fl", "module main; void main() {} @imports :: root::a;");
@@ -379,8 +510,8 @@ TEST_F(ModuleTests, WildcardsDiscoverTypesAndOnlyImmediateModuleFiles) {
     EXPECT_EQ(Check(), "");
     Write("main.fl",
           "module main; @imports :: root::math::* :: root::math::division; "
-          "void main() {}");
-    EXPECT_NE(Check().find("duplicate import alias"), std::string::npos);
+          "i32 main() { return division::value(); }");
+    EXPECT_EQ(Check(), "");
 }
 TEST_F(ModuleTests, LibraryWildcardsAndEmptyDirectories) {
     Write("library/a.fl", "module a; export i32 value() { return 42; }");
@@ -395,10 +526,10 @@ TEST_F(ModuleTests, LibraryWildcardsAndEmptyDirectories) {
           "module main; @imports :: root::missing::*; void main() {}");
     EXPECT_NE(Check().find("cannot open module directory"), std::string::npos);
 }
-TEST_F(ModuleTests, WildcardsRejectInvalidNamesAndEscapingSymlinks) {
-    Write("math/bad-name.fl", "module bad; void main() {}");
+TEST_F(ModuleTests, WildcardsUseDeclaredNamesAndRejectEscapingSymlinks) {
+    Write("math/bad-name.fl", "module bad; export i32 value() { return 42; }");
     Write("main.fl", "module main; @imports :: root::math::*; void main() {}");
-    EXPECT_NE(Check().find("invalid module filename"), std::string::npos);
+    EXPECT_EQ(Check(), "");
     fs::remove(root / "math/bad-name.fl");
     Write("outside.fl", "module outside; export i32 value() { return 42; }");
     fs::create_directories(root / "library");
@@ -601,7 +732,8 @@ TEST_F(ModuleTests, PrivateModulesAreImportableOnlyWithinTheirQuiver) {
             return api::identity<api::Answer>(api::answer()).value;
         }
     )");
-    EXPECT_EQ(CheckAt("pack/main.fl"), "");
+    EXPECT_NE(CheckAt("pack/main.fl").find("'private module' is deprecated"),
+              std::string::npos);
 
     Write("main.fl", R"(module main; @imports :: root::pack::api;
         i32 main() { return api::answer().value; }
@@ -611,15 +743,15 @@ TEST_F(ModuleTests, PrivateModulesAreImportableOnlyWithinTheirQuiver) {
     EXPECT_NE(errors.find("modules in quiver 'root::pack'"), std::string::npos);
 }
 
-TEST_F(ModuleTests, PrivateModuleExportsUseQuiverApiRules) {
+TEST_F(ModuleTests, PrivateModuleExportsRemainGloballyClassified) {
     Write("main.fl", R"(private module main;
         structure Hidden { i32 value; };
         export Hidden leak(Hidden value) { return value; }
     )");
     const std::string errors = Check();
-    EXPECT_NE(errors.find("quiver APIs cannot expose module-private types"),
+    EXPECT_NE(errors.find("exported APIs cannot expose non-exported types"),
               std::string::npos);
-    EXPECT_EQ(errors.find("exported APIs"), std::string::npos);
+    EXPECT_NE(errors.find("'private module' is deprecated"), std::string::npos);
 }
 
 TEST_F(ModuleTests, WildcardsAndCachedImportsRespectPrivateModules) {

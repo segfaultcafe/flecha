@@ -295,7 +295,8 @@ class Expander {
     void Run() {
         if (unit.genericsExpanded) return;
         unit.genericsExpanded = true;
-        for (const auto& module : unit.modules) modules[module.id] = &module;
+        for (const auto& module : unit.modules)
+            modules[module.sourceId] = &module;
         auto originals = unit.TakeDeclarations();
         for (const auto& d : originals) {
             if (d->Kind() == AstNodeKind::FunctionDeclaration &&
@@ -310,8 +311,8 @@ class Expander {
                 diagnostics.Report(DiagnosticCode::DuplicateDeclaration,
                                    d->Range(),
                                    "duplicate declaration '" + Name(*d) + "'");
-            if (modules.contains(d->moduleId))
-                for (const auto& import : modules[d->moduleId]->imports)
+            if (modules.contains(d->sourceId))
+                for (const auto& import : modules[d->sourceId]->imports)
                     if (Template(*d) && import.alias == Name(*d))
                         Error(d->Range(),
                               "import alias conflicts with declaration '" +
@@ -437,35 +438,48 @@ class Expander {
             return alias->second;
         std::string target = module, shortName = name;
         const auto separator = name.find("::");
-        bool imported = false;
+        const Module* source =
+            current && modules.contains(current->sourceId)
+                ? modules.at(current->sourceId)
+                : nullptr;
         if (separator != std::string::npos) {
             const auto prefix = name.substr(0, separator);
             shortName = name.substr(separator + 2);
-            if (!modules.contains(module)) return nullptr;
-            bool found = false;
-            for (const auto& import : modules[module]->imports)
+            if (!source) return nullptr;
+            std::vector<const Declaration*> accessible;
+            const Declaration* inaccessible = nullptr;
+            for (const auto& import : source->imports)
                 if (import.alias == prefix) {
                     target = import.resolvedModule;
-                    found = true;
-                    break;
+                    const auto found = declarations.find({target, shortName});
+                    if (found == declarations.end()) continue;
+                    if (!CanImport(*found->second, *source, target)) {
+                        inaccessible = found->second;
+                        continue;
+                    }
+                    if (std::find(accessible.begin(), accessible.end(),
+                                  found->second) == accessible.end())
+                        accessible.push_back(found->second);
                 }
-            if (!found) return nullptr;
-            imported = true;
-        }
-        const auto result = declarations.find({target, shortName});
-        if (result == declarations.end()) return nullptr;
-        if (imported &&
-            !CanImport(*result->second, *modules.at(module), target)) {
-            if (diagnose)
-                Error(range, result->second->quiverVisible
+            if (accessible.size() > 1) {
+                if (diagnose)
+                    Error(range, "ambiguous imported generic name '" + name +
+                                     "'; use explicit import aliases");
+                return nullptr;
+            }
+            if (accessible.size() == 1) return accessible.front();
+            if (inaccessible && diagnose)
+                Error(range, inaccessible->quiverVisible
                                  ? "'" + name +
                                        "' is quiver-visible and can only be "
                                        "accessed from modules in '" +
-                                       QuiverName(*result->second) + "'"
+                                       QuiverName(*inaccessible) + "'"
                                  : "generic argument or declaration '" + name +
                                        "' is module-private");
             return nullptr;
         }
+        const auto result = declarations.find({target, shortName});
+        if (result == declarations.end()) return nullptr;
         return result->second;
     }
     std::string Alias(const Declaration& declaration) {
@@ -712,9 +726,9 @@ class Expander {
         tokens.emplace_back(TokenType::EOF_TOKEN, "", origin.Range());
         Parser parser(std::move(tokens), diagnostics,
                       "$generic" + std::to_string(generatedDeclarations) + "$");
-        if (modules.contains(origin.moduleId)) {
-            parser.SetImports(modules[origin.moduleId]->imports);
-            parser.SetPrivateModule(modules[origin.moduleId]->privateModule);
+        if (modules.contains(origin.sourceId)) {
+            parser.SetImports(modules[origin.sourceId]->imports);
+            parser.SetPrivateModule(modules[origin.sourceId]->privateModule);
         }
         auto parsed = parser.Parse()->TakeDeclarations();
         if (parsed.size() != 1) {
@@ -723,6 +737,7 @@ class Expander {
         }
         auto concrete = std::move(parsed.front());
         concrete->moduleId = origin.moduleId;
+        concrete->sourceId = origin.sourceId;
         concrete->quiverId = origin.quiverId;
         // A concrete nominal type can appear in an exported ordinary signature
         // only when both its template and all nominal arguments are exported.

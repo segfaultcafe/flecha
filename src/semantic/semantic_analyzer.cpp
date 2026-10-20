@@ -429,15 +429,18 @@ Scope& SemanticAnalyzer::AddScope(const Scope* parent) {
     return *_model._scopes.back();
 }
 
-void SemanticAnalyzer::SetModule(const std::string& id) {
-    _currentModule = id;
-    const auto found = _moduleScopes.find(id);
-    if (found != _moduleScopes.end()) _currentScope = found->second;
+void SemanticAnalyzer::SetSource(const std::string& id) {
+    _currentSource = id;
+    if (const auto module = _sourceModules.find(id);
+        module != _sourceModules.end())
+        _currentModule = module->second;
+    const auto found = _sourceScopes.find(id);
+    if (found != _sourceScopes.end()) _currentScope = found->second;
 }
 
 bool SemanticAnalyzer::ReportInaccessibleImport(const std::string& name,
                                                 source::SourceRange range) {
-    const auto module = _inaccessibleImports.find(_currentModule);
+    const auto module = _inaccessibleImports.find(_currentSource);
     if (module == _inaccessibleImports.end()) return false;
     const auto found = module->second.find(name);
     if (found == module->second.end()) return false;
@@ -449,6 +452,21 @@ bool SemanticAnalyzer::ReportInaccessibleImport(const std::string& name,
                (quiver == _quiverNames.end() ? found->second->quiverId
                                              : quiver->second) +
                "'");
+    return true;
+}
+
+bool SemanticAnalyzer::ReportAmbiguousImport(const std::string& name,
+                                             source::SourceRange range) {
+    const auto source = _ambiguousImports.find(_currentSource);
+    if (source == _ambiguousImports.end()) return false;
+    const auto found = source->second.find(name);
+    if (found == source->second.end()) return false;
+    std::string message = "ambiguous imported name '" + name + "'; candidates:";
+    for (const auto* declaration : found->second)
+        message += " " + declaration->Range().start.file;
+    message += "; use explicit import aliases";
+    Report(diagnostics::DiagnosticCode::DuplicateDeclaration, range,
+           std::move(message));
     return true;
 }
 
@@ -465,8 +483,11 @@ std::string SemanticAnalyzer::TopName(const core::Declaration& declaration,
     return declaration.moduleId + name;
 }
 void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
+    _inaccessibleImports.clear();
+    _ambiguousImports.clear();
     for (const auto& module : unit.modules) {
-        auto* scope = _moduleScopes.at(module.id);
+        auto* scope = _sourceScopes.at(module.sourceId);
+        std::map<std::string, std::vector<const core::Declaration*>> candidates;
         for (const auto& import : module.imports) {
             const bool privileged =
                 module.test && module.testPair == import.resolvedModule;
@@ -507,15 +528,26 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                                .Name();
                 if (!accessible) {
                     if (declaration->quiverVisible && !name.empty())
-                        _inaccessibleImports[module.id].insert_or_assign(
+                        _inaccessibleImports[module.sourceId].insert_or_assign(
                             import.alias + "::" + name, declaration.get());
                     continue;
                 }
-                const Symbol* symbol = _model.DeclaredSymbol(*declaration);
-                if (!symbol) continue;
-                if (!name.empty())
-                    (void)scope->DeclareAs(import.alias + "::" + name, *symbol);
+                if (!name.empty()) {
+                    auto& found = candidates[import.alias + "::" + name];
+                    if (std::find(found.begin(), found.end(), declaration.get()) ==
+                        found.end())
+                        found.push_back(declaration.get());
+                }
             }
+        }
+        for (const auto& [name, found] : candidates) {
+            if (found.size() > 1) {
+                _ambiguousImports[module.sourceId].insert_or_assign(name,
+                                                                    found);
+                continue;
+            }
+            const Symbol* symbol = _model.DeclaredSymbol(*found.front());
+            if (symbol) (void)scope->DeclareAs(name, *symbol);
         }
     }
 }
@@ -672,8 +704,22 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
             static_cast<const core::FunctionDeclaration&>(declaration);
         if (function.Owner().empty()) localName = function.Name();
     }
-    const bool declared = _currentScope->DeclareAs(localName, *result);
-    if (localName != result->Name()) (void)_currentScope->Declare(*result);
+    Scope* declarationScope = _currentScope;
+    const bool topLevel =
+        declaration.Kind() == core::AstNodeKind::FunctionDeclaration ||
+        declaration.Kind() == core::AstNodeKind::StructureDeclaration ||
+        declaration.Kind() == core::AstNodeKind::EnumDeclaration ||
+        declaration.Kind() == core::AstNodeKind::ErrorDeclaration ||
+        declaration.Kind() == core::AstNodeKind::CallableTypeDeclaration;
+    if (topLevel) {
+        const auto& syntax = static_cast<const core::Declaration&>(declaration);
+        if (const auto module = _moduleScopes.find(syntax.moduleId);
+            module != _moduleScopes.end())
+            declarationScope = module->second;
+    }
+    const bool declared = declarationScope->DeclareAs(localName, *result);
+    if (localName != result->Name())
+        (void)declarationScope->Declare(*result);
     if (!declared) {
         Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
                result->DeclarationRange(),
@@ -685,6 +731,8 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
 
 SemanticType SemanticAnalyzer::ResolveTypeSyntax(const core::TypeNode& type) {
     if (type.TypeForm() == core::TypeKind::Named) {
+        if (ReportAmbiguousImport(type.Name(), type.Range()))
+            return SemanticType::Error();
         const Symbol* symbol = _currentScope->Lookup(type.Name());
         if (symbol == nullptr || (symbol->Kind() != SymbolKind::ErrorType &&
                                   symbol->Kind() != SymbolKind::EnumType &&
@@ -728,7 +776,7 @@ void SemanticAnalyzer::DeclareCallableTypes(const core::CompilationUnit& unit) {
             continue;
         const auto& syntax =
             static_cast<const core::CallableTypeDeclaration&>(*declaration);
-        SetModule(syntax.moduleId);
+        SetSource(syntax.sourceId);
         auto signature = std::make_shared<CallableSignature>();
         _callableSignatures.emplace(&syntax, signature);
         AddSymbol(std::make_unique<Symbol>(
@@ -744,7 +792,7 @@ void SemanticAnalyzer::ResolveCallableTypes(const core::CompilationUnit& unit) {
             continue;
         const auto& syntax =
             static_cast<const core::CallableTypeDeclaration&>(*declaration);
-        SetModule(syntax.moduleId);
+        SetSource(syntax.sourceId);
         CallableSignature signature;
         signature.isUnsafe = syntax.IsUnsafe();
         signature.isOnce = syntax.IsOnce();
@@ -1092,7 +1140,7 @@ void SemanticAnalyzer::RegisterErrorTypes(const core::CompilationUnit& unit) {
             continue;
         const auto& error =
             static_cast<const core::ErrorDeclaration&>(*declaration);
-        SetModule(error.moduleId);
+        SetSource(error.sourceId);
         auto family = std::make_shared<ErrorFamily>();
         family->name = TopName(error, error.Name());
         std::unordered_set<std::string> variants;
@@ -1144,7 +1192,7 @@ void SemanticAnalyzer::RegisterEnums(const core::CompilationUnit& unit) {
         if (declaration->Kind() != core::AstNodeKind::EnumDeclaration) continue;
         const auto& syntax =
             static_cast<const core::EnumDeclaration&>(*declaration);
-        SetModule(syntax.moduleId);
+        SetSource(syntax.sourceId);
 
         auto enumeration = std::make_unique<EnumType>();
         enumeration->name = TopName(syntax, syntax.Name());
@@ -1290,7 +1338,7 @@ void SemanticAnalyzer::RegisterFunctions(const core::CompilationUnit& unit) {
 
 void SemanticAnalyzer::RegisterFunction(
     const core::FunctionDeclaration& function, bool generated) {
-    SetModule(function.moduleId);
+    SetSource(function.sourceId);
     StructureType* owner = nullptr;
     EnumType* enumOwner = nullptr;
     if (!function.Owner().empty()) {
@@ -1347,7 +1395,7 @@ void SemanticAnalyzer::RegisterFunction(
         }
         if (!valid)
             Report(diagnostics::DiagnosticCode::InvalidMember, function.Range(),
-                   "a test must be declared in a '_test.fl' module and take "
+                   "a test must be declared in a '<name>_test' module and take "
                    "exactly one mutable '&testing::UnitTest' parameter");
     }
     const bool requiresBorrowSource = RequiresBorrowSource(returnType);
@@ -1580,17 +1628,28 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     _currentScope = &AddScope(nullptr);
     RegisterBuiltIns();
     _moduleScopes.clear();
+    _sourceScopes.clear();
+    _sourceModules.clear();
     _inaccessibleImports.clear();
+    _ambiguousImports.clear();
     _quiverNames.clear();
     _entryModules.clear();
     _testModules.clear();
     _testingModule = unit.testingModule;
     _currentModule.clear();
+    _currentSource.clear();
     Scope* builtins = _currentScope;
     _moduleScopes[""] = builtins;
     for (const auto& module : unit.modules) {
         _quiverNames.insert_or_assign(module.quiverId, module.quiverName);
-        if (!module.id.empty()) _moduleScopes[module.id] = &AddScope(builtins);
+        if (!module.id.empty() && !_moduleScopes.contains(module.id))
+            _moduleScopes[module.id] = &AddScope(builtins);
+    }
+    for (const auto& module : unit.modules) {
+        _sourceModules.insert_or_assign(module.sourceId, module.id);
+        if (!_sourceScopes.contains(module.sourceId))
+            _sourceScopes[module.sourceId] =
+                &AddScope(_moduleScopes.at(module.id));
         if (module.entry) _entryModules.insert(module.id);
         if (module.test) _testModules.insert(module.id);
         for (const auto& import : module.imports)
@@ -1668,7 +1727,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
         _inZero = false;
         for (const auto& field : structure->fields)
             if (field.syntax->Initializer()) {
-                SetModule(structure->syntax->moduleId);
+                SetSource(structure->syntax->sourceId);
                 MarkDirectConstruction(_directConstructions,
                                        *field.syntax->Initializer(), true);
                 const SemanticType actual =
@@ -1716,7 +1775,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
 
 void SemanticAnalyzer::AnalyzeFunction(
     const core::FunctionDeclaration& function) {
-    SetModule(function.moduleId);
+    SetSource(function.sourceId);
     const std::size_t diagnosticsBefore = _diagnostics.Diagnostics().size();
     _buildSelf = nullptr;
     _buildDepth = 0;
@@ -2541,6 +2600,7 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
         return existing->Type();
 
     function.moduleId = _currentModule;
+    function.sourceId = _currentSource;
     if (expression.HasInferredSignature()) {
         if (expected.Kind() != SemanticTypeKind::Function) {
             Report(diagnostics::DiagnosticCode::CannotInferType,
@@ -3304,6 +3364,8 @@ SemanticType SemanticAnalyzer::AnalyzeCast(
 
 SemanticType SemanticAnalyzer::AnalyzeName(
     const core::NameExpression& expression) {
+    if (ReportAmbiguousImport(expression.Name(), expression.Range()))
+        return SemanticType::Error();
     const Symbol* symbol = _currentScope->Lookup(expression.Name());
     if (symbol == nullptr) {
         if (!ReportInaccessibleImport(expression.Name(), expression.Range()))
@@ -4621,7 +4683,7 @@ void SemanticAnalyzer::RegisterStructures(const core::CompilationUnit& unit) {
             continue;
         const auto& syntax =
             static_cast<const core::StructureDeclaration&>(*declaration);
-        SetModule(syntax.moduleId);
+        SetSource(syntax.sourceId);
         auto structure = std::make_unique<StructureType>();
         structure->name = TopName(syntax, syntax.Name());
         structure->displayName = syntax.specializationName;
@@ -4636,7 +4698,7 @@ void SemanticAnalyzer::RegisterStructures(const core::CompilationUnit& unit) {
 
 void SemanticAnalyzer::ResolveStructureFields() {
     for (const auto& structure : _model._structures) {
-        SetModule(structure->syntax->moduleId);
+        SetSource(structure->syntax->sourceId);
         std::unordered_set<std::string> names;
         for (const auto& field : structure->syntax->Fields()) {
             if (!names.insert(field->Name()).second)
@@ -4699,7 +4761,7 @@ void SemanticAnalyzer::ResolveStructureFields() {
     // Layouts must be complete before applying the ordinary compound-type
     // checks, including unsupported types hidden behind a pointer field.
     for (const auto& structure : _model._structures) {
-        SetModule(structure->syntax->moduleId);
+        SetSource(structure->syntax->sourceId);
         for (const auto& field : structure->fields)
             (void)ResolveType(field.syntax->Type());
     }
@@ -4745,6 +4807,7 @@ void SemanticAnalyzer::GenerateInitializers() {
                                                    std::move(statements)),
             range, structure->name);
         init->moduleId = structure->syntax->moduleId;
+        init->sourceId = structure->syntax->sourceId;
         RegisterFunction(*init, true);
         _model._generatedFunctions.push_back(std::move(init));
     }
@@ -4803,6 +4866,7 @@ void SemanticAnalyzer::GenerateInitializers() {
                                                    std::move(statements)),
             range, structure->name);
         zero->moduleId = structure->syntax->moduleId;
+        zero->sourceId = structure->syntax->sourceId;
         RegisterFunction(*zero, true);
         _model._generatedFunctions.push_back(std::move(zero));
     }
