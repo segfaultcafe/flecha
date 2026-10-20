@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "lowering/bound_ir.hpp"
@@ -33,7 +34,9 @@ class LlvmCodeGenerator final {
     struct DeferredCall final {
         const lowering::BoundDeferStatement* statement;
         llvm::StructType* recordType;
-        std::vector<semantic::SemanticType> argumentTypes;
+        std::vector<semantic::SemanticType> captureTypes;
+        std::vector<bool> captureOwnershipTransfers;
+        bool indirect;
     };
     struct OwnedStorage final {
         llvm::Value* storage;
@@ -65,12 +68,20 @@ class LlvmCodeGenerator final {
     void EmitArrayElements(llvm::Value* storage, semantic::SemanticType type,
                            bool reverse,
                            const std::function<void(llvm::Value*)>& action);
-    llvm::AllocaInst* LifetimeFlag(llvm::Value* storage);
+    llvm::Value* LifetimeFlag(llvm::Value* storage);
     [[nodiscard]] llvm::Type* MapType(semantic::SemanticType type);
     [[nodiscard]] llvm::StructType* StringViewType();
     [[nodiscard]] llvm::StructType* StringType();
     [[nodiscard]] llvm::FunctionType* MapFunctionType(
-        const semantic::FunctionSymbol& function);
+        const lowering::BoundFunction& function);
+    [[nodiscard]] llvm::FunctionType* MapCallableInvokeType(
+        const semantic::CallableSignature& signature);
+    llvm::Function* CallableAdapter(const semantic::FunctionSymbol& symbol);
+    [[nodiscard]] llvm::StructType* ClosureEnvironmentType(
+        const lowering::BoundFunction& function);
+    llvm::Function* ClosureDestroyer(const lowering::BoundFunction& function);
+    llvm::Value* EmitClosure(
+        const lowering::BoundFunctionExpression& expression);
     [[nodiscard]] std::optional<llvm::Attribute::AttrKind>
     ExternIntegerExtension(semantic::SemanticType type) const;
     void ApplyExternAttributes(const semantic::FunctionSymbol& symbol,
@@ -97,14 +108,18 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::Value* EmitArray(
         const lowering::BoundArrayExpression& expression);
     [[nodiscard]] llvm::Value* EmitMatch(
-        const lowering::BoundMatchExpression& expression);
+        const lowering::BoundMatchExpression& expression,
+        llvm::Value* destination = nullptr);
     [[nodiscard]] llvm::Value* EmitArrayStorage(
         const lowering::BoundExpression& expression);
     [[nodiscard]] llvm::Value* EmitAddress(
         const lowering::BoundPlaceExpression& place);
     llvm::Value* EmitAllocation(
         const lowering::BoundAllocationExpression& expression);
-    llvm::Value* EmitFree(llvm::Value* pointer, semantic::SemanticType target);
+    llvm::Value* EmitFree(llvm::Value* owner, semantic::SemanticType ownerType);
+    llvm::Value* EmitIndirectCall(
+        const lowering::BoundIndirectCallExpression& expression,
+        llvm::Value* destination = nullptr);
     llvm::Value* EmitExpression(const lowering::BoundExpression& expression);
     [[nodiscard]] llvm::Value* EmitLiteral(
         const lowering::BoundLiteralExpression& expression);
@@ -128,6 +143,10 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::Value* EmitRuntimeOutput(llvm::Value* value,
                                                  semantic::SemanticType type,
                                                  bool newline);
+    [[nodiscard]] llvm::Value* EmitRuntimeNewline();
+    [[nodiscard]] llvm::Value* EmitBuiltInOutput(
+        const lowering::BoundCallExpression& expression,
+        const std::vector<llvm::Value*>& arguments);
     [[nodiscard]] llvm::Value* EmitStringViewOperation(
         const lowering::BoundStringViewOperationExpression& expression);
     [[nodiscard]] llvm::Value* EmitOwnedString(
@@ -168,6 +187,15 @@ class LlvmCodeGenerator final {
     std::optional<llvm::DataLayout> _dataLayout;
     std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
         _functions;
+    std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
+        _callableAdapters;
+    std::unordered_map<const semantic::FunctionSymbol*,
+                       const lowering::BoundFunction*>
+        _boundFunctions;
+    std::unordered_map<const semantic::FunctionSymbol*, llvm::StructType*>
+        _closureEnvironmentTypes;
+    std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
+        _closureDestroyers;
     std::unordered_map<const semantic::VariableSymbol*, llvm::Value*>
         _variables;
     std::unordered_map<std::string, llvm::BasicBlock*> _positions;
@@ -183,7 +211,12 @@ class LlvmCodeGenerator final {
         _blockScopes;
     std::unordered_map<const semantic::StructureType*, llvm::StructType*>
         _structureTypes;
-    std::unordered_map<llvm::Value*, llvm::AllocaInst*> _lifetimeFlags;
+    std::unordered_map<llvm::Value*, llvm::Value*> _lifetimeFlags;
+    std::unordered_set<llvm::Value*> _ownedCaptureStorage;
+    // Fresh owned results already have independent storage. The first owning
+    // destination can transfer them instead of cloning their contents.
+    std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedStrings;
+    std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedValues;
     llvm::Value* _returnStorage = nullptr;
     llvm::Function* _currentFunction = nullptr;
     semantic::SemanticType _currentReturnType{semantic::SemanticTypeKind::Void};

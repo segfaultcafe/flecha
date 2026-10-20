@@ -1,0 +1,5 @@
+module math;
+
+i32 secret() {
+    return 42;
+}

@@ -90,10 +90,11 @@ may have moved on any incoming path. Re-executing a declaration cannot reset
 storage that is still borrowed. Unreachable code contributes no borrow effects.
 
 The first version is conservative: an assigned reference's owners and parent
-reborrows must have enclosing or equal lexical scopes. References cannot be
-returned, even when a caller could in principle prove them valid. It does not
-use condition/value correlation to prove paths impossible. Temporary borrows
-may remain live through their entire expression. Rebinding or moving the handle
+reborrows must have enclosing or equal lexical scopes. A reference may be
+returned only through an explicit `<- parameter>` contract; see
+[reference and slice returns](ref_and_slice_returns.md). It does not use
+condition/value correlation to prove paths impossible. Temporary borrows may
+remain live through their entire expression. Rebinding or moving the handle
 used to address a pending indirect assignment is rejected.
 
 ## Disjoint structure fields
@@ -126,6 +127,40 @@ Fixed arrays and their elements can now be borrowed: `&[N]T ref = &array` or
 array; disjoint-index analysis is deferred. Const array storage produces
 read-only references. See [fixed arrays](fixed_arrays.md) for indexing,
 initialization, and lifetime restrictions.
+
+## Closure captures
+
+Anonymous functions may explicitly retain checked borrows:
+
+```flecha
+func Counter() => (i32);
+
+i32 value = 0;
+Counter next = [&value]() => {
+    value = value + 1;
+    return value;
+};
+```
+
+`&value` is exclusive and permits mutation. `&const value` is shared and makes
+the captured binding read-only. The loan follows the callable through moves and
+containers and ends after its last use. Storing the closure outside the
+captured value's lifetime is rejected.
+
+A function returning a borrowing closure declares the origin with the same
+postfix contract used by reference and slice results:
+
+```flecha
+func Reader() => (i32);
+
+Reader bind(&const i32 source) <- source {
+    return [&const source]() => { return *source; };
+}
+```
+
+The caller then retains a shared loan on the argument for as long as the
+returned callable remains live. Returning a closure that captures a local, or
+declaring the wrong source, is rejected.
 
 ## References to pointers
 

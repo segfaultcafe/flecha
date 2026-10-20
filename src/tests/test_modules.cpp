@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -14,9 +13,11 @@ class ModuleTests : public ::testing::Test {
    protected:
     fs::path root;
     void SetUp() override {
-        static std::atomic<unsigned> sequence{0};
+        const auto* test =
+            ::testing::UnitTest::GetInstance()->current_test_info();
         root = fs::temp_directory_path() /
-               ("flecha_modules_" + std::to_string(sequence++));
+               (std::string("flecha_modules_") + test->test_suite_name() + "_" +
+                test->name());
         fs::remove_all(root);
         fs::create_directories(root);
     }
@@ -25,11 +26,20 @@ class ModuleTests : public ::testing::Test {
         fs::create_directories((root / name).parent_path());
         std::ofstream(root / name) << text;
     }
-    std::string Check() {
+    std::string Check(flecha::core::ModuleLoadMode mode =
+                          flecha::core::ModuleLoadMode::Runtime) {
+        return CheckAt("main.fl", mode);
+    }
+    std::string CheckAt(const std::string& entry,
+                        flecha::core::ModuleLoadMode mode =
+                            flecha::core::ModuleLoadMode::Runtime) {
         flecha::diagnostics::DiagnosticBag diagnostics;
         flecha::core::ModuleLoader loader(diagnostics);
-        auto unit =
-            loader.Load(root / "main.fl", root, {{"test", root / "library"}});
+        auto unit = loader.Load(root / entry, root,
+                                {{"fixture", root / "library"},
+                                 {"mirror", root / "library"},
+                                 {"std", root / "std"}},
+                                mode);
         if (!diagnostics.HasErrors()) {
             flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
             auto model = analyzer.Analyze(*unit);
@@ -58,9 +68,10 @@ TEST_F(ModuleTests, LibrariesUseTheirOwnRootAndDiamondImportsShareIdentity) {
     Write("library/two.fl",
           "module two; @imports :: root::helper; export i32 read(&const "
           "helper::Box b) { return b->n; }");
-    Write("main.fl",
-          "module main; @imports :: lib::test::one :: lib::test::two; i32 "
-          "main() { b := one::make(); return two::read(&b); }");
+    Write(
+        "main.fl",
+        "module main; @imports :: lib::fixture::one :: lib::fixture::two; i32 "
+        "main() { b := one::make(); return two::read(&b); }");
     EXPECT_EQ(Check(), "");
 }
 TEST_F(ModuleTests, ExportedStructuresBundleMethodsButRespectPrivacy) {
@@ -92,6 +103,25 @@ TEST_F(ModuleTests, GenericDiagnosticsUseSourceTypeNames) {
     EXPECT_NE(errors.find("expected 'usize', found 'Array<i32>'"),
               std::string::npos);
     EXPECT_EQ(errors.find("$specialization"), std::string::npos);
+}
+TEST_F(ModuleTests, ExportedGenericCallableSignaturesCrossModuleBoundaries) {
+    Write("callbacks.fl",
+          "module callbacks; export func Mapper<T>(T) => (T); export T "
+          "apply<T>(Mapper<T> callback, T value) { return callback(value); }");
+    Write("main.fl",
+          "module main; @imports :: root::callbacks; i32 main() { "
+          "callbacks::Mapper<i32> increment = (value) => { return value + 1; "
+          "}; return callbacks::apply<i32>(increment, 41); }");
+    EXPECT_EQ(Check(), "");
+}
+TEST_F(ModuleTests, GenericCallableExportsRespectTypeVisibility) {
+    Write("callbacks.fl",
+          "module callbacks; structure Hidden { i32 value; }; export func "
+          "Transform<T>(Hidden, T) => (T);");
+    Write("main.fl",
+          "module main; @imports :: root::callbacks; void main() {}");
+    EXPECT_NE(Check().find("cannot expose non-exported types"),
+              std::string::npos);
 }
 TEST_F(ModuleTests, PrivateDeclarationsAndTransitiveImportsDoNotLeak) {
     Write("hidden.fl",
@@ -145,6 +175,108 @@ TEST_F(ModuleTests, ImportedOwnershipContractsRejectReuseAndReportSourceFiles) {
           "module memory; export unsafe void consume(own *i32 p) {}");
     EXPECT_NE(Check().find((root / "memory.fl").string()), std::string::npos);
 }
+TEST_F(ModuleTests, BorrowedResultContractsCrossModuleBoundaries) {
+    Write("access.fl",
+          "module access; export &const i32 view(&const i32 value) <- value "
+          "{ return value; } export stringv text(stringv value) <- value { "
+          "return value; }");
+    Write("main.fl",
+          "module main; @imports :: root::access; i32 main() { i32 value = "
+          "42; result := access::view(&value); return *result; }");
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl",
+          "module main; @imports :: root::access; i32 main() { i32 value = "
+          "42; result := access::view(&value); value = 0; return *result; }");
+    EXPECT_NE(Check().find("conflicts with live reference"), std::string::npos);
+
+    Write("main.fl",
+          "module main; @imports :: root::access; void main() { string value "
+          "= \"flecha\"; result := access::text(value.view()); value = "
+          "\"arrow\"; stdout(result); }");
+    EXPECT_NE(Check().find("conflicts with live reference"), std::string::npos);
+}
+TEST_F(ModuleTests, ValidatesAndPrivilegesPairedTestModules) {
+    Write("std/tests/testing.fl",
+          "module testing; export structure UnitTest { usize failures; }; "
+          "UnitTest UnitTest::init(stringv name, bool verbose) override { "
+          "return build UnitTest { self.failures = 0; }; } void "
+          "UnitTest::fail(&self) { self->failures++; } usize "
+          "UnitTest::failureCount(&const self) { return self->failures; } "
+          "bool UnitTest::failed(&const self) { return self->failures != 0; } "
+          "void UnitTest::printOutput(&const self) {}");
+    Write("math.fl",
+          "module math; i32 secret() { return 42; } export structure Box { "
+          "private i32 value; }; Box Box::init() override { return build Box "
+          "{ self.value = 42; }; } private i32 Box::hidden(&const self) { "
+          "return self->value; }");
+    Write("main.fl",
+          "module main; @imports :: root::math :: "
+          "lib::std::tests::testing; void main() {}");
+    EXPECT_EQ(Check(), "");
+
+    Write("math_test.fl",
+          "module math_test; @imports :: root::math :: "
+          "lib::std::tests::testing; test private_access("
+          "&testing::UnitTest t) { box := math::Box::init(); if "
+          "math::secret() != box.hidden() { t->fail(); } }");
+    fs::rename(root / "main.fl", root / "saved_main.fl");
+    fs::rename(root / "math_test.fl", root / "main.fl");
+    EXPECT_NE(Check().find("must match filename"), std::string::npos);
+    fs::rename(root / "main.fl", root / "math_test.fl");
+    fs::rename(root / "saved_main.fl", root / "main.fl");
+
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit =
+        loader.Load(root / "math_test.fl", root, {{"std", root / "std"}},
+                    flecha::core::ModuleLoadMode::Test);
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+    auto model = analyzer.Analyze(*unit);
+    ASSERT_TRUE(diagnostics.HasErrors());
+    std::string messages;
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        messages += diagnostic.message + "\n";
+    EXPECT_NE(messages.find("method '$m1$Box::hidden' is private"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, RejectsInvalidTestModulesAndSignatures) {
+    Write("std/tests/testing.fl",
+          "module testing; export structure UnitTest { usize failures; };");
+    Write("math.fl", "module math; export i32 value() { return 42; }");
+    Write("main.fl", "module main; test invalid(i32 value) {}");
+    EXPECT_NE(Check().find("test must be declared"), std::string::npos);
+
+    const auto analyzeTestModule = [&]() {
+        flecha::diagnostics::DiagnosticBag diagnostics;
+        flecha::core::ModuleLoader loader(diagnostics);
+        auto unit =
+            loader.Load(root / "math_test.fl", root, {{"std", root / "std"}},
+                        flecha::core::ModuleLoadMode::Test);
+        flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+        if (!diagnostics.HasErrors()) (void)analyzer.Analyze(*unit);
+        std::string messages;
+        for (const auto& diagnostic : diagnostics.Diagnostics())
+            messages += diagnostic.message + "\n";
+        return messages;
+    };
+
+    Write("math_test.fl",
+          "module math_test; @imports :: root::math :: "
+          "lib::std::tests::testing; test invalid(testing::UnitTest t) {}");
+    EXPECT_NE(analyzeTestModule().find("mutable '&testing::UnitTest'"),
+              std::string::npos);
+
+    Write("math_test.fl",
+          "module math_test; @imports :: root::math :: "
+          "lib::std::tests::testing; test extra(&testing::UnitTest t, i32 "
+          "value) {}");
+    EXPECT_NE(analyzeTestModule().find("exactly one"), std::string::npos);
+}
 TEST_F(ModuleTests, RequiresImportsBeforeDeclarationsAndRejectsWrongDirective) {
     Write("main.fl", "module main; void main() {} @imports :: root::a;");
     EXPECT_FALSE(Check().empty());
@@ -158,15 +290,18 @@ TEST_F(ModuleTests, RejectsPrivateTypesInExportedApis) {
     Write("main.fl",
           "module main; structure Secret { i32 n; }; export Secret leak() { "
           "return Secret::init(); }");
-    EXPECT_NE(Check().find("cannot expose private types"), std::string::npos);
+    EXPECT_NE(Check().find("cannot expose non-exported types"),
+              std::string::npos);
     Write("main.fl",
           "module main; error Secret { Failed } export Secret leak() { return "
           "Secret.Failed; }");
-    EXPECT_NE(Check().find("cannot expose private types"), std::string::npos);
+    EXPECT_NE(Check().find("cannot expose non-exported types"),
+              std::string::npos);
     Write("main.fl",
           "module main; structure Secret { i32 n; }; export structure Public { "
           "Secret value; };");
-    EXPECT_NE(Check().find("cannot expose private types"), std::string::npos);
+    EXPECT_NE(Check().find("cannot expose non-exported types"),
+              std::string::npos);
     Write("main.fl",
           "module main; structure Secret { i32 n; }; export structure Public { "
           "private Secret value; };");
@@ -191,12 +326,13 @@ TEST_F(ModuleTests, RejectsSourceRootEscapesAndConflictingRoots) {
     fs::create_symlink(root / "outside.fl", root / "library/outside.fl", error);
     if (error) GTEST_SKIP() << "symbolic links are unavailable: " << error;
     Write("main.fl",
-          "module main; @imports :: lib::test::outside; void main() {}");
+          "module main; @imports :: lib::fixture::outside; void main() {}");
     EXPECT_NE(Check().find("escapes its source root"), std::string::npos);
     Write("library/shared.fl",
           "module shared; export i32 value() { return 1; }");
     Write("main.fl",
-          "module main; @imports :: root::library::shared :: lib::test::shared "
+          "module main; @imports :: root::library::shared :: "
+          "lib::fixture::shared "
           "as other; void main() {}");
     EXPECT_NE(Check().find("conflicting source roots"), std::string::npos);
 }
@@ -249,7 +385,7 @@ TEST_F(ModuleTests, WildcardsDiscoverTypesAndOnlyImmediateModuleFiles) {
 TEST_F(ModuleTests, LibraryWildcardsAndEmptyDirectories) {
     Write("library/a.fl", "module a; export i32 value() { return 42; }");
     Write("main.fl",
-          "module main; @imports :: lib::test::*; i32 main() { return "
+          "module main; @imports :: lib::fixture::*; i32 main() { return "
           "a::value(); }");
     EXPECT_EQ(Check(), "");
     fs::create_directories(root / "empty");
@@ -269,7 +405,8 @@ TEST_F(ModuleTests, WildcardsRejectInvalidNamesAndEscapingSymlinks) {
     std::error_code error;
     fs::create_symlink(root / "outside.fl", root / "library/outside.fl", error);
     if (error) GTEST_SKIP() << "symbolic links are unavailable: " << error;
-    Write("main.fl", "module main; @imports :: lib::test::*; void main() {}");
+    Write("main.fl",
+          "module main; @imports :: lib::fixture::*; void main() {}");
     EXPECT_NE(Check().find("escapes its source root"), std::string::npos);
 }
 TEST_F(ModuleTests, RejectsMalformedModuleSelections) {
@@ -321,12 +458,12 @@ TEST_F(ModuleTests, GenericVisibilityIsCheckedAtDefinitionAndUse) {
     Write("main.fl",
           "module main; @imports :: root::helper; i32 main() { return "
           "helper::secret<i32>(42); }");
-    EXPECT_NE(Check().find("private"), std::string::npos);
+    EXPECT_NE(Check().find("module-private"), std::string::npos);
     Write("helper.fl",
           "module helper; structure Secret { i32 value; }; export Secret "
           "reveal<T>(T value) { return Secret::init(); }");
     Write("main.fl", "module main; @imports :: root::helper; void main() {}");
-    EXPECT_NE(Check().find("private"), std::string::npos);
+    EXPECT_NE(Check().find("non-exported"), std::string::npos);
 }
 
 TEST_F(ModuleTests, OrdinaryExportsCanExposePublicSpecializations) {
@@ -360,4 +497,281 @@ TEST_F(ModuleTests, PublicGenericMethodsAcceptCallerPrivateArguments) {
         }
     )");
     EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, MoveOnlyValuesTransferAcrossModuleBoundaries) {
+    Write("box.fl", R"(module box;
+        export structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        export Box pass(Box value) { return value; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::box;
+        i32 main() {
+            first := box::Box::init();
+            second := box::pass(first);
+            first = box::Box::init();
+            return first.value + second.value;
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, QuiverDeclarationsReachSiblingModulesAndTheirMembers) {
+    Write("api.fl", R"(module api;
+        quiver i32 value() { return 40; }
+        quiver structure Box { i32 number; };
+        Box Box::init() override { return build Box { self.number = 1; }; }
+        i32 Box::read(&const self) { return self->number; }
+        quiver enum State { On, Off }
+        quiver error Failure { Failed }
+        quiver func Mapper(i32) => (i32);
+    )");
+    Write("main.fl", R"(module main; @imports :: root::api;
+        i32 main() {
+            box := api::Box::init();
+            api::State state = api::State.On;
+            error failure = api::Failure.Failed;
+            api::Mapper mapper = (value) => { return value + 1; };
+            return api::value() + box.number + box.read() + mapper(0);
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, QuiverBoundariesRejectParentNestedAndLibraryModules) {
+    Write("pack/api.fl", "module api; quiver i32 value() { return 42; }");
+    Write("main.fl", R"(module main; @imports :: root::pack::api;
+        i32 main() { return api::value(); }
+    )");
+    std::string errors = Check();
+    EXPECT_NE(errors.find("'api::value' is quiver-visible"), std::string::npos);
+    EXPECT_NE(errors.find("modules in 'root::pack'"), std::string::npos);
+    EXPECT_EQ(errors.find("unknown name"), std::string::npos);
+
+    Write("pack/nested/main.fl", R"(module main;
+        @imports :: root::pack::api;
+        i32 main() { return api::value(); }
+    )");
+    errors = CheckAt("pack/nested/main.fl");
+    EXPECT_NE(errors.find("'api::value' is quiver-visible"), std::string::npos);
+
+    Write("library/api.fl", "module api; quiver i32 value() { return 42; }");
+    Write("main.fl", R"(module main; @imports :: lib::fixture::api;
+        i32 main() { return api::value(); }
+    )");
+    errors = Check();
+    EXPECT_NE(errors.find("'api::value' is quiver-visible"), std::string::npos);
+    EXPECT_NE(errors.find("modules in 'lib::fixture'"), std::string::npos);
+
+    Write("library/shared/api.fl",
+          "module api; quiver i32 value() { return 42; }");
+    Write("shared/main.fl", R"(module main;
+        @imports :: lib::fixture::shared::api;
+        i32 main() { return api::value(); }
+    )");
+    errors = CheckAt("shared/main.fl");
+    EXPECT_NE(errors.find("'api::value' is quiver-visible"), std::string::npos);
+    EXPECT_NE(errors.find("modules in 'lib::fixture::shared'"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, FullQuiverWildcardDoesNotBypassVisibility) {
+    Write("pack/hidden.fl", "module hidden; quiver i32 value() { return 42; }");
+    Write("pack/public.fl", "module public; export i32 value() { return 1; }");
+    Write("main.fl", R"(module main; @imports :: root::pack::*;
+        i32 main() { return hidden::value() + public::value(); }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("'hidden::value' is quiver-visible"),
+              std::string::npos);
+    EXPECT_EQ(errors.find("public::value"), std::string::npos);
+}
+
+TEST_F(ModuleTests, PrivateModulesAreImportableOnlyWithinTheirQuiver) {
+    Write("pack/api.fl", R"(private module api;
+        export structure Answer { i32 value; };
+        Answer Answer::init() override {
+            return build Answer { self.value = 42; };
+        }
+        export Answer answer() { return Answer::init(); }
+        export T identity<T>(T value) { return value; }
+    )");
+    Write("pack/main.fl", R"(module main; @imports :: root::pack::api;
+        i32 main() {
+            return api::identity<api::Answer>(api::answer()).value;
+        }
+    )");
+    EXPECT_EQ(CheckAt("pack/main.fl"), "");
+
+    Write("main.fl", R"(module main; @imports :: root::pack::api;
+        i32 main() { return api::answer().value; }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("private module 'api'"), std::string::npos);
+    EXPECT_NE(errors.find("modules in quiver 'root::pack'"), std::string::npos);
+}
+
+TEST_F(ModuleTests, PrivateModuleExportsUseQuiverApiRules) {
+    Write("main.fl", R"(private module main;
+        structure Hidden { i32 value; };
+        export Hidden leak(Hidden value) { return value; }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("quiver APIs cannot expose module-private types"),
+              std::string::npos);
+    EXPECT_EQ(errors.find("exported APIs"), std::string::npos);
+}
+
+TEST_F(ModuleTests, WildcardsAndCachedImportsRespectPrivateModules) {
+    Write("pack/api.fl",
+          "private module api; export i32 value() { return 42; }");
+    Write("pack/facade.fl", R"(module facade; @imports :: root::pack::api;
+        export i32 value() { return api::value(); }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::pack::facade :: root::pack::api;
+        i32 main() { return facade::value(); }
+    )");
+    EXPECT_NE(Check().find("private module 'api'"), std::string::npos);
+
+    Write("main.fl", R"(module main; @imports :: root::pack::*;
+        i32 main() { return facade::value(); }
+    )");
+    EXPECT_NE(Check().find("private module 'api'"), std::string::npos);
+}
+
+TEST_F(ModuleTests, PrivateModulesDoNotCrossSourceIdentities) {
+    Write("library/shared/api.fl",
+          "private module api; export i32 value() { return 42; }");
+    Write("shared/main.fl", R"(module main;
+        @imports :: lib::fixture::shared::api;
+        i32 main() { return api::value(); }
+    )");
+    const std::string errors = CheckAt("shared/main.fl");
+    EXPECT_NE(errors.find("private module 'api'"), std::string::npos);
+    EXPECT_NE(errors.find("quiver 'lib::fixture::shared'"), std::string::npos);
+}
+
+TEST_F(ModuleTests, LibraryModulesShareOnlyTheirLibraryQuiver) {
+    Write("library/secret.fl",
+          "module secret; quiver i32 value() { return 42; }");
+    Write("library/facade.fl", R"(module facade;
+        @imports :: root::secret;
+        export i32 value() { return secret::value(); }
+    )");
+    Write("main.fl", R"(module main; @imports :: lib::fixture::facade;
+        i32 main() { return facade::value(); }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main;
+        @imports :: lib::fixture::facade :: lib::mirror::secret;
+        i32 main() { return facade::value() + secret::value(); }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("modules in 'lib::mirror'"), std::string::npos);
+}
+
+TEST_F(ModuleTests, QuiverApisEnforceNominalTypeExposure) {
+    Write("main.fl", R"(module main;
+        quiver structure Shared { i32 value; };
+        structure Hidden { i32 value; };
+        quiver Shared accepted(Shared value) { return value; }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main;
+        quiver structure Shared { i32 value; };
+        export Shared leaked(Shared value) { return value; }
+    )");
+    EXPECT_NE(Check().find("exported APIs cannot expose non-exported types"),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        structure Hidden { i32 value; };
+        quiver Hidden leaked(Hidden value) { return value; }
+    )");
+    EXPECT_NE(Check().find("quiver APIs cannot expose module-private types"),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        structure Hidden { i32 value; };
+        quiver structure Shared { Hidden value; };
+    )");
+    EXPECT_NE(Check().find("quiver APIs cannot expose module-private types"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, OwnerVisibilityControlsMethodApiExposure) {
+    Write("main.fl", R"(module main;
+        structure Hidden { i32 value; };
+        quiver structure Shared { i32 value; };
+        Hidden Shared::leak(&const self) { return Hidden::init(); }
+    )");
+    EXPECT_NE(Check().find("quiver APIs cannot expose module-private types"),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        structure Hidden { i32 value; };
+        quiver structure Shared { private Hidden value; };
+        private Hidden Shared::hidden(&const self) { return self->value; }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, QuiverGenericDeclarationsRespectInstantiationBoundary) {
+    Write("generic.fl", R"(module generic;
+        quiver T identity<T>(T value) { return value; }
+        quiver structure Box<T> { T value; };
+        quiver func Mapper<T>(T) => (T);
+    )");
+    Write("main.fl", R"(module main; @imports :: root::generic;
+        i32 main() {
+            box := generic::Box<i32>::init();
+            generic::Mapper<i32> mapper = (value) => { return value; };
+            return generic::identity<i32>(mapper(box.value));
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("nested/main.fl", R"(module main; @imports :: root::generic;
+        i32 main() { return generic::identity<i32>(42); }
+    )");
+    const std::string errors = CheckAt("nested/main.fl");
+    EXPECT_NE(errors.find("'generic::identity' is quiver-visible"),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        quiver structure Shared { i32 value; };
+        export structure Box<T> { T value; };
+        export Box<Shared> leak() { return Box<Shared>::init(); }
+    )");
+    EXPECT_NE(Check().find("exported APIs cannot expose non-exported types"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, RejectsVisibilityModifiersOnMemberFunctions) {
+    Write("main.fl", R"(module main;
+        quiver structure Box { i32 value; };
+        quiver i32 Box::value(&const self) { return self->value; }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("member functions cannot be marked quiver"),
+              std::string::npos);
+    EXPECT_NE(errors.find("visibility comes from the owning type"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, PrivateMembersRequireTheExactOwningType) {
+    Write("main.fl", R"(module main;
+        structure First { private i32 value; };
+        private i32 First::hidden(&const self) { return self->value; }
+        structure Second { i32 value; };
+        i32 Second::read(&const self, &const First other) {
+            return other->value + other->hidden();
+        }
+    )");
+    const std::string errors = Check();
+    EXPECT_NE(errors.find("field 'value' is private"), std::string::npos);
+    EXPECT_NE(errors.find("hidden' is private"), std::string::npos);
 }

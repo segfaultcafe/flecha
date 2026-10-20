@@ -1,0 +1,11 @@
+.git
+.cache
+build
+build-*
+out
+out-*
+editors/vscode/node_modules
+editors/vscode/*.vsix
+*.o
+*.a
+*.so

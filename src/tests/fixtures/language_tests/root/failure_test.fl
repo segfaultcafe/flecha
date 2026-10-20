@@ -1,0 +1,10 @@
+module failure_test;
+
+@imports
+    :: root::failure
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test reports_failure(&testing::UnitTest t) {
+    asserts::is_true(t, false, "expected fixture failure");
+}

@@ -1,0 +1,92 @@
+module structure_mutations;
+
+@imports :: lib::std::containers::array;
+
+structure Token {
+    i32 kind;
+    char value;
+};
+
+Token Token::zero() override {
+    return build Token {
+        self.kind = 0;
+        self.value = '\0';
+    };
+}
+
+i32 check_remove() {
+    Token first = none;
+    first.kind = 1;
+    first.value = 'a';
+    Token second = none;
+    second.kind = 2;
+    second.value = 'b';
+    Token third = none;
+    third.kind = 3;
+    third.value = 'c';
+
+    tokens := array::Array<Token>::init();
+    if tokens.push(first) != none || tokens.push(second) != none ||
+        tokens.push(third) != none {
+        return 1;
+    }
+
+    removed, err := tokens.remove(1);
+    if err != none || removed != second || tokens.len() != 2 {
+        return 2;
+    }
+
+    remainingFirst, firstError := tokens.get(0);
+    remainingLast, lastError := tokens.get(1);
+    if firstError != none || remainingFirst != first {
+        return 3;
+    }
+    if lastError != none || remainingLast != third {
+        return 4;
+    }
+
+    return 42;
+}
+
+i32 check_swap_remove() {
+    Token first = none;
+    first.kind = 1;
+    first.value = 'a';
+    Token second = none;
+    second.kind = 2;
+    second.value = 'b';
+    Token third = none;
+    third.kind = 3;
+    third.value = 'c';
+
+    tokens := array::Array<Token>::init();
+    if tokens.push(first) != none || tokens.push(second) != none ||
+        tokens.push(third) != none {
+        return 5;
+    }
+
+    removed, err := tokens.swapRemove(0);
+    if err != none || removed != first || tokens.len() != 2 {
+        return 6;
+    }
+
+    replacement, replacementError := tokens.get(0);
+    remaining, remainingError := tokens.get(1);
+    if replacementError != none || replacement != third {
+        return 7;
+    }
+    if remainingError != none || remaining != second {
+        return 8;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    result := check_remove();
+    if result != 42 {
+        return result;
+    }
+
+    return check_swap_remove();
+}

@@ -2,11 +2,30 @@ module array;
 
 @imports
     :: root::containers::raw_array
-    :: root::containers::errors;
+    :: root::containers::errors
+    :: root::containers::algorithms;
 
 export structure Array<T> {
     private raw_array::RawArray<T> inner; 
 };
+
+(Array<T>, error) Array<T>::fromSlice([]const T source) {
+    res := Array<T>::init();
+
+    err := res.reserve(source.len());
+    if err != none {
+        return (none, err);
+    }
+
+    loop usize index = 0; index < source.len(); index++ {
+        err = res.push(source[index]);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return (res, none);
+}
 
 usize Array<T>::len(&const self) {
     return self->inner.len();
@@ -28,6 +47,52 @@ error Array<T>::push(&self, T value) {
     }
 }
 
+(usize, bool) Array<T>::indexOf(&const self, T value) {
+    return algorithms::index_of<T>(self->view(), value);
+}
+
+bool Array<T>::contains(&const self, T value) {
+    return algorithms::contains<T>(self->view(), value);
+}
+
+void Array<T>::reverse(&self) {
+    algorithms::reverse<T>(self->viewRef());
+}
+
+void Array<T>::fill(&self, T value) {
+    algorithms::fill<T>(self->viewRef(), value);
+}
+
+error Array<T>::append(&self, []const T source) {
+    const usize CURRENT = self->len();
+    const usize ADDED = source.len();
+    const usize REQUIRED = CURRENT + ADDED;
+
+    // unsigned integer overflow condition
+    bool overflow = REQUIRED < CURRENT;
+    if overflow {
+        return AllocationError.OutOfMemory;
+    }
+
+    err := self->reserve(REQUIRED);
+    if err != none {
+        return err;
+    }
+
+    loop usize i = 0; i < ADDED; i++ {
+        err = self->push(source[i]);
+        if err != none {
+            return err;
+        }
+    }
+
+    return none;
+}
+
+(Array<T>, error) Array<T>::clone(&const self) {
+    return Array<T>::fromSlice(self->view());
+}
+
 (T, error) Array<T>::get(&const self, usize index) {
     unsafe {
         return self->inner.get(index);
@@ -40,12 +105,137 @@ error Array<T>::set(&self, usize index, T value) {
     }
 }
 
+(T, error) Array<T>::remove(&self, usize index) {
+    const usize LEN = self->len();
+    if index >= LEN {
+        return (none, errors::ArrayError.IndexOutOfBounds);
+    }
+
+    removed, err := self->get(index);
+    if err != none {
+        return (none, err);
+    }
+
+    const usize LAST = LEN - 1;
+    loop usize i = index; i < LAST; i++ {
+        next, getErr := self->get(i + 1);
+        if getErr != none {
+            return (none, getErr);
+        }
+
+        setErr := self->set(i, next);
+        if setErr != none {
+            return (none, setErr);
+        }
+    }
+
+    _, err = self->pop();
+    if err != none {
+        return (none, err);
+    }
+
+    return (removed, none);
+}
+
+(T, error) Array<T>::swapRemove(&self, usize index) {
+    const usize LEN = self->len();
+    if index >= LEN {
+        return (none, errors::ArrayError.IndexOutOfBounds);
+    }
+
+    removed, err := self->get(index);
+    if err != none {
+        return (none, err);
+    }
+
+    const usize LAST = LEN - 1;
+    if index != LAST {
+        replacement, getErr := self->get(LAST);
+        if getErr != none {
+            return (none, getErr);
+        }
+
+        setErr := self->set(index, replacement);
+        if setErr != none {
+            return (none, setErr);
+        }
+    }
+
+    _, err = self->pop();
+    if err != none {
+        return (none, err);
+    }
+
+    return (removed, none);
+}
+
 (T, error) Array<T>::pop(&self) {
     unsafe {
         return self->inner.pop();
     }
 }
 
+[]const T Array<T>::view(&const self) <-self {
+    unsafe {
+        return self->inner.view();
+    }
+}
+
+[]T Array<T>::viewRef(&self) <-self {
+    unsafe {
+        return self->inner.viewRef();
+    }
+}
+
+bool Array<T>::empty(&const self) {
+    return self->len() == 0;
+}
+
+(T, error) Array<T>::first(&const self) {
+    if self->empty() {
+        return (none, errors::ArrayError.Empty);
+    }
+
+    return self->get(0);
+}
+
+(T, error) Array<T>::last(&const self) {
+    if self->empty() {
+        return (none, errors::ArrayError.Empty);
+    }
+
+    const usize LAST = self->len() - 1;
+    return self->get(LAST);
+}
+
 void Array<T>::clear(&self) {
     self->inner.clear();
+}
+
+void Array<T>::sortBy(&self, algorithms::Less<T> less) {
+    algorithms::sort_by<T>(self->viewRef(), less);
+}
+
+void Array<T>::forEach(&const self, algorithms::Action<T> action) {
+    algorithms::for_each<T>(self->view(), action);
+}
+
+(usize, bool) Array<T>::findIf(&const self, algorithms::Predicate<T> predicate) {
+    return algorithms::find_if<T>(self->view(), predicate);
+}
+
+bool Array<T>::anyOf(&const self, algorithms::Predicate<T> predicate) {
+    return algorithms::any_of<T>(self->view(), predicate);
+}
+
+bool Array<T>::allOf(&const self, algorithms::Predicate<T> predicate) {
+    return algorithms::all_of<T>(self->view(), predicate);
+}
+
+usize Array<T>::countIf(&const self, algorithms::Predicate<T> predicate) {
+    return algorithms::count_if<T>(self->view(), predicate);
+}
+
+A Array<T>::fold<A>(&const self, A initial, algorithms::Folder<T, A> folder) {
+    return algorithms::fold<T, A>(self->view(), initial, folder);
 }

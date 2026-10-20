@@ -1,0 +1,40 @@
+func Mapper(i32) => (i32);
+func GenericMapper<T>(T) => (T);
+
+structure Pipeline { Mapper callback; };
+
+Pipeline Pipeline::init(Mapper callback) <- callback override {
+    return build Pipeline { self.callback = callback; };
+}
+
+i32 Pipeline::run(&const self, i32 value) {
+    return (self->callback)(value);
+}
+
+T relay<T>(T value) <- value { return value; }
+
+Mapper offset(i32 amount) {
+    return [copy amount](value) => { return value + amount; };
+}
+
+Mapper combine([2]Mapper callbacks) <- callbacks {
+    return [own callbacks](value) => {
+        return (callbacks[0])(value) + (callbacks[1])(0);
+    };
+}
+
+i32 main() {
+    Mapper explicit = [](i32 value) => (i32) { return value * 2; };
+    Mapper inferred = (value) => { return value + 2; };
+    Pipeline pipeline = Pipeline::init(offset(20));
+
+    Mapper generic = relay<Mapper>(explicit);
+    GenericMapper<i32> specialized = (value) => { return value + 1; };
+    if generic(21) != 42 { return 1; }
+    if inferred(40) != 42 { return 2; }
+    if specialized(41) != 42 { return 4; }
+    [2]Mapper pending = [offset(10), offset(12)];
+    Mapper nested = combine(pending);
+    if nested(20) != 42 { return 3; }
+    return pipeline.run(22);
+}

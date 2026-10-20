@@ -138,8 +138,8 @@ The first milestone may conservatively reject otherwise valid lifetime patterns.
 
 Implementation branch: `feat/defer`. Depends on: 2 and 3.
 
-Implemented behavior and limits: [deferred calls](defer.md). Direct function
-calls are supported; deferred receiver/member calls remain future work.
+Implemented behavior and limits: [deferred calls](defer.md). Direct functions,
+callable values, and resolved structure or enum methods are supported.
 
 - Add `defer call(...);`, initially limited to statically resolved calls. Define
   argument capture at registration, reverse registration order, and
@@ -313,7 +313,10 @@ priority; it does not depend on the system allocator.
 ## Later, separately scoped features
 
 - Safe heap owners and allocator-aware collections that can supply references.
-- Borrowed-result lifetime contracts and support for more precise lifetimes.
+- More precise multi-source and heap-owner lifetime contracts. Single-source
+  borrowed reference/slice results and immediately destructured flat
+  multi-results are implemented by `feat/ref-and-slice-returns`; see
+  [reference and slice returns](ref_and_slice_returns.md).
 - Flow-aware stringv origins, then delayed view initialization if sound.
 - Any explicit migration of existing strings to move semantics.
 - Custom allocators, aggregate partial initialization/moves, pointer arithmetic,

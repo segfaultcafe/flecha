@@ -17,9 +17,10 @@ std::vector<Token> Tokenize(const std::string& source,
 }
 
 TEST(TokenizerTests, RecognizesKeywords) {
-    std::vector<Token> tokens =
-        Tokenize("i32 u8 f64 char bool void string stringv unsafe return none");
-    ASSERT_EQ(tokens.size(), 12);
+    std::vector<Token> tokens = Tokenize(
+        "i32 u8 f64 char bool void string stringv func once unsafe return "
+        "none");
+    ASSERT_EQ(tokens.size(), 14);
 
     EXPECT_EQ(tokens[0].type, TokenType::I32);
     EXPECT_EQ(tokens[0].value, "i32");
@@ -31,25 +32,36 @@ TEST(TokenizerTests, RecognizesKeywords) {
     EXPECT_EQ(tokens[5].type, TokenType::Void);
     EXPECT_EQ(tokens[6].type, TokenType::String);
     EXPECT_EQ(tokens[7].type, TokenType::StringView);
-    EXPECT_EQ(tokens[8].type, TokenType::Unsafe);
-    EXPECT_EQ(tokens[9].type, TokenType::Return);
-    EXPECT_EQ(tokens[10].type, TokenType::None);
-    EXPECT_EQ(tokens[11].type, TokenType::EOF_TOKEN);
+    EXPECT_EQ(tokens[8].type, TokenType::Func);
+    EXPECT_EQ(tokens[9].type, TokenType::Once);
+    EXPECT_EQ(tokens[10].type, TokenType::Unsafe);
+    EXPECT_EQ(tokens[11].type, TokenType::Return);
+    EXPECT_EQ(tokens[12].type, TokenType::None);
+    EXPECT_EQ(tokens[13].type, TokenType::EOF_TOKEN);
+}
+
+TEST(TokenizerTests, RecognizesTestKeyword) {
+    const std::vector<Token> tokens = Tokenize("test addition");
+
+    ASSERT_EQ(tokens.size(), 3);
+    EXPECT_EQ(tokens[0].type, TokenType::Test);
+    EXPECT_EQ(tokens[1].type, TokenType::Identifier);
 }
 
 TEST(TokenizerTests, RecognizesFunctionModifiersAndReservedWords) {
     std::vector<Token> tokens = Tokenize(
-        "export extern inline comptime yield if else while proceed break "
+        "export quiver extern inline comptime yield if else while proceed "
+        "break "
         "jumpto error const volatile as null true false defer");
 
     const std::vector<TokenType> expected = {
-        TokenType::Export,   TokenType::Extern,    TokenType::Inline,
-        TokenType::Comptime, TokenType::Yield,     TokenType::If,
-        TokenType::Else,     TokenType::While,     TokenType::Proceed,
-        TokenType::Break,    TokenType::JumpTo,    TokenType::Error,
-        TokenType::Const,    TokenType::Volatile,  TokenType::As,
-        TokenType::Null,     TokenType::True,      TokenType::False,
-        TokenType::Defer,    TokenType::EOF_TOKEN,
+        TokenType::Export,  TokenType::Quiver,   TokenType::Extern,
+        TokenType::Inline,  TokenType::Comptime, TokenType::Yield,
+        TokenType::If,      TokenType::Else,     TokenType::While,
+        TokenType::Proceed, TokenType::Break,    TokenType::JumpTo,
+        TokenType::Error,   TokenType::Const,    TokenType::Volatile,
+        TokenType::As,      TokenType::Null,     TokenType::True,
+        TokenType::False,   TokenType::Defer,    TokenType::EOF_TOKEN,
     };
     ASSERT_EQ(tokens.size(), expected.size());
     for (size_t index = 0; index < expected.size(); ++index) {
@@ -72,6 +84,17 @@ TEST(TokenizerTests, RecognizesMultiCharacterOperators) {
     EXPECT_EQ(tokens[8].type, TokenType::And);
     EXPECT_EQ(tokens[9].type, TokenType::Or);
     EXPECT_EQ(tokens[10].type, TokenType::EOF_TOKEN);
+}
+
+TEST(TokenizerTests, RecognizesBorrowResultArrow) {
+    std::vector<Token> tokens = Tokenize("<- < -");
+
+    ASSERT_EQ(tokens.size(), 4);
+    EXPECT_EQ(tokens[0].type, TokenType::LeftArrow);
+    EXPECT_EQ(tokens[0].value, "<-");
+    EXPECT_EQ(tokens[1].type, TokenType::Less);
+    EXPECT_EQ(tokens[2].type, TokenType::Sub);
+    EXPECT_EQ(tokens[3].type, TokenType::EOF_TOKEN);
 }
 
 TEST(TokenizerTests, RecognizesTextualLogicalOperators) {
@@ -386,12 +409,14 @@ TEST(TokenizerTests, RecognizesLoopKeywordsAndAdjacentIncrement) {
 }
 
 TEST(TokenizerTests, RecognizesOwnershipContractsAsKeywords) {
-    const auto tokens = Tokenize("own lend owner lender");
-    ASSERT_EQ(tokens.size(), 5);
-    EXPECT_EQ(tokens[0].type, TokenType::Own);
-    EXPECT_EQ(tokens[1].type, TokenType::Lend);
-    EXPECT_EQ(tokens[2].type, TokenType::Identifier);
+    const auto tokens = Tokenize("copy own lend copier owner lender");
+    ASSERT_EQ(tokens.size(), 7);
+    EXPECT_EQ(tokens[0].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[1].type, TokenType::Own);
+    EXPECT_EQ(tokens[2].type, TokenType::Lend);
     EXPECT_EQ(tokens[3].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[4].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[5].type, TokenType::Identifier);
 }
 
 TEST(TokenizerTests, RecognizesModuleAndImportDirectiveTokens) {

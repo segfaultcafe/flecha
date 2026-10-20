@@ -3,7 +3,54 @@ module errors;
 export error IoError {
     NotFound,
     PermissionDenied,
+    AlreadyExists,
     InvalidPath,
+    InvalidOptions,
+    Closed,
+    OpenFailed,
+    CloseFailed,
     ReadFailed,
+    WriteFailed,
+    SeekFailed,
+    FlushFailed,
     TooLarge,
+    UnexpectedEof,
+    ExistsFailed,
+    RemoveFailed,
+    RenameFailed,
+    CreateDirectoryFailed,
+    RemoveDirectoryFailed,
+    DirectoryNotEmpty,
+    MetadataFailed,
+}
+
+quiver error from_runtime(i32 status, IoError fallback) {
+    if status == 0 {
+        return none;
+    }
+    if status == 1 {
+        return IoError.NotFound;
+    }
+    if status == 2 {
+        return IoError.PermissionDenied;
+    }
+    if status == 3 {
+        return IoError.InvalidPath;
+    }
+    if status == 4 {
+        return IoError.AlreadyExists;
+    }
+    if status == 5 {
+        return IoError.TooLarge;
+    }
+    if status == 6 {
+        return AllocationError.OutOfMemory;
+    }
+    if status == 7 {
+        return IoError.InvalidOptions;
+    }
+    if status == 9 {
+        return IoError.DirectoryNotEmpty;
+    }
+    return fallback;
 }

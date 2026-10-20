@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -16,16 +17,21 @@ namespace flecha::core {
 
 class Parser {
    public:
-    Parser(std::vector<Token> tokens, diagnostics::DiagnosticBag& diagnostics);
+    Parser(std::vector<Token> tokens, diagnostics::DiagnosticBag& diagnostics,
+           std::string anonymousFunctionPrefix = {});
 
     void ParseHeader();
     const std::vector<Import>& Imports() const { return _imports; }
     void SetImports(std::vector<Import> imports);
+    void SetPrivateModule(bool privateModule) {
+        _modulePrivate = privateModule;
+    }
     [[nodiscard]] std::unique_ptr<CompilationUnit> Parse();
 
    private:
     bool _headerParsed = false;
     std::string _moduleName;
+    bool _modulePrivate = false;
     std::vector<Import> _imports;
     std::set<std::string> _importAliases;
     [[nodiscard]] const Token& Current() const;
@@ -46,6 +52,8 @@ class Parser {
     std::unique_ptr<ErrorDeclaration> ParseErrorDeclaration();
     std::unique_ptr<EnumDeclaration> ParseEnumDeclaration();
     std::unique_ptr<Declaration> ParseDeclaration();
+    std::unique_ptr<FunctionDeclaration> ParseTestDeclaration();
+    std::unique_ptr<CallableTypeDeclaration> ParseCallableTypeDeclaration();
     std::unique_ptr<FunctionDeclaration> ParseFunctionDeclaration();
     std::unique_ptr<TypeNode> ParseType(bool allowOwn = false,
                                         bool allowLend = false,
@@ -53,7 +61,9 @@ class Parser {
     std::optional<std::uint64_t> ParseArrayLength();
     std::unique_ptr<Expression> ParseArrayExpression();
     std::unique_ptr<Expression> ParseMatchExpression();
+    std::unique_ptr<Expression> ParseAnonymousFunctionExpression();
     std::unique_ptr<Parameter> ParseParameter();
+    std::unique_ptr<Parameter> ParseCallableParameter();
     std::unique_ptr<BlockStatement> ParseBlockStatement(bool isUnsafe = false);
     std::unique_ptr<Statement> ParseStatement();
     bool HasParenthesizedBindings() const;
@@ -81,6 +91,7 @@ class Parser {
     std::vector<std::unique_ptr<Expression>> ParseArgumentList(
         source::SourceLocation& end);
     std::unique_ptr<Expression> ParsePrimaryExpression();
+    [[nodiscard]] bool IsAnonymousFunctionStart() const;
     [[nodiscard]] int BinaryPrecedence(TokenType type) const;
     [[nodiscard]] int UnaryPrecedence(TokenType type) const;
     void ReportUnexpectedToken(std::string_view context);
@@ -88,6 +99,7 @@ class Parser {
     void SynchronizeStatement();
 
     std::vector<Token> _tokens;
+    std::string _anonymousFunctionPrefix;
     std::size_t _position = 0;
     std::size_t _rangeId = 0;
     diagnostics::DiagnosticBag& _diagnostics;

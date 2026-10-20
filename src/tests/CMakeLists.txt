@@ -38,6 +38,73 @@ set_tests_properties(CliTests.LongbowVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^longbow ${PROJECT_VERSION}"
 )
 
+add_test(
+    NAME LanguageTestTests.PassingModule
+    COMMAND $<TARGET_FILE:flecha>
+        test
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/math_test.fl
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        --lib std=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/std
+)
+set_tests_properties(LanguageTestTests.PassingModule PROPERTIES
+    PASS_REGULAR_EXPRESSION "math_test.fl [\.]+ OK"
+)
+
+add_test(
+    NAME LanguageTestTests.PassingModuleVerbose
+    COMMAND $<TARGET_FILE:flecha>
+        test
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/math_test.fl
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        --lib std=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/std
+        --verbose
+)
+set_tests_properties(LanguageTestTests.PassingModuleVerbose PROPERTIES
+    PASS_REGULAR_EXPRESSION "private_access [\.]+ ok"
+)
+
+add_test(
+    NAME LanguageTestTests.FailingModule
+    COMMAND $<TARGET_FILE:flecha>
+        test
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/failure_test.fl
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        --lib std=${PROJECT_SOURCE_DIR}/std/src
+)
+set_tests_properties(LanguageTestTests.FailingModule PROPERTIES WILL_FAIL TRUE)
+
+add_test(
+    NAME LanguageTestTests.FailureDiagnostics
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root/failure_test.fl
+        -DFLECHA_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/language_tests/root
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_test_failure.cmake
+)
+
+add_test(
+    NAME LanguageTestTests.LongbowDiscovery
+    COMMAND ${CMAKE_COMMAND} -E env
+        FLECHA_COMPILER=$<TARGET_FILE:flecha>
+        $<TARGET_FILE:longbow> test
+)
+set_tests_properties(LanguageTestTests.LongbowDiscovery PROPERTIES
+    WORKING_DIRECTORY
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project
+)
+
+add_test(
+    NAME StandardLibraryTests.FlechaModules
+    COMMAND ${CMAKE_COMMAND} -E env
+        FLECHA_COMPILER=$<TARGET_FILE:flecha>
+        FLECHA_STANDARD_LIBRARY=${PROJECT_SOURCE_DIR}/std/src
+        $<TARGET_FILE:longbow> test --verbose
+)
+set_tests_properties(StandardLibraryTests.FlechaModules PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/std
+)
+
 add_test(NAME EditorTests.VSCodeManifest
     COMMAND ${CMAKE_COMMAND}
         -DEDITOR_ROOT=${PROJECT_SOURCE_DIR}/editors/vscode
@@ -293,9 +360,30 @@ add_test(NAME NativeSemanticTests.Modules
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/modules_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_modules.cmake)
 
+add_test(NAME NativeSemanticTests.CallableIntegration
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/callable_integration
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/callable_integration_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_callable_integration.cmake)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME NativeSemanticTests.CallableAllocationFailure
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/callable_allocation_failure.fl
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/callable_allocation_failure_harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/callable_allocation_failure_test
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_callable_allocation_failure.cmake)
+endif()
+
 add_test(NAME LongbowTests.Projects
     COMMAND ${CMAKE_COMMAND}
         -DLONGBOW=$<TARGET_FILE:longbow>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
         -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/longbow_projects
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_longbow.cmake)
 
@@ -313,6 +401,13 @@ add_test(NAME StandardLibraryTests.FilesystemReadFile
         -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/filesystem_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_filesystem.cmake)
+
+add_test(NAME StandardLibraryTests.FileStream
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/file_stream_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_file_stream.cmake)
 
 add_test(NAME NativeSemanticTests.RuntimeArrays
     COMMAND ${CMAKE_COMMAND}
@@ -411,7 +506,19 @@ add_test(NAME NativeSemanticTests.StructureZero
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_unsafe_pointers.cmake)
 
 # The safe fixtures exercise the public API without unsafe caller blocks.
-foreach(case IN ITEMS main scalars structures lifecycle)
+foreach(case IN ITEMS
+        main
+        scalars
+        structures
+        lifecycle
+        from_slice
+        append
+        clone
+        remove
+        swap_remove
+        structure_mutations
+        algorithms
+        own_capture)
     set(array_fail_call 0)
     if(case STREQUAL "main")
         set(array_fail_call 2)

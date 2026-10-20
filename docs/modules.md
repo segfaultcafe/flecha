@@ -3,16 +3,28 @@
 A module is one `.fl` file. Its declaration comes first and matches the filename:
 
 ```flecha
-module factorial;
+module formatting;
 
-export i32 factorial(i32 n) {
-    if n <= 1 { return 1; }
-    return n * factorial(n - 1);
+export void print_result(usize index) {
+    stdout("Found at index: ");
+    stdoutln(index);
 }
 ```
 
-For `src/parser/math/factorial.fl`, the import path is
-`root::parser::math::factorial`. Directories supply the namespace path; the module
+A module may be restricted to its quiver:
+
+```flecha
+private module formatting;
+
+export void print_result(usize index) {}
+```
+
+Only modules in the same quiver may import a private module. Within a private
+module, `export` means quiver-wide visibility rather than global visibility;
+unmarked declarations remain visible only inside that module.
+
+For `src/ui/formatting.fl`, the import path is
+`root::ui::formatting`. Directories supply the namespace path; the module
 declaration contains only the filename stem.
 
 ## Import blocks
@@ -21,12 +33,16 @@ declaration contains only the filename stem.
 module main;
 
 @imports
-    :: root::parser::math::factorial
-    :: root::parser::tokens as parser_tokens
-    :: lib::std::containers;
+    :: lib::std::containers::algorithms;
 
-void main() {
-    stdoutln(factorial::factorial(5));
+i32 main() {
+    [5]i32 values = [10, 20, 30, 20, 40];
+    index, found := algorithms::index_of<i32>(values[:], 30);
+    if found {
+        stdoutln(index);
+        return 0;
+    }
+    return 1;
 }
 ```
 
@@ -42,8 +58,8 @@ a top-level declaration in the same module.
 resolves against a configured library's source root. When that library imports
 `root::helper`, it resolves its own helper, not the application's helper.
 The final path segment becomes the local namespace unless an alias is supplied.
-Imported functions use `factorial::factorial(5)`. Imported types use
-`containers::Box`; static methods use `containers::Box::init(...)`. Existing
+Imported functions use `algorithms::index_of<i32>(values[:], 30)`. Imported
+types use `containers::Box`; static methods use `containers::Box::init(...)`. Existing
 instance member syntax is unchanged. Qualified error types and variants work as
 `containers::ContainerError.Empty`.
 
@@ -55,31 +71,53 @@ Directory imports support all immediate modules or selected module names:
 
 ```flecha
 @imports
-    :: root::parser::math::*
-    :: lib::std::containers::{array, linked_list};
+    :: root::ui::*
+    :: lib::std::containers::{array, algorithms};
 ```
 
 `*` imports every `.fl` file directly in the directory, in filename order; it does
 not recurse into subdirectories. An existing empty directory imports nothing.
 Braces select module files, not declarations within a module. Each module keeps
-its filename as its namespace, so calls still use `factorial::factorial(2)`.
+its filename as its namespace, so calls still use `algorithms::contains<i32>(values[:], 2)`.
 Duplicate namespaces are errors; use separate explicit imports with `as` to
 resolve collisions. A wildcard or brace group cannot take a collective alias.
 
 ## Visibility
 
-Top-level functions, structures, and error types are private to their module unless
-prefixed with `export`. For an unsafe exported function, use `export unsafe ...`.
-Exporting a structure bundles all its non-private member functions, including its
-accessible initializer. Member functions do not take `export` individually.
-Existing field visibility remains unchanged. Methods are defined in the structure's
-module; importing a structure does not permit adding methods to it.
+Top-level declarations have three visibility levels:
 
-An exported API may not expose a private type through a signature or public field.
-Private fields and private methods can use private types. `tear` is still
-compiler-invoked only, regardless of visibility. Ownership contracts, unsafe
-permission, constness, borrowing, noncopyability, and immovability are all enforced
-across module boundaries.
+```flecha
+export void public_api() {}  // every importing module
+quiver void shared_api() {}  // modules in the same quiver
+void module_api() {}         // this module only
+```
+
+For an ordinary `module`, these meanings apply exactly as written. For a
+`private module`, both `export` and `quiver` declarations are quiver-visible.
+The module itself cannot be imported across its quiver boundary, including by
+wildcard imports.
+
+A module is one `.fl` file. A quiver is the set of modules in one immediate
+directory under the same source-root or library identity. A nested directory is
+a different quiver, and matching directory names in separate roots or libraries
+do not share visibility. Directory imports (`::*`) still import every immediate
+module, but never widen declaration visibility.
+
+`quiver` and `export` apply only to module-scope declarations. A structure or
+enum gives its reach to all non-private fields and methods; member functions
+cannot carry either modifier. `private` fields and methods are accessible only
+from methods of their exact owning structure or enum. Methods must be defined in
+their owner's module, and importing a type does not permit adding methods to it.
+
+An exported API may expose only exported nominal types. A quiver API may expose
+exported types and quiver types from the same quiver, but not module-private
+types. These checks include free functions, public fields, methods, enums,
+errors, callable signatures, generic declarations, and generated nominal
+specializations. An exported generic instantiated with a quiver type remains
+usable within that quiver but cannot leak through an exported API. Private
+fields and private methods may use module-private types. `tear` remains
+compiler-invoked only. Ownership contracts, unsafe permission, constness,
+borrowing, noncopyability, and immovability are enforced across every boundary.
 
 ## Compilation and identity
 
@@ -87,8 +125,9 @@ The compiler loads the reachable source graph, gives each module a separate scop
 and compiles the graph together. The same canonical file reached through a diamond
 is loaded once. Different modules may use identical declaration names without
 sharing function, structure, or error-family identities. Cycles, missing modules,
-filename mismatches, duplicate aliases, and paths escaping a source root are
-errors. A file cannot be interpreted against two conflicting source roots.
+filename mismatches, private-module imports from a different quiver, duplicate
+aliases, and paths escaping a source root are errors. A file cannot be interpreted
+against two conflicting source roots.
 Import nesting is limited to 256 levels with a diagnostic rather than unbounded
 recursion.
 

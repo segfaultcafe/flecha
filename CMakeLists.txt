@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(Flecha VERSION 0.1.3 LANGUAGES C CXX)
+project(Flecha VERSION 0.2.0 LANGUAGES C CXX)
 
 include(cmake/check_compiler_version.cmake)
 include(CTest)
 include(GNUInstallDirs)
+include(cmake/flecha_version.cmake)
 
 configure_file(
     src/include/flecha/version.hpp.in
@@ -71,6 +72,7 @@ target_link_libraries(longbow PRIVATE flecha_project_options llvm_codegen)
 target_compile_definitions(longbow PRIVATE
     FLECHA_EXECUTABLE_SUFFIX="${CMAKE_EXECUTABLE_SUFFIX}"
     FLECHA_OBJECT_SUFFIX="${CMAKE_CXX_OUTPUT_EXTENSION}"
+    FLECHA_INSTALL_DATADIR="${CMAKE_INSTALL_DATADIR}"
 )
 add_dependencies(longbow flecha)
 

@@ -8,6 +8,15 @@ if(NOT DEFINED EXECUTABLE_SUFFIX)
     set(EXECUTABLE_SUFFIX "")
 endif()
 
+if(DEFINED STANDARD_LIBRARY)
+    get_filename_component(STANDARD_LIBRARY "${STANDARD_LIBRARY}" ABSOLUTE)
+    if(NOT IS_DIRECTORY "${STANDARD_LIBRARY}")
+        message(FATAL_ERROR
+            "STANDARD_LIBRARY is not a directory: ${STANDARD_LIBRARY}")
+    endif()
+    set(ENV{FLECHA_STANDARD_LIBRARY} "${STANDARD_LIBRARY}")
+endif()
+
 execute_process(
     COMMAND "${FLECHA_COMPILER}" --version
     RESULT_VARIABLE versionResult
@@ -15,8 +24,8 @@ execute_process(
     ERROR_VARIABLE versionError
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-if(NOT versionResult EQUAL 0 OR
-   NOT versionOutput MATCHES "^flecha [0-9]+\\.[0-9]+\\.[0-9]+$")
+if(NOT versionResult EQUAL 0 OR NOT versionOutput MATCHES
+   "^flecha [0-9]+\\.[0-9]+\\.[0-9]+(-([0-9]+|dev)-g[0-9a-f]+(-dirty)?)?$")
     message(FATAL_ERROR
         "compiler version probe failed: ${versionOutput}${versionError}")
 endif()
@@ -78,6 +87,125 @@ if(NOT nativeResult EQUAL 42)
         "native smoke returned ${nativeResult} instead of 42")
 endif()
 
+set(callableRoot "${OUTPUT_ROOT}/callable-smoke")
+file(MAKE_DIRECTORY "${callableRoot}")
+file(WRITE "${callableRoot}/pipeline.fl"
+    "module pipeline;\n"
+    "export func Mapper(i32) => (i32);\n"
+    "export func Setter() => ();\n"
+    "export once func OnceAction() => (i32);\n"
+    "export unsafe func Reader() => (i32);\n"
+    "export structure Pipeline { Mapper callback; };\n"
+    "export structure Counter { i32 current; };\n"
+    "structure Token { i32 value; };\n"
+    "Pipeline Pipeline::init(Mapper callback) <- callback override {\n"
+    "    return build Pipeline { self.callback = callback; };\n"
+    "}\n"
+    "i32 Pipeline::run(&const self, i32 value) {\n"
+    "    return (self->callback)(value);\n"
+    "}\n"
+    "export T relay<T>(T value) <- value { return value; }\n"
+    "export Pipeline offset(i32 amount) {\n"
+    "    Mapper callback = [copy amount](value) => { return value + amount; };\n"
+    "    return Pipeline::init(callback);\n"
+    "}\n"
+    "export Mapper combine(i32 left, i32 right) {\n"
+    "    return [copy left, copy right](value) => {\n"
+    "        return value + left + right;\n"
+    "    };\n"
+    "}\n"
+    "export Setter assign(&i32 target, i32 value) <- target {\n"
+    "    return [&target, copy value]() => () { *target = value; };\n"
+    "}\n"
+    "Counter Counter::init(i32 value) override {\n"
+    "    return build Counter { self.current = value; };\n"
+    "}\n"
+    "void Counter::set(&self, i32 value) { self->current = value; }\n"
+    "i32 Counter::get(&const self) { return self->current; }\n"
+    "Token Token::init(i32 value) override {\n"
+    "    return build Token { self.value = value; };\n"
+    "}\n"
+    "void Token::tear(&self) override {}\n"
+    "i32 consume(Token token) { return token.value; }\n"
+    "export OnceAction consume_once(i32 value) {\n"
+    "    Token token = Token::init(value);\n"
+    "    return once [own token]() => (i32) { return consume(token); };\n"
+    "}\n"
+    "export unsafe Reader retain(own *i32 pointer) {\n"
+    "    return unsafe [own pointer]() => { return *pointer; };\n"
+    "}\n")
+file(WRITE "${callableRoot}/main.fl"
+    "module main;\n"
+    "@imports :: root::pipeline;\n"
+    "i32 main() {\n"
+    "    runner := pipeline::offset(20);\n"
+    "    if runner.run(2) != 22 { return 1; }\n"
+    "    i32 base = 0;\n"
+    "    pipeline::Mapper generic = pipeline::relay<pipeline::Mapper>(\n"
+    "        [copy base](value) => { return value + base; });\n"
+    "    if generic(42) != 42 { return 2; }\n"
+    "    pipeline::Mapper combined = pipeline::combine(10, 12);\n"
+    "    (pipeline::Mapper, i32) pair = (combined, 20);\n"
+    "    callback, input := pair;\n"
+    "    if callback(input) != 42 { return 3; }\n"
+    "    pipeline::Mapper addTwo = pipeline::combine(1, 1);\n"
+    "    pipeline::Mapper addFour = pipeline::combine(2, 2);\n"
+    "    [2]pipeline::Mapper pending = [addTwo, addFour];\n"
+    "    [2]pipeline::Mapper callbacks = pending;\n"
+    "    if (callbacks[0])(40) != 42 { return 4; }\n"
+    "    if (callbacks[1])(38) != 42 { return 5; }\n"
+    "    unsafe {\n"
+    "        pointer, failure := new<i32>(42);\n"
+    "        if failure != none { return 6; }\n"
+    "        pipeline::Reader owner = pipeline::retain(pointer);\n"
+    "        if owner() != 42 { return 7; }\n"
+    "    }\n"
+    "    pipeline::OnceAction onceAction = pipeline::consume_once(10);\n"
+    "    i32 onceValue = onceAction();\n"
+    "    i32 deferredValue = 0;\n"
+    "    {\n"
+    "        pipeline::Setter setter = pipeline::assign(&deferredValue, 20);\n"
+    "        defer setter();\n"
+    "    }\n"
+    "    if deferredValue != 20 { return 8; }\n"
+    "    pipeline::Counter counter = pipeline::Counter::init(0);\n"
+    "    {\n"
+    "        defer counter.set(12);\n"
+    "    }\n"
+    "    return onceValue + deferredValue + counter.get();\n"
+    "}\n")
+
+execute_process(
+    COMMAND "${FLECHA_COMPILER}" check "${callableRoot}/main.fl"
+        --root "${callableRoot}"
+    RESULT_VARIABLE callableCheckResult
+    ERROR_VARIABLE callableCheckError
+)
+if(NOT callableCheckResult EQUAL 0)
+    message(FATAL_ERROR
+        "callable ABI smoke check failed: ${callableCheckError}")
+endif()
+
+set(callableOutput "${callableRoot}/callable-smoke${EXECUTABLE_SUFFIX}")
+execute_process(
+    COMMAND "${FLECHA_COMPILER}" build "${callableRoot}/main.fl"
+        --root "${callableRoot}" -o "${callableOutput}"
+    RESULT_VARIABLE callableCompileResult
+    ERROR_VARIABLE callableCompileError
+)
+if(NOT callableCompileResult EQUAL 0)
+    message(FATAL_ERROR
+        "callable ABI smoke compilation failed: ${callableCompileError}")
+endif()
+execute_process(
+    COMMAND "${callableOutput}"
+    RESULT_VARIABLE callableResult
+)
+if(NOT callableResult EQUAL 42)
+    message(FATAL_ERROR
+        "callable ABI smoke returned ${callableResult} instead of 42")
+endif()
+
 execute_process(
     COMMAND "${LONGBOW}" new hello
     WORKING_DIRECTORY "${OUTPUT_ROOT}"
@@ -89,6 +217,10 @@ if(NOT createResult EQUAL 0)
     message(FATAL_ERROR
         "Longbow project creation failed: ${createOutput}${createError}")
 endif()
+file(WRITE "${OUTPUT_ROOT}/hello/src/main.fl"
+    "module main;\n"
+    "@imports :: lib::std::containers::array;\n"
+    "void main() { stdoutln(\"Hello from Flecha!\"); }\n")
 execute_process(
     COMMAND "${LONGBOW}" check
     WORKING_DIRECTORY "${OUTPUT_ROOT}/hello"

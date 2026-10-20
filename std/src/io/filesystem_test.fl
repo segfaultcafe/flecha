@@ -1,0 +1,84 @@
+module filesystem_test;
+
+@imports
+    :: root::io::filesystem
+    :: root::io::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test read_file_rejects_invalid_paths(&testing::UnitTest t) {
+    emptyContents, emptyError := filesystem::read_file("");
+    asserts::is_true(t, emptyError == errors::IoError.InvalidPath, "an empty path is invalid");
+    asserts::is_true(t, emptyContents.len() == 0, "a failed read returns an empty string");
+
+    string embeddedNullPath = "bad" + '\0'.string() + "path";
+    contents, err := filesystem::read_file(embeddedNullPath.view());
+    asserts::is_true(t, err == errors::IoError.InvalidPath, "an embedded null is invalid");
+    asserts::is_true(t, contents.len() == 0, "an invalid path returns an empty string");
+}
+
+test write_file_rejects_invalid_paths_without_creating_files(&testing::UnitTest t) {
+    emptyError := filesystem::write_file("", "");
+    asserts::is_true(t, emptyError == errors::IoError.InvalidPath, "an empty path is invalid");
+
+    string embeddedNullPath = "bad" + '\0'.string() + "path";
+    embeddedNullError := filesystem::write_file(embeddedNullPath.view(), "contents");
+    asserts::is_true(
+        t,
+        embeddedNullError == errors::IoError.InvalidPath,
+        "write_file rejects an embedded null"
+    );
+
+    [3]u8 bytes = [1, 2, 3];
+    embeddedNullError = filesystem::write_bytes(embeddedNullPath.view(), bytes[:]);
+    asserts::is_true(
+        t,
+        embeddedNullError == errors::IoError.InvalidPath,
+        "write_bytes rejects an embedded null"
+    );
+}
+
+test path_operations_reject_invalid_paths(&testing::UnitTest t) {
+    present, existsError := filesystem::exists("");
+    asserts::is_false(t, present, "an invalid path does not exist");
+    asserts::is_true(
+        t,
+        existsError == errors::IoError.InvalidPath,
+        "exists rejects an empty path"
+    );
+
+    info, metadataError := filesystem::metadata("");
+    asserts::is_true(
+        t,
+        metadataError == errors::IoError.InvalidPath,
+        "metadata rejects an empty path"
+    );
+    asserts::is_true(
+        t,
+        info.type == filesystem::FileType.Other and info.size == 0,
+        "failed metadata is empty"
+    );
+
+    string embeddedNullPath = "bad" + '\0'.string() + "path";
+    asserts::is_true(
+        t,
+        filesystem::remove_file(embeddedNullPath.view()) == errors::IoError.InvalidPath,
+        "remove_file rejects an embedded null"
+    );
+    asserts::is_true(
+        t,
+        filesystem::rename("source", embeddedNullPath.view()) == errors::IoError.InvalidPath,
+        "rename rejects an embedded null"
+    );
+    asserts::is_true(
+        t,
+        filesystem::create_directory("") == errors::IoError.InvalidPath,
+        "create_directory rejects an empty path"
+    );
+    asserts::is_true(
+        t,
+        filesystem::remove_directory(embeddedNullPath.view(), false) ==
+            errors::IoError.InvalidPath,
+        "remove_directory rejects an embedded null"
+    );
+}

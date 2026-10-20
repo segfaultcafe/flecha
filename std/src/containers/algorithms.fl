@@ -1,0 +1,168 @@
+module algorithms;
+
+export func Action<T>(&const T) => ();
+export func Less<T>(&const T left, &const T right) => (bool);
+export func Predicate<T>(&const T value) => (bool);
+export func Folder<T, A>(A accumulator, &const T value) => (A);
+
+export bool any_of<T>([]const T values, Predicate<T> predicate) {
+    loop usize index = 0; index < values.len(); index++ {
+        if predicate(&values[index]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+export bool all_of<T>([]const T values, Predicate<T> predicate) {
+    loop usize index = 0; index < values.len(); index++ {
+        if !predicate(&values[index]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export usize count_if<T>([]const T values, Predicate<T> predicate) {
+    usize count = 0;
+    loop usize index = 0; index < values.len(); index++ {
+        if predicate(&values[index]) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+export A fold<T, A>([]const T values, A initial, Folder<T, A> folder) {
+    A accumulator = initial;
+    loop usize index = 0; index < values.len(); index++ {
+        accumulator = folder(accumulator, &values[index]);
+    }
+
+    return accumulator;
+}
+
+export (usize, bool) find_if<T>([]const T values, Predicate<T> predicate) {
+    loop usize index = 0; index < values.len(); index++ {
+        if predicate(&values[index]) {
+            return (index, true);
+        }
+    }
+
+    return (none, false);
+}
+
+export (usize, bool) index_of<T>([]const T values, T needle) {
+    for (i, val) := range values {
+        if val == needle {
+            return (i, true);
+        }
+    }
+
+    return (none, false);
+}
+
+export bool contains<T>([]const T values, T needle) {
+    _, found := index_of<T>(values, needle);
+    return found;
+}
+
+export void reverse<T>([]T values) {
+    usize left = 0;
+    usize right = values.len();
+
+    while left < right {
+        right = right - 1;
+        if left >= right {
+            break;
+        }
+
+        T temporary = values[left];
+        values[left] = values[right];
+        values[right] = temporary;
+
+        left++;
+    }
+}
+
+export void fill<T>([]T values, T value) {
+    loop usize index = 0; index < values.len(); index++ {
+        values[index] = value;
+    }
+}
+
+export void for_each<T>([]const T values, Action<T> action) {
+    loop usize index = 0; index < values.len(); index++ {
+        action(&values[index]);
+    }
+}
+
+export void sort_by<T>([]T values, Less<T> less) {
+    const usize LEN = values.len();
+
+    if LEN < 2 {
+        return;
+    }
+
+    usize root = LEN / 2;
+    while root > 0 {
+        root = root - 1;
+
+        usize current = root;
+        while current < LEN / 2 {
+            usize child = current * 2 + 1;
+            if child + 1 < LEN and
+                less(&values[child], &values[child + 1]) {
+                child++;
+            }
+
+            if !less(&values[current], &values[child]) {
+                break;
+            }
+
+            T temporary = values[current];
+            values[current] = values[child];
+            values[child] = temporary;
+            current = child;
+        }
+    }
+
+    usize heapLen = LEN;
+    while heapLen > 1 {
+        heapLen = heapLen - 1;
+
+        T temporary = values[0];
+        values[0] = values[heapLen];
+        values[heapLen] = temporary;
+
+        usize current = 0;
+        while current < heapLen / 2 {
+            usize child = current * 2 + 1;
+            if child + 1 < heapLen and
+                less(&values[child], &values[child + 1]) {
+                child++;
+            }
+
+            if !less(&values[current], &values[child]) {
+                break;
+            }
+
+            temporary = values[current];
+            values[current] = values[child];
+            values[child] = temporary;
+            current = child;
+        }
+    }
+}
+
+export void sort<T>([]T values) {
+    sort_by<T>(
+        values,
+        [](&const T left, &const T right) => (bool) {
+            return *left < *right;
+        }
+    );
+}

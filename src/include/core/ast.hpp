@@ -18,11 +18,14 @@ namespace flecha::core {
 enum class AstNodeKind {
     CompilationUnit,
     FunctionDeclaration,
+    CallableTypeDeclaration,
     ErrorDeclaration,
     EnumDeclaration,
     StructureDeclaration,
     StructureField,
     BuildExpression,
+    AnonymousCapture,
+    AnonymousFunctionExpression,
     Parameter,
     Type,
     BlockStatement,
@@ -81,6 +84,12 @@ class Declaration : public AstNode {
     using AstNode::AstNode;
     std::string moduleId;
     bool exported = false;
+    bool quiverVisible = false;
+    // The source-root-qualified directory that contains this declaration.
+    // Generic nominal specializations may inherit another declaration's
+    // visibility boundary, so this lives on the declaration rather than being
+    // inferred exclusively from moduleId.
+    std::string quiverId;
     // Token spans let specialization preserve source ranges and parser
     // desugaring.
     std::vector<std::string> genericParameters;
@@ -369,6 +378,7 @@ class Parameter final : public AstNode {
         return AstNodeKind::Parameter;
     }
     [[nodiscard]] const TypeNode& Type() const { return *_type; }
+    void SetType(std::unique_ptr<TypeNode> type) { _type = std::move(type); }
     [[nodiscard]] const std::string& Name() const { return _name; }
     [[nodiscard]] const source::SourceRange& NameRange() const {
         return _nameRange;
@@ -384,6 +394,7 @@ enum class FunctionModifier : std::uint8_t {
     Private,
     Override,
     Unsafe,
+    Once,
     Export,
     Extern,
     Inline,
@@ -435,7 +446,8 @@ class FunctionDeclaration final : public Declaration {
                         std::vector<std::unique_ptr<Parameter>> parameters,
                         std::unique_ptr<BlockStatement> body,
                         source::SourceRange nameRange = {},
-                        std::string owner = {})
+                        std::string owner = {}, std::string borrowSource = {},
+                        source::SourceRange borrowSourceRange = {})
         : Declaration(range),
           _owner(std::move(owner)),
           _modifiers(std::move(modifiers)),
@@ -443,7 +455,9 @@ class FunctionDeclaration final : public Declaration {
           _name(std::move(name)),
           _parameters(std::move(parameters)),
           _body(std::move(body)),
-          _nameRange(nameRange.Empty() ? range : nameRange) {}
+          _nameRange(nameRange.Empty() ? range : nameRange),
+          _borrowSource(std::move(borrowSource)),
+          _borrowSourceRange(borrowSourceRange) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::FunctionDeclaration;
@@ -460,6 +474,10 @@ class FunctionDeclaration final : public Declaration {
     [[nodiscard]] bool IsExtern() const {
         return HasModifier(FunctionModifier::Extern);
     }
+    [[nodiscard]] bool IsTest() const { return _isTest; }
+    [[nodiscard]] bool IsTestHarness() const { return _isTestHarness; }
+    void MarkTest() { _isTest = true; }
+    void MarkTestHarness() { _isTestHarness = true; }
     const std::string& Owner() const { return _owner; }
     bool HasModifier(FunctionModifier modifier) const {
         for (const auto item : _modifiers)
@@ -467,6 +485,12 @@ class FunctionDeclaration final : public Declaration {
         return false;
     }
     [[nodiscard]] const TypeNode& ReturnType() const { return *_returnType; }
+    void SetReturnType(std::unique_ptr<TypeNode> type) {
+        _returnType = std::move(type);
+    }
+    void AddModifier(FunctionModifier modifier) {
+        if (!HasModifier(modifier)) _modifiers.push_back(modifier);
+    }
     [[nodiscard]] const std::string& Name() const { return _name; }
     [[nodiscard]] const source::SourceRange& NameRange() const {
         return _nameRange;
@@ -476,6 +500,19 @@ class FunctionDeclaration final : public Declaration {
         return _parameters;
     }
     [[nodiscard]] const BlockStatement& Body() const { return *_body; }
+    [[nodiscard]] bool HasBorrowSource() const {
+        return !_borrowSource.empty();
+    }
+    [[nodiscard]] const std::string& BorrowSource() const {
+        return _borrowSource;
+    }
+    [[nodiscard]] const source::SourceRange& BorrowSourceRange() const {
+        return _borrowSourceRange;
+    }
+    void SetBorrowSource(std::string source, source::SourceRange range) {
+        _borrowSource = std::move(source);
+        _borrowSourceRange = range;
+    }
 
    private:
     std::string _owner;
@@ -485,6 +522,131 @@ class FunctionDeclaration final : public Declaration {
     std::vector<std::unique_ptr<Parameter>> _parameters;
     std::unique_ptr<BlockStatement> _body;
     source::SourceRange _nameRange;
+    std::string _borrowSource;
+    source::SourceRange _borrowSourceRange;
+    bool _isTest = false;
+    bool _isTestHarness = false;
+};
+
+class AnonymousFunctionExpression final : public Expression {
+   public:
+    enum class CaptureMode { Copy, Reference, ConstReference, Lend, Own };
+
+    class Capture final : public AstNode {
+       public:
+        Capture(source::SourceRange range, CaptureMode mode, std::string name,
+                source::SourceRange nameRange)
+            : AstNode(range),
+              _mode(mode),
+              _name(std::move(name)),
+              _nameRange(nameRange) {}
+
+        [[nodiscard]] AstNodeKind Kind() const override {
+            return AstNodeKind::AnonymousCapture;
+        }
+        [[nodiscard]] CaptureMode Mode() const { return _mode; }
+        [[nodiscard]] const std::string& Name() const { return _name; }
+        [[nodiscard]] const source::SourceRange& NameRange() const {
+            return _nameRange;
+        }
+
+       private:
+        CaptureMode _mode;
+        std::string _name;
+        source::SourceRange _nameRange;
+    };
+
+    AnonymousFunctionExpression(source::SourceRange range,
+                                std::unique_ptr<FunctionDeclaration> function,
+                                std::vector<std::unique_ptr<Capture>> captures,
+                                bool inferredSignature,
+                                bool explicitCaptureList)
+        : Expression(range),
+          _function(std::move(function)),
+          _captures(std::move(captures)),
+          _inferredSignature(inferredSignature),
+          _explicitCaptureList(explicitCaptureList) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::AnonymousFunctionExpression;
+    }
+    [[nodiscard]] const FunctionDeclaration& Function() const {
+        return *_function;
+    }
+    [[nodiscard]] FunctionDeclaration& Function() { return *_function; }
+    [[nodiscard]] const std::vector<std::unique_ptr<Capture>>& Captures()
+        const {
+        return _captures;
+    }
+    [[nodiscard]] bool HasInferredSignature() const {
+        return _inferredSignature;
+    }
+    [[nodiscard]] bool HasExplicitCaptureList() const {
+        return _explicitCaptureList;
+    }
+
+   private:
+    std::unique_ptr<FunctionDeclaration> _function;
+    std::vector<std::unique_ptr<Capture>> _captures;
+    bool _inferredSignature;
+    bool _explicitCaptureList;
+};
+
+class CallableTypeDeclaration final : public Declaration {
+   public:
+    CallableTypeDeclaration(source::SourceRange range, std::string name,
+                            source::SourceRange nameRange,
+                            std::vector<std::unique_ptr<Parameter>> parameters,
+                            std::vector<std::unique_ptr<TypeNode>> results,
+                            bool isUnsafe, bool isOnce,
+                            std::string borrowSource = {},
+                            source::SourceRange borrowSourceRange = {})
+        : Declaration(range),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _parameters(std::move(parameters)),
+          _results(std::move(results)),
+          _isUnsafe(isUnsafe),
+          _isOnce(isOnce),
+          _borrowSource(std::move(borrowSource)),
+          _borrowSourceRange(borrowSourceRange) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::CallableTypeDeclaration;
+    }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] const source::SourceRange& NameRange() const {
+        return _nameRange;
+    }
+    [[nodiscard]] const std::vector<std::unique_ptr<Parameter>>& Parameters()
+        const {
+        return _parameters;
+    }
+    [[nodiscard]] const std::vector<std::unique_ptr<TypeNode>>& Results()
+        const {
+        return _results;
+    }
+    [[nodiscard]] bool IsUnsafe() const { return _isUnsafe; }
+    [[nodiscard]] bool IsOnce() const { return _isOnce; }
+    [[nodiscard]] bool HasBorrowSource() const {
+        return !_borrowSource.empty();
+    }
+    [[nodiscard]] const std::string& BorrowSource() const {
+        return _borrowSource;
+    }
+    [[nodiscard]] const source::SourceRange& BorrowSourceRange() const {
+        return _borrowSourceRange;
+    }
+
+   private:
+    std::string _name;
+    source::SourceRange _nameRange;
+    std::vector<std::unique_ptr<Parameter>> _parameters;
+    std::vector<std::unique_ptr<TypeNode>> _results;
+    bool _isUnsafe;
+    bool _isOnce;
+    std::string _borrowSource;
+    source::SourceRange _borrowSourceRange;
 };
 
 struct Import final {
@@ -498,7 +660,12 @@ struct Module final {
     std::string id;
     std::string name;
     std::string file;
+    std::string quiverId;
+    std::string quiverName;
+    bool privateModule = false;
     bool entry = false;
+    bool test = false;
+    std::string testPair;
     std::vector<Import> imports;
 };
 
@@ -515,8 +682,10 @@ class CompilationUnit final : public AstNode {
         _declarations.push_back(std::move(declaration));
     }
     std::string moduleName;
+    bool privateModule = false;
     std::vector<Import> imports;
     std::vector<Module> modules;
+    std::string testingModule;
     std::vector<std::unique_ptr<Declaration>> TakeDeclarations() {
         return std::move(_declarations);
     }

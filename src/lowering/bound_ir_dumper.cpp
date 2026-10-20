@@ -307,6 +307,13 @@ class Dumper final {
                         .Receiver());
                 _stream << ")";
                 break;
+            case BoundNodeKind::SliceDataExpression:
+                _stream << "(slice-data ";
+                WriteExpression(
+                    static_cast<const BoundSliceDataExpression&>(expression)
+                        .Receiver());
+                _stream << ")";
+                break;
             case BoundNodeKind::DereferenceExpression:
                 _stream << "(deref ";
                 WriteExpression(
@@ -334,13 +341,55 @@ class Dumper final {
                                .Symbol()
                                .Name();
                 break;
-            case BoundNodeKind::FunctionExpression:
-                _stream << "function_ref "
-                        << static_cast<const BoundFunctionExpression&>(
-                               expression)
-                               .Symbol()
-                               .Name();
+            case BoundNodeKind::MoveExpression:
+                _stream << "move ";
+                WriteExpression(
+                    static_cast<const BoundMoveExpression&>(expression)
+                        .Source());
                 break;
+            case BoundNodeKind::DirectExpression:
+                _stream << "direct ";
+                WriteExpression(
+                    static_cast<const BoundDirectExpression&>(expression)
+                        .Value());
+                break;
+            case BoundNodeKind::FunctionExpression: {
+                const auto& function =
+                    static_cast<const BoundFunctionExpression&>(expression);
+                _stream << "function_ref " << function.Symbol().Name();
+                if (!function.Captures().empty()) {
+                    _stream << " [";
+                    bool first = true;
+                    for (const auto& capture : function.Captures()) {
+                        if (!first) _stream << ", ";
+                        first = false;
+                        switch (capture.mode) {
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::Copy:
+                                _stream << "copy ";
+                                break;
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::Reference:
+                                _stream << "&";
+                                break;
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::ConstReference:
+                                _stream << "&const ";
+                                break;
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::Lend:
+                                _stream << "lend ";
+                                break;
+                            case core::AnonymousFunctionExpression::
+                                CaptureMode::Own:
+                                _stream << "own ";
+                                break;
+                        }
+                        WriteExpression(*capture.value);
+                    }
+                    _stream << "]";
+                }
+            } break;
             case BoundNodeKind::IncrementExpression:
                 _stream << "(post-increment ";
                 WriteExpression(
@@ -406,6 +455,18 @@ class Dumper final {
                 _stream << "(call " << call.Function().Name();
                 for (const std::unique_ptr<BoundExpression>& argument :
                      call.Arguments()) {
+                    _stream << " ";
+                    WriteExpression(*argument);
+                }
+                _stream << ")";
+                break;
+            }
+            case BoundNodeKind::IndirectCallExpression: {
+                const auto& call =
+                    static_cast<const BoundIndirectCallExpression&>(expression);
+                _stream << "(call_indirect ";
+                WriteExpression(call.Callee());
+                for (const auto& argument : call.Arguments()) {
                     _stream << " ";
                     WriteExpression(*argument);
                 }

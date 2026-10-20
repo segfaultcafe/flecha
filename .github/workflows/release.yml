@@ -203,6 +203,7 @@ jobs:
           cmake -S . -B build -G Ninja
           -DBUILD_TESTING=OFF
           -DCMAKE_BUILD_TYPE=Release
+          -DFLECHA_RELEASE_BUILD=ON
           "-DCMAKE_C_COMPILER=${FLECHA_C_COMPILER:-clang}"
           "-DCMAKE_CXX_COMPILER=${FLECHA_CXX_COMPILER:-clang++}"
           "-DLLVM_DIR=$LLVM_DIR"
@@ -226,6 +227,7 @@ jobs:
           "-DFLECHA_COMPILER=$PWD/build/flecha${{ matrix.suffix }}"
           "-DLONGBOW=$PWD/build/longbow${{ matrix.suffix }}"
           "-DOUTPUT_ROOT=$PWD/build/release-smoke"
+          "-DSTANDARD_LIBRARY=$PWD/std/src"
           "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
           -P cmake/release_smoke.cmake
 

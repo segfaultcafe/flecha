@@ -123,6 +123,306 @@ TEST(ParserTests, ParsesTypedParametersAndBareReturn) {
     EXPECT_EQ(returnStatement.Value(), nullptr);
 }
 
+TEST(ParserTests, ParsesNamedCallableSignatures) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "func Mapper(i32, stringv text) => (i32); "
+        "unsafe func Reader(lend *const u8 source) => (own *u8, error);",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    ASSERT_EQ(unit->Declarations()[0]->Kind(),
+              AstNodeKind::CallableTypeDeclaration);
+    const auto& mapper =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(mapper.Name(), "Mapper");
+    EXPECT_FALSE(mapper.IsUnsafe());
+    ASSERT_EQ(mapper.Parameters().size(), 2);
+    EXPECT_TRUE(mapper.Parameters()[0]->Name().empty());
+    EXPECT_EQ(mapper.Parameters()[1]->Name(), "text");
+    ASSERT_EQ(mapper.Results().size(), 1);
+    EXPECT_EQ(mapper.Results()[0]->Type(), PrimitiveType::I32);
+
+    const auto& reader =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[1]);
+    EXPECT_TRUE(reader.IsUnsafe());
+    EXPECT_EQ(reader.Parameters()[0]->Type().Contract(),
+              OwnershipContract::Lend);
+    ASSERT_EQ(reader.Results().size(), 2);
+    EXPECT_EQ(reader.Results()[0]->Contract(), OwnershipContract::Own);
+}
+
+TEST(ParserTests, ParsesOnceCallableSignaturesAndLiterals) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        unsafe once func Task(i32) => (i32);
+        void main() {
+            Task task = once unsafe [copy value](i32 input) => (i32) {
+                return input + value;
+            };
+        }
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& task =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_TRUE(task.IsUnsafe());
+    EXPECT_TRUE(task.IsOnce());
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& declaration = static_cast<const VariableDeclarationStatement&>(
+        *main.Body().Statements()[0]);
+    const auto& literal = static_cast<const AnonymousFunctionExpression&>(
+        *declaration.Initializer());
+    EXPECT_TRUE(literal.Function().HasModifier(FunctionModifier::Unsafe));
+    EXPECT_TRUE(literal.Function().HasModifier(FunctionModifier::Once));
+}
+
+TEST(ParserTests, ReportsDuplicateCallableModifiersAtExactRanges) {
+    struct Case final {
+        std::string source;
+        std::string message;
+        std::string duplicate;
+    };
+    const std::vector<Case> cases{
+        {"once once func Task() => ();", "duplicate callable modifier 'once'",
+         "once"},
+        {"unsafe unsafe func Task() => ();",
+         "duplicate callable modifier 'unsafe'", "unsafe"},
+        {"func Task() => (); void main() { "
+         "Task task = once once []() => () {}; }",
+         "duplicate anonymous function modifier 'once'", "once"},
+        {"unsafe func Task() => (); void main() { "
+         "Task task = unsafe unsafe []() => () {}; }",
+         "duplicate anonymous function modifier 'unsafe'", "unsafe"},
+    };
+
+    for (const Case& test : cases) {
+        DiagnosticBag diagnostics;
+        ParseSource(test.source, diagnostics);
+
+        ASSERT_EQ(diagnostics.Diagnostics().size(), 1) << test.source;
+        const Diagnostic& diagnostic = diagnostics.Diagnostics().front();
+        EXPECT_EQ(diagnostic.code, DiagnosticCode::UnexpectedToken);
+        EXPECT_EQ(diagnostic.message, test.message);
+        EXPECT_EQ(diagnostic.range.start.offset,
+                  test.source.rfind(test.duplicate));
+        EXPECT_EQ(diagnostic.range.Length(), test.duplicate.size());
+    }
+}
+
+TEST(ParserTests, ParsesGenericCallableSignatures) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "export func Predicate<T>(&const T value) => (bool); "
+        "func Transform<T, U>(T) => (U);",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& predicate =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_TRUE(predicate.exported);
+    ASSERT_EQ(predicate.genericParameters.size(), 1);
+    EXPECT_EQ(predicate.genericParameters[0], "T");
+    EXPECT_EQ(predicate.Parameters()[0]->Type().Target()->Name(), "T");
+    EXPECT_EQ(predicate.Parameters()[0]->Name(), "value");
+    EXPECT_FALSE(predicate.templateTokens.empty());
+    ASSERT_EQ(predicate.parameterTokenRanges.size(), 1);
+
+    const auto& transform =
+        static_cast<const CallableTypeDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(transform.genericParameters.size(), 2);
+    EXPECT_EQ(transform.genericParameters[0], "T");
+    EXPECT_EQ(transform.genericParameters[1], "U");
+    EXPECT_EQ(transform.Parameters()[0]->Type().Name(), "T");
+    EXPECT_EQ(transform.Results()[0]->Name(), "U");
+}
+
+TEST(ParserTests, ParsesCapturelessAnonymousFunctionForms) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        func Mapper(i32) => (i32);
+        void main() {
+            Mapper explicit = [](i32 value) => (i32) { return value; };
+            Mapper inferred = (value) => { return value; };
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(main.Body().Statements().size(), 2);
+
+    const auto& explicitVariable =
+        static_cast<const VariableDeclarationStatement&>(
+            *main.Body().Statements()[0]);
+    const auto& explicitFunction =
+        static_cast<const AnonymousFunctionExpression&>(
+            *explicitVariable.Initializer());
+    EXPECT_TRUE(explicitFunction.HasExplicitCaptureList());
+    EXPECT_FALSE(explicitFunction.HasInferredSignature());
+    ASSERT_EQ(explicitFunction.Function().Parameters().size(), 1);
+    EXPECT_EQ(explicitFunction.Function().Parameters()[0]->Name(), "value");
+    EXPECT_EQ(explicitFunction.Function().Parameters()[0]->Type().Type(),
+              PrimitiveType::I32);
+    EXPECT_EQ(explicitFunction.Function().ReturnType().Type(),
+              PrimitiveType::I32);
+
+    const auto& inferredVariable =
+        static_cast<const VariableDeclarationStatement&>(
+            *main.Body().Statements()[1]);
+    const auto& inferredFunction =
+        static_cast<const AnonymousFunctionExpression&>(
+            *inferredVariable.Initializer());
+    EXPECT_FALSE(inferredFunction.HasExplicitCaptureList());
+    EXPECT_TRUE(inferredFunction.HasInferredSignature());
+    EXPECT_EQ(inferredFunction.Function().Parameters()[0]->Name(), "value");
+}
+
+TEST(ParserTests, ParsesCopyCaptureLists) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        func Mapper(i32) => (i32);
+        void main() {
+            Mapper callback = [copy factor, copy offset](value) => {
+                return value + factor + offset;
+            };
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& variable = static_cast<const VariableDeclarationStatement&>(
+        *main.Body().Statements()[0]);
+    const auto& function = static_cast<const AnonymousFunctionExpression&>(
+        *variable.Initializer());
+    ASSERT_EQ(function.Captures().size(), 2);
+    EXPECT_EQ(function.Captures()[0]->Name(), "factor");
+    EXPECT_EQ(function.Captures()[1]->Name(), "offset");
+    EXPECT_EQ(function.Captures()[0]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::Copy);
+}
+
+TEST(ParserTests, ParsesCheckedReferenceCaptureLists) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        func Mapper() => (i32);
+        void main() {
+            Mapper callback = [&value, &const limit]() => {
+                return value + limit;
+            };
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& variable = static_cast<const VariableDeclarationStatement&>(
+        *main.Body().Statements()[0]);
+    const auto& function = static_cast<const AnonymousFunctionExpression&>(
+        *variable.Initializer());
+    ASSERT_EQ(function.Captures().size(), 2);
+    EXPECT_EQ(function.Captures()[0]->Name(), "value");
+    EXPECT_EQ(function.Captures()[0]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::Reference);
+    EXPECT_EQ(function.Captures()[1]->Name(), "limit");
+    EXPECT_EQ(function.Captures()[1]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::ConstReference);
+}
+
+TEST(ParserTests, ParsesRawResourceCaptureLists) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        unsafe func Reader() => (i32);
+        void main() {
+            Reader callback = unsafe [lend borrowed, own transferred]() => {
+                return *borrowed + *transferred;
+            };
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& main =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& variable = static_cast<const VariableDeclarationStatement&>(
+        *main.Body().Statements()[0]);
+    const auto& function = static_cast<const AnonymousFunctionExpression&>(
+        *variable.Initializer());
+    ASSERT_EQ(function.Captures().size(), 2);
+    EXPECT_EQ(function.Captures()[0]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::Lend);
+    EXPECT_EQ(function.Captures()[1]->Mode(),
+              AnonymousFunctionExpression::CaptureMode::Own);
+}
+
+TEST(ParserTests, ParsesTestDeclarationsWithMutableContexts) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "module sample; @imports :: root::testing; "
+        "test addition(&testing::UnitTest t) { t->fail(); }",
+        diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_TRUE(function.IsTest());
+    EXPECT_EQ(function.Name(), "addition");
+    EXPECT_EQ(function.ReturnType().Type(), PrimitiveType::Void);
+    ASSERT_EQ(function.Parameters().size(), 1);
+    EXPECT_EQ(function.Parameters()[0]->Type().TypeForm(), TypeKind::Reference);
+    EXPECT_FALSE(function.Parameters()[0]->Type().Target()->IsConst());
+    EXPECT_EQ(function.Parameters()[0]->Type().Target()->Name(),
+              "testing::UnitTest");
+}
+
+TEST(ParserTests, ParsesBorrowResultSourceAfterParameters) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "&const i32 identity(&const i32 value) <- value { return value; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_TRUE(function.HasBorrowSource());
+    EXPECT_EQ(function.BorrowSource(), "value");
+    EXPECT_EQ(function.BorrowSourceRange().start.offset, 41);
+    EXPECT_EQ(function.BorrowSourceRange().end.offset, 46);
+}
+
+TEST(ParserTests, RequiresBorrowSourceAfterLeftArrow) {
+    DiagnosticBag diagnostics;
+    (void)ParseSource("&i32 invalid(&i32 value) <- { return value; }",
+                      diagnostics);
+
+    EXPECT_TRUE(diagnostics.HasErrors());
+    ASSERT_FALSE(diagnostics.Diagnostics().empty());
+    EXPECT_EQ(diagnostics.Diagnostics().front().code,
+              DiagnosticCode::ExpectedToken);
+}
+
 TEST(ParserTests, ParsesExternDeclarationWithSemicolonAndModifiers) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(
@@ -178,9 +478,9 @@ TEST(ParserTests, AppendsMissingEndOfFileTokenSafely) {
 
 TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
     DiagnosticBag diagnostics;
-    std::unique_ptr<CompilationUnit> unit =
-        ParseSource("bool test() { return a or b and c ^ d == e < f + g * h; }",
-                    diagnostics);
+    std::unique_ptr<CompilationUnit> unit = ParseSource(
+        "bool check() { return a or b and c ^ d == e < f + g * h; }",
+        diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const BinaryExpression& logicalOr =
@@ -215,7 +515,7 @@ TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
 TEST(ParserExpressionTests, BinaryOperatorsAreLeftAssociative) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return 10 - 3 - 2; }", diagnostics);
+        ParseSource("i32 check() { return 10 - 3 - 2; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const BinaryExpression& outer =
@@ -230,7 +530,7 @@ TEST(ParserExpressionTests, BinaryOperatorsAreLeftAssociative) {
 TEST(ParserExpressionTests, UnaryOperatorsBindTighterAndAssociateRight) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return !-*value; }", diagnostics);
+        ParseSource("i32 check() { return !-*value; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const UnaryExpression& logicalNot =
@@ -247,7 +547,7 @@ TEST(ParserExpressionTests, UnaryOperatorsBindTighterAndAssociateRight) {
 TEST(ParserExpressionTests, ParenthesesOverridePrecedenceAndKeepRange) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return (1 + 2) * 3; }", diagnostics);
+        ParseSource("i32 check() { return (1 + 2) * 3; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const BinaryExpression& multiplication =
@@ -264,7 +564,7 @@ TEST(ParserExpressionTests, ParenthesesOverridePrecedenceAndKeepRange) {
 TEST(ParserExpressionTests, ReportsMissingRightOperandWithoutThrowing) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return 1 +; }", diagnostics);
+        ParseSource("i32 check() { return 1 +; }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -275,7 +575,7 @@ TEST(ParserExpressionTests, ReportsMissingRightOperandWithoutThrowing) {
 TEST(ParserAssignmentTests, AssignmentsHaveLowestPrecedence) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return result = a or b + c; }", diagnostics);
+        ParseSource("i32 check() { return result = a or b + c; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const AssignmentExpression& assignment =
@@ -290,7 +590,7 @@ TEST(ParserAssignmentTests, AssignmentsHaveLowestPrecedence) {
 TEST(ParserAssignmentTests, AssignmentsAssociateRight) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return a = b = 0; }", diagnostics);
+        ParseSource("i32 check() { return a = b = 0; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const AssignmentExpression& outer =
@@ -302,7 +602,7 @@ TEST(ParserAssignmentTests, AssignmentsAssociateRight) {
 TEST(ParserAssignmentTests, ReportsInvalidAssignmentTarget) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return (a + b) = 3; }", diagnostics);
+        ParseSource("i32 check() { return (a + b) = 3; }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -314,8 +614,8 @@ TEST(ParserAssignmentTests, ReportsInvalidAssignmentTarget) {
 
 TEST(ParserVariableDeclarationTests, ParsesTypedInitializedVariables) {
     DiagnosticBag diagnostics;
-    std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { i32 x = 32; bool y = false; }", diagnostics);
+    std::unique_ptr<CompilationUnit> unit = ParseSource(
+        "void check() { i32 x = 32; bool y = false; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const FunctionDeclaration& function =
@@ -346,7 +646,7 @@ TEST(ParserVariableDeclarationTests, ParsesTypedInitializedVariables) {
 TEST(ParserVariableDeclarationTests, ParsesTypedDeclarationWithoutInitializer) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { i32 value; }", diagnostics);
+        ParseSource("void check() { i32 value; }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_FALSE(diagnostics.HasErrors());
@@ -364,7 +664,7 @@ TEST(ParserVariableDeclarationTests, ParsesTypedDeclarationWithoutInitializer) {
 TEST(ParserVariableDeclarationTests, ParsesInferredVariables) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { x := 32; y := false; }", diagnostics);
+        ParseSource("void check() { x := 32; y := false; }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const FunctionDeclaration& function =
@@ -394,7 +694,7 @@ TEST(ParserVariableDeclarationTests, ParsesInferredVariables) {
 TEST(ParserVariableDeclarationTests, InferredVariablesRequireInitializer) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { value :=; }", diagnostics);
+        ParseSource("void check() { value :=; }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -404,7 +704,7 @@ TEST(ParserVariableDeclarationTests, InferredVariablesRequireInitializer) {
 TEST(ParserCallTests, ParsesNestedFunctionCalls) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "i32 test() { return add(1, multiply(2, 3)); }", diagnostics);
+        "i32 check() { return add(1, multiply(2, 3)); }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const CallExpression& add =
@@ -421,7 +721,7 @@ TEST(ParserCallTests, ParsesNestedFunctionCalls) {
 TEST(ParserCallTests, ParsesEmptyAndChainedCalls) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return factory()(value); }", diagnostics);
+        ParseSource("i32 check() { return factory()(value); }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const CallExpression& outer =
@@ -436,8 +736,8 @@ TEST(ParserCallTests, ParsesEmptyAndChainedCalls) {
 
 TEST(ParserCallTests, CallsBindTighterThanUnaryAndBinaryOperators) {
     DiagnosticBag diagnostics;
-    std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return -value(1) * other(2); }", diagnostics);
+    std::unique_ptr<CompilationUnit> unit = ParseSource(
+        "i32 check() { return -value(1) * other(2); }", diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     const BinaryExpression& multiplication =
@@ -452,7 +752,7 @@ TEST(ParserCallTests, CallsBindTighterThanUnaryAndBinaryOperators) {
 TEST(ParserCallTests, ReportsMissingArgumentSeparatorAndRecovers) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return add(1 2); }", diagnostics);
+        ParseSource("i32 check() { return add(1 2); }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -463,7 +763,7 @@ TEST(ParserCallTests, ReportsMissingArgumentSeparatorAndRecovers) {
 TEST(ParserCallTests, ReportsTrailingComma) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("i32 test() { return add(1,); }", diagnostics);
+        ParseSource("i32 check() { return add(1,); }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -474,7 +774,7 @@ TEST(ParserCallTests, ReportsTrailingComma) {
 TEST(ParserStringViewTests, ParsesMembersIndexingAndPostfixChains) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "stringv test(stringv text) { return text.substr(0, 3); } "
+        "stringv check(stringv text) { return text.substr(0, 3); } "
         "char first(stringv text) { return text.at(0); } "
         "char indexed(stringv text) { return text.substr(1, 2)[0]; }",
         diagnostics);
@@ -510,7 +810,7 @@ TEST(ParserStringViewTests, ParsesMembersIndexingAndPostfixChains) {
 TEST(ParserConditionalTests, ParsesConditionalAlsoClauses) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "void test() { if x {} also y {} else if z {} also w {} else {} }",
+        "void check() { if x {} also y {} else if z {} also w {} else {} }",
         diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
@@ -539,7 +839,7 @@ TEST(ParserConditionalTests, ParsesConditionalAlsoClauses) {
 TEST(ParserConditionalTests, RejectsMultipleAlsoClausesOnOneBranch) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "void test() { if ready {} also warm {} also authorized {} }",
+        "void check() { if ready {} also warm {} also authorized {} }",
         diagnostics);
 
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -561,7 +861,7 @@ TEST(ParserConditionalTests, RejectsMultipleAlsoClausesOnOneBranch) {
 TEST(ParserConditionalTests, RejectsBareAlsoClause) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
-        ParseSource("void test() { if ready {} also {} }", diagnostics);
+        ParseSource("void check() { if ready {} also {} }", diagnostics);
 
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(diagnostics.Diagnostics().size(), 1);
@@ -1352,5 +1652,54 @@ TEST(ParserTests, ParsesModuleImportsAndExportsOnOneLineOrMultipleLines) {
             static_cast<const CallExpression&>(*returned.Value());
         EXPECT_EQ(static_cast<const NameExpression&>(call.Callee()).Name(),
                   "math::answer");
+    }
+}
+
+TEST(ParserTests, ParsesQuiverVisibilityOnTopLevelDeclarations) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "quiver i32 value() { return 42; } quiver structure Box { i32 n; }; "
+        "quiver enum State { On } quiver error Failure { Failed } quiver "
+        "func Callback(i32) => (i32);",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 5);
+    for (const auto& declaration : unit->Declarations()) {
+        EXPECT_TRUE(declaration->quiverVisible);
+        EXPECT_FALSE(declaration->exported);
+    }
+}
+
+TEST(ParserTests, ParsesPrivateModulesAndScopesExportsToTheirQuiver) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "private module example; export i32 shared() { return 42; } "
+        "quiver structure Box { i32 value; }; i32 local() { return 0; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    EXPECT_EQ(unit->moduleName, "example");
+    EXPECT_TRUE(unit->privateModule);
+    ASSERT_EQ(unit->Declarations().size(), 3);
+    EXPECT_TRUE(unit->Declarations()[0]->quiverVisible);
+    EXPECT_FALSE(unit->Declarations()[0]->exported);
+    EXPECT_TRUE(unit->Declarations()[1]->quiverVisible);
+    EXPECT_FALSE(unit->Declarations()[2]->quiverVisible);
+    EXPECT_FALSE(unit->Declarations()[2]->exported);
+}
+
+TEST(ParserTests, RejectsDuplicateAndConflictingVisibilityModifiers) {
+    for (const std::string& source :
+         {"export quiver void value() {}", "quiver export void value() {}",
+          "quiver quiver void value() {}"}) {
+        DiagnosticBag diagnostics;
+        (void)ParseSource(source, diagnostics);
+        ASSERT_TRUE(diagnostics.HasErrors()) << source;
+        ASSERT_FALSE(diagnostics.Diagnostics().empty());
+        EXPECT_NE(diagnostics.Diagnostics()[0].message.find(
+                      "duplicate or conflicting visibility modifier"),
+                  std::string::npos)
+            << source;
     }
 }

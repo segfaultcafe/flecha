@@ -1,10 +1,15 @@
 #include "codegen/native_compiler.hpp"
 
 #include <llvm/ADT/SmallString.h>
+#include <llvm/Analysis/CGSCCPassManager.h>
+#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/PassManager.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <llvm/Passes/OptimizationLevel.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/FileUtilities.h>
@@ -222,6 +227,25 @@ bool NativeCompiler::EmitObject(const lowering::BoundProgram& program,
         return Fail(diagnostics::DiagnosticCode::ObjectEmissionFailed,
                     generator.Error());
     }
+
+    // The target emission pass manager only performs instruction selection and
+    // machine-level work. Run LLVM's target-aware scalar/vector optimization
+    // pipeline first so native builds do not emit the generator's deliberately
+    // straightforward IR verbatim.
+    llvm::LoopAnalysisManager loopAnalyses;
+    llvm::FunctionAnalysisManager functionAnalyses;
+    llvm::CGSCCAnalysisManager cgsccAnalyses;
+    llvm::ModuleAnalysisManager moduleAnalyses;
+    llvm::PassBuilder passBuilder(_targetMachine.get());
+    passBuilder.registerModuleAnalyses(moduleAnalyses);
+    passBuilder.registerCGSCCAnalyses(cgsccAnalyses);
+    passBuilder.registerFunctionAnalyses(functionAnalyses);
+    passBuilder.registerLoopAnalyses(loopAnalyses);
+    passBuilder.crossRegisterProxies(loopAnalyses, functionAnalyses,
+                                     cgsccAnalyses, moduleAnalyses);
+    llvm::ModulePassManager optimizationPipeline =
+        passBuilder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+    optimizationPipeline.run(*module, moduleAnalyses);
 
     std::error_code fileError;
     llvm::raw_fd_ostream output(objectPath, fileError, llvm::sys::fs::OF_None);

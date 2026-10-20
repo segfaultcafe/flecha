@@ -41,6 +41,7 @@ class Lowerer final {
 
     const semantic::SemanticModel* _semanticModel = nullptr;
     semantic::SemanticType _returnType = semantic::SemanticType::Error();
+    const core::Expression* _directTransfer = nullptr;
     bool _zeroFunction = false;
 };
 

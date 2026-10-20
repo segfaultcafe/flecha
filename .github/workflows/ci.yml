@@ -143,18 +143,20 @@ jobs:
       - name: Configure
         run: >-
           cmake -S . -B build-longbow-tests -G Ninja
-          -DBUILD_TESTING=ON
+          -DBUILD_TESTING=OFF
           -DCMAKE_C_COMPILER=/usr/bin/gcc-14
           -DCMAKE_CXX_COMPILER=/usr/bin/g++-14
           "-DLLVM_DIR=$(/usr/bin/llvm-config-18 --cmakedir)"
 
-      - name: Build Flecha, Longbow, and test targets
-        run: cmake --build build-longbow-tests --parallel
+      - name: Build Flecha and Longbow
+        run: cmake --build build-longbow-tests --target longbow --parallel
 
-      - name: Run Longbow and standard library tests
-        run: >-
-          ctest --test-dir build-longbow-tests --output-on-failure
-          -R '^(LongbowTests|StandardLibraryTests)\.'
+      - name: Run standard library unit tests
+        working-directory: std
+        env:
+          FLECHA_COMPILER: ${{ github.workspace }}/build-longbow-tests/flecha
+          FLECHA_STANDARD_LIBRARY: ${{ github.workspace }}/std/src
+        run: ../build-longbow-tests/longbow test --verbose
 
   sanitizers:
     name: AddressSanitizer and UBSan
@@ -194,17 +196,17 @@ jobs:
 
       - name: Run sanitized unit tests
         env:
-          ASAN_OPTIONS: detect_leaks=0
+          ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: build-sanitizers/src/tests/test_flecha
 
       - name: Run sanitized native smoke tests
         env:
-          ASAN_OPTIONS: detect_leaks=0
+          ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: >-
           ctest --test-dir build-sanitizers --output-on-failure
-          -R '^NativeSemanticTests\.(ControlFlowDefiniteAssignment|ConstDeclarations|UnsafePointers|CheckedReferences|FixedArrays|Iteration|CheckedSlices|Defer|Tuples|ErrorValues|Structures|RawAllocation)$'
+          -R '^NativeSemanticTests\.(ControlFlowDefiniteAssignment|ConstDeclarations|UnsafePointers|CheckedReferences|FixedArrays|Iteration|CheckedSlices|Defer|Tuples|ErrorValues|Structures|RawAllocation|Modules|CallableIntegration|CallableAllocationFailure)$'
 
   platform-build:
     name: Create package (${{ matrix.name }})
@@ -338,6 +340,7 @@ jobs:
           "-DFLECHA_COMPILER=$PWD/build/flecha${{ matrix.suffix }}"
           "-DLONGBOW=$PWD/build/longbow${{ matrix.suffix }}"
           "-DOUTPUT_ROOT=$PWD/build/release-smoke"
+          "-DSTANDARD_LIBRARY=$PWD/std/src"
           "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
           -P cmake/release_smoke.cmake
 

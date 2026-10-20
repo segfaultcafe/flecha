@@ -27,6 +27,8 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
     }
     for (const auto& function : semanticModel.GeneratedFunctions())
         functions.push_back(LowerFunction(*function));
+    for (const auto* function : semanticModel.AnonymousFunctions())
+        functions.push_back(LowerFunction(*function));
     _semanticModel = nullptr;
     return std::make_unique<BoundProgram>(std::move(functions));
 }
@@ -47,11 +49,17 @@ std::unique_ptr<BoundFunction> Lowerer::LowerFunction(
             static_cast<const semantic::VariableSymbol*>(parameterSymbol));
     }
 
+    std::vector<BoundFunctionCapture> captures;
+    for (const semantic::ClosureCapture& capture :
+         _semanticModel->Captures(function))
+        captures.push_back({capture.syntax->Mode(), capture.variable});
+
     _returnType = functionSymbol.ReturnType();
     _zeroFunction =
         functionSymbol.Owner() && functionSymbol.Name().ends_with("::zero");
     auto result = std::make_unique<BoundFunction>(
-        functionSymbol, std::move(parameters), LowerBlock(function.Body()));
+        functionSymbol, std::move(captures), std::move(parameters),
+        LowerBlock(function.Body()));
     _zeroFunction = false;
     return result;
 }
@@ -106,8 +114,7 @@ std::unique_ptr<BoundStatement> Lowerer::LowerStatement(
                 bindings.push_back(
                     {static_cast<const semantic::VariableSymbol*>(
                          _semanticModel->DestructureTarget(*binding)),
-                     destructure.IsInferred() ||
-                         binding->ExplicitType() != nullptr});
+                     _semanticModel->DeclaredSymbol(*binding) != nullptr});
             return std::make_unique<BoundDestructureStatement>(
                 statement.Range(), std::move(bindings),
                 LowerExpression(destructure.Value()));
@@ -279,7 +286,51 @@ std::unique_ptr<BoundPlaceExpression> Lowerer::LowerPlace(
 std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
     const core::Expression& expression, semantic::SemanticType expected) {
     const semantic::SemanticType type = _semanticModel->TypeOf(expression);
+    if (_semanticModel->TransferOf(expression) == semantic::TransferKind::Move)
+        return std::make_unique<BoundMoveExpression>(expression.Range(),
+                                                     LowerPlace(expression));
+    if (_semanticModel->TransferOf(expression) ==
+            semantic::TransferKind::Direct &&
+        _directTransfer != &expression) {
+        const core::Expression* previous = _directTransfer;
+        _directTransfer = &expression;
+        std::unique_ptr<BoundExpression> value =
+            LowerExpression(expression, expected);
+        _directTransfer = previous;
+        return std::make_unique<BoundDirectExpression>(expression.Range(),
+                                                       std::move(value));
+    }
     switch (expression.Kind()) {
+        case core::AstNodeKind::AnonymousFunctionExpression: {
+            const auto& anonymous =
+                static_cast<const core::AnonymousFunctionExpression&>(
+                    expression);
+            std::vector<BoundClosureCapture> captures;
+            for (const semantic::ClosureCapture& capture :
+                 _semanticModel->Captures(anonymous.Function())) {
+                std::unique_ptr<BoundExpression> value =
+                    std::make_unique<BoundVariableExpression>(
+                        capture.syntax->NameRange(),
+                        static_cast<const semantic::VariableSymbol&>(
+                            *capture.source));
+                if (capture.syntax->Mode() ==
+                        core::AnonymousFunctionExpression::CaptureMode::Own &&
+                    !capture.source->Type().IsCopyable())
+                    value = std::make_unique<BoundMoveExpression>(
+                        capture.syntax->NameRange(),
+                        std::make_unique<BoundVariableExpression>(
+                            capture.syntax->NameRange(),
+                            static_cast<const semantic::VariableSymbol&>(
+                                *capture.source)));
+                captures.push_back({capture.syntax->Mode(), capture.variable,
+                                    std::move(value)});
+            }
+            return std::make_unique<BoundFunctionExpression>(
+                expression.Range(),
+                static_cast<const semantic::FunctionSymbol&>(
+                    *_semanticModel->DeclaredSymbol(anonymous.Function())),
+                std::move(captures));
+        }
         case core::AstNodeKind::BuildExpression: {
             const auto& build =
                 static_cast<const core::BuildExpression&>(expression);
@@ -394,7 +445,9 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             }
             if ((literal.LiteralType() == TokenType::None ||
                  (literal.LiteralType() == TokenType::Null &&
-                  expected.Kind() == semantic::SemanticTypeKind::Pointer)) &&
+                  (expected.Kind() == semantic::SemanticTypeKind::Pointer ||
+                   expected.Kind() ==
+                       semantic::SemanticTypeKind::OwnedBuffer))) &&
                 !expected.IsError() &&
                 expected.Kind() != semantic::SemanticTypeKind::None) {
                 return std::make_unique<BoundLiteralExpression>(
@@ -466,6 +519,7 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                       kind == semantic::SemanticTypeKind::Bool ||
                       kind == semantic::SemanticTypeKind::Char)) ||
                     kind == semantic::SemanticTypeKind::Pointer ||
+                    kind == semantic::SemanticTypeKind::OwnedBuffer ||
                     kind == semantic::SemanticTypeKind::Null)
                     return other;
                 return semantic::SemanticType::Error();
@@ -489,33 +543,45 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
         case core::AstNodeKind::CallExpression: {
             const core::CallExpression& call =
                 static_cast<const core::CallExpression&>(expression);
-            const core::NameExpression& callee =
-                static_cast<const core::NameExpression&>(call.Callee());
-            const semantic::FunctionSymbol& function =
-                static_cast<const semantic::FunctionSymbol&>(
-                    *_semanticModel->SymbolFor(callee));
-            if (function.BuiltIn() == semantic::BuiltInFunction::New)
+            const semantic::FunctionSymbol* function = nullptr;
+            if (call.Callee().Kind() == core::AstNodeKind::NameExpression) {
+                const auto& name =
+                    static_cast<const core::NameExpression&>(call.Callee());
+                const auto* symbol = _semanticModel->SymbolFor(name);
+                if (symbol && symbol->Kind() == semantic::SymbolKind::Function)
+                    function =
+                        static_cast<const semantic::FunctionSymbol*>(symbol);
+            }
+            const auto& signature =
+                _semanticModel->TypeOf(call.Callee()).Signature();
+            if (function &&
+                function->BuiltIn() == semantic::BuiltInFunction::New)
                 return std::make_unique<BoundAllocationExpression>(
                     expression.Range(), type, *type.Elements()[0].Target(),
                     _semanticModel->GlobalScope()
                         .Lookup("AllocationError")
                         ->Type(),
                     LowerExpression(*call.Arguments()[0],
-                                    function.ParameterTypes()[0]),
+                                    function->ParameterTypes()[0]),
                     call.TypeArgument()->TypeForm() == core::TypeKind::Slice);
             std::vector<std::unique_ptr<BoundExpression>> arguments;
             arguments.reserve(call.Arguments().size());
             for (const std::unique_ptr<core::Expression>& argument :
                  call.Arguments()) {
                 const semantic::SemanticType parameterType =
-                    (function.BuiltIn() == semantic::BuiltInFunction::None ||
-                     function.BuiltIn() == semantic::BuiltInFunction::Free)
-                        ? function.ParameterTypes()[arguments.size()]
+                    (!function ||
+                     function->BuiltIn() == semantic::BuiltInFunction::None ||
+                     function->BuiltIn() == semantic::BuiltInFunction::Free)
+                        ? signature.parameters[arguments.size()]
                         : semantic::SemanticType::Error();
                 arguments.push_back(LowerExpression(*argument, parameterType));
             }
+            if (!function)
+                return std::make_unique<BoundIndirectCallExpression>(
+                    expression.Range(), LowerExpression(call.Callee()),
+                    std::move(arguments));
             return std::make_unique<BoundCallExpression>(
-                expression.Range(), function, std::move(arguments));
+                expression.Range(), *function, std::move(arguments));
         }
         case core::AstNodeKind::MemberCallExpression: {
             const core::MemberCallExpression& member =
@@ -541,6 +607,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 return std::make_unique<BoundCallExpression>(
                     expression.Range(), *method, std::move(arguments));
             }
+            if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
+                    semantic::SemanticTypeKind::Slice &&
+                member.Member() == "data")
+                return std::make_unique<BoundSliceDataExpression>(
+                    expression.Range(), type,
+                    LowerExpression(member.Receiver()));
             if (_semanticModel->TypeOf(member.Receiver()).IsSequence() &&
                 member.Member() != "len")
                 return LowerPlace(expression);

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -32,6 +33,11 @@ extern "C" void* flecha_runtime_v1_alloc(size_t size, size_t alignment) {
     static_cast<AllocationHeader*>(data)[-1] = {base, 1};
     std::memset(data, 0, size);
     return data;
+}
+
+extern "C" void flecha_runtime_v1_allocation_failure(void) {
+    std::fputs("flecha runtime error: allocation failed\n", stderr);
+    std::abort();
 }
 
 extern "C" void flecha_runtime_v1_free(void* data) {

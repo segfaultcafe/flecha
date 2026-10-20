@@ -13,8 +13,40 @@ using Symbols = std::set<const Symbol*>;
 using Code = diagnostics::DiagnosticCode;
 using Kind = core::AstNodeKind;
 
-bool IsBorrowed(const Symbol* symbol) {
-    return symbol != nullptr && symbol->Type().IsBorrowed();
+bool ContainsBorrowed(SemanticType type) {
+    if (type.HasBorrowedLifetime()) return true;
+    if (type.Kind() != SemanticTypeKind::Tuple) return false;
+    return std::any_of(type.Elements().begin(), type.Elements().end(),
+                       ContainsBorrowed);
+}
+
+bool CanCarryBorrow(SemanticType type) {
+    if (type.HasBorrowedLifetime() || type.Kind() == SemanticTypeKind::Function)
+        return true;
+    if (type.Kind() == SemanticTypeKind::Tuple)
+        return std::any_of(type.Elements().begin(), type.Elements().end(),
+                           CanCarryBorrow);
+    if (type.Kind() == SemanticTypeKind::Array ||
+        type.Kind() == SemanticTypeKind::OwnedBuffer)
+        return CanCarryBorrow(*type.Target());
+    if (type.Kind() == SemanticTypeKind::Structure)
+        return std::any_of(type.Structure()->fields.begin(),
+                           type.Structure()->fields.end(),
+                           [](const StructureField& field) {
+                               return CanCarryBorrow(field.type);
+                           });
+    return false;
+}
+
+bool TracksBorrow(const Symbol* symbol) {
+    return symbol != nullptr &&
+           (symbol->Kind() == SymbolKind::Parameter ||
+            symbol->Kind() == SymbolKind::LocalVariable) &&
+           CanCarryBorrow(symbol->Type());
+}
+
+bool IsExclusiveBorrow(SemanticType type) {
+    return type.IsBorrowed() && !type.Target()->IsConst();
 }
 
 const core::Expression& Unwrap(const core::Expression& expression) {
@@ -27,22 +59,43 @@ const core::Expression& Unwrap(const core::Expression& expression) {
 
 // A reborrow retains its owner and all parent handles. The sets are finite even
 // on back edges; joins retain every possible origin rather than choosing one.
+struct Projection final {
+    const StructureField* field = nullptr;
+    const FunctionSymbol* resultFunction = nullptr;
+    std::size_t resultIndex = 0;
+    auto operator<=>(const Projection&) const = default;
+};
+
 struct Origin final {
     const Symbol* owner;
     Symbols parents;
-    std::vector<const StructureField*> fields;
+    std::vector<Projection> fields;
     // Array/slice elements continue to borrow their whole containing array.
     // Do not refine a path further after crossing an element boundary.
     bool wholeSequence = false;
+    // Closures can carry a mixture of shared and exclusive captures, so the
+    // access mode belongs to each origin rather than only to the holder type.
+    bool exclusive = false;
     auto operator<=>(const Origin&) const = default;
 };
 bool Overlaps(const Origin& left, const Origin& right) {
     if (left.owner != right.owner) return false;
     // Equal paths overlap; a prefix denotes an enclosing structure.
-    // The first differing field proves the two places disjoint.
+    // Differing concrete fields prove disjointness. Result slots prove
+    // disjointness only within the same validated multi-result function;
+    // abstract result slots conservatively overlap concrete fields.
     const auto length = std::min(left.fields.size(), right.fields.size());
-    return std::equal(left.fields.begin(), left.fields.begin() + length,
-                      right.fields.begin());
+    for (std::size_t index = 0; index < length; ++index) {
+        const Projection& a = left.fields[index];
+        const Projection& b = right.fields[index];
+        if (a == b) continue;
+        if (a.field != nullptr && b.field != nullptr) return false;
+        if (a.resultFunction != nullptr &&
+            a.resultFunction == b.resultFunction && b.resultFunction != nullptr)
+            return false;
+        return true;
+    }
+    return true;
 }
 
 using Origins = std::set<Origin>;
@@ -56,6 +109,7 @@ struct Value final {
     Origins origins;
     const Symbol* handle = nullptr;
     std::size_t temporary = 0;
+    std::vector<Value> elements;
 };
 struct Loan final {
     Value value;
@@ -88,7 +142,22 @@ class BorrowChecker final {
         for (const std::unique_ptr<core::Parameter>& parameter :
              function.Parameters()) {
             const Symbol* symbol = _model.DeclaredSymbol(*parameter);
-            if (IsBorrowed(symbol)) seed[symbol].origins.insert({symbol, {}});
+            if (TracksBorrow(symbol))
+                seed[symbol].origins.insert(
+                    {symbol,
+                     {},
+                     {},
+                     false,
+                     symbol->Type().Kind() == SemanticTypeKind::Function ||
+                         IsExclusiveBorrow(symbol->Type())});
+        }
+        const Symbol* declared = _model.DeclaredSymbol(function);
+        if (declared != nullptr && declared->Kind() == SymbolKind::Function) {
+            _function = static_cast<const FunctionSymbol*>(declared);
+            if (const auto source = _function->BorrowSourceIndex();
+                source && *source < function.Parameters().size())
+                _borrowSource =
+                    _model.DeclaredSymbol(*function.Parameters()[*source]);
         }
         ComputeLiveness();
         std::vector<State> incoming(_graph.nodes.size()),
@@ -140,6 +209,18 @@ class BorrowChecker final {
                    : nullptr;
     }
 
+    const Symbol* Root(const core::Expression& expression) const {
+        const core::Expression& inner = Unwrap(expression);
+        if (const Symbol* symbol = Named(inner)) return symbol;
+        if (inner.Kind() == Kind::MemberAccessExpression)
+            return Root(static_cast<const core::MemberAccessExpression&>(inner)
+                            .Receiver());
+        if (inner.Kind() == Kind::IndexExpression)
+            return Root(
+                static_cast<const core::IndexExpression&>(inner).Receiver());
+        return nullptr;
+    }
+
     void Report(Code code, source::SourceRange range, std::string message) {
         if (_report)
             _reported.try_emplace(std::make_pair(range, code),
@@ -178,9 +259,20 @@ class BorrowChecker final {
             }
             case Kind::NameExpression: {
                 const Symbol* symbol = Named(expression);
-                if (IsBorrowed(symbol)) uses.insert(symbol);
+                if (TracksBorrow(symbol)) uses.insert(symbol);
                 break;
             }
+            case Kind::AnonymousFunctionExpression:
+                for (const auto& capture :
+                     static_cast<const core::AnonymousFunctionExpression&>(
+                         expression)
+                         .Captures())
+                    if (capture->Mode() !=
+                        core::AnonymousFunctionExpression::CaptureMode::Copy) {
+                        const Symbol* source = _model.CaptureSource(*capture);
+                        if (TracksBorrow(source)) uses.insert(source);
+                    }
+                break;
             case Kind::ParenthesizedExpression:
                 CollectUses(Unwrap(expression), uses);
                 break;
@@ -248,14 +340,23 @@ class BorrowChecker final {
     void ComputeLiveness() {
         for (NodeId id = 0; id < _graph.nodes.size(); ++id) {
             const FlowNode& node = _graph.nodes[id];
+            if (node.captureRead != nullptr) {
+                const Symbol* source = _model.CaptureSource(*node.captureRead);
+                if (TracksBorrow(source)) _uses[id].insert(source);
+            }
             if (node.declaration != nullptr) {
                 const Symbol* symbol = _model.DeclaredSymbol(*node.declaration);
-                if (IsBorrowed(symbol)) _defs[id].insert(symbol);
+                if (TracksBorrow(symbol)) _defs[id].insert(symbol);
                 if (node.declaration->Initializer() != nullptr)
                     CollectUses(*node.declaration->Initializer(), _uses[id]);
             }
-            if (node.destructure != nullptr)
+            if (node.destructure != nullptr) {
                 CollectUses(node.destructure->Value(), _uses[id]);
+                for (const auto& binding : node.destructure->Bindings()) {
+                    const Symbol* symbol = _model.DestructureTarget(*binding);
+                    if (TracksBorrow(symbol)) _defs[id].insert(symbol);
+                }
+            }
             if (node.deferRegistration != nullptr)
                 CollectUses(node.deferRegistration->Call(), _uses[id]);
             if (node.evaluation != nullptr) {
@@ -266,7 +367,7 @@ class BorrowChecker final {
                         Named(static_cast<const core::AssignmentExpression&>(
                                   expression)
                                   .Target());
-                    if (IsBorrowed(symbol)) _defs[id].insert(symbol);
+                    if (TracksBorrow(symbol)) _defs[id].insert(symbol);
                 }
             }
         }
@@ -313,48 +414,190 @@ class BorrowChecker final {
             // A backward jump can execute a declaration again while another
             // handle still borrows its old storage.
             CheckHandleChange(symbol, node.declaration->NameRange());
-            if (!IsBorrowed(symbol))
+            if (!TracksBorrow(symbol))
                 CheckAccess({{{symbol, {}}}, nullptr, 0}, true,
                             node.declaration->NameRange());
             Value value;
             if (node.declaration->Initializer() != nullptr)
                 value = Evaluate(*node.declaration->Initializer());
-            if (IsBorrowed(symbol)) {
+            if (TracksBorrow(symbol)) {
                 if (node.declaration->IsRangeSource())
                     value = Borrow(std::move(value), false,
                                    node.declaration->Range());
-                Store(symbol, value, node.declaration->Initializer()->Range());
+                Store(symbol, value,
+                      node.declaration->Initializer() != nullptr
+                          ? node.declaration->Initializer()->Range()
+                          : node.declaration->NameRange());
             }
         }
         if (node.destructure != nullptr) {
-            (void)Evaluate(node.destructure->Value());
-            for (const auto& binding : node.destructure->Bindings()) {
+            Value value = Evaluate(node.destructure->Value());
+            for (std::size_t index = 0;
+                 index < node.destructure->Bindings().size(); ++index) {
+                const auto& binding = node.destructure->Bindings()[index];
                 const Symbol* target = _model.DestructureTarget(*binding);
-                if (target != nullptr)
+                if (TracksBorrow(target) && index < value.elements.size())
+                    Store(target, std::move(value.elements[index]),
+                          binding->Range());
+                else if (target != nullptr)
                     CheckAccess({{{target, {}}}, nullptr, 0}, true,
                                 binding->Range());
             }
         }
         if (node.deferRegistration != nullptr) {
-            const auto& call = static_cast<const core::CallExpression&>(
-                Unwrap(node.deferRegistration->Call()));
+            const core::Expression& deferred =
+                Unwrap(node.deferRegistration->Call());
+            std::vector<const core::Expression*> operands;
+            if (deferred.Kind() == Kind::CallExpression) {
+                const auto& call =
+                    static_cast<const core::CallExpression&>(deferred);
+                bool direct = false;
+                if (call.Callee().Kind() == Kind::NameExpression) {
+                    const Symbol* symbol = _model.SymbolFor(
+                        static_cast<const core::NameExpression&>(
+                            call.Callee()));
+                    direct = symbol != nullptr &&
+                             symbol->Kind() == SymbolKind::Function;
+                }
+                if (!direct) operands.push_back(&call.Callee());
+                for (const auto& argument : call.Arguments())
+                    operands.push_back(argument.get());
+            } else if (deferred.Kind() == Kind::MemberCallExpression) {
+                const auto& call =
+                    static_cast<const core::MemberCallExpression&>(deferred);
+                const FunctionSymbol* method = _model.MethodFor(call);
+                if (method != nullptr && method->HasReceiver())
+                    operands.push_back(&call.Receiver());
+                for (const auto& argument : call.Arguments())
+                    operands.push_back(argument.get());
+            }
             const auto& captures =
                 _model.DeferredCaptures(*node.deferRegistration);
-            for (std::size_t index = 0; index < call.Arguments().size();
-                 ++index) {
-                Value value = Evaluate(*call.Arguments()[index]);
+            for (std::size_t index = 0;
+                 index < operands.size() && index < captures.size(); ++index) {
                 const Symbol* capture = captures[index];
+                const SemanticType operandType =
+                    _model.TypeOf(*operands[index]);
+                Value value =
+                    capture != nullptr && capture->Type().IsBorrowed() &&
+                            (operandType.Kind() ==
+                                 SemanticTypeKind::Structure ||
+                             operandType.Kind() == SemanticTypeKind::Enum)
+                        ? Place(*operands[index])
+                        : Evaluate(*operands[index]);
                 if (capture == nullptr) continue;
-                value = Borrow(std::move(value),
-                               !capture->Type().Target()->IsConst(),
-                               call.Arguments()[index]->Range());
+                if (capture->Type().IsBorrowed())
+                    value = Borrow(std::move(value),
+                                   IsExclusiveBorrow(capture->Type()),
+                                   operands[index]->Range());
                 const Origins previous = state[capture].origins;
-                Store(capture, std::move(value),
-                      call.Arguments()[index]->Range());
+                Store(capture, std::move(value), operands[index]->Range());
                 state[capture].origins.insert(previous.begin(), previous.end());
             }
         }
-        if (node.evaluation != nullptr) (void)Evaluate(*node.evaluation);
+        if (node.evaluation != nullptr) {
+            Value value = Evaluate(*node.evaluation);
+            if (node.borrowReturn != nullptr)
+                ValidateReturn(value, node.evaluation->Range());
+        }
+    }
+
+    void ValidateReturn(const Value& value, source::SourceRange range) {
+        if (_function == nullptr) return;
+        if (!ContainsBorrowed(_function->ReturnType()) && value.origins.empty())
+            return;
+        ValidateReturn(value, _function->ReturnType(), range);
+    }
+
+    void ValidateReturn(const Value& value, SemanticType type,
+                        source::SourceRange range) {
+        if (type.Kind() == SemanticTypeKind::Tuple) {
+            if (value.elements.size() != type.Elements().size()) {
+                Report(Code::InvalidBorrowContract, range,
+                       "borrowed tuple result cannot be traced to its "
+                       "declared source");
+                return;
+            }
+            for (std::size_t left = 0; left < type.Elements().size(); ++left) {
+                if (!type.Elements()[left].IsBorrowed()) continue;
+                for (std::size_t right = left + 1;
+                     right < type.Elements().size(); ++right) {
+                    if (!type.Elements()[right].IsBorrowed()) continue;
+                    const bool exclusive =
+                        !type.Elements()[left].Target()->IsConst() ||
+                        !type.Elements()[right].Target()->IsConst();
+                    if (!exclusive) continue;
+                    for (const Origin& a : value.elements[left].origins)
+                        for (const Origin& b : value.elements[right].origins)
+                            if (Overlaps(a, b))
+                                Report(
+                                    Code::InvalidBorrowContract, range,
+                                    "mutable borrowed results must originate "
+                                    "from disjoint places");
+                }
+            }
+            for (std::size_t index = 0; index < type.Elements().size(); ++index)
+                if (ContainsBorrowed(type.Elements()[index]))
+                    ValidateReturn(value.elements[index],
+                                   type.Elements()[index], range);
+            return;
+        }
+        if (!type.HasBorrowedLifetime() && value.origins.empty()) return;
+        if (_borrowSource == nullptr) {
+            if (!value.origins.empty())
+                Report(Code::InvalidBorrowContract, range,
+                       "borrowed result requires a '<- parameter>' borrow "
+                       "contract");
+            return;
+        }
+        if (value.origins.empty()) {
+            Report(Code::InvalidBorrowContract, range,
+                   "borrowed result does not originate from declared source '" +
+                       _borrowSource->Name() + "'");
+            return;
+        }
+        for (const Origin& origin : value.origins)
+            if (origin.owner != _borrowSource) {
+                Report(Code::InvalidBorrowContract, range,
+                       "borrowed result originates from '" +
+                           origin.owner->Name() + "', not declared source '" +
+                           _borrowSource->Name() + "'");
+                return;
+            }
+    }
+
+    Value BorrowResult(SemanticType type, const Value& source,
+                       source::SourceRange range,
+                       const FunctionSymbol* function, std::size_t& resultIndex,
+                       bool multiple) {
+        if (type.HasBorrowedLifetime()) {
+            Value projected = source;
+            if (multiple) {
+                Origins origins;
+                for (Origin origin : projected.origins) {
+                    origin.fields.push_back({nullptr, function, resultIndex});
+                    origins.insert(std::move(origin));
+                }
+                projected.origins = std::move(origins);
+            }
+            ++resultIndex;
+            return Borrow(std::move(projected), IsExclusiveBorrow(type), range);
+        }
+        Value result;
+        if (type.Kind() == SemanticTypeKind::Tuple) {
+            for (const SemanticType& element : type.Elements()) {
+                Value value = BorrowResult(element, source, range, function,
+                                           resultIndex, true);
+                result.origins.insert(value.origins.begin(),
+                                      value.origins.end());
+                result.elements.push_back(std::move(value));
+            }
+        } else if (CanCarryBorrow(type)) {
+            result.origins = source.origins;
+            result.temporary = _nextTemporary++;
+            _temporaries.push_back({result, false, result.temporary});
+        }
+        return result;
     }
 
     void CheckHandleChange(const Symbol* symbol, source::SourceRange range) {
@@ -385,9 +628,8 @@ class BorrowChecker final {
                 if (!_active.contains(symbol) || symbol == access.handle ||
                     origin.parents.contains(symbol))
                     continue;
-                const bool exclusive = !symbol->Type().Target()->IsConst();
                 for (const Origin& loan : value.origins) {
-                    if (Overlaps(loan, origin) && (write || exclusive)) {
+                    if (Overlaps(loan, origin) && (write || loan.exclusive)) {
                         Report(Code::BorrowConflict, range,
                                "access to '" + origin.owner->Name() +
                                    "' conflicts with live reference '" +
@@ -398,7 +640,7 @@ class BorrowChecker final {
             for (const Loan& loan : _temporaries) {
                 if (loan.id == access.temporary) continue;
                 for (const Origin& other : loan.value.origins)
-                    if (Overlaps(other, origin) && (write || loan.exclusive))
+                    if (Overlaps(other, origin) && (write || other.exclusive))
                         Report(Code::BorrowConflict, range,
                                "access conflicts with a borrow in the current "
                                "expression");
@@ -439,7 +681,7 @@ class BorrowChecker final {
                            "reborrow");
         }
         if (value.handle != nullptr &&
-            !value.handle->Type().Target()->IsConst()) {
+            IsExclusiveBorrow(value.handle->Type())) {
             CheckHandleChange(value.handle, range);
             CheckAccess(value, true, range);
             if (value.handle->Type().IsConst())
@@ -456,7 +698,8 @@ class BorrowChecker final {
     Value Project(Value value, const StructureField* field) {
         Origins projected;
         for (Origin origin : value.origins) {
-            if (!origin.wholeSequence) origin.fields.push_back(field);
+            if (!origin.wholeSequence)
+                origin.fields.push_back({field, nullptr, 0});
             projected.insert(std::move(origin));
         }
         value.origins = std::move(projected);
@@ -532,6 +775,7 @@ class BorrowChecker final {
         Origins origins;
         for (Origin origin : value.origins) {
             if (value.handle != nullptr) origin.parents.insert(value.handle);
+            origin.exclusive = exclusive;
             origins.insert(std::move(origin));
         }
         RemoveTemporary(value.temporary);
@@ -540,8 +784,182 @@ class BorrowChecker final {
         return result;
     }
 
+    void SimulateBuildBlock(const core::BlockStatement& block) {
+        for (const auto& statement : block.Statements())
+            SimulateBuildStatement(*statement);
+    }
+
+    void SimulateBuildStatement(const core::Statement& statement) {
+        switch (statement.Kind()) {
+            case Kind::VariableDeclarationStatement: {
+                const auto& declaration =
+                    static_cast<const core::VariableDeclarationStatement&>(
+                        statement);
+                const Symbol* symbol = _model.DeclaredSymbol(declaration);
+                Value value;
+                if (declaration.Initializer() != nullptr)
+                    value = Evaluate(*declaration.Initializer());
+                if (TracksBorrow(symbol))
+                    Store(symbol, std::move(value), declaration.Range());
+                break;
+            }
+            case Kind::DestructureStatement: {
+                const auto& destructure =
+                    static_cast<const core::DestructureStatement&>(statement);
+                Value value = Evaluate(destructure.Value());
+                for (std::size_t index = 0;
+                     index < destructure.Bindings().size(); ++index) {
+                    const Symbol* target = _model.DestructureTarget(
+                        *destructure.Bindings()[index]);
+                    if (TracksBorrow(target) && index < value.elements.size())
+                        Store(target, value.elements[index],
+                              destructure.Bindings()[index]->Range());
+                }
+                break;
+            }
+            case Kind::ExpressionStatement:
+                (void)Evaluate(
+                    static_cast<const core::ExpressionStatement&>(statement)
+                        .Value());
+                break;
+            case Kind::ReturnStatement: {
+                const auto* value =
+                    static_cast<const core::ReturnStatement&>(statement)
+                        .Value();
+                if (value != nullptr) (void)Evaluate(*value);
+                break;
+            }
+            case Kind::BlockStatement:
+                SimulateBuildBlock(
+                    static_cast<const core::BlockStatement&>(statement));
+                break;
+            case Kind::RangeStatement:
+                SimulateBuildBlock(
+                    static_cast<const core::RangeStatement&>(statement)
+                        .Expansion());
+                break;
+            case Kind::IfStatement: {
+                const auto& conditional =
+                    static_cast<const core::IfStatement&>(statement);
+                const State before = *_state;
+                State merged = before;
+                auto mergeBranch = [&](const core::BlockStatement& body) {
+                    *_state = before;
+                    SimulateBuildBlock(body);
+                    Merge(merged, *_state);
+                };
+                mergeBranch(conditional.PrimaryBranch().Body());
+                for (const auto& branch : conditional.ElseIfBranches())
+                    mergeBranch(branch->Body());
+                if (conditional.ElseBody() != nullptr)
+                    mergeBranch(*conditional.ElseBody());
+                *_state = std::move(merged);
+                break;
+            }
+            case Kind::WhileStatement: {
+                const auto& loop =
+                    static_cast<const core::WhileStatement&>(statement);
+                const State before = *_state;
+                SimulateBuildBlock(loop.Body());
+                Merge(*_state, before);
+                if (loop.Also() != nullptr)
+                    SimulateBuildBlock(loop.Also()->Body());
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    Value EvaluateBuild(const core::BuildExpression& build) {
+        State simulated = *_state;
+        State* const previousState = _state;
+        const Symbols previousActive = _active;
+        const Symbols previousPinned = _pinned;
+        const std::vector<Loan> previousLoans = _temporaries;
+        const std::size_t previousTemporary = _nextTemporary;
+        _state = &simulated;
+        const Symbol* self = _model.DeclaredSymbol(build);
+        if (self != nullptr) simulated[self] = {};
+        SimulateBuildBlock(build.Body());
+        Value result;
+        if (self != nullptr) result.origins = simulated[self].origins;
+        _state = previousState;
+        _active = previousActive;
+        _pinned = previousPinned;
+        _temporaries = previousLoans;
+        _nextTemporary = previousTemporary;
+        return result;
+    }
+
     Value Evaluate(const core::Expression& expression) {
         switch (expression.Kind()) {
+            case Kind::BuildExpression:
+                return EvaluateBuild(
+                    static_cast<const core::BuildExpression&>(expression));
+            case Kind::AnonymousFunctionExpression: {
+                const auto& function =
+                    static_cast<const core::AnonymousFunctionExpression&>(
+                        expression);
+                Value result;
+                std::vector<std::size_t> temporaries;
+                for (const auto& capture : function.Captures()) {
+                    const auto mode = capture->Mode();
+                    if (mode == core::AnonymousFunctionExpression::CaptureMode::
+                                    Copy ||
+                        mode == core::AnonymousFunctionExpression::CaptureMode::
+                                    Lend)
+                        continue;
+                    const Symbol* source = _model.CaptureSource(*capture);
+                    if (source == nullptr) continue;
+                    if (mode ==
+                        core::AnonymousFunctionExpression::CaptureMode::Own) {
+                        if (source->Type().Kind() ==
+                                SemanticTypeKind::Pointer ||
+                            source->Type().Kind() ==
+                                SemanticTypeKind::OwnedBuffer)
+                            continue;
+                        if (TracksBorrow(source)) {
+                            const Handle handle = (*_state)[source];
+                            Value moved{handle.origins, source, 0};
+                            CheckAccess(moved, true, capture->NameRange());
+                            if (source->Type().HasBorrowedLifetime()) {
+                                CheckHandleChange(source, capture->NameRange());
+                                (*_state)[source] = {{}, true};
+                            }
+                            result.origins.insert(handle.origins.begin(),
+                                                  handle.origins.end());
+                        }
+                        continue;
+                    }
+                    Value place;
+                    if (source->Type().HasBorrowedLifetime()) {
+                        const Handle& handle = (*_state)[source];
+                        if (handle.moved)
+                            Report(Code::MovedReference, capture->NameRange(),
+                                   "capture of possibly moved reference '" +
+                                       source->Name() + "'");
+                        place = {handle.origins, source, 0};
+                    } else {
+                        place = {{{source, {}}}, source, 0};
+                    }
+                    Value borrowed = Borrow(
+                        std::move(place),
+                        capture->Mode() == core::AnonymousFunctionExpression::
+                                               CaptureMode::Reference,
+                        capture->Range());
+                    temporaries.push_back(borrowed.temporary);
+                    result.origins.insert(borrowed.origins.begin(),
+                                          borrowed.origins.end());
+                }
+                for (const std::size_t temporary : temporaries)
+                    RemoveTemporary(temporary);
+                if (!result.origins.empty()) {
+                    result.temporary = _nextTemporary++;
+                    _temporaries.push_back({result, false, result.temporary});
+                }
+                return result;
+            }
             case Kind::SliceExpression: {
                 const auto& slice =
                     static_cast<const core::SliceExpression&>(expression);
@@ -561,18 +979,29 @@ class BorrowChecker final {
                               !_model.TypeOf(expression).Target()->IsConst(),
                               expression.Range());
             }
-            case Kind::TupleExpression:
+            case Kind::TupleExpression: {
+                Value result;
                 for (const auto& element :
                      static_cast<const core::TupleExpression&>(expression)
-                         .Elements())
-                    (void)Evaluate(*element);
-                return {};
-            case Kind::ArrayExpression:
+                         .Elements()) {
+                    Value value = Evaluate(*element);
+                    result.origins.insert(value.origins.begin(),
+                                          value.origins.end());
+                    result.elements.push_back(std::move(value));
+                }
+                return result;
+            }
+            case Kind::ArrayExpression: {
+                Value result;
                 for (const auto& element :
                      static_cast<const core::ArrayExpression&>(expression)
-                         .Elements())
-                    (void)Evaluate(*element);
-                return {};
+                         .Elements()) {
+                    Value value = Evaluate(*element);
+                    result.origins.insert(value.origins.begin(),
+                                          value.origins.end());
+                }
+                return result;
+            }
             case Kind::MatchExpression: {
                 const auto& match =
                     static_cast<const core::MatchExpression&>(expression);
@@ -597,17 +1026,24 @@ class BorrowChecker final {
                 return Evaluate(Unwrap(expression));
             case Kind::NameExpression: {
                 const Symbol* symbol = Named(expression);
-                if (IsBorrowed(symbol)) {
+                if (TracksBorrow(symbol)) {
                     const Handle& handle = (*_state)[symbol];
-                    if (handle.moved)
+                    if (handle.moved && symbol->Type().HasBorrowedLifetime())
                         Report(Code::MovedReference, expression.Range(),
                                "use of possibly moved reference '" +
                                    symbol->Name() + "'");
+                    if (!symbol->Type().HasBorrowedLifetime())
+                        CheckAccess(
+                            {{{symbol, {}}}, symbol, 0},
+                            _model.TransferOf(expression) == TransferKind::Move,
+                            expression.Range());
                     return {handle.origins, symbol, 0};
                 }
                 if (symbol != nullptr && symbol->Kind() != SymbolKind::Function)
-                    CheckAccess({{{symbol, {}}}, nullptr, 0}, false,
-                                expression.Range());
+                    CheckAccess(
+                        {{{symbol, {}}}, nullptr, 0},
+                        _model.TransferOf(expression) == TransferKind::Move,
+                        expression.Range());
                 return {};
             }
             case Kind::UnaryExpression: {
@@ -639,7 +1075,7 @@ class BorrowChecker final {
                 const auto& assignment =
                     static_cast<const core::AssignmentExpression&>(expression);
                 const Symbol* symbol = Named(assignment.Target());
-                if (IsBorrowed(symbol)) {
+                if (TracksBorrow(symbol)) {
                     Value value = Evaluate(assignment.Value());
                     Store(symbol, std::move(value), assignment.Value().Range());
                     return {(*_state)[symbol].origins, symbol, 0};
@@ -650,9 +1086,15 @@ class BorrowChecker final {
                 for (const Origin& origin : place.origins)
                     _pinned.insert(origin.parents.begin(),
                                    origin.parents.end());
-                (void)Evaluate(assignment.Value());
+                Value value = Evaluate(assignment.Value());
                 CheckAccess(place, true, assignment.Target().Range());
                 _pinned = previousPinned;
+                const Symbol* root = Root(assignment.Target());
+                if (TracksBorrow(root) && !root->Type().HasBorrowedLifetime()) {
+                    value.origins.insert((*_state)[root].origins.begin(),
+                                         (*_state)[root].origins.end());
+                    Store(root, std::move(value), assignment.Value().Range());
+                }
                 return {};
             }
             case Kind::BinaryExpression: {
@@ -674,39 +1116,86 @@ class BorrowChecker final {
                     static_cast<const core::CallExpression&>(expression);
                 const Symbol* symbol = Named(call.Callee());
                 const auto* function =
-                    static_cast<const FunctionSymbol*>(symbol);
+                    symbol && symbol->Kind() == SymbolKind::Function
+                        ? static_cast<const FunctionSymbol*>(symbol)
+                        : nullptr;
+                const SemanticType callable = _model.TypeOf(call.Callee());
+                const CallableSignature* signature =
+                    callable.Kind() == SemanticTypeKind::Function
+                        ? &callable.Signature()
+                        : nullptr;
                 const bool allocation =
                     function && function->BuiltIn() == BuiltInFunction::New;
                 const State skipped = allocation ? *_state : State{};
                 const std::vector<Loan> previousLoans = _temporaries;
+                if (function == nullptr) {
+                    Value callee = Evaluate(call.Callee());
+                    for (const Origin& origin : callee.origins)
+                        CheckAccess({{origin}, callee.handle, callee.temporary},
+                                    origin.exclusive, call.Callee().Range());
+                }
+                Value borrowSource;
                 for (std::size_t index = 0; index < call.Arguments().size();
                      ++index) {
                     Value value = Evaluate(*call.Arguments()[index]);
-                    if (function != nullptr &&
-                        index < function->ParameterTypes().size() &&
-                        function->ParameterTypes()[index].IsBorrowed()) {
-                        (void)Borrow(std::move(value),
-                                     !function->ParameterTypes()[index]
-                                          .Target()
-                                          ->IsConst(),
-                                     call.Arguments()[index]->Range());
+                    const bool destroys =
+                        signature != nullptr &&
+                        ((index == 0 && function != nullptr &&
+                          (function->BuiltIn() == BuiltInFunction::Free ||
+                           function->BuiltIn() == BuiltInFunction::Take)) ||
+                         (index < signature->parameterContracts.size() &&
+                          signature->parameterContracts[index] ==
+                              core::OwnershipContract::Own));
+                    if (destroys)
+                        CheckAccess(Place(*call.Arguments()[index]), true,
+                                    call.Arguments()[index]->Range());
+                    if (signature != nullptr &&
+                        signature->borrowSourceIndex == index)
+                        borrowSource = value;
+                    if (signature != nullptr &&
+                        index < signature->parameters.size() &&
+                        signature->parameters[index].HasBorrowedLifetime()) {
+                        (void)Borrow(
+                            std::move(value),
+                            IsExclusiveBorrow(signature->parameters[index]),
+                            call.Arguments()[index]->Range());
                     }
                 }
                 _temporaries = previousLoans;
                 if (allocation) Merge(*_state, skipped);
+                if (signature != nullptr && CanCarryBorrow(signature->result) &&
+                    signature->borrowSourceIndex.has_value()) {
+                    std::size_t resultIndex = 0;
+                    return BorrowResult(
+                        signature->result, borrowSource, expression.Range(),
+                        function, resultIndex,
+                        signature->result.Kind() == SemanticTypeKind::Tuple);
+                }
                 return {};
             }
-            case Kind::CastExpression:
-                (void)Evaluate(
-                    static_cast<const core::CastExpression&>(expression)
-                        .Value());
+            case Kind::CastExpression: {
+                const auto& cast =
+                    static_cast<const core::CastExpression&>(expression);
+                if (_model.TypeOf(expression).Kind() ==
+                    SemanticTypeKind::StringView) {
+                    if (_model.TypeOf(cast.Value()).Kind() ==
+                        SemanticTypeKind::String)
+                        return Borrow(Place(cast.Value()), false,
+                                      expression.Range());
+                    return Evaluate(cast.Value());
+                }
+                (void)Evaluate(cast.Value());
                 return {};
+            }
             case Kind::MemberAccessExpression: {
                 const auto& field =
                     static_cast<const core::MemberAccessExpression&>(
                         expression);
-                if (_model.FieldFor(field))
+                if (_model.FieldFor(field)) {
                     CheckAccess(Place(expression), false, expression.Range());
+                    if (CanCarryBorrow(_model.TypeOf(expression)))
+                        return Evaluate(field.Receiver());
+                }
                 return {};
             }
             case Kind::MemberCallExpression: {
@@ -714,10 +1203,13 @@ class BorrowChecker final {
                     static_cast<const core::MemberCallExpression&>(expression);
                 if (const auto* method = _model.MethodFor(call)) {
                     const std::vector<Loan> previousLoans = _temporaries;
+                    Value borrowSource;
                     if (method->HasReceiver()) {
                         Value value = call.Access() == TokenType::Arrow
                                           ? Evaluate(call.Receiver())
                                           : Place(call.Receiver());
+                        if (method->BorrowSourceIndex() == 0)
+                            borrowSource = value;
                         if (method->ParameterTypes()[0].Kind() ==
                                 SemanticTypeKind::Reference &&
                             _model.TypeOf(call.Receiver()).Kind() !=
@@ -731,14 +1223,49 @@ class BorrowChecker final {
                     const std::size_t offset = method->HasReceiver() ? 1 : 0;
                     for (std::size_t i = 0; i < call.Arguments().size(); ++i) {
                         Value value = Evaluate(*call.Arguments()[i]);
-                        const auto type = method->ParameterTypes()[i + offset];
-                        if (type.IsBorrowed())
+                        const std::size_t parameter = i + offset;
+                        if (method->ParameterContract(parameter) ==
+                            core::OwnershipContract::Own)
+                            CheckAccess(Place(*call.Arguments()[i]), true,
+                                        call.Arguments()[i]->Range());
+                        if (method->BorrowSourceIndex() == parameter)
+                            borrowSource = value;
+                        const auto type = method->ParameterTypes()[parameter];
+                        if (type.HasBorrowedLifetime())
                             (void)Borrow(std::move(value),
-                                         !type.Target()->IsConst(),
+                                         IsExclusiveBorrow(type),
                                          call.Arguments()[i]->Range());
                     }
                     _temporaries = previousLoans;
+                    if (CanCarryBorrow(method->ReturnType()) &&
+                        method->BorrowSourceIndex().has_value()) {
+                        std::size_t resultIndex = 0;
+                        return BorrowResult(method->ReturnType(), borrowSource,
+                                            expression.Range(), method,
+                                            resultIndex,
+                                            method->ReturnType().Kind() ==
+                                                SemanticTypeKind::Tuple);
+                    }
                     return {};
+                }
+                const SemanticType receiverType =
+                    _model.TypeOf(call.Receiver());
+                if (_model.TypeOf(expression).Kind() ==
+                        SemanticTypeKind::StringView &&
+                    (call.Member() == "view" || call.Member() == "substr")) {
+                    Value value =
+                        receiverType.Kind() == SemanticTypeKind::StringView
+                            ? Evaluate(call.Receiver())
+                            : Place(call.Receiver());
+                    const Symbols previousPinned = _pinned;
+                    if (value.handle != nullptr) _pinned.insert(value.handle);
+                    for (const Origin& origin : value.origins)
+                        _pinned.insert(origin.parents.begin(),
+                                       origin.parents.end());
+                    for (const auto& argument : call.Arguments())
+                        (void)Evaluate(*argument);
+                    _pinned = previousPinned;
+                    return Borrow(std::move(value), false, expression.Range());
                 }
                 if (_model.TypeOf(call.Receiver()).IsSequence() &&
                     (call.Member() == "front" || call.Member() == "back")) {
@@ -780,6 +1307,8 @@ class BorrowChecker final {
     Symbols _active, _pinned;
     std::vector<Loan> _temporaries;
     std::size_t _nextTemporary = 1;
+    const FunctionSymbol* _function = nullptr;
+    const Symbol* _borrowSource = nullptr;
     bool _report = false;
     std::map<std::pair<source::SourceRange, Code>, std::string> _reported;
 };

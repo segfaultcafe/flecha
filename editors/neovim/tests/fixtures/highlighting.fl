@@ -20,6 +20,9 @@ stringv Echo(stringv value) {
     return value;
 }
 
+T generic_identity<T>(T value) { return value; }
+i32 generic_result = generic_identity<i32>(42);
+
 constptr u8 fixed_pointer;
 constref u8 fixed_reference;
 &const u8 shared_reference;
@@ -69,6 +72,17 @@ unsafe void inspect(lend *const i32 pointer) {}
 stringv directive = "@imports string";
 
 module highlighting;
+func Mapper<T>(T) => (T);
+once func Action() => ();
+Mapper<i32> integerMapper = (value) => { return value; };
+Mapper copied = [copy factor](value) => { return value + factor; };
+Mapper borrowed = [&factor, &const limit](value) => { return value + factor + limit; };
+Mapper lent = unsafe [lend pointer](value) => { return value + *pointer; };
+Mapper owned = unsafe [own owner](value) => { return value + *owner; };
+Mapper nested = [own copied](value) => { return copied(value); };
+Action action = once []() => () {};
+test gold_keyword(&testing::UnitTest t) {}
 export i32 exported_function() { return 42; }
+quiver i32 quiver_function() { return 42; }
 
 unsafe { old := take(self->storage); buffer, err := new<[]i32>(count); }

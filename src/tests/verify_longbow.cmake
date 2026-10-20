@@ -8,6 +8,18 @@ function(run expected directory)
     endif()
     set(last_output "${output}" PARENT_SCOPE)
 endfunction()
+function(run_with_standard_library expected directory)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "FLECHA_STANDARD_LIBRARY=${FLECHA_STD}" "${LONGBOW}" ${ARGN}
+        WORKING_DIRECTORY "${directory}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+    if(NOT result EQUAL expected)
+        message(FATAL_ERROR
+            "longbow ${ARGN} returned ${result}, expected ${expected}: ${output} ${errors}")
+    endif()
+    set(last_output "${output}" PARENT_SCOPE)
+endfunction()
 run(0 "${TEST_ROOT}" new hello)
 if(NOT EXISTS "${TEST_ROOT}/hello/longbow.toml" OR NOT EXISTS "${TEST_ROOT}/hello/.gitignore")
     message(FATAL_ERROR "missing scaffold files")
@@ -20,7 +32,16 @@ run(0 "${TEST_ROOT}/hello" run)
 if(NOT last_output STREQUAL "Hello from Flecha!\n")
     message(FATAL_ERROR "wrong program output: ${last_output}")
 endif()
-run(0 "${TEST_ROOT}/hello/src" run -- "argument with spaces" "$(not-a-shell-command)")
+file(WRITE "${TEST_ROOT}/hello/src/main.fl"
+    "module main;\n"
+    "@imports :: lib::std::containers::array;\n"
+    "void main() { stdoutln(\"Hello from Flecha!\"); }\n")
+run_with_standard_library(0 "${TEST_ROOT}/hello" run)
+if(NOT last_output STREQUAL "Hello from Flecha!\n")
+    message(FATAL_ERROR "wrong program output with standard library: ${last_output}")
+endif()
+run_with_standard_library(0 "${TEST_ROOT}/hello/src" run --
+    "argument with spaces" "$(not-a-shell-command)")
 file(SHA256 "${TEST_ROOT}/hello/src/main.fl" before)
 run(1 "${TEST_ROOT}" new hello)
 run(1 "${TEST_ROOT}/hello" init)

@@ -7,6 +7,8 @@
     {"include": "#strings"},
     {"include": "#characters"},
     {"include": "#imports"},
+    {"include": "#tests"},
+    {"include": "#callableDeclarations"},
     {"include": "#types"},
     {"include": "#modifiers"},
     {"include": "#control"},
@@ -61,6 +63,14 @@
       "name": "keyword.control.import.flecha",
       "match": "@imports\\b"
     },
+    "tests": {
+      "name": "keyword.other.test.flecha",
+      "match": "\\btest\\b"
+    },
+    "callableDeclarations": {
+      "name": "storage.type.function.flecha",
+      "match": "\\bfunc\\b"
+    },
     "types": {
       "patterns": [
         {
@@ -75,7 +85,7 @@
     },
     "modifiers": {
       "name": "storage.modifier.flecha",
-      "match": "\\b(?:unsafe|export|extern|inline|comptime|own|lend|const|constptr|constref|volatile|private|override)\\b"
+      "match": "\\b(?:unsafe|once|export|quiver|extern|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|override)\\b"
     },
     "control": {
       "name": "keyword.control.flecha",
@@ -112,7 +122,7 @@
     },
     "operators": {
       "name": "keyword.operator.flecha",
-      "match": "::|->|=>|:=|===|!==|==|!=|<=|>=|&&|\\|\\||\\b(?:and|or|raw)\\b|[&=+*/%^!<>-]"
+      "match": "::|<-|->|=>|:=|===|!==|==|!=|<=|>=|&&|\\|\\||\\b(?:and|or|raw)\\b|[&=+*/%^!<>-]"
     }
   }
 }

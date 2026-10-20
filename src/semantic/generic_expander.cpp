@@ -46,6 +46,17 @@ void Walk(const AstNode& input, const Callback& callback) {
             visit(n.Body());
             break;
         }
+        case AstNodeKind::AnonymousFunctionExpression: {
+            NODE(AnonymousFunctionExpression);
+            visit(n.Function());
+            break;
+        }
+        case AstNodeKind::CallableTypeDeclaration: {
+            NODE(CallableTypeDeclaration);
+            list(n.Parameters());
+            list(n.Results());
+            break;
+        }
         case AstNodeKind::StructureDeclaration: {
             NODE(StructureDeclaration);
             list(n.Fields());
@@ -230,6 +241,7 @@ void Walk(const AstNode& input, const Callback& callback) {
             break;
         }
         case AstNodeKind::CompilationUnit:
+        case AstNodeKind::AnonymousCapture:
         case AstNodeKind::ErrorDeclaration:
         case AstNodeKind::ProceedStatement:
         case AstNodeKind::BreakStatement:
@@ -248,6 +260,8 @@ std::string Name(const Declaration& declaration) {
         return static_cast<const StructureDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::EnumDeclaration)
         return static_cast<const EnumDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::CallableTypeDeclaration)
+        return static_cast<const CallableTypeDeclaration&>(declaration).Name();
     return static_cast<const ErrorDeclaration&>(declaration).Name();
 }
 bool Template(const Declaration& d) {
@@ -402,6 +416,19 @@ class Expander {
             if (scope.contains(name)) return true;
         return false;
     }
+    bool CanImport(const Declaration& declaration, const Module& from,
+                   const std::string& target) const {
+        return declaration.exported ||
+               (declaration.quiverVisible &&
+                declaration.quiverId == from.quiverId) ||
+               (from.test && from.testPair == target);
+    }
+    std::string QuiverName(const Declaration& declaration) const {
+        for (const auto& item : modules)
+            if (item.second->quiverId == declaration.quiverId)
+                return item.second->quiverName;
+        return declaration.quiverId;
+    }
     const Declaration* Lookup(const std::string& name,
                               const std::string& module,
                               source::SourceRange range, bool diagnose = true) {
@@ -427,10 +454,16 @@ class Expander {
         }
         const auto result = declarations.find({target, shortName});
         if (result == declarations.end()) return nullptr;
-        if (imported && !result->second->exported) {
+        if (imported &&
+            !CanImport(*result->second, *modules.at(module), target)) {
             if (diagnose)
-                Error(range, "generic argument or declaration '" + name +
-                                 "' is private");
+                Error(range, result->second->quiverVisible
+                                 ? "'" + name +
+                                       "' is quiver-visible and can only be "
+                                       "accessed from modules in '" +
+                                       QuiverName(*result->second) + "'"
+                                 : "generic argument or declaration '" + name +
+                                       "' is module-private");
             return nullptr;
         }
         return result->second;
@@ -457,9 +490,11 @@ class Expander {
             if (!type.typeArguments.empty()) {
                 auto arguments = ResolveArguments(type.typeArguments, module);
                 if (!declaration ||
-                    declaration->Kind() != AstNodeKind::StructureDeclaration) {
+                    (declaration->Kind() != AstNodeKind::StructureDeclaration &&
+                     declaration->Kind() !=
+                         AstNodeKind::CallableTypeDeclaration)) {
                     Error(type.Range(),
-                          "unknown generic structure '" + type.Name() + "'");
+                          "unknown generic type '" + type.Name() + "'");
                     return result;
                 }
                 declaration =
@@ -518,23 +553,28 @@ class Expander {
         for (auto& type : syntax) result.push_back(TypeTokens(*type, module));
         return result;
     }
-    void ValidatePublicType(const TypeNode& type,
-                            const Declaration& declaration,
-                            const std::set<std::string>& parameters) {
+    void ValidateApiType(const TypeNode& type, const Declaration& api,
+                         const std::set<std::string>& parameters) {
         if (type.TypeForm() == TypeKind::Named &&
             !parameters.contains(type.Name())) {
-            const auto* named =
-                Lookup(type.Name(), declaration.moduleId, type.Range());
-            if (named && !named->exported)
-                Error(type.Range(),
-                      "exported generic APIs cannot expose private types");
+            const auto* named = Lookup(type.Name(), api.moduleId, type.Range());
+            const bool visible =
+                !named || (api.exported && named->exported) ||
+                (api.quiverVisible &&
+                 (named->exported ||
+                  (named->quiverVisible && named->quiverId == api.quiverId)));
+            if (!visible)
+                Error(type.Range(), api.exported
+                                        ? "exported APIs cannot expose "
+                                          "non-exported types"
+                                        : "quiver APIs cannot expose "
+                                          "module-private types");
         }
-        if (type.Target())
-            ValidatePublicType(*type.Target(), declaration, parameters);
+        if (type.Target()) ValidateApiType(*type.Target(), api, parameters);
         for (const auto& element : type.Elements())
-            ValidatePublicType(*element, declaration, parameters);
+            ValidateApiType(*element, api, parameters);
         for (const auto& argument : type.typeArguments)
-            ValidatePublicType(*argument, declaration, parameters);
+            ValidateApiType(*argument, api, parameters);
     }
     void Validate(const Declaration& declaration) {
         if (!Template(declaration)) return;
@@ -543,29 +583,45 @@ class Expander {
         parameters.insert(declaration.ownerParameters.begin(),
                           declaration.ownerParameters.end());
         if (declaration.Kind() == AstNodeKind::StructureDeclaration &&
-            declaration.exported)
+            (declaration.exported || declaration.quiverVisible))
             for (const auto& field :
                  static_cast<const StructureDeclaration&>(declaration).Fields())
                 if (!field->IsPrivate())
-                    ValidatePublicType(field->Type(), declaration, parameters);
+                    ValidateApiType(field->Type(), declaration, parameters);
         if (declaration.Kind() == AstNodeKind::FunctionDeclaration) {
             const auto& function =
                 static_cast<const FunctionDeclaration&>(declaration);
-            bool publicApi = function.exported;
+            const Declaration* api = function.exported || function.quiverVisible
+                                         ? &function
+                                         : nullptr;
             if (!function.Owner().empty()) {
                 const auto* owner = Lookup(function.Owner(), function.moduleId,
                                            function.Range());
-                publicApi = owner && owner->exported &&
+                if (function.exported || function.quiverVisible)
+                    Error(function.Range(),
+                          "member functions cannot have declaration "
+                          "visibility; visibility comes from the owning type");
+                api =
+                    owner && (owner->exported || owner->quiverVisible) &&
                             !function.HasModifier(FunctionModifier::Private) &&
-                            function.Name() != "tear";
+                            function.Name() != "tear"
+                        ? owner
+                        : nullptr;
             }
-            if (publicApi) {
-                ValidatePublicType(function.ReturnType(), declaration,
-                                   parameters);
+            if (api) {
+                ValidateApiType(function.ReturnType(), *api, parameters);
                 for (const auto& parameter : function.Parameters())
-                    ValidatePublicType(parameter->Type(), declaration,
-                                       parameters);
+                    ValidateApiType(parameter->Type(), *api, parameters);
             }
+        }
+        if (declaration.Kind() == AstNodeKind::CallableTypeDeclaration &&
+            (declaration.exported || declaration.quiverVisible)) {
+            const auto& callable =
+                static_cast<const CallableTypeDeclaration&>(declaration);
+            for (const auto& parameter : callable.Parameters())
+                ValidateApiType(parameter->Type(), declaration, parameters);
+            for (const auto& result : callable.Results())
+                ValidateApiType(*result, declaration, parameters);
         }
         Walk(declaration, [&](AstNode& node, bool enter) {
             if (!enter) return;
@@ -654,9 +710,12 @@ class Expander {
             return nullptr;
         }
         tokens.emplace_back(TokenType::EOF_TOKEN, "", origin.Range());
-        Parser parser(std::move(tokens), diagnostics);
-        if (modules.contains(origin.moduleId))
+        Parser parser(std::move(tokens), diagnostics,
+                      "$generic" + std::to_string(generatedDeclarations) + "$");
+        if (modules.contains(origin.moduleId)) {
             parser.SetImports(modules[origin.moduleId]->imports);
+            parser.SetPrivateModule(modules[origin.moduleId]->privateModule);
+        }
         auto parsed = parser.Parse()->TakeDeclarations();
         if (parsed.size() != 1) {
             Error(at, "could not specialize '" + Name(origin) + "'");
@@ -664,17 +723,37 @@ class Expander {
         }
         auto concrete = std::move(parsed.front());
         concrete->moduleId = origin.moduleId;
+        concrete->quiverId = origin.quiverId;
         // A concrete nominal type can appear in an exported ordinary signature
-        // only when both its template and all nominal arguments are public.
-        if (concrete->Kind() == AstNodeKind::StructureDeclaration) {
-            concrete->exported = origin.exported;
+        // only when both its template and all nominal arguments are exported.
+        // A quiver template, or an exported template applied to a quiver type,
+        // keeps the matching quiver boundary. Module-private arguments keep the
+        // specialization module-private.
+        if (concrete->Kind() == AstNodeKind::StructureDeclaration ||
+            concrete->Kind() == AstNodeKind::CallableTypeDeclaration) {
+            bool exported = origin.exported;
+            bool modulePrivate = !origin.exported && !origin.quiverVisible;
+            std::string boundary = origin.quiverVisible ? origin.quiverId : "";
             for (const auto& argument : arguments)
                 for (const auto& token : argument)
                     if (const auto alias =
                             unit.genericAliases.find(token.value);
-                        alias != unit.genericAliases.end() &&
-                        !alias->second->exported)
-                        concrete->exported = false;
+                        alias != unit.genericAliases.end()) {
+                        const auto& type = *alias->second;
+                        if (!type.exported) exported = false;
+                        if (!type.exported && !type.quiverVisible) {
+                            modulePrivate = true;
+                        } else if (type.quiverVisible) {
+                            if (!boundary.empty() && boundary != type.quiverId)
+                                modulePrivate = true;
+                            else
+                                boundary = type.quiverId;
+                        }
+                    }
+            concrete->exported = exported;
+            concrete->quiverVisible =
+                !exported && !modulePrivate && !boundary.empty();
+            if (concrete->quiverVisible) concrete->quiverId = boundary;
         }
         if (current)
             concrete->instantiationOrigins = current->instantiationOrigins;
@@ -995,6 +1074,15 @@ class Expander {
                          type.syntax->TypeForm() == TypeKind::Slice))
                         return Element(type);
                 }
+                if (call.Member() == "data") {
+                    auto type = ExpressionType(call.Receiver());
+                    if (type.syntax &&
+                        type.syntax->TypeForm() == TypeKind::Slice) {
+                        type = Element(type);
+                        ++type.extraPointers;
+                        return type;
+                    }
+                }
                 const auto* owner = Receiver(call);
                 if (!owner) return {};
                 const auto found = concreteMethods.find({owner, call.Member()});
@@ -1092,6 +1180,17 @@ class Expander {
                 for (std::size_t i = 0; i < destructure.Bindings().size();
                      ++i) {
                     const auto& binding = *destructure.Bindings()[i];
+                    if (binding.Name() == "_") continue;
+                    bool local = locals.back().contains(binding.Name());
+                    // Parameters and the outermost function body share one
+                    // semantic scope even though the syntax walker keeps a
+                    // frame for each.
+                    if (!local && locals.size() == 2)
+                        local = locals.front().contains(binding.Name());
+                    const bool declaration =
+                        binding.ExplicitType() != nullptr ||
+                        (destructure.IsInferred() && !local);
+                    if (!declaration) continue;
                     locals.back().insert(binding.Name());
                     if (binding.ExplicitType())
                         localTypes.back()[binding.Name()] = {

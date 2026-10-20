@@ -94,6 +94,1124 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::U8)));
 }
 
+TEST(SemanticCallableTests, ResolvesStructuralSignaturesAndFunctionValues) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        func Equivalent(i32 value) => (i32);
+        i32 twice(i32 value) { return value * 2; }
+        i32 apply(Mapper callback, i32 value) { return callback(value); }
+        i32 main() {
+            Equivalent callback = twice;
+            Mapper moved = callback;
+            return apply(moved, 21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const auto& declaration = static_cast<const CallableTypeDeclaration&>(
+        *result.unit->Declarations()[0]);
+    const auto* symbol = result.model.DeclaredSymbol(declaration);
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->Kind(), SymbolKind::CallableType);
+    EXPECT_EQ(symbol->Type().Name(), "func(i32) => (i32)");
+    EXPECT_FALSE(symbol->Type().IsCopyable());
+    EXPECT_TRUE(symbol->Type().OwnsStorage());
+}
+
+TEST(SemanticCallableTests, ResolvesOnceCallableIdentityAndCompatibility) {
+    Analysis result = Analyze(R"(
+        func Reusable() => (i32);
+        once func SingleUse() => (i32);
+        i32 answer() { return 42; }
+        i32 main() {
+            SingleUse function = answer;
+            SingleUse closure = once []() => (i32) { return 0; };
+            return function() + closure();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const auto& reusable = static_cast<const CallableTypeDeclaration&>(
+        *result.unit->Declarations()[0]);
+    const auto& singleUse = static_cast<const CallableTypeDeclaration&>(
+        *result.unit->Declarations()[1]);
+    const SemanticType reusableType =
+        result.model.DeclaredSymbol(reusable)->Type();
+    const SemanticType onceType =
+        result.model.DeclaredSymbol(singleUse)->Type();
+    EXPECT_EQ(onceType.Name(), "once func() => (i32)");
+    EXPECT_NE(reusableType, onceType);
+    EXPECT_TRUE(IsAssignable(onceType, reusableType));
+    EXPECT_FALSE(IsAssignable(reusableType, onceType));
+}
+
+TEST(SemanticCallableTests, ConsumesOnceCallablesAndOwnedCaptures) {
+    Analysis valid = Analyze(R"(
+        once func Inner() => (i32);
+        once func Outer() => (i32);
+        i32 main() {
+            Inner inner = once []() => (i32) { return 42; };
+            Outer outer = once [own inner]() => (i32) { return inner(); };
+            return outer();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis releasesBorrow = Analyze(R"(
+        once func Reader() => (i32);
+        i32 main() {
+            i32 value = 1;
+            Reader reader = once [&const value]() => (i32) { return value; };
+            i32 previous = reader();
+            value = 41;
+            return previous + value;
+        }
+    )");
+    for (const auto& diagnostic : releasesBorrow.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(releasesBorrow.diagnostics.HasErrors());
+
+    Analysis invokedTwice = Analyze(R"(
+        once func Action() => ();
+        void main() {
+            Action action = once []() => () {};
+            action();
+            action();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invokedTwice, DiagnosticCode::MovedValue),
+              nullptr);
+
+    Analysis reusableBody = Analyze(R"(
+        once func Inner() => (i32);
+        func Outer() => (i32);
+        i32 main() {
+            Inner inner = once []() => (i32) { return 42; };
+            Outer outer = [own inner]() => (i32) { return inner(); };
+            return outer();
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(reusableBody, DiagnosticCode::NonCopyableValue),
+        nullptr);
+}
+
+TEST(SemanticCallableTests, ReportsSecondOnceInvocationAtTheCallee) {
+    const std::string source =
+        "once func Action() => (); "
+        "void main() { Action action = once []() => () {}; "
+        "action(); action(); }";
+    Analysis result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(result, DiagnosticCode::MovedValue);
+
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message, "variable 'action' may have been moved");
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("action();"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("action").size());
+}
+
+TEST(SemanticCallableTests, RejectsOnceToReusableAtTheInitializer) {
+    const std::string source =
+        "func Reusable() => (); once func SingleUse() => (); "
+        "void main() { SingleUse single = once []() => () {}; "
+        "Reusable reusable = single; }";
+    Analysis result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(result, DiagnosticCode::IncompatibleType);
+
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message,
+              "expected 'func() => ()', found 'once func() => ()'");
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("single;"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("single").size());
+}
+
+TEST(SemanticCallableTests, ReportsReusableOwnedCaptureConsumptionAtTheCallee) {
+    const std::string source =
+        "once func Action() => (); func Wrapper() => (); "
+        "void main() { Action action = once []() => () {}; "
+        "Wrapper wrapper = [own action]() => () { action(); }; }";
+    Analysis result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(result, DiagnosticCode::NonCopyableValue);
+
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message,
+              "owned capture 'action' cannot be consumed by a reusable "
+              "closure");
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("action();"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("action").size());
+}
+
+TEST(SemanticCallableTests, ReportsCallableUseAfterDeferAtTheCallee) {
+    const std::string source =
+        "func Action() => (); "
+        "void main() { Action action = []() => () {}; "
+        "defer action(); action(); }";
+    Analysis result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(result, DiagnosticCode::MovedValue);
+
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message, "variable 'action' may have been moved");
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("action();"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("action").size());
+}
+
+TEST(SemanticCallableTests, SpecializesGenericCallableSignaturesStructurally) {
+    Analysis result = Analyze(R"(
+        func Mapper<T>(T) => (T);
+        i32 identity(i32 value) { return value; }
+        i32 apply(Mapper<i32> callback, i32 value) {
+            return callback(value);
+        }
+        i32 main() {
+            Mapper<i32> named = identity;
+            Mapper<i32> inferred = (value) => { return value + 1; };
+            return apply(named, 20) + inferred(1);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const FunctionDeclaration* apply = nullptr;
+    for (const auto& declaration : result.unit->Declarations())
+        if (declaration->Kind() == AstNodeKind::FunctionDeclaration) {
+            const auto* function =
+                static_cast<const FunctionDeclaration*>(declaration.get());
+            if (function->Name() == "apply") apply = function;
+        }
+    ASSERT_NE(apply, nullptr);
+    const auto* symbol =
+        static_cast<const FunctionSymbol*>(result.model.DeclaredSymbol(*apply));
+    ASSERT_NE(symbol, nullptr);
+    ASSERT_EQ(symbol->ParameterTypes().size(), 2);
+    EXPECT_EQ(symbol->ParameterTypes()[0].Name(), "func(i32) => (i32)");
+}
+
+TEST(SemanticCallableTests, SpecializesGenericOnceCallableSignatures) {
+    Analysis result = Analyze(R"(
+        once func Transform<T>(T) => (T);
+        i32 identity(i32 value) { return value; }
+        i32 main() {
+            Transform<i32> transform = identity;
+            return transform(42);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const FunctionDeclaration* main = nullptr;
+    for (const auto& declaration : result.unit->Declarations())
+        if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
+            static_cast<const FunctionDeclaration&>(*declaration).Name() ==
+                "main")
+            main = static_cast<const FunctionDeclaration*>(declaration.get());
+    ASSERT_NE(main, nullptr);
+    const auto& declaration = static_cast<const VariableDeclarationStatement&>(
+        *main->Body().Statements()[0]);
+    const auto* symbol = result.model.DeclaredSymbol(declaration);
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_TRUE(symbol->Type().Signature().isOnce);
+}
+
+TEST(SemanticCallableTests,
+     GenericCallableSpecializationsPreserveCompleteContracts) {
+    Analysis result = Analyze(R"(
+        unsafe func Transfer<T>(lend *const T source) => (own *T, error);
+        unsafe (own *i32, error) transfer(lend *const i32 source) {
+            return (null, none);
+        }
+        unsafe void main() {
+            Transfer<i32> callback = transfer;
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests,
+     GenericCallableSpecializationsPreserveBorrowContracts) {
+    Analysis result = Analyze(R"(
+        func Borrower<T>(&T source) => (&T) <- source;
+        &i32 borrow(&i32 source) <- source { return source; }
+        i32 main() {
+            value := 42;
+            Borrower<i32> callback = borrow;
+            reference := callback(&value);
+            *reference = *reference + 1;
+            return value;
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, SpecializesNestedGenericCallableTypes) {
+    Analysis result = Analyze(R"(
+        func Fold<T, U>([]const T values, U initial) => (U);
+        i32 sum([]const i32 values, i32 initial) {
+            result := initial;
+            for (_, value) := range values { result = result + value; }
+            return result;
+        }
+        void use(Fold<i32, i32> callback) {
+            [2]i32 values = [20, 22];
+            result := callback(values[:], 0);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, StoresGenericCallablesInGenericAggregates) {
+    Analysis result = Analyze(R"(
+        func Mapper<T>(T) => (T);
+        structure Handler<T> { Mapper<T> callback; };
+        T Handler<T>::run(&const self, T value) {
+            return (self->callback)(value);
+        }
+        i32 twice(i32 value) { return value * 2; }
+        i32 main() {
+            handler := build Handler<i32> { self.callback = twice; };
+            return handler.run(21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests,
+     GivesAnonymousFunctionsUniqueNamesAcrossSpecializations) {
+    Analysis result = Analyze(R"(
+        func Mapper<T>(T) => (T);
+        func Less<T>(&const T, &const T) => (bool);
+        Mapper<T> identity<T>() {
+            return (value) => { return value; };
+        }
+        Less<T> less<T>() {
+            return [](&const T left, &const T right) => (bool) {
+                return *left < *right;
+            };
+        }
+        void main() {
+            first := identity<i32>();
+            second := identity<i64>();
+            less32 := less<i32>();
+            less64 := less<i64>();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, DiagnosesInvalidGenericCallableApplications) {
+    const std::vector<std::string> sources = {
+        "func Mapper<T>(T) => (T); void use(Mapper callback) {}",
+        "func Mapper<T>(T) => (T); void use(Mapper<i32, i64> callback) {}",
+        "func Mapper<T>(T) => (T); void use(Mapper<Missing> callback) {}",
+        "func Mapper(i32) => (i32); void use(Mapper<i32> callback) {}",
+    };
+
+    for (const std::string& source : sources) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(FindErrorDiagnostic(Analyze(source),
+                                      DiagnosticCode::InvalidGeneric),
+                  nullptr);
+    }
+}
+
+TEST(SemanticCallableTests, DiagnosesSignatureAndSafetyMismatches) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        func Wrong(i64) => (i32);
+        func InvalidPointer(*u8) => ();
+        structure RawBox { *u8 pointer; };
+        func InvalidTransitive(RawBox) => ();
+        i32 twice(i32 value) { return value * 2; }
+        i32 main() { Wrong callback = twice; return 0; }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::IncompatibleType),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RequiresUnsafeContextForUnsafeIndirectCalls) {
+    Analysis result = Analyze(R"(
+        unsafe func Reader(lend *const i32 source) => (i32);
+        unsafe i32 read(lend *const i32 source) { return *source; }
+        i32 invoke(Reader reader, *const i32 source) {
+            return reader(source);
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, TreatsCallableVariablesAsMoveOnly) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 twice(i32 value) { return value * 2; }
+        i32 main() {
+            Mapper first = twice;
+            Mapper second = first;
+            return first(21);
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
+}
+
+TEST(SemanticCallableTests, TreatsCallableAggregatesAsMoveOnly) {
+    const std::vector<std::string> sources = {
+        R"(
+            func Mapper(i32) => (i32);
+            i32 twice(i32 value) { return value * 2; }
+            i32 main() {
+                Mapper callback = twice;
+                (Mapper, i32) first = (callback, 21);
+                (Mapper, i32) second = first;
+                (Mapper, i32) invalid = first;
+                return 0;
+            }
+        )",
+        R"(
+            func Mapper(i32) => (i32);
+            i32 twice(i32 value) { return value * 2; }
+            i32 main() {
+                Mapper callback = twice;
+                [1]Mapper first = [callback];
+                [1]Mapper second = first;
+                [1]Mapper invalid = first;
+                return 0;
+            }
+        )",
+        R"(
+            func Mapper(i32) => (i32);
+            structure Holder { Mapper callback; };
+            Holder Holder::init(Mapper callback) <- callback override {
+                return build Holder { self.callback = callback; };
+            }
+            i32 twice(i32 value) { return value * 2; }
+            i32 main() {
+                Mapper callback = twice;
+                Holder first = Holder::init(callback);
+                Holder second = first;
+                Holder invalid = first;
+                return 0;
+            }
+        )",
+    };
+
+    for (const std::string& source : sources) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(
+            FindErrorDiagnostic(Analyze(source), DiagnosticCode::MovedValue),
+            nullptr);
+    }
+}
+
+TEST(SemanticCallableTests,
+     InfersCapturelessAnonymousFunctionsFromAssignmentsArgumentsAndReturns) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 apply(Mapper callback, i32 value) { return callback(value); }
+        Mapper make() { return (value) => { return value + 1; }; }
+        i32 main() {
+            explicit := [](i32 value) => (i32) { return value * 2; };
+            Mapper inferred = (value) => { return value + 2; };
+            Mapper assigned = [](i32 value) => (i32) { return value; };
+            assigned = (value) => { return value + 3; };
+            return apply(explicit, 10) + apply(inferred, 10) +
+                   apply([](value) => { return value; }, 10) + make()(0);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    EXPECT_EQ(result.model.AnonymousFunctions().size(), 6);
+    for (const auto* function : result.model.AnonymousFunctions()) {
+        const auto* symbol = result.model.DeclaredSymbol(*function);
+        ASSERT_NE(symbol, nullptr);
+        EXPECT_EQ(symbol->Kind(), SymbolKind::Function);
+        EXPECT_EQ(symbol->Type().Name(), "func(i32) => (i32)");
+    }
+}
+
+TEST(SemanticCallableTests, DiagnosesMissingContextAndCaptures) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 main() {
+            outer := 41;
+            inferred := (value) => { return value; };
+            Mapper capturing = (value) => { return value + outer; };
+            return 0;
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::CannotInferType),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnknownName),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, ResolvesExplicitCopyCaptures) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 main() {
+            i32 factor = 2;
+            string label = "scale";
+            Mapper callback = [copy factor, copy label](value) => {
+                label = "used";
+                return value * factor;
+            };
+            factor = 10;
+            return callback(21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.AnonymousFunctions().size(), 1);
+    const auto& captures =
+        result.model.Captures(*result.model.AnonymousFunctions().front());
+    ASSERT_EQ(captures.size(), 2);
+    EXPECT_EQ(captures[0].source->Name(), "factor");
+    EXPECT_EQ(captures[0].variable->Name(), "factor");
+    EXPECT_EQ(captures[0].variable->Type().Name(), "i32");
+    EXPECT_EQ(captures[1].variable->Type().Name(), "string");
+}
+
+TEST(SemanticCallableTests, RequiresEveryOuterLocalToBeCaptured) {
+    Analysis result = Analyze(R"(
+        func Mapper(i32) => (i32);
+        i32 main() {
+            i32 captured = 1;
+            i32 omitted = 2;
+            Mapper callback = [copy captured](value) => {
+                return value + captured + omitted;
+            };
+            return callback(1);
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnknownName),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsInvalidCopyCaptures) {
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { i32 x = 1; "
+                          "Mapper f = [copy x, copy x](v) => { return v; }; "
+                          "return 0; }"),
+                  DiagnosticCode::DuplicateDeclaration),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { Mapper f = "
+                          "[copy missing](v) => { return v; }; return 0; }"),
+                  DiagnosticCode::UnknownName),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { Mapper "
+                          "original = (v) => { return v; }; Mapper f = [copy "
+                          "original](v) => { return original(v); }; return 0; "
+                          "}"),
+                  DiagnosticCode::NonCopyableValue),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { i32 x = 1; "
+                          "&const i32 r = &x; Mapper f = [copy r](v) => { "
+                          "return v; }; return 0; }"),
+                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); unsafe i32 main() { i32 "
+                          "x = 1; *i32 p = &raw x; Mapper f = [copy p](v) => { "
+                          "return v; }; return 0; }"),
+                  DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, AllowsRawCopyCapturesOnlyOnUnsafeFunctions) {
+    Analysis valid = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader read = unsafe [copy pointer]() => (i32) {
+                return *pointer;
+            };
+            return read();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis invalid = Analyze(R"(
+        func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader read = [copy pointer]() => (i32) { return 0; };
+            return read();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, ResolvesUnsafeRawResourceCaptures) {
+    Analysis result = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            i32 borrowed = 0;
+            {
+                Reader reader = unsafe [lend pointer]() => {
+                    return *pointer;
+                };
+                borrowed = reader();
+            }
+            free(pointer);
+
+            owned, secondFailure := new<i32>(7);
+            if secondFailure != none { return 2; }
+            Reader owner = unsafe [own owned]() => { return *owned; };
+            return borrowed + owner();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.AnonymousFunctions().size(), 2);
+    const auto& lent =
+        result.model.Captures(*result.model.AnonymousFunctions()[0]);
+    const auto& owned =
+        result.model.Captures(*result.model.AnonymousFunctions()[1]);
+    ASSERT_EQ(lent.size(), 1);
+    ASSERT_EQ(owned.size(), 1);
+    EXPECT_FALSE(lent[0].variable->Writable());
+    EXPECT_FALSE(owned[0].variable->Writable());
+}
+
+TEST(SemanticCallableTests, RequiresUnsafeRawResourceCaptureLiterals) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Reader reader = [lend pointer]() => { return *pointer; };
+            free(pointer);
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RequiresRawResourcesForLendAndOwnCaptures) {
+    Analysis result = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            Reader lent = unsafe [lend value]() => { return value; };
+            Reader owned = unsafe [own value]() => { return value; };
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::NonCopyableValue),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsInvalidRawResourceCaptureTransfers) {
+    Analysis copied = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Reader reader = unsafe [copy pointer]() => { return *pointer; };
+            free(pointer);
+            return reader();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(copied, DiagnosticCode::UnverifiedOwnership),
+              nullptr);
+
+    Analysis stackOwner = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader reader = unsafe [own pointer]() => { return *pointer; };
+            return reader();
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(stackOwner, DiagnosticCode::UnverifiedOwnership),
+        nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsLendCaptureEscapesAndOwnerConflicts) {
+    Analysis returned = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe Reader bind(lend *const i32 pointer) {
+            return unsafe [lend pointer]() => { return *pointer; };
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(returned, DiagnosticCode::UnverifiedOwnership),
+        nullptr);
+
+    Analysis stored = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Reader escaped = unsafe []() => (i32) { return 0; };
+            {
+                Reader local = unsafe [lend pointer]() => { return *pointer; };
+                escaped = local;
+            }
+            free(pointer);
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(stored, DiagnosticCode::UnverifiedOwnership),
+              nullptr);
+
+    Analysis freed = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Reader reader = unsafe [lend pointer]() => { return *pointer; };
+            free(pointer);
+            return reader();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(freed, DiagnosticCode::UnverifiedOwnership),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsConsumptionFromReusableOwnCapture) {
+    Analysis result = Analyze(R"(
+        unsafe func Consumer() => ();
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            Consumer consumer = unsafe [own pointer]() => {
+                free(pointer);
+            };
+            consumer();
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::UnverifiedOwnership),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, OwnsMovableCallablesAndSafeAggregates) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        structure State { i32 value; };
+        State State::init(i32 value) override {
+            return build State { self.value = value; };
+        }
+        void State::tear(&self) override {}
+
+        Reader wrap(i32 value) {
+            State state = State::init(value);
+            Reader inner = [own state]() => { return state.value; };
+            return [own inner]() => { return inner(); };
+        }
+        i32 main() {
+            Reader callback = wrap(42);
+            return callback();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.AnonymousFunctions().size(), 2);
+    for (const auto* function : result.model.AnonymousFunctions()) {
+        ASSERT_EQ(result.model.Captures(*function).size(), 1);
+        EXPECT_EQ(result.model.Captures(*function)[0].syntax->Mode(),
+                  AnonymousFunctionExpression::CaptureMode::Own);
+        EXPECT_FALSE(function->IsUnsafe());
+    }
+}
+
+TEST(SemanticCallableTests, MovesGeneralizedOwnCaptureSources) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            Reader inner = []() => (i32) { return 21; };
+            Reader outer = [own inner]() => { return inner() * 2; };
+            return inner() + outer();
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsInvalidGeneralizedOwnCaptures) {
+    Analysis copyable = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 42;
+            Reader callback = [own value]() => { return value; };
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(copyable, DiagnosticCode::NonCopyableValue),
+              nullptr);
+
+    Analysis immovable = Analyze(R"(
+        func Reader() => (i32);
+        structure State { i32 value; };
+        State State::init() override { return build State {}; }
+        unsafe void State::tear(&self) override {}
+        unsafe i32 main() {
+            State state = State::init();
+            Reader callback = [own state]() => { return state.value; };
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(immovable, DiagnosticCode::NonCopyableValue),
+              nullptr);
+
+    Analysis transparentRaw = Analyze(R"(
+        unsafe func Reader() => (i32);
+        unsafe i32 main() {
+            i32 value = 42;
+            *i32 pointer = &raw value;
+            Reader inner = unsafe []() => (i32) { return 0; };
+            (Reader, *i32) state = (inner, pointer);
+            Reader callback = unsafe [own state]() => { return 42; };
+            return callback();
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(transparentRaw, DiagnosticCode::NonCopyableValue),
+        nullptr);
+}
+
+TEST(SemanticCallableTests,
+     RejectsConsumptionFromReusableGeneralizedOwnCapture) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        void consume(Reader callback) {}
+        i32 main() {
+            Reader inner = []() => (i32) { return 42; };
+            Reader outer = [own inner]() => {
+                consume(inner);
+                return 42;
+            };
+            return outer();
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::NonCopyableValue),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, PropagatesBorrowOriginsThroughOwnCaptures) {
+    Analysis valid = Analyze(R"(
+        func Reader() => (i32);
+        Reader wrap(&const i32 source) <- source {
+            Reader inner = [&const source]() => { return *source; };
+            return [own inner]() => { return inner(); };
+        }
+        i32 main() {
+            i32 value = 42;
+            Reader callback = wrap(&value);
+            return callback();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis escaped = Analyze(R"(
+        func Reader() => (i32);
+        Reader invalid() {
+            i32 local = 42;
+            Reader inner = [&const local]() => { return local; };
+            return [own inner]() => { return inner(); };
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(escaped, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+}
+
+TEST(SemanticCallableTests, ChecksCopyCaptureSourceInitialization) {
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze("func Mapper(i32) => (i32); i32 main() { i32 x; "
+                          "Mapper f = [copy x](v) => { return v + x; }; return "
+                          "0; }"),
+                  DiagnosticCode::UninitializedVariable),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, ResolvesCheckedReferenceCaptures) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 40;
+            const i32 limit = 2;
+            Reader callback = [&value, &const limit]() => {
+                value = value + limit;
+                return value;
+            };
+            return callback();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    const auto& captures =
+        result.model.Captures(*result.model.AnonymousFunctions().front());
+    ASSERT_EQ(captures.size(), 2);
+    EXPECT_TRUE(captures[0].variable->Writable());
+    EXPECT_FALSE(captures[1].variable->Writable());
+}
+
+TEST(SemanticCallableTests, RejectsWritesThroughSharedCaptures) {
+    Analysis result = Analyze(R"(
+        func Writer() => ();
+        void main() {
+            i32 value = 1;
+            Writer callback = [&const value]() => { value = 2; };
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::SymbolNotWritable),
+              nullptr);
+
+    Analysis reborrow = Analyze(R"(
+        func Writer() => ();
+        Writer bind(&i32 source) <- source {
+            return [&const source]() => { *source = 2; };
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(reborrow, DiagnosticCode::SymbolNotWritable),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, RejectsMutableCaptureOfReadOnlyStorage) {
+    Analysis result = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            const i32 value = 1;
+            Reader callback = [&value]() => { return value; };
+            return callback();
+        }
+    )");
+
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::SymbolNotWritable),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, EnforcesCheckedCaptureLoansUntilLastUse) {
+    Analysis conflict = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 1;
+            Reader callback = [&const value]() => { return value; };
+            value = 2;
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(conflict, DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    Analysis released = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 1;
+            Reader callback = [&const value]() => { return value; };
+            i32 result = callback();
+            value = 2;
+            return result + value;
+        }
+    )");
+    for (const auto& diagnostic : released.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(released.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, DiagnosesCheckedCaptureEscapes) {
+    Analysis storage = Analyze(R"(
+        func Reader() => (i32);
+        i32 main() {
+            Reader callback = () => { return 0; };
+            {
+                i32 local = 1;
+                callback = [&const local]() => { return local; };
+            }
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(storage, DiagnosticCode::ReferenceEscape),
+              nullptr);
+
+    Analysis returned = Analyze(R"(
+        func Reader() => (i32);
+        Reader invalid() {
+            i32 local = 1;
+            return [&const local]() => { return local; };
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(returned, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis container = Analyze(R"(
+        func Reader() => (i32);
+        [1]Reader invalid() {
+            i32 local = 1;
+            return [[&const local]() => { return local; }];
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(container, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis containerStorage = Analyze(R"(
+        func Reader() => (i32);
+        i32 zero() { return 0; }
+        i32 main() {
+            [1]Reader callbacks = [zero];
+            {
+                i32 local = 42;
+                callbacks[0] = [&const local]() => { return local; };
+            }
+            return 0;
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(containerStorage, DiagnosticCode::ReferenceEscape),
+        nullptr);
+}
+
+TEST(SemanticCallableTests, PropagatesCaptureOriginsThroughCallableReturns) {
+    Analysis valid = Analyze(R"(
+        func Reader() => (i32);
+        Reader bind(&const i32 source) <- source {
+            return [&const source]() => { return *source; };
+        }
+        i32 main() {
+            i32 value = 41;
+            Reader callback = bind(&value);
+            return callback();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis conflict = Analyze(R"(
+        func Reader() => (i32);
+        Reader bind(&const i32 source) <- source {
+            return [&const source]() => { return *source; };
+        }
+        i32 main() {
+            i32 value = 41;
+            Reader callback = bind(&value);
+            value = 42;
+            return callback();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(conflict, DiagnosticCode::BorrowConflict),
+              nullptr);
+}
+
+TEST(SemanticCallableTests, PropagatesCaptureOriginsThroughStructures) {
+    Analysis missingContract = Analyze(R"(
+        func Reader() => (i32);
+        structure Holder { Reader callback; };
+        Holder Holder::init(Reader callback) override {
+            return build Holder { self.callback = callback; };
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(missingContract,
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+
+    Analysis valid = Analyze(R"(
+        func Reader() => (i32);
+        structure Holder { Reader callback; };
+        Holder Holder::init(Reader callback) <- callback override {
+            return build Holder { self.callback = callback; };
+        }
+        i32 main() {
+            i32 value = 42;
+            Reader callback = [&const value]() => { return value; };
+            Holder holder = Holder::init(callback);
+            return value;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, EnforcesAnonymousFunctionPointerSafety) {
+    Analysis valid = Analyze(R"(
+        unsafe func Reader(*const i32) => (i32);
+        i32 main() {
+            Reader inferred = (source) => { return *source; };
+            explicit := unsafe [](*const i32 source) => (i32) {
+                return *source;
+            };
+            return 0;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+    EXPECT_EQ(valid.model.AnonymousFunctions().size(), 2);
+
+    Analysis invalid = Analyze(R"(
+        i32 main() {
+            callback := [](*const i32 source) => (i32) { return 0; };
+            return 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
 TEST(SemanticMatchTests, AcceptsExhaustiveAndWildcardEnumMatches) {
     Analysis result = Analyze(R"(
         enum TokenKind: u8 { Identifier = 1, Number = 4, End = 9, }
@@ -346,21 +1464,64 @@ TEST(SemanticBuiltInTests, ProvidesTypedStandardOutput) {
 
 TEST(SemanticBuiltInTests, ValidatesStandardOutputArguments) {
     Analysis valid = Analyze(
-        "void Main() { stdout(42); stdoutln(false); stdout('x'); "
-        "stdout(1.5); }");
+        "void Main() { stdout(); stdout(42, false, 'x', 1.5); "
+        "stdoutln(); stdoutln(\"answer: \", 42); }");
     EXPECT_FALSE(valid.diagnostics.HasErrors());
 
     Analysis wrongType = Analyze("void Main() { stdout(null); }");
     EXPECT_NE(FindDiagnostic(wrongType, DiagnosticCode::IncompatibleArgument),
               nullptr);
 
-    Analysis wrongCount = Analyze("void Main() { stdout(); }");
-    EXPECT_NE(FindDiagnostic(wrongCount, DiagnosticCode::WrongArgumentCount),
-              nullptr);
-
     Analysis lineWrongType = Analyze("void Main() { stdoutln(none); }");
     EXPECT_NE(
         FindDiagnostic(lineWrongType, DiagnosticCode::IncompatibleArgument),
+        nullptr);
+}
+
+TEST(SemanticBuiltInTests, ValidatesFormattedStandardOutput) {
+    Analysis unsupported = Analyze(
+        "void Main() { stdoutf(\"expected: %d, text: %s%c\", 42, "
+        "\"flecha\", '!', true); }");
+    EXPECT_NE(FindDiagnostic(unsupported, DiagnosticCode::InvalidFormat),
+              nullptr);
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidFormat),
+              "FLECHA-S0060");
+
+    Analysis supported = Analyze(
+        "void Main() { stdoutf(\"expected: %d, text: %s%s, ok: %b/%b, "
+        "percent: %%\", 42, \"flecha\", '!', true, 1 as u8); }");
+    EXPECT_FALSE(supported.diagnostics.HasErrors());
+
+    Analysis missingFormat = Analyze("void Main() { stdoutf(); }");
+    EXPECT_NE(FindDiagnostic(missingFormat, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+
+    Analysis nonLiteral = Analyze(
+        "void Main() { stringv format = \"%d\"; stdoutf(format, 42); }");
+    EXPECT_NE(FindDiagnostic(nonLiteral, DiagnosticCode::InvalidFormat),
+              nullptr);
+
+    Analysis incomplete = Analyze("void Main() { stdoutf(\"value: %\", 1); }");
+    EXPECT_NE(FindDiagnostic(incomplete, DiagnosticCode::InvalidFormat),
+              nullptr);
+
+    Analysis wrongCount = Analyze("void Main() { stdoutf(\"%d %s\", 1); }");
+    EXPECT_NE(FindDiagnostic(wrongCount, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+
+    Analysis wrongDecimal = Analyze("void Main() { stdoutf(\"%d\", false); }");
+    EXPECT_NE(
+        FindDiagnostic(wrongDecimal, DiagnosticCode::IncompatibleArgument),
+        nullptr);
+
+    Analysis wrongString = Analyze("void Main() { stdoutf(\"%s\", 42); }");
+    EXPECT_NE(FindDiagnostic(wrongString, DiagnosticCode::IncompatibleArgument),
+              nullptr);
+
+    Analysis wrongBoolean =
+        Analyze("void Main() { stdoutf(\"%b\", 1 as u16); }");
+    EXPECT_NE(
+        FindDiagnostic(wrongBoolean, DiagnosticCode::IncompatibleArgument),
         nullptr);
 }
 
@@ -482,9 +1643,59 @@ TEST(SemanticStringTests, RejectsViewsThatEscapeLocalOwners) {
               nullptr);
 
     Analysis safe = Analyze(
-        "stringv Identity(stringv value) { return value; } "
+        "stringv Identity(stringv value) <- value { return value; } "
         "stringv Literal() { return \"static\"; }");
     EXPECT_FALSE(safe.diagnostics.HasErrors());
+}
+
+TEST(SemanticStringTests, TracksBorrowedStringViewResultContracts) {
+    const std::string declaration =
+        "structure Label { string text; }; "
+        "Label Label::init(stringv text) override { return build Label { "
+        "self.text = text.string(); }; } "
+        "stringv Label::view(&const self) <- self { return "
+        "self->text.view(); } ";
+
+    Analysis valid =
+        Analyze(declaration +
+                "u32 read() { Label label = Label::init(\"flecha\"); "
+                "view := label.view(); return view.len(); }");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis ownerMutation = Analyze(
+        declaration +
+        "void mutate() { Label label = Label::init(\"flecha\"); "
+        "view := label.view(); label.text = \"arrow\"; stdout(view); }");
+    EXPECT_NE(FindDiagnostic(ownerMutation, DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    Analysis escape =
+        Analyze(declaration +
+                "stringv escape() { Label label = Label::init(\"flecha\"); "
+                "return label.view(); }");
+    EXPECT_NE(FindDiagnostic(escape, DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+
+    Analysis wrongSource = Analyze(
+        "structure Label { string text; }; "
+        "stringv Label::wrong(&const self) <- self { "
+        "string local = \"temporary\"; return local.view(); }");
+    EXPECT_NE(
+        FindDiagnostic(wrongSource, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis missingContract =
+        Analyze("stringv identity(stringv value) { return value; }");
+    EXPECT_NE(
+        FindDiagnostic(missingContract, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis directOwnerMutation = Analyze(
+        "void mutate() { string owner = \"flecha\"; "
+        "view := owner.view(); owner = \"arrow\"; stdout(view); }");
+    EXPECT_NE(
+        FindDiagnostic(directOwnerMutation, DiagnosticCode::BorrowConflict),
+        nullptr);
 }
 
 TEST(SemanticDeclarationTests, BindsEveryNameToItsResolvedSymbol) {
@@ -699,7 +1910,7 @@ TEST(SemanticCastTests, CentralizesExtensibleExplicitCastPolicy) {
 
 TEST(SemanticStringViewTests, SupportsExplicitAndInferredViews) {
     Analysis analysis = Analyze(
-        "stringv Identity(stringv value) { return value; } "
+        "stringv Identity(stringv value) <- value { return value; } "
         "i32 main() { stringv explicitValue = \"Flecha\"; "
         "inferred := Identity(explicitValue); "
         "if inferred == \"Flecha\" { return 42; } return 0; }");
@@ -1591,8 +2802,7 @@ TEST(SemanticReferenceTests, ChildReborrowsFreezeParentsUntilLastUse) {
 
 TEST(SemanticReferenceTests, RejectsEscapesAndUnsupportedConversions) {
     for (const std::string& source :
-         {"&i32 f(&i32 r) { return r; }",
-          "void f() { i32 x = 1; r := &x; { i32 y = 2; r = &y; } }",
+         {"void f() { i32 x = 1; r := &x; { i32 y = 2; r = &y; } }",
           "void f() { i32 x = 1; r := &x; { child := &x; r = &*child; } }",
           "unsafe void f() { i32 x = 1; r := &x; &raw r; }",
           "unsafe void f() { i32 x = 1; r := &x; &raw *r; }"}) {
@@ -1603,6 +2813,137 @@ TEST(SemanticReferenceTests, RejectsEscapesAndUnsupportedConversions) {
     }
     EXPECT_NE(FindDiagnostic(Analyze("unsafe void f(*i32 p) { r := &*p; }"),
                              DiagnosticCode::InvalidReference),
+              nullptr);
+}
+
+TEST(SemanticReferenceTests, ValidatesBorrowedResultContracts) {
+    EXPECT_FALSE(Analyze("&i32 identity(&i32 value) <- value { return value; }")
+                     .diagnostics.HasErrors());
+    EXPECT_FALSE(
+        Analyze("&const i32 shared(&i32 value) <- value { return value; }")
+            .diagnostics.HasErrors());
+    EXPECT_FALSE(Analyze("[]const i32 view([]i32 values) <- values { return "
+                         "values; }")
+                     .diagnostics.HasErrors());
+
+    for (const std::string& source : {
+             "&i32 missing(&i32 value) { return value; }",
+             "&i32 unknown(&i32 value) <- other { return value; }",
+             "&i32 owned(i32 value) <- value { return &value; }",
+             "i32 unnecessary(&i32 value) <- value { return *value; }",
+             "&i32 wrong(&i32 left, &i32 right) <- left { return right; }",
+             "&i32 local(&i32 value) <- value { i32 result = 1; return "
+             "&result; }",
+             "((&i32, &i32), i32) nested(&i32 value) <- value { return "
+             "((value, value), 0); }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(FindDiagnostic(Analyze(source),
+                                 DiagnosticCode::InvalidBorrowContract),
+                  nullptr);
+    }
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("&i32 mutable(&const i32 value) <- value { return "
+                          "value; }"),
+                  DiagnosticCode::InvalidReturnType),
+              nullptr);
+
+    const std::string unknown =
+        "&i32 invalid(&i32 value) <- missing { return value; }";
+    Analysis analysis = Analyze(unknown);
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidBorrowContract);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->range.start.offset, unknown.find("missing"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("missing").size());
+}
+
+TEST(SemanticReferenceTests, PropagatesBorrowedResultsIntoCallerState) {
+    const std::string identity =
+        "&i32 identity(&i32 value) <- value { return value; } ";
+    EXPECT_NE(FindDiagnostic(
+                  Analyze(identity + "i32 f() { i32 x = 1; r := identity(&x); "
+                                     "x = 2; return *r; }"),
+                  DiagnosticCode::BorrowConflict),
+              nullptr);
+    EXPECT_FALSE(Analyze(identity + "i32 f() { i32 x = 1; r := identity(&x); "
+                                    "*r = 2; x = 3; return x; }")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(identity + "void f() { i32 x = 1; i32 y = 2; r := &x; "
+                               "child := identity(r); r = &y; *child = 3; }"),
+            DiagnosticCode::BorrowConflict),
+        nullptr);
+
+    const std::string view =
+        "[]const i32 view([]const i32 values) <- values { return values; } ";
+    EXPECT_NE(
+        FindDiagnostic(Analyze(view + "i32 f() { a := [1, 2]; s := view(a[:]); "
+                                      "a[0] = 3; return s[0]; }"),
+                       DiagnosticCode::BorrowConflict),
+        nullptr);
+}
+
+TEST(SemanticReferenceTests,
+     SupportsImmediatelyDestructuredMultipleBorrowedResults) {
+    const std::string pair =
+        "(&const i32, &const i32) ends(&const [2]i32 values) <- values { "
+        "return (&(*values)[0], &(*values)[1]); } ";
+    EXPECT_FALSE(Analyze(pair +
+                         "i32 f() { a := [2, 3]; left, right := ends(&a); "
+                         "return *left + *right; }")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(
+        FindDiagnostic(Analyze(pair + "i32 f() { a := [2, 3]; left, right := "
+                                      "ends(&a); a[0] = 4; return *right; }"),
+                       DiagnosticCode::BorrowConflict),
+        nullptr);
+    EXPECT_NE(FindDiagnostic(
+                  Analyze(pair + "void f() { a := [2, 3]; pair := ends(&a); "
+                                 "}"),
+                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(Analyze(pair + "void f() { a := [2, 3]; "
+                                            "ends(&a); }"),
+                             DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+
+    const std::string fields =
+        "structure Pair { i32 left; i32 right; }; "
+        "(&i32, &i32) fields(&Pair value) <- value { return "
+        "(&value->left, &value->right); } "
+        "(&i32, &i32) forward_fields(&Pair value) <- value { return "
+        "fields(value); } ";
+    EXPECT_FALSE(Analyze(fields +
+                         "i32 f() { Pair pair = none; left, right := "
+                         "forward_fields(&pair); *left = 2; *right = 3; return "
+                         "pair.left + pair.right; }")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("structure Pair { i32 value; }; "
+                          "(&i32, &i32) duplicate(&Pair pair) <- pair { return "
+                          "(&pair->value, &pair->value); }"),
+                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+}
+
+TEST(SemanticReferenceTests, SupportsReceiverAndTransitiveContracts) {
+    const std::string source =
+        "structure Box { i32 value; }; "
+        "&i32 identity(&i32 value) <- value { return value; } "
+        "&i32 forward(&i32 value) <- value { return identity(value); } "
+        "&i32 Box::value_ref(&self) <- self { return "
+        "forward(&self->value); } ";
+    EXPECT_FALSE(Analyze(source +
+                         "i32 good() { Box box = none; r := "
+                         "box.value_ref(); *r = 4; return box.value; }")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(FindDiagnostic(
+                  Analyze(source + "i32 bad() { Box box = none; r := "
+                                   "box.value_ref(); box.value = 4; return "
+                                   "*r; }"),
+                  DiagnosticCode::BorrowConflict),
               nullptr);
 }
 
@@ -2125,6 +3466,30 @@ TEST(SemanticSliceTests, AcceptsCheckedSlicesCallsConstAndElementReferences) {
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticSliceTests, ExposesDataPointersOnlyInUnsafeCode) {
+    const Analysis valid = Analyze(R"(
+        unsafe *T slice_data<T>([]T values) { return values.data(); }
+        unsafe void use([]i32 writable, []const i32 readable) {
+            *i32 output = writable.data();
+            *const i32 input = readable.data();
+            *output = *input;
+            slice_data<i32>(writable);
+        }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_NE(FindDiagnostic(Analyze("void f([]i32 values) { values.data(); }"),
+                             DiagnosticCode::UnsafeOperation),
+              nullptr);
+    EXPECT_TRUE(Analyze("unsafe void f([]i32 values) { values.data(0); }")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze("unsafe void f() { a := [1]; a.data(); }")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze("unsafe void f([]const i32 values) { *i32 p = "
+                        "values.data(); }")
+                    .diagnostics.HasErrors());
+}
+
 TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
     for (const std::string& source :
          {"void f() { a := [1, 2]; s := a[2:1]; }",
@@ -2143,7 +3508,6 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
           "void f([][]u8 s) {}",
           "void f([2][]u8 a) {}",
           "void f(&[]u8 s) {}",
-          "void f(*[]u8 s) {}",
           "[]u8 f() { [1]u8 a = [1]; return a[:]; }",
           "unsafe void f(*[2]u8 p) { s := (*p)[:]; }",
           "void f() { a := [1]; s := a[:]; unsafe { p := &raw s; } }",
@@ -2156,6 +3520,21 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+}
+
+TEST(SemanticMemoryTests, RuntimeArrayOwnersPreserveLengthAndMoveOwnership) {
+    auto valid = Analyze(
+        "unsafe (own *[]i32, error) make(usize count) { return "
+        "new<[]i32>(count); } "
+        "unsafe usize f() { p, e := make(3); if e != none { return 0; } "
+        "q := p; defer free(q); q[0] = 42; length := q.len(); values := q[:]; "
+        "return length + values.len(); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    EXPECT_TRUE(Analyze("unsafe void f() { p, e := new<[]i32>(2); q := p; "
+                        "free(p); free(q); }")
+                    .diagnostics.HasErrors());
 }
 
 TEST(SemanticSliceTests, EnforcesReadOnlyElementsAndFixedHandles) {
@@ -2268,6 +3647,72 @@ TEST(SemanticDeferTests, CapturesAtRegistrationAndChecksCallsNormally) {
     ASSERT_NE(diagnostic, nullptr);
     EXPECT_EQ(diagnostic->range.start.offset, 17);
     EXPECT_EQ(diagnostic->range.end.offset, 19);
+}
+
+TEST(SemanticDeferTests, AcceptsIndirectAndMemberCallsAndRetainsTheirState) {
+    Analysis result = Analyze(R"(
+        func Action(i32) => ();
+        void consume(i32 value) {}
+        structure Writer { i32 value; };
+        void Writer::flush(&self) { self->value++; }
+        void f() {
+            Action callback = consume;
+            Writer writer = none;
+            defer callback(1);
+            defer writer.flush();
+        }
+    )");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        func Action() => ();
+        void f() {
+            Action callback = () => {};
+            defer callback();
+            callback();
+        }
+    )"),
+                             DiagnosticCode::MovedValue),
+              nullptr);
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        structure Writer { i32 value; };
+        void Writer::flush(&self) { self->value++; }
+        void f() {
+            Writer writer = none;
+            defer writer.flush();
+            writer.value++;
+        }
+    )"),
+                             DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        func Action() => ();
+        void f() {
+            value := 0;
+            Action callback = [&value]() => { value = 1; };
+            defer callback();
+            value++;
+        }
+    )"),
+                             DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        unsafe func Action() => ();
+        void f(Action callback) { defer callback(); }
+    )"),
+                             DiagnosticCode::UnsafeOperation),
+              nullptr);
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        structure Writer {};
+        unsafe void Writer::flush(&self) {}
+        void f() { Writer writer = none; defer writer.flush(); }
+    )"),
+                             DiagnosticCode::UnsafeOperation),
+              nullptr);
 }
 
 TEST(SemanticDeferTests, HoldsBorrowedArgumentsUntilTheirScopeEnds) {
@@ -2395,7 +3840,15 @@ TEST(SemanticTupleTests, PreservesInitializationAndSimultaneousBindingRules) {
           "void f() { i32 a; (i32 b, i32 c) = (a = 1, a); stdoutln(a); }",
           "void f() { a := 1; b := 2; (a, b) = (b, a); }",
           "void f() { a := 1; { (a, b) := (a, 2); stdoutln(a); } }",
-          "void f() { (_, _) := (1, 2); }"}) {
+          "void f() { (_, _) = (1, 2); }",
+          "(i32, i32) pair() { return (1, 2); } void f() { first, err := "
+          "pair(); second, err := pair(); stdoutln(first + second + err); }",
+          "(i32, i32) pair() { return (1, 2); } void f(i32 err) { value, err "
+          ":= pair(); stdoutln(value + err); }",
+          "(i32, i32) pair() { return (1, 2); } void f() { i32 err; value, "
+          "err := pair(); stdoutln(value + err); }",
+          "void f() { i32 err = 7; { value, err := (1, true); if err { "
+          "stdoutln(value); } } stdoutln(err); }"}) {
         SCOPED_TRACE(source);
         EXPECT_FALSE(Analyze(source).diagnostics.HasErrors());
     }
@@ -2406,10 +3859,23 @@ TEST(SemanticTupleTests, PreservesInitializationAndSimultaneousBindingRules) {
           "stdoutln(a); }",
           "void f() { i32 a; while true { jumpto use; (a, i32 b) = (1, 2); "
           "#use stdoutln(a); break; } }",
-          "void f() { (i32, bool) t; (a, b) := t; }"}) {
+          "void f() { (i32, bool) t; (a, b) := t; }",
+          "void f() { a, b := (1, 2); a, b := (3, 4); }",
+          "void f() { err := 0; _, err := (1, 2); }",
+          "void f() { const i32 err = 0; value, err := (1, 2); }",
+          "void f() { err := true; value, err := (1, 2); }"}) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+
+    const Analysis noNew =
+        Analyze("void f() { a, b := (1, 2); a, b := (3, 4); }");
+    const Diagnostic* diagnostic =
+        FindDiagnostic(noNew, DiagnosticCode::InvalidDestructure);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message,
+              "short destructuring declaration requires at least one new "
+              "variable");
 }
 
 TEST(SemanticTupleTests, DestructuringCannotWriteThroughActiveLoans) {
@@ -3025,6 +4491,234 @@ TEST(SemanticStructureTests,
                                         "f() { Parent p = Parent::init(); }"),
                        DiagnosticCode::UnsafeOperation),
         nullptr);
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(prefix + "structure Parent { Box child; }; unsafe void "
+                             "f() { p := Parent::init(); moved := p; }"),
+            DiagnosticCode::NonCopyableValue),
+        nullptr);
+    EXPECT_NE(
+        FindDiagnostic(Analyze(prefix + "unsafe void f() { left, right := "
+                                        "(Box::init(), Box::init()); }"),
+                       DiagnosticCode::NonCopyableValue),
+        nullptr);
+}
+
+TEST(SemanticStructureTests, MovesSafeTearValuesAndRestoresReassignedSources) {
+    auto result = Analyze(R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        Box pass(Box value) { return value; }
+        Box choose(bool condition, Box left, Box right) {
+            if condition { return left; }
+            return right;
+        }
+        i32 check(bool condition) {
+            first := Box::init();
+            second := first;
+            first = Box::init();
+            third := pass(second);
+            selected := choose(condition, first, third);
+            first = Box::init();
+            return selected.value + first.value;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticStructureTests, DiscardingAWholeNonCopyableValueConsumesIt) {
+    const std::string prefix = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+    )";
+    auto result = Analyze(prefix + R"(
+        void check() {
+            box := Box::init();
+            box;
+            stdout(box.value);
+        }
+    )");
+    EXPECT_NE(FindDiagnostic(result, DiagnosticCode::MovedValue), nullptr);
+    EXPECT_FALSE(Analyze(prefix + R"(
+        enum Pick { Left, Right, }
+        void check(Pick pick) {
+            left := Box::init();
+            right := Box::init();
+            match pick { Pick.Left => left, Pick.Right => right, };
+        }
+    )")
+                     .diagnostics.HasErrors());
+}
+
+TEST(SemanticStructureTests, DeferredByValueCallsMoveAtRegistration) {
+    const std::string prefix = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        void consume(Box value) {}
+    )";
+    const std::string source = prefix + R"(
+        void check() {
+            box := Box::init();
+            defer consume(box);
+            stdout(box.value);
+        }
+    )";
+    auto result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindDiagnostic(result, DiagnosticCode::MovedValue);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("box"));
+}
+
+TEST(SemanticStructureTests, DiagnosesMovedPossibleAndSelfMovedValues) {
+    const std::string prefix = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+    )";
+    for (const std::string& body : {
+             "first := Box::init(); second := first; stdout(first.value);",
+             "first := Box::init(); if condition { second := first; } "
+             "stdout(first.value);",
+             "first := Box::init(); while condition { second := first; break; "
+             "} stdout(first.value);",
+         }) {
+        SCOPED_TRACE(body);
+        auto result =
+            Analyze(prefix + "void check(bool condition) { " + body + " }");
+        const Diagnostic* diagnostic =
+            FindDiagnostic(result, DiagnosticCode::MovedValue);
+        ASSERT_NE(diagnostic, nullptr);
+        EXPECT_EQ(diagnostic->range.start.offset,
+                  (prefix + "void check(bool condition) { " + body + " }")
+                      .rfind("first"));
+    }
+    EXPECT_NE(FindDiagnostic(Analyze(prefix + R"(
+        void check() { value := Box::init(); value = value; }
+    )"),
+                             DiagnosticCode::NonCopyableValue),
+              nullptr);
+    EXPECT_FALSE(Analyze(prefix + R"(
+        void check(bool condition) {
+            value := Box::init();
+            if condition { moved := value; }
+            value = Box::init();
+            stdout(value.value);
+        }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(FindDiagnostic(Analyze(prefix + R"(
+        void check() {
+            left, right := (Box::init(), Box::init());
+            (left, right) = (left, right);
+        }
+    )"),
+                             DiagnosticCode::NonCopyableValue),
+              nullptr);
+}
+
+TEST(SemanticStructureTests, WholeMovesRespectLoansAndRejectPartialMoves) {
+    const std::string prefix = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        void consume(Box value) {}
+        void inspect(&const i32 value) { stdout(*value); }
+    )";
+    for (const std::string& body : {
+             "box := Box::init(); reference := &box.value; moved := box; "
+             "stdout(*reference);",
+             "box := Box::init(); reference := &box.value; consume(box); "
+             "stdout(*reference);",
+             "box := Box::init(); reference := &box.value; defer "
+             "inspect(reference); moved := box;",
+         }) {
+        SCOPED_TRACE(body);
+        EXPECT_NE(
+            FindDiagnostic(Analyze(prefix + "void check() { " + body + " }"),
+                           DiagnosticCode::BorrowConflict),
+            nullptr);
+    }
+    EXPECT_NE(FindDiagnostic(Analyze(prefix + R"(
+        void check() { values := [Box::init()]; box := values[0]; }
+    )"),
+                             DiagnosticCode::NonCopyableValue),
+              nullptr);
+    EXPECT_FALSE(Analyze(prefix + R"(
+        void check() {
+            box := Box::init();
+            reference := &box.value;
+            stdout(*reference);
+            moved := box;
+        }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+            structure Buffer { own *i32 data; usize length; };
+            unsafe Buffer Buffer::init(own *i32 data, usize length) override {
+                return build Buffer {
+                    self.data = data;
+                    self.length = length;
+                };
+            }
+            void Buffer::tear(&self) override {
+                unsafe { free(self->data); }
+            }
+            unsafe []i32 Buffer::view(&self) <- self {
+                return self->data[:self->length];
+            }
+            unsafe void check() {
+                data, err := new<[]i32>(1);
+                buffer := Buffer::init(data, 1);
+                values := buffer.view();
+                moved := buffer;
+                stdout(values[0]);
+            }
+        )"),
+                             DiagnosticCode::BorrowConflict),
+              nullptr);
+}
+
+TEST(SemanticStructureTests, MovesWholeTuplesArraysAndNestedValues) {
+    auto result = Analyze(R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        structure Outer { Box child; };
+        void Outer::tear(&self) override {}
+        void check() {
+            pair := (Box::init(), Box::init());
+            left, right := pair;
+            values := [left, right];
+            movedValues := values;
+            outer := Outer::init();
+            movedOuter := outer;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticStructureTests, MoveOnlyArrayRepeatsConsumeAtMostOnce) {
+    EXPECT_FALSE(Analyze(R"(
+        structure Box {};
+        void Box::tear(&self) override {}
+        void check() {
+            zero := Box::init();
+            empty := [zero; 0];
+            one := Box::init();
+            singleton := [one; 1];
+        }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        structure Box {};
+        void Box::tear(&self) override {}
+        void check() {
+            box := Box::init();
+            duplicated := [box; 2];
+        }
+    )"),
+                             DiagnosticCode::NonCopyableValue),
+              nullptr);
 }
 
 TEST(SemanticStructureTests,
@@ -3817,6 +5511,50 @@ TEST(SemanticMemoryTests, RuntimeArrayIndexingRequiresLiveAllocationBases) {
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors()) << source;
 }
 
+TEST(SemanticMemoryTests, RuntimeArraySlicesRequireTrackedOwnershipAndUnsafe) {
+    const std::string buffer =
+        "structure Buffer { own *i32 data; usize length; }; "
+        "unsafe Buffer Buffer::init(own *i32 data, usize length) override { "
+        "return build Buffer { self.data = data; self.length = length; }; } "
+        "unsafe void Buffer::tear(&self) override { free(self->data); } ";
+    auto valid = Analyze(buffer +
+                         "unsafe []i32 Buffer::view(&self) <- self { return "
+                         "self->data[:self->length]; }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    for (const std::string& source : {
+             "unsafe void f(*i32 p) { values := p[:1]; values[0]; }",
+             "unsafe void f(lend *i32 p) { values := p[:1]; values[0]; }",
+             "void f(lend *i32 p) { values := p[:1]; values[0]; }",
+             "unsafe void f() { i32 value = 0; p := &raw value; values := "
+             "p[:1]; values[0]; }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticMemoryTests, RuntimeArraySlicesProtectAllocationLifetime) {
+    const std::string consume = "unsafe void consume(own *i32 p) { free(p); } ";
+    for (const std::string& action : {"free(p);", "consume(p);"}) {
+        SCOPED_TRACE(action);
+        auto result =
+            Analyze(consume +
+                    "unsafe i32 f() { p, e := new<[]i32>(2); if e != none { "
+                    "return 0; } values := p[:]; " +
+                    action + " return values[0]; }");
+        EXPECT_NE(FindDiagnostic(result, DiagnosticCode::BorrowConflict),
+                  nullptr);
+    }
+
+    auto lastUse = Analyze(
+        "unsafe i32 f() { p, e := new<[]i32>(2); if e != none { return 0; } "
+        "values := p[:]; value := values[0]; free(p); return value; }");
+    for (const auto& diagnostic : lastUse.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
 TEST(SemanticMemoryTests, RuntimeArrayCountRunsBeforeAllocationFailure) {
     auto analysis = Analyze(
         "unsafe usize count(own *i32 p) { free(p); return 3; } "
@@ -3920,6 +5658,18 @@ TEST(SemanticGenericTests,
     EXPECT_FALSE(result.diagnostics.HasErrors());
     EXPECT_EQ(result.unit->genericTemplates.size(), 5u);
     EXPECT_EQ(result.unit->Declarations().size(), 6u);
+}
+
+TEST(SemanticGenericTests, PreservesBorrowedResultContracts) {
+    auto result = Analyze(R"(
+        &const T identity_ref<T>(&const T value) <- value { return value; }
+        i32 main() {
+            i32 value = 42;
+            result := identity_ref<i32>(&value);
+            return *result;
+        }
+    )");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
 TEST(SemanticGenericTests, StructuresMethodsNestedTypesAndFieldComparisons) {
@@ -4077,6 +5827,22 @@ TEST(SemanticGenericTests, GenericLifecycleKeepsUnsafeTearRestrictions) {
             .diagnostics.HasErrors());
 }
 
+TEST(SemanticGenericTests, GenericSafeTearValuesMoveByValue) {
+    auto result = Analyze(R"(
+        structure Box<T> { T value; };
+        void Box<T>::tear(&self) override {}
+        Box<T> pass<T>(Box<T> value) { return value; }
+        i32 main() {
+            first := Box<i32>::init();
+            second := pass<i32>(first);
+            first = Box<i32>::init();
+            return second.value + first.value;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
 TEST(SemanticGenericTests, GenericMethodsResolveMixedTuplesAndBuildSelfFields) {
     auto result = Analyze(R"(
         structure Box<T> { T n; };
@@ -4133,7 +5899,7 @@ TEST(SemanticReferenceTests, AllowsDisjointStructureFieldBorrows) {
             *x = 20;
             return self->y + *x;
         }
-        i32 test() {
+        i32 check() {
             value := Nested::init();
             x := &value.pair.x;
             y := &value.pair.y;
@@ -4171,8 +5937,8 @@ TEST(SemanticReferenceTests,
           "parent := &value.pair; child := &parent->x; parent = &value.pair; "
           "return *child;"}) {
         SCOPED_TRACE(body);
-        auto result = Analyze(prefix + "i32 test() { value := Outer::init(); " +
-                              body + " }");
+        auto result = Analyze(
+            prefix + "i32 check() { value := Outer::init(); " + body + " }");
         EXPECT_NE(FindDiagnostic(result, DiagnosticCode::BorrowConflict),
                   nullptr);
     }
@@ -4181,7 +5947,7 @@ TEST(SemanticReferenceTests,
 TEST(SemanticReferenceTests, FieldBorrowsTrackReborrowsJoinsAndLoops) {
     const std::string prefix = "structure Triple { i32 x; i32 y; i32 z; }; ";
     auto valid = Analyze(prefix + R"(
-        i32 test(bool condition) {
+        i32 check(bool condition) {
             value := Triple::init();
             parent := &value;
             child := &parent->x;
@@ -4198,7 +5964,7 @@ TEST(SemanticReferenceTests, FieldBorrowsTrackReborrowsJoinsAndLoops) {
     for (const auto& diagnostic : valid.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
     auto invalid = Analyze(prefix + R"(
-        i32 test(bool condition) {
+        i32 check(bool condition) {
             value := Triple::init();
             child := &value.x;
             if condition { child = &value.y; }
@@ -4214,7 +5980,7 @@ TEST(SemanticReferenceTests, FieldBorrowsPreserveWholeArrayConflicts) {
         "structure Pair { i32 x; i32 y; }; structure Buffer { [2]Pair values; "
         "usize length; }; ";
     auto valid = Analyze(prefix + R"(
-        i32 test() {
+        i32 check() {
             buffer := Buffer::init();
             element := &buffer.values[0].x;
             buffer.length = 2;
@@ -4225,10 +5991,11 @@ TEST(SemanticReferenceTests, FieldBorrowsPreserveWholeArrayConflicts) {
     for (const auto& access :
          {"buffer.values[1].x = 2;", "buffer.values[1].y = 2;",
           "buffer.values = [Pair::init(), Pair::init()];"}) {
-        auto invalid = Analyze(prefix +
-                               "i32 test() { buffer := Buffer::init(); element "
-                               ":= &buffer.values[0].x; " +
-                               access + " return *element; }");
+        auto invalid =
+            Analyze(prefix +
+                    "i32 check() { buffer := Buffer::init(); element "
+                    ":= &buffer.values[0].x; " +
+                    access + " return *element; }");
         EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::BorrowConflict),
                   nullptr);
     }
@@ -4237,11 +6004,11 @@ TEST(SemanticReferenceTests, FieldBorrowsPreserveWholeArrayConflicts) {
 TEST(SemanticReferenceTests, DeferredFieldBorrowsProtectOnlyTheirField) {
     const std::string prefix =
         "structure Pair { i32 x; i32 y; }; void touch(&i32 n) { *n = 42; } ";
-    EXPECT_FALSE(Analyze(prefix + "void test() { value := Pair::init(); defer "
+    EXPECT_FALSE(Analyze(prefix + "void check() { value := Pair::init(); defer "
                                   "touch(&value.x); value.y = 22; }")
                      .diagnostics.HasErrors());
     auto invalid = Analyze(prefix +
-                           "void test() { value := Pair::init(); defer "
+                           "void check() { value := Pair::init(); defer "
                            "touch(&value.x); value.x = 22; }");
     EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::BorrowConflict), nullptr);
 }
@@ -4249,7 +6016,7 @@ TEST(SemanticReferenceTests, DeferredFieldBorrowsProtectOnlyTheirField) {
 TEST(SemanticReferenceTests, DerefMemberSharesDereferenceLvalueAndBorrowRules) {
     auto valid = Analyze(R"(
         structure Pair { i32 x; i32 y; };
-        i32 test() {
+        i32 check() {
             pair := Pair::init();
             parent := &pair;
             x := &parent->deref().x;
@@ -4265,13 +6032,14 @@ TEST(SemanticReferenceTests, DerefMemberSharesDereferenceLvalueAndBorrowRules) {
     for (const auto& diagnostic : valid.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
     for (const auto& source :
-         {"void test() { i32 x = 1; &const i32 r = &x; r->deref() = 2; }",
-          "i32 test() { i32 x = 1; r := &x; child := &r->deref(); r->deref() = "
+         {"void check() { i32 x = 1; &const i32 r = &x; r->deref() = 2; }",
+          "i32 check() { i32 x = 1; r := &x; child := &r->deref(); r->deref() "
+          "= "
           "2; return child->deref(); }",
-          "i32 test() { i32 x = 1; r := &x; moved := r; return r->deref(); }",
-          "unsafe i32 test(*i32 p) { return p->deref(); }",
-          "i32 test() { i32 x = 1; return x->deref(); }",
-          "i32 test() { i32 x = 1; r := &x; return r->deref(1); }"}) {
+          "i32 check() { i32 x = 1; r := &x; moved := r; return r->deref(); }",
+          "unsafe i32 check(*i32 p) { return p->deref(); }",
+          "i32 check() { i32 x = 1; return x->deref(); }",
+          "i32 check() { i32 x = 1; r := &x; return r->deref(1); }"}) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }

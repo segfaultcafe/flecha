@@ -1,0 +1,28 @@
+structure Pair {
+    i32 left;
+    i32 right;
+};
+
+&const i32 view(&const i32 value) <- value {
+    return value;
+}
+
+[]const i32 as_readonly([]i32 values) <- values {
+    return values;
+}
+
+(&i32, &i32) fields(&Pair pair) <- pair {
+    return (&pair->left, &pair->right);
+}
+
+i32 main() {
+    Pair pair = none;
+    left, right := fields(&pair);
+    *left = 20;
+    *right = 22;
+
+    values := [20, 22];
+    readonly := as_readonly(values[:]);
+    first := view(&readonly[0]);
+    return pair.left + pair.right + *first - 20;
+}

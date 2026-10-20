@@ -26,10 +26,38 @@ typedef enum FlechaRuntimeReadFileStatus {
     FLECHA_RUNTIME_READ_FILE_OUT_OF_MEMORY = 6,
 } FlechaRuntimeReadFileStatus;
 
+typedef enum FlechaRuntimeFileStreamStatus {
+    FLECHA_RUNTIME_FILE_STREAM_OK = 0,
+    FLECHA_RUNTIME_FILE_STREAM_NOT_FOUND = 1,
+    FLECHA_RUNTIME_FILE_STREAM_PERMISSION_DENIED = 2,
+    FLECHA_RUNTIME_FILE_STREAM_INVALID_PATH = 3,
+    FLECHA_RUNTIME_FILE_STREAM_ALREADY_EXISTS = 4,
+    FLECHA_RUNTIME_FILE_STREAM_TOO_LARGE = 5,
+    FLECHA_RUNTIME_FILE_STREAM_OUT_OF_MEMORY = 6,
+    FLECHA_RUNTIME_FILE_STREAM_INVALID_OPTIONS = 7,
+    FLECHA_RUNTIME_FILE_STREAM_FAILED = 8,
+} FlechaRuntimeFileStreamStatus;
+
+typedef enum FlechaRuntimeFilesystemStatus {
+    FLECHA_RUNTIME_FILESYSTEM_OK = 0,
+    FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND = 1,
+    FLECHA_RUNTIME_FILESYSTEM_PERMISSION_DENIED = 2,
+    FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH = 3,
+    FLECHA_RUNTIME_FILESYSTEM_ALREADY_EXISTS = 4,
+    FLECHA_RUNTIME_FILESYSTEM_TOO_LARGE = 5,
+    FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY = 6,
+    FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS = 7,
+    FLECHA_RUNTIME_FILESYSTEM_FAILED = 8,
+    FLECHA_RUNTIME_FILESYSTEM_DIRECTORY_NOT_EMPTY = 9,
+} FlechaRuntimeFilesystemStatus;
+
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.
 void* flecha_runtime_v1_alloc(size_t size, size_t alignment);
+// Terminates execution after an allocation that cannot be represented as a
+// language-level error, such as closure-environment creation.
+void flecha_runtime_v1_allocation_failure(void);
 // Allocates count zeroed elements, checking multiplication before allocation.
 // Zero count still returns a releasable allocation on success. Zero element
 // size is invalid. Failure returns null and does not allocate storage.
@@ -65,8 +93,7 @@ void flecha_runtime_v1_string_clone(FlechaRuntimeString* output,
                                     const char* data, size_t length);
 void flecha_runtime_v1_string_concat(FlechaRuntimeString* output,
                                      const char* leftData, size_t leftLength,
-                                     const char* rightData,
-                                     size_t rightLength);
+                                     const char* rightData, size_t rightLength);
 void flecha_runtime_v1_string_destroy(char* data);
 void flecha_runtime_v1_string_from_i8(FlechaRuntimeString* output,
                                       int8_t value);
@@ -102,6 +129,55 @@ void flecha_runtime_v1_string_from_char(FlechaRuntimeString* output,
 // null-terminated buffer. On failure output is empty.
 int32_t flecha_runtime_v1_read_file(FlechaRuntimeString* output,
                                     const char* path, size_t path_length);
+
+// Filesystem paths follow read_file's platform rules. path_exists reports a
+// missing path as successful false; the mutation operations report it as
+// NOT_FOUND. Every path is validated before an operating-system call.
+int32_t flecha_runtime_v1_path_exists(uint8_t* output, const char* path,
+                                      size_t path_length);
+// Metadata follows symbolic links. type is 0 for other entries, 1 for regular
+// files, and 2 for directories. size is the regular-file byte length and zero
+// for every other type. Both outputs are reset before path validation.
+int32_t flecha_runtime_v1_metadata(uint8_t* output_type, uint64_t* output_size,
+                                   const char* path, size_t path_length);
+int32_t flecha_runtime_v1_remove_file(const char* path, size_t path_length);
+int32_t flecha_runtime_v1_rename(const char* source, size_t source_length,
+                                 const char* destination,
+                                 size_t destination_length);
+int32_t flecha_runtime_v1_create_directory(const char* path,
+                                           size_t path_length);
+int32_t flecha_runtime_v1_remove_directory(const char* path, size_t path_length,
+                                           uint8_t force, uint8_t recursive);
+
+// Opens an unbuffered binary file stream. Paths follow read_file's platform
+// rules. Every option is a byte boolean and must be zero or one. On success,
+// output receives an opaque runtime-owned handle; every failure leaves it null.
+int32_t flecha_runtime_v1_file_stream_open(void** output, const char* path,
+                                           size_t path_length, uint8_t read,
+                                           uint8_t write, uint8_t append,
+                                           uint8_t truncate, uint8_t create,
+                                           uint8_t create_new);
+
+// Closes and destroys a handle returned by file_stream_open. The handle is
+// consumed even when the underlying close operation reports a failure.
+int32_t flecha_runtime_v1_file_stream_close(void* handle);
+
+// Performs one system read/write operation. Null storage is valid only when
+// its corresponding size is zero. Count outputs are reset before validation.
+int32_t flecha_runtime_v1_file_stream_read(void* handle, uint8_t* destination,
+                                           size_t capacity, size_t* bytes_read);
+int32_t flecha_runtime_v1_file_stream_write(void* handle, const uint8_t* source,
+                                            size_t length,
+                                            size_t* bytes_written);
+
+// origin is 0 for start, 1 for current, and 2 for end. On success position is
+// the absolute byte offset from the start of the file.
+int32_t flecha_runtime_v1_file_stream_seek(void* handle, int64_t offset,
+                                           uint8_t origin, uint64_t* position);
+
+// Synchronizes pending writes with the backing file. Read-only handles succeed
+// without issuing a system flush.
+int32_t flecha_runtime_v1_file_stream_flush(void* handle);
 
 #ifdef __cplusplus
 }

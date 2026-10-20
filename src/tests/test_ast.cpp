@@ -134,6 +134,22 @@ TEST(AstTests, RepresentsFunctionAndCompilationUnit) {
     EXPECT_EQ(unit.Declarations()[0]->Kind(), AstNodeKind::FunctionDeclaration);
 }
 
+TEST(AstTests, RepresentsBorrowResultContract) {
+    std::vector<std::unique_ptr<Parameter>> parameters;
+    parameters.push_back(
+        std::make_unique<Parameter>(RANGE, MakeI32Type(), "value"));
+    auto function = std::make_unique<FunctionDeclaration>(
+        RANGE, std::vector<FunctionModifier>{}, MakeI32Type(), "identity",
+        std::move(parameters),
+        std::make_unique<BlockStatement>(
+            RANGE, std::vector<std::unique_ptr<Statement>>{}),
+        RANGE, "", "value", RANGE);
+
+    EXPECT_TRUE(function->HasBorrowSource());
+    EXPECT_EQ(function->BorrowSource(), "value");
+    EXPECT_EQ(function->BorrowSourceRange(), RANGE);
+}
+
 TEST(AstTests, NodesAreMoveOnly) {
     static_assert(!std::is_copy_constructible_v<LiteralExpression>);
     static_assert(std::is_move_constructible_v<LiteralExpression>);

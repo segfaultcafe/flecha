@@ -120,12 +120,40 @@ The runtime provides versioned C ABI operations for:
 Bounds checking for `at`, indexing, and `substr` follows the existing
 `stringv` policy: an invalid dynamic range reports a runtime error and
 terminates safely.
+
 ## Lifetime safety
 
-`stringv` never owns storage. A view may be returned when it refers to static
-literal storage or a borrowed `stringv` parameter, but a view into any owning
-`string` in the current function cannot escape the owner's scope. The semantic analyzer reports
-`FLECHA-S0020` when a returned view would outlive its local owner.
+`stringv` never owns storage. A function that returns a view derived from a
+parameter or receiver declares that relationship with the same result-borrow
+contract used by references and slices:
+
+```flecha
+stringv identity(stringv value) <- value {
+    return value;
+}
+
+stringv Label::name(&const self) <- self {
+    return self->text.view();
+}
+```
+
+The declared source may be a checked reference, slice, or `stringv`. The
+compiler verifies that every returned view actually originates from that
+source, propagates the origin through calls (including imported calls), and
+keeps the owner protected while the result remains live. A `stringv` result
+without `<- source>` is valid only when it has no runtime owner, such as a
+string literal:
+
+```flecha
+stringv label() {
+    return "static";
+}
+```
+
+A view into an owning `string` local cannot escape the owner's scope. Returning
+a parameter-backed view without a contract is also rejected because callers
+would otherwise lose its lifetime origin. These violations use the existing
+borrow-contract and escaping-owner diagnostics.
 
 Owning `string` locals are destroyed at their lexical scope edge, including
 control-flow exits through `return`, `break`, `proceed`, and `jumpto`.

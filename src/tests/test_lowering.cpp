@@ -218,6 +218,36 @@ TEST(LoweringTests, PreservesOwningStringConversions) {
     EXPECT_NE(dump.find("(string.view"), std::string::npos);
 }
 
+TEST(LoweringTests, RepresentsWholeValueMovesExplicitly) {
+    LoweredSource result = Lower(R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        Box pass(Box value) { return value; }
+        i32 main() {
+            first := Box::init();
+            second := first;
+            third := pass(second);
+            return third.value;
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const BoundFunction& main = *result.program->Functions()[2];
+    const auto& second = static_cast<const BoundVariableDeclarationStatement&>(
+        *main.Body().Statements()[1]);
+    ASSERT_NE(second.Initializer(), nullptr);
+    EXPECT_EQ(second.Initializer()->Kind(), BoundNodeKind::MoveExpression);
+    const auto& move =
+        static_cast<const BoundMoveExpression&>(*second.Initializer());
+    EXPECT_EQ(static_cast<const BoundVariableExpression&>(move.Source())
+                  .Symbol()
+                  .Name(),
+              "first");
+    EXPECT_NE(DumpBoundProgram(*result.program).find("move load first"),
+              std::string::npos);
+}
+
 TEST(LoweringTests, SafelyRepresentsFunctionReferences) {
     LoweredSource result =
         Lower("i32 helper() { return 1; } i32 main() { helper; return 0; }");
@@ -228,6 +258,124 @@ TEST(LoweringTests, SafelyRepresentsFunctionReferences) {
         static_cast<const BoundExpressionStatement&>(
             *result.program->Functions()[1]->Body().Statements()[0]);
     EXPECT_EQ(statement.Expression().Kind(), BoundNodeKind::FunctionExpression);
+}
+
+TEST(LoweringTests, CarriesCopyCapturesIntoClosureEnvironments) {
+    LoweredSource result = Lower(R"(
+        func Mapper(i32) => (i32);
+        i32 main() {
+            i32 factor = 2;
+            Mapper callback = [copy factor](value) => {
+                return value * factor;
+            };
+            return callback(21);
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    ASSERT_EQ(result.program->Functions().size(), 2);
+    const auto& declaration =
+        static_cast<const BoundVariableDeclarationStatement&>(
+            *result.program->Functions()[0]->Body().Statements()[1]);
+    ASSERT_NE(declaration.Initializer(), nullptr);
+    const auto& direct =
+        static_cast<const BoundDirectExpression&>(*declaration.Initializer());
+    const auto& closure =
+        static_cast<const BoundFunctionExpression&>(direct.Value());
+    ASSERT_EQ(closure.Captures().size(), 1);
+    EXPECT_EQ(closure.Captures()[0].variable->Name(), "factor");
+    EXPECT_EQ(static_cast<const BoundVariableExpression&>(
+                  *closure.Captures()[0].value)
+                  .Symbol()
+                  .Name(),
+              "factor");
+    ASSERT_EQ(result.program->Functions()[1]->Captures().size(), 1);
+    EXPECT_EQ(result.program->Functions()[1]->Captures()[0].variable->Name(),
+              "factor");
+    EXPECT_NE(DumpBoundProgram(*result.program).find("[copy load factor]"),
+              std::string::npos);
+}
+
+TEST(LoweringTests, LowersOnceInvocationAsCalleeMove) {
+    LoweredSource result = Lower(R"(
+        once func Action() => (i32);
+        i32 main() {
+            Action action = once []() => (i32) { return 42; };
+            return action();
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const auto& returned = static_cast<const BoundReturnStatement&>(
+        *result.program->Functions()[0]->Body().Statements()[1]);
+    ASSERT_NE(returned.Expression(), nullptr);
+    const auto& call =
+        static_cast<const BoundIndirectCallExpression&>(*returned.Expression());
+    EXPECT_EQ(call.Callee().Kind(), BoundNodeKind::MoveExpression);
+    EXPECT_TRUE(call.Callee().Type().Signature().isOnce);
+}
+
+TEST(LoweringTests, CarriesCheckedReferenceCaptureModes) {
+    LoweredSource result = Lower(R"(
+        func Reader() => (i32);
+        i32 main() {
+            i32 value = 1;
+            Reader callback = [&const value]() => { return value; };
+            return callback();
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const auto& declaration =
+        static_cast<const BoundVariableDeclarationStatement&>(
+            *result.program->Functions()[0]->Body().Statements()[1]);
+    const auto& direct =
+        static_cast<const BoundDirectExpression&>(*declaration.Initializer());
+    const auto& closure =
+        static_cast<const BoundFunctionExpression&>(direct.Value());
+    ASSERT_EQ(closure.Captures().size(), 1);
+    EXPECT_EQ(closure.Captures()[0].mode,
+              AnonymousFunctionExpression::CaptureMode::ConstReference);
+    ASSERT_EQ(result.program->Functions()[1]->Captures().size(), 1);
+    EXPECT_EQ(result.program->Functions()[1]->Captures()[0].mode,
+              AnonymousFunctionExpression::CaptureMode::ConstReference);
+    EXPECT_NE(DumpBoundProgram(*result.program).find("[&const load value]"),
+              std::string::npos);
+}
+
+TEST(LoweringTests, MovesGeneralizedOwnCapturesIntoEnvironments) {
+    LoweredSource result = Lower(R"(
+        func Reader() => (i32);
+        i32 main() {
+            Reader inner = []() => (i32) { return 42; };
+            Reader outer = [own inner]() => { return inner(); };
+            return outer();
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const auto& declaration =
+        static_cast<const BoundVariableDeclarationStatement&>(
+            *result.program->Functions()[0]->Body().Statements()[1]);
+    const auto& direct =
+        static_cast<const BoundDirectExpression&>(*declaration.Initializer());
+    const auto& closure =
+        static_cast<const BoundFunctionExpression&>(direct.Value());
+    ASSERT_EQ(closure.Captures().size(), 1);
+    EXPECT_EQ(closure.Captures()[0].mode,
+              AnonymousFunctionExpression::CaptureMode::Own);
+    ASSERT_EQ(closure.Captures()[0].value->Kind(),
+              BoundNodeKind::MoveExpression);
+    const auto& move =
+        static_cast<const BoundMoveExpression&>(*closure.Captures()[0].value);
+    EXPECT_EQ(static_cast<const BoundVariableExpression&>(move.Source())
+                  .Symbol()
+                  .Name(),
+              "inner");
 }
 
 TEST(LoweringTests, PreservesDelayedDeclarationsAcrossTerminatingBranches) {
@@ -400,8 +548,8 @@ TEST(LoweringTests, PreservesLoopUpdateAndSnapshotsRangeSources) {
 
 TEST(LoweringTests, RepresentsSlicesBoundsAndEndpointPlaces) {
     LoweredSource result = Lower(
-        "void f() { a := [1, 2, 3]; s := a[1:]; s.front() = 4; "
-        "r := &s.back(); *r = 5; }");
+        "unsafe void f() { a := [1, 2, 3]; s := a[1:]; s.front() = 4; "
+        "r := &s.back(); *r = 5; *i32 p = s.data(); *p = 6; }");
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_NE(result.program, nullptr);
     const std::string dump = DumpBoundProgram(*result.program);
@@ -409,6 +557,7 @@ TEST(LoweringTests, RepresentsSlicesBoundsAndEndpointPlaces) {
     EXPECT_NE(dump.find("(checked-index load s front)"), std::string::npos);
     EXPECT_NE(dump.find("(address (checked-index load s back))"),
               std::string::npos);
+    EXPECT_NE(dump.find("(slice-data load s)"), std::string::npos);
 }
 
 TEST(LoweringTests, RejectsInvalidSlicesBeforeCodeGeneration) {
@@ -435,10 +584,37 @@ TEST(LoweringTests, RetainsDeferredCallInsteadOfAnImmediateExpression) {
     EXPECT_EQ(invalid.program, nullptr);
 }
 
+TEST(LoweringTests, RetainsDeferredIndirectAndMemberCalls) {
+    LoweredSource result = Lower(R"(
+        func Action(i32) => ();
+        structure Writer { i32 value; };
+        void Writer::flush(&self) { self->value++; }
+        void f(Action callback) {
+            Writer writer = none;
+            defer callback(1);
+            defer writer.flush();
+        }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const auto& statements =
+        result.program->Functions()[1]->Body().Statements();
+    ASSERT_EQ(statements.size(), 3);
+    const auto& indirect =
+        static_cast<const BoundDeferStatement&>(*statements[1]);
+    const auto& member =
+        static_cast<const BoundDeferStatement&>(*statements[2]);
+    EXPECT_EQ(indirect.Call().Kind(), BoundNodeKind::IndirectCallExpression);
+    EXPECT_EQ(member.Call().Kind(), BoundNodeKind::CallExpression);
+    const std::string dump = DumpBoundProgram(*result.program);
+    EXPECT_NE(dump.find("defer (call_indirect"), std::string::npos);
+    EXPECT_NE(dump.find("defer (call Writer::flush"), std::string::npos);
+}
+
 TEST(LoweringTests, PreservesTupleEvaluationAndDestructuringTargets) {
     auto result = Lower(
         "(i32, bool) pair() { return (42, true); } void f() { x := 0; (x, bool "
-        "ok) = pair(); (_, _) := pair(); }");
+        "ok) = pair(); first, err := (1, 2); second, err := (3, 4); }");
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_NE(result.program, nullptr);
     const auto& statement = static_cast<const BoundDestructureStatement&>(
@@ -448,5 +624,13 @@ TEST(LoweringTests, PreservesTupleEvaluationAndDestructuringTargets) {
     EXPECT_EQ(statement.Value().Kind(), BoundNodeKind::CallExpression);
     EXPECT_NE(DumpBoundProgram(*result.program)
                   .find("destructure (x: i32, local ok: bool)"),
+              std::string::npos);
+    const auto& shortDeclaration =
+        static_cast<const BoundDestructureStatement&>(
+            *result.program->Functions()[1]->Body().Statements()[3]);
+    EXPECT_TRUE(shortDeclaration.Bindings()[0].declaration);
+    EXPECT_FALSE(shortDeclaration.Bindings()[1].declaration);
+    EXPECT_NE(DumpBoundProgram(*result.program)
+                  .find("destructure (local second: i32, err: i32)"),
               std::string::npos);
 }

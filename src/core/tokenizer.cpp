@@ -28,13 +28,17 @@ const KeywordMap KEYWORDS = {
     {"string", TokenType::String},
     {"stringv", TokenType::StringView},
     {"module", TokenType::Module},
+    {"test", TokenType::Test},
     {"enum", TokenType::Enum},
     {"structure", TokenType::Structure},
     {"private", TokenType::Private},
     {"override", TokenType::Override},
     {"build", TokenType::Build},
+    {"func", TokenType::Func},
+    {"once", TokenType::Once},
     {"unsafe", TokenType::Unsafe},
     {"export", TokenType::Export},
+    {"quiver", TokenType::Quiver},
     {"extern", TokenType::Extern},
     {"inline", TokenType::Inline},
     {"comptime", TokenType::Comptime},
@@ -226,6 +230,7 @@ Token Tokenizer::NextToken() {
             }
             return makeToken(TokenType::Bang);
         case '<':
+            if (Match('-')) return makeToken(TokenType::LeftArrow);
             return makeToken(Match('=') ? TokenType::LessEqual
                                         : TokenType::Less);
         case '>':

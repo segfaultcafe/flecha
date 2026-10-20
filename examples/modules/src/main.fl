@@ -1,9 +1,17 @@
 module main;
 
 @imports
-    :: root::parser::math::factorial;
+    :: lib::std::containers::algorithms;
 
-void main() {
-    stdout("Factorial: ");
-    stdoutln(factorial::factorial(5));
+i32 main() {
+    [5]i32 values = [10, 20, 30, 20, 40];
+    index, found := algorithms::index_of<i32>(values[:], 30);
+
+    if found {
+        stdout("Found at index: ");
+        stdoutln(index);
+        return 0;
+    }
+
+    return 1;
 }

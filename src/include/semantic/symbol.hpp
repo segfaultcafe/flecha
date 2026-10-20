@@ -18,10 +18,19 @@ enum class SymbolKind {
     LocalVariable,
     ErrorType,
     EnumType,
-    StructureType
+    StructureType,
+    CallableType
 };
 
-enum class BuiltInFunction { None, Stdout, StdoutLine, New, Free, Take };
+enum class BuiltInFunction {
+    None,
+    Stdout,
+    StdoutLine,
+    StdoutFormat,
+    New,
+    Free,
+    Take
+};
 
 class Symbol {
    public:
@@ -71,14 +80,33 @@ class FunctionSymbol final : public Symbol {
                    bool isUnsafe = false, const StructureType* owner = nullptr,
                    bool isPrivate = false, bool hasReceiver = false,
                    bool isExtern = false, std::string linkName = {},
+                   const EnumType* enumOwner = nullptr,
+                   std::optional<std::size_t> borrowSourceIndex = std::nullopt,
+                   std::vector<core::OwnershipContract> parameterContracts = {})
+        : FunctionSymbol(std::move(name),
+                         std::make_shared<const CallableSignature>(
+                             CallableSignature{returnType,
+                                               std::move(parameterTypes),
+                                               std::move(parameterContracts),
+                                               {},
+                                               borrowSourceIndex,
+                                               isUnsafe}),
+                         declarationRange, builtIn, owner, isPrivate,
+                         hasReceiver, isExtern, std::move(linkName),
+                         enumOwner) {}
+
+    FunctionSymbol(std::string name,
+                   std::shared_ptr<const CallableSignature> signature,
+                   source::SourceRange declarationRange,
+                   BuiltInFunction builtIn = BuiltInFunction::None,
+                   const StructureType* owner = nullptr, bool isPrivate = false,
+                   bool hasReceiver = false, bool isExtern = false,
+                   std::string linkName = {},
                    const EnumType* enumOwner = nullptr)
-        : Symbol(SymbolKind::Function, std::move(name),
-                 SemanticType(SemanticTypeKind::Function), declarationRange,
-                 false),
-          _returnType(returnType),
-          _parameterTypes(std::move(parameterTypes)),
+        : Symbol(SymbolKind::Function, std::move(name), SemanticType(signature),
+                 declarationRange, false),
+          _signature(std::move(signature)),
           _builtIn(builtIn),
-          _isUnsafe(isUnsafe),
           _owner(owner),
           _enumOwner(enumOwner),
           _isPrivate(isPrivate),
@@ -86,11 +114,15 @@ class FunctionSymbol final : public Symbol {
           _isExtern(isExtern),
           _linkName(linkName.empty() ? Name() : std::move(linkName)) {}
 
-    [[nodiscard]] SemanticType ReturnType() const { return _returnType; }
+    [[nodiscard]] SemanticType ReturnType() const { return _signature->result; }
     [[nodiscard]] const std::vector<SemanticType>& ParameterTypes() const {
-        return _parameterTypes;
+        return _signature->parameters;
     }
-    [[nodiscard]] bool IsUnsafe() const { return _isUnsafe; }
+    [[nodiscard]] const CallableSignature& Signature() const {
+        return *_signature;
+    }
+    [[nodiscard]] bool IsUnsafe() const { return _signature->isUnsafe; }
+    [[nodiscard]] bool IsOnce() const { return _signature->isOnce; }
     const StructureType* Owner() const { return _owner; }
     const EnumType* EnumOwner() const { return _enumOwner; }
     bool HasOwner() const { return _owner != nullptr || _enumOwner != nullptr; }
@@ -98,13 +130,20 @@ class FunctionSymbol final : public Symbol {
     bool HasReceiver() const { return _hasReceiver; }
     bool IsExtern() const { return _isExtern; }
     const std::string& LinkName() const { return _linkName; }
+    [[nodiscard]] std::optional<std::size_t> BorrowSourceIndex() const {
+        return _signature->borrowSourceIndex;
+    }
+    [[nodiscard]] core::OwnershipContract ParameterContract(
+        std::size_t index) const {
+        return index < _signature->parameterContracts.size()
+                   ? _signature->parameterContracts[index]
+                   : core::OwnershipContract::None;
+    }
     [[nodiscard]] BuiltInFunction BuiltIn() const { return _builtIn; }
 
    private:
-    SemanticType _returnType;
-    std::vector<SemanticType> _parameterTypes;
+    std::shared_ptr<const CallableSignature> _signature;
     BuiltInFunction _builtIn;
-    bool _isUnsafe;
     const StructureType* _owner;
     const EnumType* _enumOwner;
     bool _isPrivate;

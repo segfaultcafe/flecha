@@ -35,7 +35,10 @@ enum class BoundNodeKind {
     SliceExpression,
     ArrayElementExpression,
     ArrayLengthExpression,
+    SliceDataExpression,
     LiteralExpression,
+    DirectExpression,
+    MoveExpression,
     VariableExpression,
     DereferenceExpression,
     AddressExpression,
@@ -45,6 +48,7 @@ enum class BoundNodeKind {
     BinaryExpression,
     AssignmentExpression,
     CallExpression,
+    IndirectCallExpression,
     AllocationExpression,
     StringViewOperationExpression,
     CastExpression,
@@ -302,6 +306,21 @@ class BoundArrayLengthExpression final : public BoundExpression {
     std::unique_ptr<BoundExpression> _receiver;
 };
 
+class BoundSliceDataExpression final : public BoundExpression {
+   public:
+    BoundSliceDataExpression(source::SourceRange range,
+                             semantic::SemanticType type,
+                             std::unique_ptr<BoundExpression> receiver)
+        : BoundExpression(range, type), _receiver(std::move(receiver)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::SliceDataExpression;
+    }
+    [[nodiscard]] const BoundExpression& Receiver() const { return *_receiver; }
+
+   private:
+    std::unique_ptr<BoundExpression> _receiver;
+};
+
 class BoundDereferenceExpression final : public BoundPlaceExpression {
    public:
     BoundDereferenceExpression(source::SourceRange range,
@@ -349,21 +368,68 @@ class BoundVariableExpression final : public BoundPlaceExpression {
     const semantic::VariableSymbol& _symbol;
 };
 
+class BoundMoveExpression final : public BoundExpression {
+   public:
+    BoundMoveExpression(source::SourceRange range,
+                        std::unique_ptr<BoundPlaceExpression> source)
+        : BoundExpression(range, source->Type()), _source(std::move(source)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::MoveExpression;
+    }
+    [[nodiscard]] const BoundPlaceExpression& Source() const {
+        return *_source;
+    }
+
+   private:
+    std::unique_ptr<BoundPlaceExpression> _source;
+};
+
+class BoundDirectExpression final : public BoundExpression {
+   public:
+    BoundDirectExpression(source::SourceRange range,
+                          std::unique_ptr<BoundExpression> value)
+        : BoundExpression(range, value->Type()), _value(std::move(value)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::DirectExpression;
+    }
+    [[nodiscard]] const BoundExpression& Value() const { return *_value; }
+
+   private:
+    std::unique_ptr<BoundExpression> _value;
+};
+
+struct BoundClosureCapture final {
+    core::AnonymousFunctionExpression::CaptureMode mode;
+    const semantic::VariableSymbol* variable;
+    std::unique_ptr<BoundExpression> value;
+};
+
+struct BoundFunctionCapture final {
+    core::AnonymousFunctionExpression::CaptureMode mode;
+    const semantic::VariableSymbol* variable;
+};
+
 class BoundFunctionExpression final : public BoundExpression {
    public:
     BoundFunctionExpression(source::SourceRange range,
-                            const semantic::FunctionSymbol& symbol)
+                            const semantic::FunctionSymbol& symbol,
+                            std::vector<BoundClosureCapture> captures = {})
         : BoundExpression(range, symbol.Type().WithoutConst()),
-          _symbol(symbol) {}
+          _symbol(symbol),
+          _captures(std::move(captures)) {}
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::FunctionExpression;
     }
     [[nodiscard]] const semantic::FunctionSymbol& Symbol() const {
         return _symbol;
     }
+    [[nodiscard]] const std::vector<BoundClosureCapture>& Captures() const {
+        return _captures;
+    }
 
    private:
     const semantic::FunctionSymbol& _symbol;
+    std::vector<BoundClosureCapture> _captures;
 };
 
 class BoundUnaryExpression final : public BoundExpression {
@@ -515,6 +581,29 @@ class BoundCallExpression final : public BoundExpression {
     std::vector<std::unique_ptr<BoundExpression>> _arguments;
 };
 
+class BoundIndirectCallExpression final : public BoundExpression {
+   public:
+    BoundIndirectCallExpression(
+        source::SourceRange range, std::unique_ptr<BoundExpression> callee,
+        std::vector<std::unique_ptr<BoundExpression>> arguments)
+        : BoundExpression(range,
+                          callee->Type().Signature().result.WithoutConst()),
+          _callee(std::move(callee)),
+          _arguments(std::move(arguments)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::IndirectCallExpression;
+    }
+    [[nodiscard]] const BoundExpression& Callee() const { return *_callee; }
+    [[nodiscard]] const std::vector<std::unique_ptr<BoundExpression>>&
+    Arguments() const {
+        return _arguments;
+    }
+
+   private:
+    std::unique_ptr<BoundExpression> _callee;
+    std::vector<std::unique_ptr<BoundExpression>> _arguments;
+};
+
 class BoundStringViewOperationExpression final : public BoundExpression {
    public:
     BoundStringViewOperationExpression(
@@ -591,9 +680,7 @@ class BoundDeferStatement final : public BoundStatement {
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::DeferStatement;
     }
-    [[nodiscard]] const BoundCallExpression& Call() const {
-        return static_cast<const BoundCallExpression&>(*_call);
-    }
+    [[nodiscard]] const BoundExpression& Call() const { return *_call; }
 
    private:
     std::unique_ptr<BoundExpression> _call;
@@ -755,13 +842,18 @@ class BoundBuildExpression final : public BoundExpression {
 class BoundFunction final {
    public:
     BoundFunction(const semantic::FunctionSymbol& symbol,
+                  std::vector<BoundFunctionCapture> captures,
                   std::vector<const semantic::VariableSymbol*> parameters,
                   std::unique_ptr<BoundBlockStatement> body)
         : _symbol(symbol),
+          _captures(std::move(captures)),
           _parameters(std::move(parameters)),
           _body(std::move(body)) {}
     [[nodiscard]] const semantic::FunctionSymbol& Symbol() const {
         return _symbol;
+    }
+    [[nodiscard]] const std::vector<BoundFunctionCapture>& Captures() const {
+        return _captures;
     }
     [[nodiscard]] const std::vector<const semantic::VariableSymbol*>&
     Parameters() const {
@@ -772,6 +864,7 @@ class BoundFunction final {
 
    private:
     const semantic::FunctionSymbol& _symbol;
+    std::vector<BoundFunctionCapture> _captures;
     std::vector<const semantic::VariableSymbol*> _parameters;
     std::unique_ptr<BoundBlockStatement> _body;
 };

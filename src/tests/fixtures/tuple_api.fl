@@ -21,7 +21,7 @@ i32 tuple_values_test() {
     (a, b) = counted(&calls);
     if calls != 1 or a != 1 or !b { return 4; }
     (_, b) = counted(&calls);
-    (_, _) := counted(&calls);
+    (_, _) = counted(&calls);
     if calls != 3 { return 5; }
     (a, b) = recurse(7);
     if a != 42 or !b { return 6; }
@@ -117,7 +117,7 @@ i32 tuple_strings_test() {
         capture = ("after", 0);
     }
     if calls != 1 { return 7; }
-    (_, _) := owned_tuple();
+    (_, _) = owned_tuple();
     return 42;
 }
 

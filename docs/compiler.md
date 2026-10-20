@@ -12,18 +12,37 @@ flecha --version
 flecha check INPUT [--root DIR] [--lib NAME=DIR ...]
 flecha build INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
              [--link OBJECT-OR-LIBRARY ...]
+flecha test INPUT_TEST [--root DIR] [--lib NAME=DIR ...] [--verbose]
+            [--link OBJECT-OR-LIBRARY ...]
 flecha --emit-llvm INPUT [-o OUTPUT] [--root DIR] [--lib NAME=DIR ...]
 flecha --emit-object INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
 ```
 
+Release builds report the package version, such as `flecha 0.1.1`. Builds from
+a Git checkout append the number of commits since the matching release tag and
+the abbreviated commit, such as `flecha 0.1.1-5-g3738687`; tracked local edits
+also append `-dirty`. A shallow checkout without the release tag uses
+`0.1.1-dev-g<commit>`. Set the CMake cache variable `FLECHA_BUILD_VERSION` to
+provide an explicit value when Git metadata is unavailable. Official release
+jobs configure with `FLECHA_RELEASE_BUILD=ON`, which always reports exactly the
+package version and never includes a Git or dirty-worktree suffix.
+
 `check` runs the complete frontend without creating an artifact. `build` emits
-and links a host-native executable with the Flecha runtime. `--emit-object`
-stops before linking. `--emit-llvm` writes textual LLVM IR, or prints it when
-`-o` is omitted.
+and links a host-native executable with the Flecha runtime. `test` requires a
+`_test.fl` entry module, builds a temporary native runner, executes every test
+declaration in that module, and returns a nonzero status when any test records
+a failure. Its default output is one dot-leader status line for the test file;
+`--verbose` instead shows one status line per test. Assertion failures retain
+their detailed `testing::UnitTest` output beneath the failed test and include
+the test declaration's `file:line:column` location. This location identifies
+the test function, not an inferred defect inside the production function.
+Both modes report the number of passed and failed tests. `--emit-object` stops
+before linking.
+`--emit-llvm` writes textual LLVM IR, or prints it when `-o` is omitted.
 
 `--root` supplies the source root used by `root::` imports. Each `--lib`
 option maps one `lib::` namespace to a source directory. `--link` adds a native
-object or library when building an executable containing `extern`
+object or library when building or testing code containing `extern`
 declarations.
 
 The compiler invokes a host C++ linker driver for executable builds. Release

@@ -1,6 +1,8 @@
 #ifndef FLECHA_SEMANTIC_SCOPE_HPP
 #define FLECHA_SEMANTIC_SCOPE_HPP
 
+#include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -17,6 +19,8 @@ class Scope final {
     bool DeclareAs(std::string name, const Symbol& symbol);
     [[nodiscard]] const Symbol* LookupLocal(std::string_view name) const;
     [[nodiscard]] const Symbol* Lookup(std::string_view name) const;
+    [[nodiscard]] std::optional<std::string> NameFor(
+        const Symbol& symbol) const;
 
    private:
     const Scope* _parent;

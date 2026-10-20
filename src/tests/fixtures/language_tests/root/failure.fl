@@ -1,0 +1,5 @@
+module failure;
+
+export i32 value() {
+    return 42;
+}

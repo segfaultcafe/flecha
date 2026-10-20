@@ -37,6 +37,21 @@ bool SemanticType::ContainsStructure() const {
     return false;
 }
 
+bool SemanticType::ContainsOwnedBuffer() const {
+    if (_kind == SemanticTypeKind::OwnedBuffer) return true;
+    if (_kind == SemanticTypeKind::Structure) {
+        if (!_structure->validLayout) return false;
+        for (const auto& field : _structure->fields)
+            if (field.type.ContainsOwnedBuffer()) return true;
+    }
+    if (_kind == SemanticTypeKind::Array)
+        return Target()->ContainsOwnedBuffer();
+    if (_kind == SemanticTypeKind::Tuple)
+        for (const auto& element : Elements())
+            if (element.ContainsOwnedBuffer()) return true;
+    return false;
+}
+
 bool SemanticType::IsZeroable() const {
     if (_kind == SemanticTypeKind::Enum) return _enum->defaultValue.has_value();
     if (_kind == SemanticTypeKind::Structure)
@@ -49,7 +64,8 @@ bool SemanticType::IsZeroable() const {
     }
     return IsNumeric() || _kind == SemanticTypeKind::Bool ||
            _kind == SemanticTypeKind::Char ||
-           _kind == SemanticTypeKind::Pointer;
+           _kind == SemanticTypeKind::Pointer ||
+           _kind == SemanticTypeKind::OwnedBuffer;
 }
 
 bool SemanticType::IsTriviallyZeroable() const {
@@ -67,10 +83,13 @@ bool SemanticType::IsTriviallyZeroable() const {
     }
     return IsNumeric() || _kind == SemanticTypeKind::Bool ||
            _kind == SemanticTypeKind::Char ||
-           _kind == SemanticTypeKind::Pointer;
+           _kind == SemanticTypeKind::Pointer ||
+           _kind == SemanticTypeKind::OwnedBuffer;
 }
 
 bool SemanticType::IsCopyable() const {
+    if (_kind == SemanticTypeKind::Function) return false;
+    if (_kind == SemanticTypeKind::OwnedBuffer) return false;
     if (_kind == SemanticTypeKind::Structure) {
         if (!_structure->validLayout || _structure->tear) return false;
         for (const auto& field : _structure->fields)
@@ -102,6 +121,7 @@ bool SemanticType::OwnsStorage() const {
     if (_kind == SemanticTypeKind::Structure) return true;
     if (_kind == SemanticTypeKind::Array) return Target()->OwnsStorage();
     if (_kind == SemanticTypeKind::String) return true;
+    if (_kind == SemanticTypeKind::Function) return true;
     if (_kind == SemanticTypeKind::Tuple)
         for (const auto& element : Elements())
             if (element.OwnsStorage()) return true;
@@ -112,12 +132,23 @@ bool SemanticType::operator==(const SemanticType& other) const {
     return _kind == other._kind && _isConst == other._isConst &&
            _family == other._family && _structure == other._structure &&
            _enum == other._enum && _length == other._length &&
+           ((_signature == nullptr && other._signature == nullptr) ||
+            (_signature != nullptr && other._signature != nullptr &&
+             *_signature == *other._signature)) &&
            ((_elements == nullptr && other._elements == nullptr) ||
             (_elements != nullptr && other._elements != nullptr &&
              *_elements == *other._elements)) &&
            ((_target == nullptr && other._target == nullptr) ||
             (_target != nullptr && other._target != nullptr &&
              *_target == *other._target));
+}
+
+bool CallableSignature::operator==(const CallableSignature& other) const {
+    return result == other.result && parameters == other.parameters &&
+           parameterContracts == other.parameterContracts &&
+           resultContracts == other.resultContracts &&
+           borrowSourceIndex == other.borrowSourceIndex &&
+           isUnsafe == other.isUnsafe && isOnce == other.isOnce;
 }
 
 SemanticType SemanticType::FromSyntax(const core::TypeNode& type) {
@@ -135,6 +166,11 @@ SemanticType SemanticType::FromSyntax(const core::TypeNode& type) {
         return SemanticType(SemanticTypeKind::Array, FromSyntax(*type.Target()),
                             type.IsConst(), type.Length());
     if (type.TypeForm() != core::TypeKind::Primitive) {
+        if (type.TypeForm() == core::TypeKind::Pointer &&
+            type.Target()->TypeForm() == core::TypeKind::Slice)
+            return SemanticType(SemanticTypeKind::OwnedBuffer,
+                                FromSyntax(*type.Target()->Target()),
+                                type.IsConst());
         return SemanticType(type.TypeForm() == core::TypeKind::Pointer
                                 ? SemanticTypeKind::Pointer
                                 : SemanticTypeKind::Reference,
@@ -201,6 +237,8 @@ std::string SemanticType::Name() const {
         }
         case SemanticTypeKind::Slice:
             return "[]" + _target->Name();
+        case SemanticTypeKind::OwnedBuffer:
+            return "*[]" + _target->Name();
         case SemanticTypeKind::Array:
             return "[" + std::to_string(_length) + "]" + _target->Name();
         case SemanticTypeKind::Pointer:
@@ -215,7 +253,45 @@ std::string SemanticType::Name() const {
         case SemanticTypeKind::None:
             return "none";
         case SemanticTypeKind::Function:
-            return "function";
+            if (!_signature) return "function";
+            {
+                std::string name = _signature->isUnsafe ? "unsafe " : "";
+                if (_signature->isOnce) name += "once ";
+                name += "func(";
+                for (std::size_t i = 0; i < _signature->parameters.size();
+                     ++i) {
+                    if (i != 0) name += ", ";
+                    if (i < _signature->parameterContracts.size() &&
+                        _signature->parameterContracts[i] ==
+                            core::OwnershipContract::Own)
+                        name += "own ";
+                    else if (i < _signature->parameterContracts.size() &&
+                             _signature->parameterContracts[i] ==
+                                 core::OwnershipContract::Lend)
+                        name += "lend ";
+                    name += _signature->parameters[i].Name();
+                }
+                name += ") => (";
+                if (_signature->result.Kind() == SemanticTypeKind::Tuple) {
+                    for (std::size_t i = 0;
+                         i < _signature->result.Elements().size(); ++i) {
+                        if (i != 0) name += ", ";
+                        if (i < _signature->resultContracts.size() &&
+                            _signature->resultContracts[i] ==
+                                core::OwnershipContract::Own)
+                            name += "own ";
+                        name += _signature->result.Elements()[i].Name();
+                    }
+                } else if (_signature->result.Kind() !=
+                           SemanticTypeKind::Void) {
+                    if (!_signature->resultContracts.empty() &&
+                        _signature->resultContracts[0] ==
+                            core::OwnershipContract::Own)
+                        name += "own ";
+                    name += _signature->result.Name();
+                }
+                return name + ")";
+            }
         case SemanticTypeKind::Error:
             return "<error>";
     }
@@ -284,6 +360,15 @@ SemanticType SemanticType::FromSyntax(core::PrimitiveType type) {
 bool IsAssignable(SemanticType destination, SemanticType source) {
     if (destination.IsError() || source.IsError()) return true;
     if (destination.WithoutConst() == source.WithoutConst()) return true;
+    if (destination.Kind() == SemanticTypeKind::Function &&
+        source.Kind() == SemanticTypeKind::Function &&
+        destination.Signature().isOnce && !source.Signature().isOnce) {
+        CallableSignature reusableDestination = destination.Signature();
+        CallableSignature reusableSource = source.Signature();
+        reusableDestination.isOnce = false;
+        reusableSource.isOnce = false;
+        if (reusableDestination == reusableSource) return true;
+    }
     if (destination.Kind() == SemanticTypeKind::U8 &&
         source.Kind() == SemanticTypeKind::Char)
         return true;
@@ -308,7 +393,15 @@ bool IsAssignable(SemanticType destination, SemanticType source) {
                    (destination.Target()->IsConst() ||
                     !source.Target()->IsConst());
         }
+        if (source.Kind() == SemanticTypeKind::OwnedBuffer)
+            return destination.Target()->WithoutConst() ==
+                       source.Target()->WithoutConst() &&
+                   (destination.Target()->IsConst() ||
+                    !source.Target()->IsConst());
     }
+    if (destination.Kind() == SemanticTypeKind::OwnedBuffer &&
+        source.Kind() == SemanticTypeKind::Null)
+        return true;
     if (destination.Kind() == SemanticTypeKind::String &&
         source.Kind() == SemanticTypeKind::StringView) {
         return true;

@@ -47,6 +47,87 @@ ownership does not guarantee non-nullness. Visible factory return paths preserve
 allocation-error/null relationships, including `new<T>` failure paths. An arbitrary
 error result does not imply that an accompanying owning pointer is null.
 
+## Anonymous-function captures
+
+Raw allocations use explicit capture contracts, parallel to parameter
+contracts but tied to the closure environment:
+
+```flecha
+unsafe func Reader() => (i32);
+
+unsafe i32 use() {
+    borrowed, borrowError := new<i32>(20);
+    if borrowError != none { return 1; }
+    i32 result = 0;
+    {
+        Reader reader = unsafe [lend borrowed]() => { return *borrowed; };
+        result = reader();
+    }
+    free(borrowed);
+
+    retained, retainError := new<i32>(22);
+    if retainError != none { return 2; }
+    Reader owner = unsafe [own retained]() => { return *retained; };
+    return result + owner();
+}
+```
+
+`lend` requires an `unsafe` anonymous function and a raw pointer or
+runtime-sized buffer. Raw-resource `own` has the same safety requirement. A
+tracked allocation cannot use `copy`, because copying the address does not say
+which value owns cleanup. Captured bindings are read-only; mutation through a
+mutable pointer remains possible.
+
+`lend name` copies the raw handle without transferring its cleanup obligation.
+The closure keeps that allocation lent until the callable leaves its creation
+scope, so the owner cannot be freed or passed to an `own` consumer in the
+meantime. A lending closure cannot be returned or stored into a longer-lived
+binding or container.
+
+`own name` consumes the source owner's cleanup obligation when the closure is
+created. Moving the callable moves that obligation. Its destroy thunk releases
+the captured allocation in reverse capture order, then frees the environment.
+Null remains valid and needs no cleanup. The callable may be invoked repeatedly,
+so its body cannot free the capture or pass it to an `own` parameter; otherwise
+the next invocation could use released storage. A `once` anonymous function is
+single-use and may consume owned captures:
+
+```flecha
+unsafe once func Release() => ();
+
+Release release = unsafe once [own pointer]() => () {
+    free(pointer);
+};
+release();
+```
+
+Calling `release` moves the complete callable, invokes it, and destroys its
+environment immediately afterward. A consumed capture is cleared before the
+destroy thunk runs; captures that the body leaves untouched are still released
+normally. An uninvoked once callable follows the ordinary environment cleanup
+path.
+
+The same `own name` syntax moves noncopyable safe values into an environment:
+
+```flecha
+func Mapper(i32) => (i32);
+
+Mapper decorate(Mapper inner) <- inner {
+    return [own inner](value) => { return inner(value) + 1; };
+}
+```
+
+Callable values, mutable checked handles, and movable aggregates such as tuples,
+fixed arrays, structures, and safe containers are accepted. Copyable values use
+`copy` instead. A structure with unsafe teardown is immovable and rejected. Safe
+owning captures do not require an unsafe literal, even when an aggregate hides
+raw storage behind safe teardown. The move invalidates the source binding,
+retains any checked-reference origins, and recursively destroys the value in
+reverse capture order. A reusable closure may call or inspect this state but may
+not move it out or pass it to a consuming parameter. A once closure may consume
+it, including invoking an owned once callable or moving an owned structure into
+another function.
+
 ## Owning fields and tear
 
 ```flecha
@@ -54,7 +135,7 @@ structure Box { own *i32 value; };
 unsafe Box Box::init(own *i32 value) override {
     return build Box { self.value = value; };
 }
-unsafe void Box::tear(&self) override { free(self->value); }
+void Box::tear(&self) override { unsafe { free(self->value); } }
 ```
 
 Owning fields require an explicit `tear`. The compiler independently checks that
@@ -63,9 +144,13 @@ transfers the stored allocation; destroying the raw-pointer field performs no
 additional free. Null fields need no cleanup.
 
 Existing lifecycle rules remain: `tear` is compiler-invoked and cannot be called
-explicitly. A custom tear makes its structure noncopyable, and an unsafe tear also
-makes it immovable. Transferring a pointer to an immovable structure does not move
-the structure. Fresh construction still goes directly into its final storage.
+explicitly. A custom safe tear makes its structure noncopyable but movable as a
+complete value; moving transfers the field cleanup obligation and invalidates
+the source until reassignment. An unsafe tear makes the structure immovable.
+Transferring a pointer to an immovable structure does not move the structure.
+Fresh construction still goes directly into its final storage. Moving an owning
+field out by ordinary member access remains unsupported; use `take` where its
+explicit field-replacement contract applies.
 
 The initial field implementation supports initialization in `build` and access
 through the structure's `self` methods. Omitted owning fields start null, as other
@@ -80,6 +165,9 @@ invalidates earlier aliases and requires the extracted owner to be discharged. S
 
 Annotated functions are verified independently, even when unused. Calls use their
 contracts, so annotated recursion does not require recursive body interpretation.
+Named callable signatures carry the same `own` and `lend` parameter contracts
+through indirect calls. An owning argument is transferred at the indirect call
+boundary, and an owning result creates a new caller cleanup obligation.
 Known-null calls are checked against the body as well. Unannotated helpers retain
 the existing bounded visible-body analysis. Tracked raw pointers passed to an
 annotated function need explicit parameter contracts; indirect mutation through
@@ -90,9 +178,10 @@ The existing allocation-analysis path budgets remain, with an additional limit o
 site with its previous result still live is rejected. Unsupported ownership effects
 fail before object emission rather than silently losing tracking.
 
-This does not introduce external-function support, safe heap references, general
-moves, or complete memory-safety verification. Unverified external raw-pointer
-validity, aliasing, nullability, and stack lifetimes remain unsafe obligations.
-Runtime-sized zeroed scalar allocation and an `i32` dynamic array are now
+This does not introduce external-function support, safe heap references, partial
+field/index moves, or complete memory-safety verification. Whole noncopyable
+aggregate moves are implemented, but unverified external raw-pointer validity,
+aliasing, nullability, and stack lifetimes remain unsafe obligations.
+Runtime-sized zeroed allocation and the standard-library dynamic arrays are
 implemented; see [dynamic arrays](dynamic_arrays.md). Partially initialized
-storage and generic element moves remain future work.
+storage and move-only dynamic-array element relocation remain future work.

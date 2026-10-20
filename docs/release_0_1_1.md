@@ -29,11 +29,13 @@ its version against the release tag, and publishes it with the platform bundles
 and consolidated checksums. User installation and local packaging are covered
 by the [`editor installation guide`](editors.md).
 
-The documentation reconciliation treats feature guides and executable tests as
-the implementation contract. The specification now marks implemented checked
-references, slices, allocation, generics, and LLVM/native code generation
-separately from proposals such as borrowed returns, cross-compilation, debug
-information, and general move semantics.
+At the 0.1.1 release, the documentation reconciliation treated feature guides
+and executable tests as the implementation contract. That revision marked
+checked references, slices, allocation, generics, and LLVM/native code
+generation separately from proposals such as borrowed returns, general move
+semantics, cross-compilation, and debug information. Subsequent development has
+implemented single-origin borrowed returns and whole-value aggregate moves; the
+current feature guides describe their contracts.
 
 ## Non-goals
 

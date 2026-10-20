@@ -19,9 +19,10 @@ pointer. The existing mixed form `(pointer, error err) = new<u8>(42);` also work
 when pointer has already been declared.
 
 Runtime-sized scalar buffers are also available as `new<[]T>(count)`, returning
-`(*T, error)`. The count is evaluated before allocation, and all elements start
-at zero. See [dynamic arrays](dynamic_arrays.md) for indexing, supported types,
-and the first Flecha standard-library container.
+`(*[]T, error)`. The move-only `*[]T` owner carries both data and length. The
+count is evaluated before allocation, and all elements start at zero. See
+[dynamic arrays](dynamic_arrays.md) for indexing, transfer rules, supported
+types, and the first Flecha standard-library container.
 
 ## Allocation and evaluation
 
@@ -58,6 +59,11 @@ initializer retain their existing behavior: for example, owning-string runtime
 allocation failure terminates the process, and bounds traps do not unwind.
 There is no constructor-exception or partial-construction protocol.
 
+For `new<[]T>`, success packages `{data, count}` in the owning buffer; failure
+packages `{null, 0}`. A successful zero-count allocation remains non-null and
+releasable. An explicitly expected legacy `*T` may receive the data pointer,
+consuming the buffer owner and dropping its visible count.
+
 ## Supported values
 
 Allocatable types are sized owned values: scalars, enums, errors, raw pointers,
@@ -71,9 +77,12 @@ or overridden `T::zero()`; a structure without valid default construction is
 rejected. Raw pointer elements are
 initialized to null by `none`; they do not allocate their targets.
 
-Existing copy rules apply to an initializer naming an existing value: owning
-fields are deep-copied and noncopyable structures must instead be freshly
-constructed. New never implicitly moves an existing noncopyable object.
+Existing transfer rules apply to an initializer naming an existing value:
+copyable fields are copied, while a noncopyable movable structure, tuple, or
+fixed array moves into the new allocation after allocation succeeds. The source
+then becomes unavailable until reassigned. Because allocation failure skips the
+initializer, the source remains live on that path. Unsafe-tear values are
+immovable and must be constructed directly in their final allocation storage.
 Zero-sized values receive a distinct live allocation that must still be freed.
 
 ## Release and deferred release
@@ -182,9 +191,11 @@ unknown external/field-derived pointers and stack-address lifetimes do not gain
 a safety guarantee. Free with unverified provenance is rejected. The analysis
 tracks allocation obligations, not byte usage or peak heap size; automatic
 strings and structure values continue to use their existing cleanup rules.
-General safe heap owners remain future work. The first concrete dynamic collection
-is [`RawArray<T>`](dynamic_arrays.md), implemented in Flecha using these raw contracts.
-The same document describes `Array<T>`, its safe public wrapper.
+General safe heap-owner primitives remain future work. The first concrete
+dynamic collection is [`RawArray<T>`](dynamic_arrays.md), implemented in
+Flecha using these raw contracts. The same document describes `Array<T>`, its
+safe public wrapper; both container values now use whole-value moves, while
+move-only element relocation remains unsupported.
 
 ## Diagnostics and verification
 
@@ -212,6 +223,9 @@ destruction order, null free, and deferred release on control-flow exits. Its
 native harness uses linker wrapping to inject one allocator failure without a
 production runtime test hook. Runtime tests check zeroing, alignment, overflow,
 and invalid alignment. ASan/UBSan and native leak checks cover this fixture.
+Anonymous functions may preserve a temporary loan with `[lend pointer]` or
+transfer cleanup into their environment with `[own pointer]`; the complete
+rules are documented in [ownership contracts](ownership_contracts.md).
 See [runtime_abi.md](runtime_abi.md) for the storage ABI and
 [../examples/raw_allocation.fl](../examples/raw_allocation.fl) for a runnable
 example returning 42.

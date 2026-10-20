@@ -1,7 +1,8 @@
 # Deferred calls
 
-`defer function(arguments);` captures a direct function call now and executes it
-when the current lexical scope exits. See [the runnable example](../examples/defer.fl).
+`defer callee(arguments);` captures a function, callable value, or structure
+method call now and executes it when the current lexical scope exits. See
+[the runnable example](../examples/defer.fl).
 
 ```flecha
 void report(i32 value) { stdoutln(value); }
@@ -19,15 +20,30 @@ i32 main() {
 
 ## Capture and execution
 
-- Arguments evaluate once, left to right, when execution reaches the statement.
-  Their side effects happen immediately; the outer call runs later.
-- Scalar, raw-pointer, fixed-array, and tuple arguments capture their current values.
-  Reassigning the original variable does not change the captured value.
+- A callable value or method receiver evaluates first, followed by arguments
+  once from left to right. Their side effects happen immediately; the outer
+  call runs later. A direct function target needs no runtime evaluation.
+- A deferred callable value moves into the deferred record, so its closure
+  environment remains alive and the source callable is unavailable afterward.
+  The environment is destroyed exactly once after invocation and after argument
+  snapshots are released.
+- An instance method captures its receiver according to the declared receiver
+  parameter before evaluating explicit arguments. A checked receiver loan stays
+  active until scope exit; raw receiver handles retain their normal unsafe
+  restrictions.
+- Scalar and raw-pointer arguments capture their current values. Copyable fixed
+  arrays, tuples, and structures capture independent snapshots. Reassigning the
+  original variable does not change such a snapshot.
 - Both `string` and `stringv` arguments get independent owned byte snapshots.
   This copy can allocate. A `stringv` parameter receives a view of its snapshot
   during the deferred call. All snapshots are destroyed after that call.
-- Tuple arguments recursively copy owning string elements; discarded tuple
-  results recursively release their owned storage.
+- Copyable tuple arguments recursively copy owning string elements; discarded
+  tuple results recursively release their owned storage.
+- A noncopyable movable structure, tuple, or fixed array is moved into the
+  deferred record when the statement registers. The source is unavailable
+  afterward until reassigned. At scope exit that ownership transfers to the
+  by-value callee, which tears it down; the record does not destroy it a second
+  time.
 - References and slices capture borrowed handles, without copying their targets.
   Their loans remain active until scope exit, including the lifetime of any
   parent reborrow. They must not outlive their owners.
@@ -42,12 +58,12 @@ i32 main() {
   directly in final storage before cleanup, including immovable results. See
   [structures](structures.md) for lifecycle rules.
 
-Only statically resolved direct function calls are supported, including
-`stdout` and `stdoutln`. Parenthesizing the call is allowed. Deferred blocks,
-member calls, closures, and indirect function calls are not supported in this
-milestone. `defer` does not require unsafe permission by itself; an unsafe callee
-or argument operation still requires an enclosing unsafe block or function at
-the registration site.
+Direct functions, callable values and resolved structure or enum methods are
+supported, including `stdout` and `stdoutln`. Parenthesizing the call is
+allowed. Deferred blocks and built-in member operations such as `slice.len()`
+are not supported. `defer` does not require unsafe permission by itself; an
+unsafe callee, receiver, or argument operation still requires an enclosing
+unsafe block or function at the registration site.
 
 ## Scope exits and control flow
 

@@ -2,7 +2,8 @@
 
 Runtime-sized storage uses `new<[]T>(count)` in an unsafe context. `count` has type
 `usize` and is evaluated exactly once, before attempting allocation. The result is
-`(*T, error)`, matching the existing pointer/error convention. Numeric, boolean,
+`(*[]T, error)`: `*[]T` is a move-only owning buffer containing the allocation
+base and its `usize` element count. Numeric, boolean,
 character, and defaultable enum elements are supported. Runtime arrays also
 accept copyable, default-constructible structures whose recursively stored
 fields are numbers, booleans, characters, enums, raw pointers, fixed arrays, or
@@ -22,20 +23,28 @@ unsafe {
 }
 ```
 
-The allocator records the element count. Multiplication overflow or allocation
-failure returns null and `AllocationError.OutOfMemory`. A zero count can succeed
-with a non-null, releasable handle; no element may be accessed. Allocation metadata
-is private to the runtime and does not change the raw-pointer representation.
-`const` controls mutation as before: `new<[]const i32>(count)` produces `*const i32`.
+Multiplication overflow or allocation failure returns `{null, 0}` and
+`AllocationError.OutOfMemory`. A zero count can succeed with a non-null,
+releasable handle whose length is zero; no element may be accessed. `const`
+controls mutation as before: `new<[]const i32>(count)` produces `*[]const i32`.
 
-Raw `pointer[index]` requires unsafe permission and a base pointer from Flecha's
-allocator. The index has type `usize` and is checked against the recorded count
-before forming an element address. Out-of-bounds access traps. Known stack and
+Owning-buffer indexing, slicing, `front`, `back`, and `len` use the count carried
+in the value and require unsafe permission. Indexing is bounds checked before an
+element address is formed. Slicing produces an ordinary borrowed `[]T` descriptor.
+Moves, consuming arguments and returns, and `take` invalidate the source owner;
+`free(buffer)` consumes the live allocation obligation.
+
+Legacy raw `*T` indexing still requires unsafe permission and a base pointer from
+Flecha's allocator. The index has type `usize` and is checked against allocator
+metadata before forming an element address. Out-of-bounds access traps. Known stack and
 interior addresses, known null pointers, and tracked freed/transferred aliases are
 rejected. Arbitrary external pointer provenance remains an unsafe caller obligation:
 indexing a foreign allocation or interior address cannot read Flecha's metadata.
-This does not add pointer arithmetic, checked references into the heap, or raw-to-
-slice conversions. Ordinary raw dereference `*pointer` retains its unsafe validity
+For source compatibility, an owning buffer may transfer into an explicitly typed
+raw `*T` destination; this consumes the owner and drops its visible length. New
+code should retain `*[]T` so checked access does not consult hidden metadata.
+This does not add pointer arithmetic or checked references into the heap. Ordinary
+raw dereference `*pointer` retains its unsafe validity
 obligations, including requiring a live element for a zero-capacity allocation.
 
 `free(pointer)` releases the complete buffer. The supported element types need no
@@ -60,8 +69,9 @@ Mutable calls accepting a reference to the owning structure conservatively
 invalidate tracked aliases to its owning fields; aliases must be obtained again
 after the call. General field-effect summaries are not yet implemented.
 
-Construction and destruction rules remain unchanged: `tear` is compiler-invoked,
-and an unsafe tear makes a structure immovable and noncopyable.
+Construction and destruction use the ordinary lifecycle rules: `tear` is
+compiler-invoked, a safe tear makes a structure noncopyable but movable as a
+whole value, and an unsafe tear makes it immovable.
 
 ## Standard-library `RawArray<T>`
 
@@ -133,10 +143,19 @@ Growth failure preserves length, capacity, and existing contents.
 `RawArray` now has a safe initializer and a safe `tear` containing internal
 unsafe cleanup. The wrapper's generated lifecycle initializes and destroys its
 inner field automatically; it does not free the buffer separately. Both types
-remain noncopyable, and existing values cannot be implicitly moved or replaced.
-The language's unsafe-tear immovability rule is unchanged.
+remain noncopyable but are movable as complete values. Initialization,
+assignment, by-value arguments and returns, and discard transfer the buffer
+cleanup responsibility and invalidate the source until it is reassigned. A
+live borrow from `view()` or `viewRef()` prevents moving, replacing, or
+destroying its container. The language's unsafe-tear immovability rule is
+unchanged.
+
+Element relocation is still limited to the documented copyable element set.
+`push`, `pop`, `get`, `set`, growth, and compaction do not yet support
+move-only elements, and indexing cannot partially move an element out of a
+container. Container-level moves do not relax those element restrictions.
 
 `StandardLibraryTests.SafeArray.*` runs growth/failure, scalar, structure, and
 scope-cleanup checks through safe callers with allocation tracking.
-`CompilerDiagnostics.SafeArray` checks privacy, copying, implicit movement,
+`CompilerDiagnostics.SafeArray` checks privacy, use after a container move,
 conflicting borrows, and unsupported element operations.

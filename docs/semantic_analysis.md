@@ -135,19 +135,34 @@ scope constraints as references. Slice range sources receive shared reborrows.
 `FLECHA-S0037` reports statically invalid slice bounds; dynamic bounds trap in
 native code. See [checked_slices.md](checked_slices.md).
 
+### Single-use callables
+
+`once func` is structurally distinct from `func`. A compatible reusable
+callable is assignable to a once destination, but the reverse conversion is
+not. Every indirect call through a once signature records a move of the callee,
+so definite assignment reports a second invocation or later use with
+`FLECHA-S0027`. Inside a once anonymous function, an `own` capture may be moved,
+returned through an owning contract, passed to an owning parameter, or freed;
+the same operations remain invalid in reusable closures.
+
 ### Deferred calls
 
-`defer` requires a statically resolved direct call (`FLECHA-S0038` otherwise).
-Argument typing, definite assignment, and unsafe permission apply at
-registration. Synthetic capture symbols keep reference/slice loans live until
-their enclosing scope exits, including across backward jumps and control-flow
-joins. See [defer.md](defer.md) for capture and cleanup rules.
+`defer` accepts direct functions, callable values, and resolved structure or
+enum methods (`FLECHA-S0038` otherwise). Callee, receiver, and argument typing,
+definite assignment, moves, and unsafe permission apply at registration.
+Synthetic capture symbols keep callable borrow origins and receiver,
+reference, or slice loans live until their enclosing scope exits, including
+across backward jumps and control-flow joins. See [defer.md](defer.md) for
+capture and cleanup rules.
 
 ### Tuples and destructuring
 
 Tuple element types are structural and recursive. Expected tuple types supply
 element contexts for literals. Destructuring resolves existing destinations
 before analyzing its right-hand side and introduces new bindings afterward.
+For `:=`, existing writable names in the current lexical scope are assignments;
+other non-blank names are declarations, and at least one declaration is
+required.
 The shared CFG evaluates the complete source before destination writes, with
 scope resets for declarations. Borrow checking treats each destination as a
 write to its owner. `FLECHA-S0039` and `FLECHA-S0040` diagnose unsupported tuple

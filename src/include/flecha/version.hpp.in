@@ -3,7 +3,7 @@
 
 namespace flecha {
 
-inline constexpr char VERSION[] = "@PROJECT_VERSION@";
+inline constexpr char VERSION[] = "@FLECHA_BUILD_VERSION@";
 
 }  // namespace flecha
 

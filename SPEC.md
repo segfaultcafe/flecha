@@ -89,7 +89,7 @@ Statements are terminated with semicolons. Blocks are enclosed in braces.
 Flecha function declarations place modifiers first, followed by the return type, function name, parameters, and body:
 
 ```text
-[modifiers] ReturnType functionName(parameters) {
+[modifiers] ReturnType functionName(parameters) [<- borrowSource] {
     body
 }
 ```
@@ -105,9 +105,13 @@ i32 add(i32 left, i32 right) {
     return left + right;
 }
 
-unsafe void write_register(*volatile u32 address, u32 value) {
+unsafe void write_value(lend *u32 address, u32 value) {
     *address = value;
     return;
+}
+
+&const i32 view(&const i32 value) <- value {
+    return value;
 }
 ```
 
@@ -120,6 +124,162 @@ Tentative function modifiers include:
 - `comptime`
 
 Modifiers and their exact interactions will be specified as their corresponding features are implemented.
+
+Flecha 0.2.0 introduces named callable signatures:
+
+```flecha
+func Mapper(i32) => (i32);
+func Logger(stringv) => ();
+unsafe func Reader(lend *const u8 source) => (i32);
+once func Task() => (i32);
+```
+
+A named signature is a normal type. Parameter names are optional unless a
+borrowed result names its source. Results always use a list: `()` means `void`,
+one entry is a single result, and multiple entries form a tuple result.
+Ownership contracts, `unsafe`, and `once` are part of structural
+compatibility.
+
+Named functions can be stored, passed, returned, inferred by `:=`, and called
+indirectly:
+
+```flecha
+func Mapper(i32) => (i32);
+
+i32 twice(i32 value) { return value * 2; }
+i32 apply(Mapper callback, i32 value) { return callback(value); }
+
+i32 main() {
+    callback := twice;
+    return apply(callback, 21);
+}
+```
+
+Callable signatures may be generic. Type arguments are explicit when the alias
+is used, and specialization substitutes parameters and results before ordinary
+structural compatibility, safety, ownership, and borrow-contract checking:
+
+```flecha
+func Predicate<T>(&const T value) => (bool);
+func Transform<T, U>(T value) => (U);
+
+Transform<i32, i64> widen = (value) => {
+    return value.cast<i64>;
+};
+```
+
+A specialized alias is an ordinary callable type. It can be used in parameters,
+results, fields, containers, and other generic declarations, and it supplies the
+complete expected signature for contextual anonymous-function inference.
+Generic callable declarations do not infer omitted type arguments.
+
+Callable aliases are structural rather than nominal: two complete signatures
+with identical parameter, result, safety, ownership, and borrow contracts are
+compatible regardless of their declaration names. Callable values are
+move-only and use a uniform compiler ABI containing invoke, environment, and
+destroy pointers. Captureless named functions use null environment and destroy
+pointers.
+
+`once func` is a distinct callable kind whose invocation consumes the callable
+value. A second invocation is diagnosed as a moved-value use. A compatible
+reusable callable may move into a once slot, but a once callable cannot become
+reusable. Both kinds use the same compiler ABI.
+
+Captureless anonymous functions use the same signature shape. The empty square
+brackets may be written explicitly or omitted:
+
+```flecha
+Mapper explicit = [](i32 value) => (i32) { return value * 2; };
+Mapper inferred = (value) => { return value * 2; };
+```
+
+An explicit literal spells every parameter type and its complete result list.
+A contextually inferred literal uses bare parameter names and omits the result
+list; its entire signature comes from the expected callable type. Inference is
+available in typed initializers, arguments, and returns, but not in `:=`
+declarations without an expected type. Partial inference is rejected.
+
+An omitted or empty capture list is captureless: names in the body resolve from
+module scope, not the surrounding local scope. Local values must be listed
+explicitly. Snapshot and checked-reference captures are supported:
+
+```flecha
+i32 factor = 2;
+Mapper scaled = [copy factor](value) => {
+    return value * factor;
+};
+
+i32 count = 0;
+Mapper incremented = [&count, &const factor](value) => {
+    count = count + 1;
+    return value * factor + count;
+};
+```
+
+Each `copy` entry snapshots its source when the anonymous function value is
+created. Scalars and copyable aggregates are copied by value; owning strings
+and owning fields are deep-copied. Reassigning or leaving the source scope does
+not affect the captured value. Captured state belongs to the closure and may be
+mutated independently when its source binding was writable.
+
+Copy captures reject borrowed handles, callable values, and other noncopyable
+values. A raw pointer may be copied only by an `unsafe` anonymous function.
+Tracked raw allocations require an explicit resource capture instead:
+
+```flecha
+unsafe Reader inspect(lend *const i32 pointer) {
+    return unsafe [lend pointer]() => { return *pointer; }; // rejected: escape
+}
+
+unsafe Reader retain(own *i32 pointer) {
+    return unsafe [own pointer]() => { return *pointer; };
+}
+```
+
+`lend name` keeps a tracked raw allocation with its current owner and prevents
+freeing or transferring that allocation while the closure is live. A lending
+closure cannot leave the lexical scope in which it was created. It requires an
+`unsafe` anonymous function and a raw pointer or runtime-sized buffer.
+
+`own name` moves a value into the closure environment. For a raw pointer or
+runtime-sized buffer, it transfers cleanup responsibility and requires an
+`unsafe` anonymous function. It also accepts movable, noncopyable safe values,
+including callable values and aggregates containing callables or safe custom
+teardown. These captures do not make the anonymous function unsafe. Copyable
+values use `copy` instead, and values with unsafe teardown are immovable and
+rejected. The source binding becomes unavailable, borrow origins follow the
+moved value, and the environment destroy thunk recursively tears it down
+exactly once.
+
+All `own` captured bindings are read-only. Because ordinary callables are
+reusable, their bodies may access an owned capture but cannot transfer or
+otherwise consume it. A `once` anonymous function may move, return, pass to an
+`own` parameter, or free an owned capture because its body can execute only
+once. Consumed captures are removed from the environment's cleanup obligation;
+untouched captures are still destroyed when the callable is destroyed without
+being invoked.
+
+`&name` creates an exclusive checked borrow of writable storage. `&const name`
+creates a shared, read-only borrow. The loan lasts until the closure's last use,
+including when the closure moves into another variable or a callable-containing
+array, tuple, or structure. A closure cannot be stored somewhere that outlives
+the captured storage. Returning a borrowing closure requires a matching
+`<- parameter` contract, and calls propagate that origin into the returned
+callable value. Borrowed reference, slice, and string-view parameters are
+stored in the environment by value so returned closures retain the underlying
+borrow rather than the creator's parameter slot.
+
+Callable values remain move-only, and moving a closure transfers its
+environment and cleanup responsibility exactly once. Anonymous functions use
+the `once` modifier to opt into a consuming body:
+
+```flecha
+once func Task() => (i32);
+
+Task task = once [own resource]() => (i32) {
+    return consume(resource);
+};
+```
 
 ## 6. Return and yield
 
@@ -375,6 +535,8 @@ Tuples, tuple parameters/results, and flat destructuring are implemented.
 Binding-list parentheses are optional. Without parentheses, explicit types
 carry forward to subsequent names until another type is written. Mixed
 bindings such as `(existing, i32 fresh) = value;` and `_` discards are supported.
+In a `:=` binding list, names already declared in the current lexical scope are
+assigned while new names are declared; at least one non-blank name must be new.
 The right-hand side evaluates once before destination stores. Tuples use value
 semantics, including deep copies of owning strings; stored borrowed elements
 remain unsupported. The native representation is an LLVM non-packed struct,
@@ -441,23 +603,42 @@ future allocation APIs.
 
 ## 12. Unsafe code
 
-Unsafe operations include behavior the compiler cannot fully validate, such as dereferencing raw pointers, accessing volatile memory, constructing values from unchecked representations, and calling functions with caller-maintained safety requirements.
+Unsafe operations include behavior the compiler cannot fully validate. The
+implemented model covers raw-address creation, raw-pointer dereferences, and
+calls with caller-maintained safety requirements. Volatile memory access and
+unchecked representation construction remain future features.
 
 An `unsafe` function places safety obligations on its caller:
 
 ```flecha
-unsafe void write_register(*volatile u32 address, u32 value) {
+unsafe void write_value(lend *u32 address, u32 value) {
     *address = value;
     return;
+}
+
+unsafe void destroy_value(own *u32 address) {
+    free(address);
+    return;
+}
+
+unsafe (own *u32, error) create_value(u32 initial) {
+    return new<u32>(initial);
 }
 ```
 
 Calling it requires an explicit unsafe context:
 
 ```flecha
-void configure_device() {
+u32 create_and_read() {
     unsafe {
-        write_register(0x40001000 as *volatile u32, 1);
+        address, allocation_error := create_value(0);
+        if allocation_error != none {
+            return 0;
+        }
+        write_value(address, 1);
+        result := *address;
+        destroy_value(address);
+        return result;
     }
 }
 ```
@@ -465,10 +646,12 @@ void configure_device() {
 An ordinary safe function may internally use a small unsafe block while preserving a safe external contract:
 
 ```flecha
-u32 read_device(*volatile const u32 address) {
+u32 increment(u32 value) {
     unsafe {
-        return *address;
+        pointer := &raw value;
+        write_value(pointer, value + 1);
     }
+    return value;
 }
 ```
 
@@ -480,19 +663,22 @@ permission from unsafe callers. The shorthand `unsafe copy(...)` is rejected;
 use a block instead. Ordinary nested blocks also create lexical scopes.
 
 Raw address creation is explicit: `&raw value` produces a raw pointer and
-requires an unsafe context. `&value` creates a checked reference.
-The volatile and integer-address examples above remain future features.
+requires an unsafe context. `&value` creates a checked reference. Volatile
+memory access and integer-to-pointer casts remain future features. The
+`volatile` word is reserved by the tokenizer, but types such as
+`*volatile u32` are not accepted by the parser yet.
 See [unsafe contexts and pointers](docs/unsafe_pointers.md).
 
 ## 13. Pointers, arrays, and slices
 
-The intended pointer syntax keeps qualifiers inside the type rather than attaching them to individual declarations:
+The implemented pointer syntax distinguishes target constness from a fixed
+pointer binding:
 
 ```flecha
 *u8
 *const u8
-*volatile u32
-*volatile const u32
+const *u8
+const *const u8
 ```
 
 The parser and type model represent recursive pointers and references with
@@ -528,9 +714,12 @@ control flow. `constref T` fixes the handle without making its target read-only;
 moving a fixed mutable handle is rejected.
 
 References require initializers and cannot contain `none` or `null`. References
-to shorter-lived storage cannot escape into outer bindings. Reference returns,
-raw/reference conversions, reference comparisons, direct references to strings
-or views, and nested reference storage are rejected in this first version.
+to shorter-lived storage cannot escape into outer bindings. A reference result
+must declare the checked-reference or checked-slice parameter that anchors it
+with `<- parameter`; every return is verified against that source and the loan
+is propagated into the caller. Raw/reference conversions, reference
+comparisons, direct references to strings or views, and nested reference
+storage are rejected in this first version.
 `&*T` borrows a raw-pointer slot; accessing the raw pointee still requires unsafe
 permission. See [checked references](docs/checked_references.md) for exact rules,
 limits, and diagnostics. Integer literals gain contextual integer types with
@@ -595,9 +784,13 @@ Slices neither allocate nor own their elements. Bounds are checked even in unsaf
 blocks. `len()`, indexing, `front()`, and `back()` are supported; endpoint methods
 are writable locations when elements are mutable. Mutable handles move, shared
 handles copy, and calls reborrow. Slice ranges take a shared reborrow rather than
-copying the backing elements. Slice returns and nested borrowed storage remain
-unsupported pending lifetime contracts. See [checked slices](docs/checked_slices.md)
-for exact rules, limitations, and diagnostics.
+copying the backing elements. Slice results use the same `<- parameter>`
+contract as reference results. A flat result tuple may contain multiple
+references or slices from that one source when it is immediately destructured;
+overlapping mutable results are rejected. Nested borrowed storage remains
+unsupported. See [checked slices](docs/checked_slices.md) and
+[reference and slice returns](docs/ref_and_slice_returns.md) for exact rules,
+limitations, and diagnostics.
 
 ### 13.4 Structures
 
@@ -626,7 +819,8 @@ fields, construction limits, examples, and diagnostics.
 
 Flecha should not require a garbage collector. Stack allocation is the ordinary default. The implemented explicit raw allocation API is `new<T>(value)` returning `(*T, error)`, paired with unsafe `free(ptr)`. It uses the system allocation service; custom allocators remain future work.
 Runtime-sized scalar and supported trivially copyable structure storage uses
-`new<[]T>(count)` and checked unsafe `pointer[index]` access. See
+`new<[]T>(count)`, returning a move-only `*[]T` owner whose `{data, length}`
+representation supports checked unsafe indexing without allocator queries. See
 [dynamic arrays](docs/dynamic_arrays.md) for the implemented limits and the
 Flecha `RawArray<T>` library and its safe `Array<T>` wrapper.
 On failure, new returns null and `AllocationError.OutOfMemory` without evaluating
@@ -710,9 +904,18 @@ The compiler should eventually be self-hosted in Flecha, but self-hosting is not
 Modules declare `module name;`, matching their filename. Import blocks use
 `@imports :: root::path::module :: lib::library::module as alias;`, with a
 multiline form preferred. `root` and `lib` are reserved in import paths.
-Top-level declarations require `export` for access through imports. Exported
-structures and enums bundle non-private member functions; existing field
-privacy and compiler-only tear rules remain unchanged. Directory imports use
+`private module name;` restricts importing the module to its quiver. In a
+private module, `export` has quiver visibility rather than global visibility;
+unmarked declarations remain module-only.
+Top-level declarations use `export` for access from every importing module,
+`quiver` for access from modules in the same immediate directory and the same
+source-root or library identity, and no modifier for module-only access.
+Wildcard imports do not bypass these boundaries. Exported and quiver
+structures and enums bundle non-private member functions; member functions do
+not take declaration-visibility modifiers, and private members remain limited
+to methods of the exact owning type. Exported APIs may expose only exported
+nominal types. Quiver APIs may also expose quiver types from the same quiver,
+but never module-private types. Directory imports use
 `root::path::*`
 for immediate module files or `root::path::{first, second}` for selected modules.
 Each imported module retains its namespace. See [modules](docs/modules.md).
@@ -777,10 +980,13 @@ i32 main() {
 
 ## Generics
 
-Generic functions and structures use explicit type parameters and arguments:
+Generic functions, structures, and callable signatures use explicit type
+parameters and arguments:
 `T identity<T>(T value)`, `structure Box<T> { T value; };`, and
-`identity<i32>(42)`. Methods inherit owner parameters through `Box<T>::method`.
-Specializations have distinct nominal identities and are checked on use.
+`func Mapper<T>(T) => (T);`. Methods inherit owner parameters through
+`Box<T>::method`. Structure specializations have distinct nominal identities;
+callable specializations remain structural. All specializations are checked on
+use.
 References remain valid function parameters and cannot be stored in structure
 fields. Existing ownership, const, visibility, and lifecycle rules apply.
 See [generics](docs/generics.md) for the implemented rules and limits.
@@ -792,9 +998,9 @@ The following decisions are intentionally not finalized:
 - re-exports, cyclic modules, and separately compiled module interfaces;
 - additional declaration forms, including whether to introduce `var`;
 - string literal representation and encoding;
-- lifetime contracts for returned slices, references, and other borrowed views;
+- multi-source, heap-owner, and other more general borrowed-result contracts;
 - union syntax;
-- general move semantics, partial moves, and cleanup for future owning types;
+- partial aggregate moves and cleanup rules for future owning types;
 - allocator interfaces;
 - arithmetic overflow behavior;
 - floating-point equality involving NaN and signed zero;
@@ -811,14 +1017,17 @@ These questions should be resolved by prioritizing predictable behavior, a small
 
 ## 20. Implementation status
 
-The 0.1 compiler implements source-located diagnostics; the lexer, parser,
+The current compiler implements source-located diagnostics; the lexer, parser,
 semantic and ownership analyses; lowering; and LLVM IR, object, and native
 executable emission. Implemented language areas include functions and control
 flow, primitives and conversions, `none`, tuples, errors, enums and matching,
 strings and views, raw pointers and unsafe blocks, checked references, fixed and
-runtime-sized arrays, checked slices, structures and lifecycle hooks, modules,
-explicit generics, raw allocation, ownership contracts, and direct deferred
-calls. The linked feature documents define the exact supported forms and
+runtime-sized arrays, checked slices, structures and lifecycle hooks, explicit
+generics, callable values and closures, single-use callables, raw allocation,
+ownership contracts, and direct, indirect, and member deferred calls. Modules
+support global, quiver, and module-private visibility. Flecha and Longbow also
+discover and run paired `_test.fl` modules through first-class `test`
+declarations. The linked feature documents define the exact supported forms and
 diagnostics.
 
 Near-term work can extend the standard library and tooling without implying

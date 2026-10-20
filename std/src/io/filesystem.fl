@@ -1,39 +1,187 @@
 module filesystem;
 
-@imports :: root::io::errors;
+@imports
+    :: root::io::errors
+    :: root::io::file
+    :: root::io::utils
+    :: root::io::runtime;
 
-extern unsafe i32 flecha_runtime_v1_read_file(
-    *string output,
-    *const char path,
-    usize path_length
-);
+export enum FileType: u8 {
+    default Other,
+    File,
+    Directory,
+}
+
+u8 FileType::number(&const self) {
+    return match *self {
+        FileType.Other => 0,
+        FileType.File => 1,
+        FileType.Directory => 2,
+    };
+}
+
+FileType FileType::fromNumber(u8 number) {
+    if number == 1 {
+        return FileType.File;
+    }
+    if number == 2 {
+        return FileType.Directory;
+    }
+
+    return FileType.Other;
+}
+
+export structure Metadata {
+    FileType type;
+    u64 size;
+};
 
 export (string, error) read_file(stringv path) {
     string output = none;
     unsafe {
-        i32 status = flecha_runtime_v1_read_file(
+        i32 status = runtime::flecha_runtime_v1_read_file(
             &raw output,
             path.data(),
             path.len().cast<usize>
         );
-        if status == 0 {
-            return (output, none);
+
+        err := errors::from_runtime(status, errors::IoError.ReadFailed);
+        if err != none {
+            return (none, err);
         }
-        if status == 1 {
-            return (none, errors::IoError.NotFound);
+    }
+
+    return (output, none);
+}
+
+export error write_file(stringv path, stringv contents) {
+    output, err := file::File::open(path, file::OpenOptions::writeOnly());
+    if err != none {
+        return err;
+    }
+
+    err = output.writeAllString(contents);
+    if err != none {
+        return err;
+    }
+
+    err = output.flush();
+    if err != none {
+        return err;
+    }
+
+    return output.close();
+}
+
+export error write_bytes(stringv path, []const u8 contents) {
+    output, err := file::File::open(path, file::OpenOptions::writeOnly());
+    if err != none {
+        return err;
+    }
+
+    err = output.writeAll(contents);
+    if err != none {
+        return err;
+    }
+
+    err = output.flush();
+    if err != none {
+        return err;
+    }
+
+    return output.close();
+}
+
+export (bool, error) exists(stringv path) {
+    u8 present = 0;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_path_exists(
+            &raw present,
+            path.data(),
+            path.len().cast<usize>
+        );
+
+        err := errors::from_runtime(status, errors::IoError.ExistsFailed);
+        if err != none {
+            return (false, err);
         }
-        if status == 2 {
-            return (none, errors::IoError.PermissionDenied);
+    }
+
+    return (present != 0, none);
+}
+
+export (Metadata, error) metadata(stringv path) {
+    meta := Metadata::init();
+    unsafe {
+        u8 typeNumber = 0;
+        u64 size = 0;
+
+        i32 status = runtime::flecha_runtime_v1_metadata(
+            &raw typeNumber,
+            &raw size,
+            path.data(),
+            path.len().cast<usize>
+        );
+
+        err := errors::from_runtime(status, errors::IoError.MetadataFailed);
+        if err != none {
+            return (none, err);
         }
-        if status == 3 {
-            return (none, errors::IoError.InvalidPath);
-        }
-        if status == 5 {
-            return (none, errors::IoError.TooLarge);
-        }
-        if status == 6 {
-            return (none, AllocationError.OutOfMemory);
-        }
-        return (none, errors::IoError.ReadFailed);
+
+        meta.type = FileType::fromNumber(typeNumber);
+        meta.size = size;
+    }
+
+    return (meta, none);
+}
+
+export error remove_file(stringv path) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_remove_file(
+            path.data(),
+            path.len().cast<usize>
+        );
+
+        return errors::from_runtime(status, errors::IoError.RemoveFailed);
+    }
+}
+
+export error rename(stringv source, stringv destination) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_rename(
+            source.data(),
+            source.len().cast<usize>,
+            destination.data(),
+            destination.len().cast<usize>
+        );
+
+        return errors::from_runtime(status, errors::IoError.RenameFailed);
+    }
+}
+
+export error create_directory(stringv path) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_create_directory(
+            path.data(),
+            path.len().cast<usize>
+        );
+
+        return errors::from_runtime(status, errors::IoError.CreateDirectoryFailed);
+    }
+}
+
+export error remove_directory(stringv path, bool force) {
+    u8 forceByte = utils::bool_byte(force);
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_remove_directory(
+            path.data(),
+            path.len().cast<usize>,
+            forceByte,
+            forceByte
+        );
+
+        return errors::from_runtime(status, errors::IoError.RemoveDirectoryFailed);
     }
 }

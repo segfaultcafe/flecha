@@ -5,8 +5,9 @@ remain design proposals.
 
 The agreed `own` / `lend` contracts are now implemented as described in
 [ownership contracts](ownership_contracts.md). References never take either
-keyword. The broader move-by-default proposals below remain unimplemented;
-existing string copies and structure immovability rules are unchanged.
+keyword. Whole-value move-by-default semantics are implemented for
+noncopyable aggregates with safe teardown. Existing standalone string copies
+remain unchanged, and aggregates with an unsafe tear remain immovable.
 
 The implemented model includes explicit raw allocation/free in unsafe code,
 `defer` for scheduled cleanup, and mandatory diagnostics for tracked resource
@@ -16,11 +17,12 @@ use `&T` and `&const T`, with `&value` creation and `*reference` access. The
 preferred fixed-binding spellings are `constptr T` for `const *T` and
 `constref T` for `const &T`. Existing string copy semantics remain unchanged.
 
-Pointers, fixed arrays, checked references and slices, raw allocation,
-ownership contracts, and deferred direct calls are implemented. Their focused
-feature guides are normative for the 0.1 compiler. The broader move-by-default,
-safe heap ownership, allocator, and borrowed-result designs in this document
-remain proposals. Current behavior is recorded in [definite assignment](definite_assignment.md),
+Pointers, fixed arrays, checked references and slices, borrowed-result
+contracts, raw allocation, ownership contracts, aggregate moves, and deferred
+direct calls are implemented. Their focused feature guides are normative for
+the current compiler. Safe heap-owner primitives, custom allocators, partial
+moves, and moving elements within dynamic containers remain proposals. Current
+behavior is recorded in [definite assignment](definite_assignment.md),
 [strings](string.md), [const declarations and types](const_types.md),
 [checked references](checked_references.md), [checked slices](checked_slices.md),
 and [raw allocation](raw_allocation.md).
@@ -38,7 +40,9 @@ any of it.
 | Raw pointer `*T` / `*const T` | No ownership or lifetime guarantee | Copy the address |
 | Shared reference `&const T`, shared slice `[]const T`, or `stringv` | Borrow existing storage | Copy the view, preserving its lifetime restrictions |
 | Mutable reference `&T` or mutable slice `[]T` | Borrow storage for exclusive access | Transfer the borrow; do not duplicate exclusive access |
-| Owning value | Release its resource exactly once | Proposed: transfer ownership; copying a resource is explicit |
+| Standalone owning string | Release its allocation exactly once | Copy with independent storage; existing string semantics are unchanged |
+| Noncopyable aggregate with safe tear | Run typed teardown exactly once | Move the complete value and transfer cleanup responsibility |
+| Aggregate with unsafe tear | Run address-sensitive teardown exactly once | Immovable after construction; borrow it instead |
 | Fixed-size array | Store elements inline; own their element values | Copy if every element is implicitly copyable; otherwise transfer the array |
 
 A slice is never an owning growable array. A raw pointer is never implicitly
@@ -73,36 +77,47 @@ Initially, arrays must be initialized as whole values before producing a safe
 slice. Partial element initialization and partial moves of aggregates are
 excluded until the compiler can track them and clean them up correctly.
 
-## 3. Ownership and transfer — proposed decision
+## 3. Ownership and transfer — implemented whole-value moves
 
-Recommend move-by-default semantics for owning values:
+Noncopyable structures with safe teardown move by default as complete values.
+Tuples and fixed arrays containing such structures inherit the same behavior:
 
-- Binding or assigning from an owning variable transfers its resource.
-- Passing an owning value transfers it to the callee; returning one transfers
+- Initialization and assignment from a movable variable transfer its resource.
+- Passing a movable value transfers it to the callee; returning one transfers
   it to the caller. Borrowed parameters provide non-consuming access.
+- Complete tuple destructuring, match bindings, discards, and whole fixed-array
+  transfers also consume a movable value. Ignored or discarded owning parts are
+  still destroyed exactly once.
 - The source becomes unavailable until assigned a new value. Reads, borrows,
-  and a second move from a possibly moved source are errors.
-- Explicit copying creates an independent owner. An allocating copy must be
-  visible in source; an API such as `copy` must also define allocator and
-  allocation-failure behavior.
+  and a second move from a moved or possibly moved source are errors.
 - Replacing an owner evaluates the replacement before releasing the old
-  resource. A failed fallible construction must leave the old owner intact.
-- Direct self-move assignment is rejected initially.
+  resource. Direct self-move assignment is rejected.
+- A move is a destructive access and is rejected while a conflicting borrow,
+  deferred use, or owner-backed returned view is live.
+- Copyable values retain copy semantics. Standalone `string` initialization,
+  assignment, and by-value argument passing continue to make independent copies.
 
-Illustrative future semantics, not current compiler behavior:
+For example:
 
 ```flecha
-string first = "ready".string();
-second := first;              // proposed: moves first
-// stdoutln(first);           // proposed: error, first was moved
-stdoutln(second.view());
+structure Box {
+    own *i32 data;
+}
+
+void Box::tear(&self) override {
+    unsafe { free(self->data); }
+}
+
+first := Box::init(...);
+second := first;        // moves the complete Box
+// consume(first);      // error: first was moved
+first = Box::init(...); // reinitialization restores first
 ```
 
-This would deliberately change existing string initialization, assignment,
-and owning parameter passing, which currently make independent copies. The
-migration requires explicit tests and documentation changes; this draft does
-not change those semantics. String contents remain immutable. Replacing an
-owning string variable is a different operation from mutating its bytes.
+Arbitrary field and indexed-element moves are not implemented. An unsafe
+teardown marks its structure, and aggregates containing it, as immovable; such
+values must be constructed directly in their destination. These restrictions
+avoid creating aggregate states whose cleanup cannot be proven complete.
 
 ## 4. Deterministic destruction
 
@@ -123,9 +138,10 @@ when necessary. Null storage suffices for the existing string representation;
 other owning types may need explicit live flags.
 
 Destruction cannot fail or transfer control. Immediate process termination
-from a runtime safety failure need not unwind scopes. Structure teardown is
-implemented as described in [structures.md](structures.md).
-General moves and partial construction remain future work.
+from a runtime safety failure need not unwind scopes. Structure teardown and
+whole-value transfer are implemented as described in
+[structures.md](structures.md). Partial construction and partial aggregate
+moves remain future work.
 
 ## 5. Borrowed access — implemented conservative policy
 
@@ -155,12 +171,13 @@ An operation must be valid for every possible origin. Loops and jumps require
 a fixed point for this state as well as initialization state.
 
 A view into a local owner or stack array cannot escape the storage lifetime.
-Returning a view derived from a parameter requires a known relationship
-between the result and that parameter's storage. Until function contracts can
-express or soundly infer that relationship, reject unsupported borrowed
-returns. Static literal views may escape. The exact contract syntax is open;
-existing borrowed string returns follow the conservative rules in
-[strings](string.md).
+A reference- or slice-returning function declares its single originating
+parameter or receiver with the postfix `<- origin` contract. The compiler
+verifies every return against that origin, rejects locals, temporaries, and
+ambiguous origins, and propagates the returned loan into the caller's borrow
+state. Static literal views may also escape. See
+[reference and slice returns](ref_and_slice_returns.md) for the complete
+contract and [strings](string.md) for borrowed string returns.
 
 Uninitialized `stringv` declarations remain rejected. Mutable slices are
 implemented with the access, lifetime, reborrow, and whole-owner region rules
@@ -256,7 +273,8 @@ Neither changes the existing &u8 declaration. `typeof` syntax and cross-type
 reference reinterpretation are not accepted features of this draft. Any later
 reinterpretation mechanism needs a separate unsafe storage-validity contract.
 
-Implicit dereference/member syntax and borrowed-result annotations remain open.
+Implicit dereference/member syntax remains open. Borrowed-result annotations
+are implemented with the postfix `<- origin` contract.
 
 ### 5.2 Const declarations and access qualifiers
 
@@ -448,8 +466,9 @@ unsafe {
 `new<T>(none)` initializes to T's defined zero value, when one exists; it
 does not mean uninitialized storage. Success produces a live allocation and
 no error; failure assigns null and `AllocationError.OutOfMemory`, without
-evaluating the initializer. Fixed arrays use `new<[N]T>(value)`; runtime-sized scalar buffers use
-`new<[]T>(count)`. Their count is evaluated before allocation and their elements
+evaluating the initializer. Fixed arrays use `new<[N]T>(value)`; runtime-sized
+scalar buffers use `new<[]T>(count)` and return a move-only `*[]T` owner carrying
+`{data, length}`. Their count is evaluated before allocation and their elements
 start zeroed. See [dynamic arrays](dynamic_arrays.md). `free(null)` is a no-op.
 
 Raw allocation and free require an unsafe function or block. Allocations are
@@ -486,9 +505,10 @@ The special pointer-operation syntax and naming remain to be finalized.
 
 ### 8.1 Deferred cleanup
 
-The direct-call implementation is documented in [defer.md](defer.md). Deferred
-`free`, bounded static allocation-effect checks, and `own` / `lend` contracts
-are implemented. External ownership contracts remain future work.
+The function, callable-value, and member-call implementation is documented in
+[defer.md](defer.md). Deferred `free`, bounded static allocation-effect checks,
+and `own` / `lend` contracts are implemented. External ownership contracts
+remain future work.
 
 A deferred call registers when execution reaches it and executes when its
 current enclosing scope exits. It is not hoisted to scope entry. Register
@@ -522,9 +542,11 @@ Implemented deferred allocation-cleanup rules:
   Deferred calls must not return from their enclosing function or redirect its
   control flow.
 - Traps and immediate process termination do not execute defers. Registered
-  calls run before lexical string and structure destruction; string, view,
-  and copyable structure captures are independent snapshots destroyed after
-  invocation. Structure lifecycle rules are in [structures.md](structures.md).
+  calls run before lexical string and structure destruction. String, view, and
+  copyable aggregate captures are independent snapshots destroyed after
+  invocation. A noncopyable movable aggregate is moved into the deferred record
+  at registration and then transferred to its callee, which destroys it exactly
+  once. Structure lifecycle rules are in [structures.md](structures.md).
 
 Defer helps ensure cleanup. It does not prove pointer validity, prevent all
 raw-pointer aliasing, or turn an unsafe function into a safe function.
@@ -539,9 +561,10 @@ because it is given a reference spelling.
 
 The existing owning string remains a safe-facing value with lexical cleanup
 and current copy semantics, subject to its documented implementation limits.
-Its allocator/failure policy and any move-semantics migration are separate
-features. A freestanding target should retain stack storage and checked views
-without requiring a heap, while defining a bounds-failure mechanism.
+Its allocator/failure policy and any standalone-string move migration are
+separate features. A freestanding target should retain stack storage and
+checked views without requiring a heap, while defining a bounds-failure
+mechanism.
 
 ## 9. Control-flow restrictions
 
@@ -581,12 +604,12 @@ Agreed direction:
 
 Next proposals to settle:
 
-1. Borrowed-result contracts; fixed mutable-reference moves are currently rejected.
+1. More expressive borrowed-result contracts for results that may originate
+   from multiple inputs; the single-origin `<- origin` form is implemented.
 2. Reference borrowing of strings/views and nested reference storage.
-3. Lifetime contracts for returned borrowed values; local slice lifetime and
-   alias checking is implemented in [checked_slices.md](checked_slices.md).
-4. Ownership contracts for external declarations and more general inferred
+3. Ownership contracts for external declarations and more general inferred
    recursive effects.
+4. Partial aggregate moves and dynamic-array relocation of move-only elements.
 5. Any migration of existing string copies to moves. No such migration is
    agreed or implemented by this document.
 
@@ -596,9 +619,10 @@ implementation milestone, const declarations and compound type representation,
 is documented in [const declarations and types](const_types.md). Unsafe pointer operations are documented in [unsafe pointers](unsafe_pointers.md).
 Checked scalar and pointer-slot references are documented in
 [checked references](checked_references.md). Checked slices, system allocation,
-direct deferred calls, and explicit cross-function ownership contracts are also
-implemented. Borrowed-result contracts and more general inferred resource
-effects remain future work. Named and generic
+direct, indirect, and member deferred calls, explicit cross-function ownership
+contracts, general whole-value moves, and single-origin borrowed-result
+contracts are also implemented. More general inferred resource effects remain
+future work. Named and generic
 [error values](error_values.md) are implemented.
 [Tuples and destructuring](tuples.md) are implemented.
 
@@ -611,5 +635,5 @@ arithmetic remain outside the first safe-reference feature.
 and cleanup subsets and links to their focused contracts. Its design goal of
 locally visible cost still has a known exception: existing string assignment,
 owning parameter passing, conversions, and deferred string/view snapshots can
-allocate implicitly. A future move-semantics proposal must preserve or
+allocate implicitly. A future standalone-string move proposal must preserve or
 deliberately revise that shipped behavior.

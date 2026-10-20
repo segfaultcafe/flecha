@@ -3,6 +3,7 @@
 
 #include <cassert>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,7 @@ enum class SemanticTypeKind {
     String,
     StringView,
     Pointer,
+    OwnedBuffer,
     Reference,
     Array,
     Slice,
@@ -50,6 +52,7 @@ struct ErrorFamily final {
 
 struct StructureType;
 struct EnumType;
+struct CallableSignature;
 
 class SemanticType final {
    public:
@@ -89,7 +92,17 @@ class SemanticType final {
           _isConst(isConst),
           _enum(enumeration) {}
     const EnumType* Enum() const { return _enum; }
+    explicit SemanticType(std::shared_ptr<const CallableSignature> signature,
+                          bool isConst = false)
+        : _kind(SemanticTypeKind::Function),
+          _isConst(isConst),
+          _signature(std::move(signature)) {}
+    [[nodiscard]] const CallableSignature& Signature() const {
+        assert(_kind == SemanticTypeKind::Function && _signature);
+        return *_signature;
+    }
     bool ContainsStructure() const;
+    bool ContainsOwnedBuffer() const;
     bool IsZeroable() const;
     bool IsTriviallyZeroable() const;
     bool IsCopyable() const;
@@ -109,13 +122,18 @@ class SemanticType final {
         return _kind == SemanticTypeKind::Reference ||
                _kind == SemanticTypeKind::Slice;
     }
+    [[nodiscard]] bool HasBorrowedLifetime() const {
+        return IsBorrowed() || _kind == SemanticTypeKind::StringView;
+    }
     [[nodiscard]] bool IsSequence() const {
         return _kind == SemanticTypeKind::Array ||
-               _kind == SemanticTypeKind::Slice;
+               _kind == SemanticTypeKind::Slice ||
+               _kind == SemanticTypeKind::OwnedBuffer;
     }
     [[nodiscard]] bool IsConst() const { return _isConst; }
     [[nodiscard]] bool IsCompound() const {
         return _kind == SemanticTypeKind::Pointer ||
+               _kind == SemanticTypeKind::OwnedBuffer ||
                _kind == SemanticTypeKind::Reference ||
                _kind == SemanticTypeKind::Array ||
                _kind == SemanticTypeKind::Slice ||
@@ -140,9 +158,22 @@ class SemanticType final {
     std::shared_ptr<const ErrorFamily> _family;
     const StructureType* _structure = nullptr;
     const EnumType* _enum = nullptr;
+    std::shared_ptr<const CallableSignature> _signature;
     std::uint64_t _length = 0;
     std::shared_ptr<const SemanticType> _target;
     std::shared_ptr<const std::vector<SemanticType>> _elements;
+};
+
+struct CallableSignature final {
+    SemanticType result{SemanticTypeKind::Void};
+    std::vector<SemanticType> parameters;
+    std::vector<core::OwnershipContract> parameterContracts;
+    std::vector<core::OwnershipContract> resultContracts;
+    std::optional<std::size_t> borrowSourceIndex;
+    bool isUnsafe = false;
+    bool isOnce = false;
+
+    bool operator==(const CallableSignature& other) const;
 };
 
 [[nodiscard]] bool IsAssignable(SemanticType destination, SemanticType source);

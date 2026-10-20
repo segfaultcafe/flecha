@@ -39,7 +39,8 @@ typed incompatible integers still need explicit casts.
 ## Destructuring
 
 ```flecha
-a, b := divide(17, 5);             // Declare both names with inferred types.
+a, err := divide(17, 5);           // Declare both names with inferred types.
+next, err := divide(20, 3);        // Declare next and assign the existing err.
 i32 q, i32 r = divide(17, 5);      // Declare both names explicitly.
 i32 quotient, remainder = divide(17, 5); // Shared i32 type.
 a, b = (b, a);                    // Assign existing names; swap their values.
@@ -47,8 +48,10 @@ a, i32 next = divide(20, 3);       // Assign a; declare next.
 _, b = divide(19, 5);             // Discard an element.
 ```
 
-- `:=` declares every non-blank binding and cannot contain explicit types.
-  It does not reuse existing bindings in the same scope.
+- `:=` declares each new non-blank binding and assigns names already declared
+  in the same lexical scope. At least one non-blank binding must be new. Names
+  from an outer scope are shadowed rather than assigned. Explicit types are not
+  allowed in a `:=` binding list.
 - Without parentheses, an explicit type applies to the following names until
   another type is written. `bool ok, changed, i32 code = ...;` declares two
   booleans and an integer. Qualifiers and compound types carry forward too.
@@ -80,9 +83,13 @@ introduced in this milestone.
 
 Supported elements are numeric scalars, booleans, characters, raw pointers,
 owning strings, error values, structures, supported fixed arrays, and nested
-tuples. Tuples use value-copy semantics for copyable elements. Arrays copy inline; owning string elements are deep-copied whenever
-ownership is duplicated. Deferred tuple arguments also receive independent
-copies. Discarded owning elements and tuple results are cleaned up.
+tuples. A tuple is copyable when all its elements are copyable. Those tuples
+use value-copy semantics; owning strings are deep-copied whenever ownership is
+duplicated, including in deferred snapshots. A tuple containing a noncopyable
+but movable structure instead moves as a complete value on initialization,
+assignment, by-value argument or return, discard, and complete destructuring.
+Its source becomes unavailable until reassigned. Discarded or ignored owning
+elements are destroyed exactly once.
 
 An expected `string` element accepts a string literal or view by copying it:
 
@@ -92,10 +99,13 @@ An expected `string` element accepts a string literal or view by copying it:
 owned := ("hello".string(), 42);
 ```
 
-Inferred `("hello", 42)` would contain `stringv`, so it is rejected. References,
-slices, and string views cannot be tuple elements yet: stored borrowed values
-need lifetime contracts. Arrays/slices of tuples are also deferred. Raw pointers
-retain their unsafe lifetime contract.
+Inferred `("hello", 42)` would contain `stringv`, so it is rejected. References
+and slices may appear in a flat function-result tuple covered by an explicit
+`<- parameter>` contract, but that result must be immediately destructured;
+see [reference and slice returns](ref_and_slice_returns.md). Stored borrowed
+tuples, nested borrowed tuples, and string-view tuple elements remain rejected.
+Arrays/slices of tuples are also deferred. Raw pointers retain their unsafe
+lifetime contract.
 
 `const (i32, bool)` fixes the tuple binding. Reading or destructuring a const
 tuple copies its values into independently writable inferred bindings; explicit
@@ -106,21 +116,24 @@ unsupported, consistent with the existing restriction on borrowing strings.
 `none` zero-initializes an explicitly typed tuple without structures recursively,
 including empty owning strings and null raw pointers. Tuples containing structures
 require construction; their copy, destruction, and immovability rules follow
-[structures](structures.md). Noncopyable tuples cannot be destructured yet. Delayed tuple initialization uses the
-existing whole-variable definite-assignment rules. Tuples cannot be cast.
+[structures](structures.md). Complete noncopyable tuples can be moved and
+destructured; moving an individual tuple field is not supported. A tuple that
+contains an unsafe-tear value is immovable. Delayed tuple initialization uses
+the existing whole-variable definite-assignment rules. Tuples cannot be cast.
 
 ## Cleanup and ABI
 
-Returning an owning tuple produces an independent result before scope cleanup
-runs. Local tuples, parameters, temporaries, and deferred captures recursively
-release their owning strings. Existing cleanup edges cover returns, fallthrough,
-break, proceed, and outward jumps, including repeated declarations reached by
-backward jumps. Traps retain the existing no-unwind behavior.
+Returning a copyable owning tuple produces an independent result; returning a
+noncopyable movable tuple transfers it. Local tuples, parameters, temporaries,
+and deferred captures recursively release only the ownership they retain.
+Existing cleanup edges cover returns, fallthrough, break, proceed, and outward
+jumps, including repeated declarations reached by backward jumps. Traps retain
+the existing no-unwind behavior.
 
 The internal LLVM representation is a non-packed struct whose fields follow
-source order. Nested tuples remain nested structs. Flecha functions accept and
-return these aggregates directly in LLVM IR; LLVM lowers them for the native
-target. Padding follows the target data layout. This is an internal Flecha ABI,
+source order. Nested tuples remain nested structs. Results containing a
+structure use caller-provided storage; structure-free tuples use LLVM aggregate
+values. Padding follows the target data layout. This is an internal Flecha ABI,
 not a promised C struct ABI or stable cross-version binary interface. No foreign
 aggregate interoperability is introduced.
 

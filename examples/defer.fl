@@ -2,6 +2,9 @@
 void report(i32 value) { stdoutln(value); }
 void set_answer(&i32 value) { *value = 42; }
 unsafe void write_pointer(*i32 value, i32 next) { *value = next; }
+func Reporter(i32) => ();
+structure Writer { i32 value; };
+void Writer::flush(&const self) { stdoutln(self->value); }
 
 i32 main() {
     i32 captured = 10;
@@ -17,6 +20,22 @@ i32 main() {
         defer report(i + 3);
         proceed; // Prints 3 on the first iteration, then 4.
     }
+
+    {
+        offset := 1;
+        Reporter callback = [copy offset](value) => {
+            report(value + offset);
+        };
+        defer callback(4);
+        // callback moved into the deferred record and is unavailable here.
+    } // Prints 5 and destroys the closure environment exactly once.
+
+    Writer writer = none;
+    writer.value = 6;
+    {
+        defer writer.flush();
+        // The shared receiver borrow holds until this block ends.
+    } // Prints 6.
 
     i32 answer = 0;
     {
