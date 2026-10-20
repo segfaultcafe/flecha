@@ -181,6 +181,39 @@ TEST(ParserTests, ParsesOnceCallableSignaturesAndLiterals) {
     EXPECT_TRUE(literal.Function().HasModifier(FunctionModifier::Once));
 }
 
+TEST(ParserTests, ReportsDuplicateCallableModifiersAtExactRanges) {
+    struct Case final {
+        std::string source;
+        std::string message;
+        std::string duplicate;
+    };
+    const std::vector<Case> cases{
+        {"once once func Task() => ();", "duplicate callable modifier 'once'",
+         "once"},
+        {"unsafe unsafe func Task() => ();",
+         "duplicate callable modifier 'unsafe'", "unsafe"},
+        {"func Task() => (); void main() { "
+         "Task task = once once []() => () {}; }",
+         "duplicate anonymous function modifier 'once'", "once"},
+        {"unsafe func Task() => (); void main() { "
+         "Task task = unsafe unsafe []() => () {}; }",
+         "duplicate anonymous function modifier 'unsafe'", "unsafe"},
+    };
+
+    for (const Case& test : cases) {
+        DiagnosticBag diagnostics;
+        ParseSource(test.source, diagnostics);
+
+        ASSERT_EQ(diagnostics.Diagnostics().size(), 1) << test.source;
+        const Diagnostic& diagnostic = diagnostics.Diagnostics().front();
+        EXPECT_EQ(diagnostic.code, DiagnosticCode::UnexpectedToken);
+        EXPECT_EQ(diagnostic.message, test.message);
+        EXPECT_EQ(diagnostic.range.start.offset,
+                  test.source.rfind(test.duplicate));
+        EXPECT_EQ(diagnostic.range.Length(), test.duplicate.size());
+    }
+}
+
 TEST(ParserTests, ParsesGenericCallableSignatures) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

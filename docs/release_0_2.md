@@ -123,7 +123,8 @@ Linux x86-64, Windows x86-64, macOS x86-64, and macOS arm64.
 
 The implemented callable foundation is necessary but is not the complete
 v0.2.0 feature boundary. The release also requires the following four stages,
-in dependency order.
+in dependency order, followed by the implemented single-use callable stretch
+item.
 
 7. **Generalized owning captures — implemented
    ([#64](https://github.com/segfaultcafe/flecha/issues/64)).** `own` must
@@ -155,14 +156,15 @@ in dependency order.
    func Transform<T, U>(T) => (U);
    ```
 
-9. **Standard-library callback algorithms — required
+9. **Standard-library callback algorithms — implemented
    ([#68](https://github.com/segfaultcafe/flecha/issues/68)).** The standard
    library must provide `for_each`, `find_if`, and `fold` over slices. These
    APIs accept named functions, captureless anonymous functions, and capturing
    closures through generic callable signatures. Their callable ownership,
    element and accumulator constraints, safety propagation, and borrow
-   contracts must be explicit. End-to-end tests and runnable examples cover
-   every callable form.
+   contracts are explicit. End-to-end tests and
+   `examples/callback_algorithms.fl` cover named functions, captureless
+   inferred literals, capturing closures, and comparator closures.
 
 10. **Deferred indirect and member calls — implemented
     ([#65](https://github.com/segfaultcafe/flecha/issues/65)).** `defer` must

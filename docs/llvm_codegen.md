@@ -25,7 +25,10 @@ end-to-end test suites:
   view operations, output, and deterministic cleanup;
 - raw pointers, checked references, fixed arrays, checked slices, tuples, error
   values, enums and exhaustive matches, and structures with lifecycle hooks;
-- direct deferred calls and cleanup on the supported scope-exit edges;
+- named and anonymous callable values, heap-backed closure environments,
+  generic and single-use callable signatures, and indirect calls;
+- direct, indirect, and member deferred calls with cleanup on the supported
+  scope-exit edges;
 - system allocation, runtime-sized arrays, typed destruction, and `free`;
 - concrete generic specializations produced before semantic analysis; and
 - target-width `isize` and `usize`, C ABI integer extension attributes for

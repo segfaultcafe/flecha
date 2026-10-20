@@ -1,0 +1,54 @@
+// Build from the repository root:
+// build/flecha build examples/callback_algorithms.fl \
+//     --lib std=std/src -o /tmp/flecha-callback-algorithms
+// Returns 42 after exercising every v0.2.0 callback form.
+
+module callback_algorithms;
+
+@imports
+    :: lib::std::containers::algorithms;
+
+bool is_greater_than_two(&const i32 value) {
+    return *value > 2;
+}
+
+i32 main() {
+    [4]i32 values = [1, 2, 3, 4];
+
+    // Named function.
+    index, found :=
+        algorithms::find_if<i32>(values[:], is_greater_than_two);
+    if !found or index != 2 {
+        return 1;
+    }
+
+    // Captureless, contextually inferred anonymous function.
+    total := algorithms::fold<i32, i32>(
+        values[:],
+        0,
+        (sum, value) => { return sum + *value; }
+    );
+    if total != 10 {
+        return 2;
+    }
+
+    // Capturing anonymous function.
+    i32 visited = 0;
+    algorithms::for_each<i32>(values[:], [&visited](value) => {
+        visited = visited + *value;
+    });
+    if visited != 10 {
+        return 3;
+    }
+
+    // Captureless comparator.
+    algorithms::sort_by<i32>(values[:], (left, right) => {
+        return *left > *right;
+    });
+    if values[0] != 4 or values[1] != 3 or
+        values[2] != 2 or values[3] != 1 {
+        return 4;
+    }
+
+    return 42;
+}
