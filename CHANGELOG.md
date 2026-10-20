@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-20
+
+Flecha 0.2.0 introduces callable values and closures with explicit ownership,
+generic and single-use callable signatures, first-class language tests, scoped
+module visibility, and broader standard-library containers and I/O support.
+
 ### Language
 
 - Added single-use `once func` callable types and `once` anonymous functions.
