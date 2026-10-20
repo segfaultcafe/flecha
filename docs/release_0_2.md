@@ -150,7 +150,7 @@ in dependency order.
    contracts must be explicit. End-to-end tests and runnable examples cover
    every callable form.
 
-10. **Deferred indirect and member calls — required
+10. **Deferred indirect and member calls — implemented
     ([#65](https://github.com/segfaultcafe/flecha/issues/65)).** `defer` must
     accept calls through callable values and methods. The callee, receiver, and
     arguments follow one documented registration-time evaluation rule, remain
