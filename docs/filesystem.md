@@ -38,11 +38,13 @@ string before passing its address, and the runtime either transfers exactly one
 compatible allocation into that slot or leaves it empty. Generated string
 cleanup therefore owns and destroys the result exactly once.
 
-`export error write_file(stringv path, []const u8 contents)` creates or
-truncates a file, writes the complete byte slice, flushes it, and closes it.
-Opening, writing, flushing, and closing failures are returned to the caller.
-Empty slices create an empty file, and binary data is written without newline
-or encoding conversion.
+`export error write_file(stringv path, stringv contents)` creates or truncates
+a file, writes the complete string view, flushes it, and closes it. String
+literals can be written directly, and embedded null bytes are preserved.
+`write_bytes` provides the same operation for `[]const u8` buffers. Opening,
+writing, flushing, and closing failures are returned to the caller. Empty
+inputs create an empty file, and data is written without newline or encoding
+conversion.
 
 `exists` returns `(false, none)` when a path is absent and reserves errors for
 invalid paths or operating-system failures. `remove_file` removes files but not
@@ -51,6 +53,11 @@ replacement rules when the destination already exists. `create_directory`
 creates one directory level with permissions filtered through the process
 umask on POSIX. It reports `AlreadyExists` for an existing path and `NotFound`
 when a parent component is missing.
+
+`metadata` returns a `Metadata` value containing `FileType.Other`,
+`FileType.File`, or `FileType.Directory`. Symbolic links are followed. Regular
+file sizes are reported in bytes; directories and other entry types have size
+zero. A missing path reports `NotFound`.
 
 `remove_directory(path, false)` removes an empty directory and reports
 `DirectoryNotEmpty` when it still contains entries. Passing `true` recursively

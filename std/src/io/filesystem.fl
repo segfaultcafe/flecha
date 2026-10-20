@@ -6,6 +6,36 @@ module filesystem;
     :: root::io::utils
     :: root::io::runtime;
 
+export enum FileType: u8 {
+    default Other,
+    File,
+    Directory,
+}
+
+u8 FileType::number(&const self) {
+    return match *self {
+        FileType.Other => 0,
+        FileType.File => 1,
+        FileType.Directory => 2,
+    };
+}
+
+FileType FileType::fromNumber(u8 number) {
+    if number == 1 {
+        return FileType.File;
+    }
+    if number == 2 {
+        return FileType.Directory;
+    }
+
+    return FileType.Other;
+}
+
+export structure Metadata {
+    FileType type;
+    u64 size;
+};
+
 export (string, error) read_file(stringv path) {
     string output = none;
     unsafe {
@@ -24,7 +54,26 @@ export (string, error) read_file(stringv path) {
     return (output, none);
 }
 
-export error write_file(stringv path, []const u8 contents) {
+export error write_file(stringv path, stringv contents) {
+    output, err := file::File::open(path, file::OpenOptions::writeOnly());
+    if err != none {
+        return err;
+    }
+
+    err = output.writeAllString(contents);
+    if err != none {
+        return err;
+    }
+
+    err = output.flush();
+    if err != none {
+        return err;
+    }
+
+    return output.close();
+}
+
+export error write_bytes(stringv path, []const u8 contents) {
     output, err := file::File::open(path, file::OpenOptions::writeOnly());
     if err != none {
         return err;
@@ -60,6 +109,31 @@ export (bool, error) exists(stringv path) {
     }
 
     return (present != 0, none);
+}
+
+export (Metadata, error) metadata(stringv path) {
+    meta := Metadata::init();
+    unsafe {
+        u8 typeNumber = 0;
+        u64 size = 0;
+
+        i32 status = runtime::flecha_runtime_v1_metadata(
+            &raw typeNumber,
+            &raw size,
+            path.data(),
+            path.len().cast<usize>
+        );
+
+        err := errors::from_runtime(status, errors::IoError.MetadataFailed);
+        if err != none {
+            return (none, err);
+        }
+
+        meta.type = FileType::fromNumber(typeNumber);
+        meta.size = size;
+    }
+
+    return (meta, none);
 }
 
 export error remove_file(stringv path) {

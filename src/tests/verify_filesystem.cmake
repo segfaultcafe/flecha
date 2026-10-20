@@ -29,6 +29,11 @@ i32 main() {
     if text_error != none or text != \"flecha\\n\" {
         return 1;
     }
+    text_info, text_metadata_error := filesystem::metadata(\"${textPath}\");
+    if text_metadata_error != none or
+        text_info.type != filesystem::FileType.File or text_info.size != 7 {
+        return 32;
+    }
 
     empty, empty_error := filesystem::read_file(\"${emptyPath}\");
     if empty_error != none or empty.len() != 0 {
@@ -46,8 +51,16 @@ i32 main() {
         return 4;
     }
 
+    if filesystem::write_file(\"${writePath}\", \"hi mom\") != none {
+        return 35;
+    }
+    message, message_error := filesystem::read_file(\"${writePath}\");
+    if message_error != none or message != \"hi mom\" {
+        return 36;
+    }
+
     [4]u8 bytes = [65, 0, 66, 10];
-    if filesystem::write_file(\"${writePath}\", bytes[:]) != none {
+    if filesystem::write_bytes(\"${writePath}\", bytes[:]) != none {
         return 5;
     }
     written, written_error := filesystem::read_file(\"${writePath}\");
@@ -58,7 +71,7 @@ i32 main() {
     }
 
     [0]u8 no_bytes = none;
-    if filesystem::write_file(\"${writePath}\", no_bytes[:]) != none {
+    if filesystem::write_bytes(\"${writePath}\", no_bytes[:]) != none {
         return 7;
     }
     truncated, truncated_error := filesystem::read_file(\"${writePath}\");
@@ -66,7 +79,7 @@ i32 main() {
         return 8;
     }
 
-    if filesystem::write_file(invalid_path.view(), no_bytes[:]) !=
+    if filesystem::write_bytes(invalid_path.view(), no_bytes[:]) !=
         errors::IoError.InvalidPath {
         return 9;
     }
@@ -86,6 +99,14 @@ i32 main() {
     if filesystem::create_directory(\"${createdDirectory}\") != none {
         return 11;
     }
+    directory_info, directory_metadata_error := filesystem::metadata(
+        \"${createdDirectory}\"
+    );
+    if directory_metadata_error != none or
+        directory_info.type != filesystem::FileType.Directory or
+        directory_info.size != 0 {
+        return 33;
+    }
     if filesystem::create_directory(\"${createdDirectory}\") !=
         errors::IoError.AlreadyExists {
         return 12;
@@ -99,7 +120,7 @@ i32 main() {
         return 13;
     }
 
-    if filesystem::write_file(\"${renameSource}\", bytes[:]) != none {
+    if filesystem::write_bytes(\"${renameSource}\", bytes[:]) != none {
         return 14;
     }
     if filesystem::rename(\"${renameSource}\", \"${renameDestination}\") != none {
@@ -149,7 +170,7 @@ i32 main() {
     }
 
     if filesystem::create_directory(\"${createdDirectory}\") != none or
-        filesystem::write_file(\"${renameSource}\", bytes[:]) != none {
+        filesystem::write_bytes(\"${renameSource}\", bytes[:]) != none {
         return 29;
     }
     if filesystem::remove_directory(\"${createdDirectory}\", true) != none {
@@ -158,6 +179,12 @@ i32 main() {
     present, exists_error = filesystem::exists(\"${createdDirectory}\");
     if exists_error != none or present {
         return 31;
+    }
+
+    missing_info, missing_metadata_error := filesystem::metadata(\"${missingPath}\");
+    if missing_metadata_error != errors::IoError.NotFound or
+        missing_info.type != filesystem::FileType.Other or missing_info.size != 0 {
+        return 34;
     }
 
     return 42;

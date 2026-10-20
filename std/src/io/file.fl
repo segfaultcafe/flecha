@@ -197,6 +197,52 @@ error File::writeAll(&self, []const u8 source) {
     return none;
 }
 
+(usize, error) File::writeString(&self, stringv source) {
+    if self->handle == null {
+        return (none, errors::IoError.Closed);
+    }
+
+    usize bytesWritten = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_file_stream_write(
+            self->handle,
+            source.data(),
+            source.len().cast<usize>,
+            &raw bytesWritten
+        );
+
+        err := errors::from_runtime(status, errors::IoError.WriteFailed);
+        if err != none {
+            return (bytesWritten, err);
+        }
+    }
+
+    return (bytesWritten, none);
+}
+
+error File::writeAllString(&self, stringv source) {
+    if self->handle == null {
+        return errors::IoError.Closed;
+    }
+
+    u32 offset = 0;
+    while offset < source.len() {
+        written, err := self->writeString(
+            source.substr(offset, source.len() - offset)
+        );
+        if err != none {
+            return err;
+        }
+        if written == 0 {
+            return errors::IoError.WriteFailed;
+        }
+
+        offset = offset + written.cast<u32>;
+    }
+
+    return none;
+}
+
 (u64, error) File::seek(&self, i64 offset, SeekFrom origin) {
     if self->handle == null {
         return (none, errors::IoError.Closed);

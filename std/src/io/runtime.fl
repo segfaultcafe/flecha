@@ -76,3 +76,10 @@ export extern unsafe i32 flecha_runtime_v1_remove_directory(
     u8 force,
     u8 recursive
 );
+
+export extern unsafe i32 flecha_runtime_v1_metadata(
+    *u8 output_type,
+    *u64 output_size,
+    *const char path,
+    usize path_length
+);

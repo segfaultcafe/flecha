@@ -21,6 +21,7 @@ export error IoError {
     CreateDirectoryFailed,
     RemoveDirectoryFailed,
     DirectoryNotEmpty,
+    MetadataFailed,
 }
 
 quiver error from_runtime(i32 status, IoError fallback) {

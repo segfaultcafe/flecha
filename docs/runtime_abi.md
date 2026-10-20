@@ -68,11 +68,15 @@ maps those codes to `IoError` or `AllocationError.OutOfMemory`.
 
 ## Filesystem paths
 
-The `flecha_runtime_v1_path_exists`, `remove_file`, `rename`, and
+The `flecha_runtime_v1_path_exists`, `metadata`, `remove_file`, `rename`, and
 `create_directory` entry points use the same explicit path representation and
 platform conversion as `read_file`. Existence checks report a missing path as
-successful false. Mutations report missing paths as `NotFound`; exclusive
-directory creation reports an existing path as `AlreadyExists`.
+successful false. Metadata follows symbolic links and reports type `0` for
+other entries, `1` for regular files, and `2` for directories. Its size output
+is the regular-file byte length and zero for other types. Both metadata outputs
+are cleared before path validation. Mutations report missing paths as
+`NotFound`; exclusive directory creation reports an existing path as
+`AlreadyExists`.
 
 The filesystem status table matches the file-stream table: success `0`, not
 found `1`, permission denied `2`, invalid path `3`, already exists `4`, too

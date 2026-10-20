@@ -8,6 +8,7 @@
 #include <limits>
 #include <new>
 #include <system_error>
+#include <utility>
 
 #include "runtime/runtime_abi.h"
 
@@ -332,6 +333,58 @@ extern "C" int32_t flecha_runtime_v1_path_exists(uint8_t* output,
     }
     return IsMissingError(operationError) ? FLECHA_RUNTIME_FILESYSTEM_OK
                                           : MapFilesystemError(operationError);
+}
+
+extern "C" int32_t flecha_runtime_v1_metadata(uint8_t* outputType,
+                                              uint64_t* outputSize,
+                                              const char* path,
+                                              size_t pathLength) {
+    if (outputType == nullptr || outputSize == nullptr)
+        return FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS;
+    *outputType = 0;
+    *outputSize = 0;
+
+    NativePathCharacter* nativePath = nullptr;
+    const int32_t pathStatus = CopyNativePath(path, pathLength, &nativePath);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) return pathStatus;
+
+    int result = 0;
+#ifdef _WIN32
+    struct _stat64 information{};
+    do {
+        errno = 0;
+        result = _wstat64(nativePath, &information);
+    } while (result != 0 && errno == EINTR);
+#else
+    struct stat information{};
+    do {
+        errno = 0;
+        result = ::stat(nativePath, &information);
+    } while (result != 0 && errno == EINTR);
+#endif
+    const int operationError = errno;
+    std::free(nativePath);
+    if (result != 0) return MapFilesystemError(operationError);
+
+#ifdef _WIN32
+    const int entryType = information.st_mode & _S_IFMT;
+    const bool isFile = entryType == _S_IFREG;
+    const bool isDirectory = entryType == _S_IFDIR;
+#else
+    const bool isFile = S_ISREG(information.st_mode);
+    const bool isDirectory = S_ISDIR(information.st_mode);
+#endif
+
+    if (isFile) {
+        if (information.st_size < 0) return FLECHA_RUNTIME_FILESYSTEM_FAILED;
+        if (!std::in_range<uint64_t>(information.st_size))
+            return FLECHA_RUNTIME_FILESYSTEM_TOO_LARGE;
+        *outputType = 1;
+        *outputSize = static_cast<uint64_t>(information.st_size);
+    } else if (isDirectory) {
+        *outputType = 2;
+    }
+    return FLECHA_RUNTIME_FILESYSTEM_OK;
 }
 
 extern "C" int32_t flecha_runtime_v1_remove_file(const char* path,

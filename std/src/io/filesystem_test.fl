@@ -18,17 +18,23 @@ test read_file_rejects_invalid_paths(&testing::UnitTest t) {
 }
 
 test write_file_rejects_invalid_paths_without_creating_files(&testing::UnitTest t) {
-    [0]u8 empty = none;
-    emptyError := filesystem::write_file("", empty[:]);
+    emptyError := filesystem::write_file("", "");
     asserts::is_true(t, emptyError == errors::IoError.InvalidPath, "an empty path is invalid");
 
     string embeddedNullPath = "bad" + '\0'.string() + "path";
-    [3]u8 bytes = [1, 2, 3];
-    embeddedNullError := filesystem::write_file(embeddedNullPath.view(), bytes[:]);
+    embeddedNullError := filesystem::write_file(embeddedNullPath.view(), "contents");
     asserts::is_true(
         t,
         embeddedNullError == errors::IoError.InvalidPath,
-        "an embedded null is invalid"
+        "write_file rejects an embedded null"
+    );
+
+    [3]u8 bytes = [1, 2, 3];
+    embeddedNullError = filesystem::write_bytes(embeddedNullPath.view(), bytes[:]);
+    asserts::is_true(
+        t,
+        embeddedNullError == errors::IoError.InvalidPath,
+        "write_bytes rejects an embedded null"
     );
 }
 
@@ -39,6 +45,18 @@ test path_operations_reject_invalid_paths(&testing::UnitTest t) {
         t,
         existsError == errors::IoError.InvalidPath,
         "exists rejects an empty path"
+    );
+
+    info, metadataError := filesystem::metadata("");
+    asserts::is_true(
+        t,
+        metadataError == errors::IoError.InvalidPath,
+        "metadata rejects an empty path"
+    );
+    asserts::is_true(
+        t,
+        info.type == filesystem::FileType.Other and info.size == 0,
+        "failed metadata is empty"
     );
 
     string embeddedNullPath = "bad" + '\0'.string() + "path";

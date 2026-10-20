@@ -216,6 +216,17 @@ TEST_F(RuntimeFilesystemMutationTests, RejectsInvalidPathsAndOutputs) {
     EXPECT_EQ(present, 0);
     EXPECT_EQ(flecha_runtime_v1_path_exists(nullptr, "path", 4),
               FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+    uint8_t type = 99;
+    uint64_t size = 99;
+    EXPECT_EQ(
+        flecha_runtime_v1_metadata(&type, &size, invalid, sizeof(invalid)),
+        FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(type, 0);
+    EXPECT_EQ(size, 0u);
+    EXPECT_EQ(flecha_runtime_v1_metadata(nullptr, &size, "path", 4),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+    EXPECT_EQ(flecha_runtime_v1_metadata(&type, nullptr, "path", 4),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
     present = 99;
     EXPECT_EQ(flecha_runtime_v1_path_exists(&present, nullptr, 0),
               FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
@@ -241,6 +252,41 @@ TEST_F(RuntimeFilesystemMutationTests, RejectsInvalidPathsAndOutputs) {
               FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
     EXPECT_EQ(flecha_runtime_v1_remove_directory("path", 4, 0, 2),
               FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+}
+
+TEST_F(RuntimeFilesystemMutationTests, ReportsFileAndDirectoryMetadata) {
+    ASSERT_TRUE(std::filesystem::create_directory(Root()));
+    const auto filePath = Root() / "data.bin";
+    const std::array<char, 4> contents{'A', '\0', 'B', '\n'};
+    {
+        std::ofstream file(filePath, std::ios::binary);
+        ASSERT_TRUE(file.good());
+        file.write(contents.data(),
+                   static_cast<std::streamsize>(contents.size()));
+    }
+
+    uint8_t type = 99;
+    uint64_t size = 99;
+    const std::string file = filePath.string();
+    EXPECT_EQ(
+        flecha_runtime_v1_metadata(&type, &size, file.data(), file.size()),
+        FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(type, 1);
+    EXPECT_EQ(size, contents.size());
+
+    const std::string directory = Root().string();
+    EXPECT_EQ(flecha_runtime_v1_metadata(&type, &size, directory.data(),
+                                         directory.size()),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(type, 2);
+    EXPECT_EQ(size, 0u);
+
+    const std::string missing = (Root() / "missing").string();
+    EXPECT_EQ(flecha_runtime_v1_metadata(&type, &size, missing.data(),
+                                         missing.size()),
+              FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND);
+    EXPECT_EQ(type, 0);
+    EXPECT_EQ(size, 0u);
 }
 
 TEST_F(RuntimeFilesystemMutationTests, RemovesEmptyAndRecursiveDirectories) {
