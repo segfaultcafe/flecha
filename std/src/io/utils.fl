@@ -1,6 +1,6 @@
 private module utils;
 
-export u8 bool_byte(bool value) {
+quiver u8 bool_byte(bool value) {
     if value {
         return 1;
     }
