@@ -59,7 +59,7 @@ i32 main() {
         return 36;
     }
 
-    [4]u8 bytes = [65, 0, 66, 10];
+    [4]u8 bytes = ['A', 0, 'B', '\\n'];
     if filesystem::write_bytes(\"${writePath}\", bytes[:]) != none {
         return 5;
     }

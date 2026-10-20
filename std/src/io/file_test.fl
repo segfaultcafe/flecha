@@ -137,6 +137,18 @@ test closed_files_reject_every_operation(&testing::UnitTest t) {
         closed.writeAll(empty[:]) == errors::IoError.Closed,
         "writeAll rejects a closed File"
     );
+    stringv emptyText = "";
+    stringBytesWritten, stringWriteError := closed.writeString(emptyText);
+    asserts::is_true(
+        t,
+        stringBytesWritten == 0 and stringWriteError == errors::IoError.Closed,
+        "writeString rejects a closed File"
+    );
+    asserts::is_true(
+        t,
+        closed.writeAllString(emptyText) == errors::IoError.Closed,
+        "writeAllString rejects a closed File"
+    );
 
     position, seekError := closed.seek(0, file::SeekFrom.Start);
     asserts::is_true(
