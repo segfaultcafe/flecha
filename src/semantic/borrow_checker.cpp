@@ -445,21 +445,53 @@ class BorrowChecker final {
             }
         }
         if (node.deferRegistration != nullptr) {
-            const auto& call = static_cast<const core::CallExpression&>(
-                Unwrap(node.deferRegistration->Call()));
+            const core::Expression& deferred =
+                Unwrap(node.deferRegistration->Call());
+            std::vector<const core::Expression*> operands;
+            if (deferred.Kind() == Kind::CallExpression) {
+                const auto& call =
+                    static_cast<const core::CallExpression&>(deferred);
+                bool direct = false;
+                if (call.Callee().Kind() == Kind::NameExpression) {
+                    const Symbol* symbol = _model.SymbolFor(
+                        static_cast<const core::NameExpression&>(
+                            call.Callee()));
+                    direct = symbol != nullptr &&
+                             symbol->Kind() == SymbolKind::Function;
+                }
+                if (!direct) operands.push_back(&call.Callee());
+                for (const auto& argument : call.Arguments())
+                    operands.push_back(argument.get());
+            } else if (deferred.Kind() == Kind::MemberCallExpression) {
+                const auto& call =
+                    static_cast<const core::MemberCallExpression&>(deferred);
+                const FunctionSymbol* method = _model.MethodFor(call);
+                if (method != nullptr && method->HasReceiver())
+                    operands.push_back(&call.Receiver());
+                for (const auto& argument : call.Arguments())
+                    operands.push_back(argument.get());
+            }
             const auto& captures =
                 _model.DeferredCaptures(*node.deferRegistration);
-            for (std::size_t index = 0; index < call.Arguments().size();
-                 ++index) {
-                Value value = Evaluate(*call.Arguments()[index]);
+            for (std::size_t index = 0;
+                 index < operands.size() && index < captures.size(); ++index) {
                 const Symbol* capture = captures[index];
+                const SemanticType operandType =
+                    _model.TypeOf(*operands[index]);
+                Value value =
+                    capture != nullptr && capture->Type().IsBorrowed() &&
+                            (operandType.Kind() ==
+                                 SemanticTypeKind::Structure ||
+                             operandType.Kind() == SemanticTypeKind::Enum)
+                        ? Place(*operands[index])
+                        : Evaluate(*operands[index]);
                 if (capture == nullptr) continue;
-                value = Borrow(std::move(value),
-                               !capture->Type().Target()->IsConst(),
-                               call.Arguments()[index]->Range());
+                if (capture->Type().IsBorrowed())
+                    value = Borrow(std::move(value),
+                                   IsExclusiveBorrow(capture->Type()),
+                                   operands[index]->Range());
                 const Origins previous = state[capture].origins;
-                Store(capture, std::move(value),
-                      call.Arguments()[index]->Range());
+                Store(capture, std::move(value), operands[index]->Range());
                 state[capture].origins.insert(previous.begin(), previous.end());
             }
         }

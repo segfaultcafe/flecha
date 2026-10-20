@@ -680,9 +680,7 @@ class BoundDeferStatement final : public BoundStatement {
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::DeferStatement;
     }
-    [[nodiscard]] const BoundCallExpression& Call() const {
-        return static_cast<const BoundCallExpression&>(*_call);
-    }
+    [[nodiscard]] const BoundExpression& Call() const { return *_call; }
 
    private:
     std::unique_ptr<BoundExpression> _call;

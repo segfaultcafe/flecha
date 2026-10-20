@@ -33,8 +33,9 @@ class LlvmCodeGenerator final {
     struct DeferredCall final {
         const lowering::BoundDeferStatement* statement;
         llvm::StructType* recordType;
-        std::vector<semantic::SemanticType> argumentTypes;
-        std::vector<bool> argumentOwnershipTransfers;
+        std::vector<semantic::SemanticType> captureTypes;
+        std::vector<bool> captureOwnershipTransfers;
+        bool indirect;
     };
     struct OwnedStorage final {
         llvm::Value* storage;
