@@ -1,7 +1,6 @@
 # Logical module composition (0.2.1 correction)
 
-This document defines Flecha's corrected module model for 0.2.1. The feature is
-mandatory for the patch release but is not implemented yet.
+This document defines the logical module model implemented in Flecha 0.2.1.
 
 ## Terms and identity
 
@@ -195,6 +194,6 @@ The compiler must report at least:
 - duplicate explicit source-local aliases; and
 - a logical test module without its same-namespace production module.
 
-These rules supersede the current one-file/one-module behavior described in
-[Modules](modules.md) when 0.2.1 is released. The release gates are defined in
-the [0.2.1 module-correctness milestone](release_0_2_1.md).
+These rules supersede Flecha 0.2.0's one-file/one-module behavior. The delivered
+release contract and validation matrix are recorded in the
+[0.2.1 module-correctness milestone](release_0_2_1.md).

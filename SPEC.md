@@ -901,12 +901,20 @@ The compiler should eventually be self-hosted in Flecha, but self-hosting is not
 
 ## 17. Modules and tooling
 
-Modules declare `module name;`, matching their filename. Import blocks use
-`@imports :: root::path::module :: lib::library::module as alias;`, with a
-multiline form preferred. `root` and `lib` are reserved in import paths.
-`private module name;` restricts importing the module to its quiver. In a
-private module, `export` has quiver visibility rather than global visibility;
-unmarked declarations remain module-only.
+Each `.fl` source unit declares `module name;`. Every source unit with the same
+declared name in the same namespace and source identity contributes to one
+logical module, regardless of filename. Those units share declarations and
+nominal identity, while their `@imports` bindings remain source-local. Import
+blocks use `@imports :: root::path::module :: lib::library::module as alias;`,
+with a multiline form preferred. `root` and `lib` are reserved in import
+paths.
+
+`private module name;` remains accepted with a deprecation warning and
+restricts importing the complete logical module to its quiver. All contributing
+source units must agree on private status. `export` always has global
+declaration visibility, including inside a legacy private module; the module
+import gate still controls whether an outside importer can reach it.
+
 Top-level declarations use `export` for access from every importing module,
 `quiver` for access from modules in the same immediate directory and the same
 source-root or library identity, and no modifier for module-only access.
@@ -915,19 +923,15 @@ structures and enums bundle non-private member functions; member functions do
 not take declaration-visibility modifiers, and private members remain limited
 to methods of the exact owning type. Exported APIs may expose only exported
 nominal types. Quiver APIs may also expose quiver types from the same quiver,
-but never module-private types. Directory imports use
-`root::path::*`
-for immediate module files or `root::path::{first, second}` for selected modules.
-Each imported module retains its namespace. See [modules](docs/modules.md).
+but never module-private types.
 
-The current implementation described above still couples modules to files and
-downgrades `export` inside a private module. The immediate
-[0.2.1 module-correctness milestone](docs/release_0_2_1.md) replaces that model
-with filename-independent logical modules, source-local imports, stable
-declaration visibility, deprecated module-wide private imports, and logical
-test-module pairing. Distinct same-named imports will overlap under one local
-namespace, with collisions diagnosed at the member use site and explicit
-aliases providing isolation.
+Directory imports use `root::path::*` for immediate declared logical modules or
+`root::path::{first, second}` for selected declared module names. Distinct
+same-named imports overlap under one local namespace, with collisions diagnosed
+at the member use site; explicit aliases provide isolation. Repeated imports of
+the same canonical logical module are deduplicated. See
+[modules](docs/modules.md), [logical module composition](docs/module_composition.md),
+and the [0.2.1 module correction](docs/release_0_2_1.md).
 
 Longbow provides project creation, local checking/building, and execution:
 `longbow new hello`, `longbow check`, `longbow build`, and `longbow run`.
@@ -1035,9 +1039,10 @@ runtime-sized arrays, checked slices, structures and lifecycle hooks, explicit
 generics, callable values and closures, single-use callables, raw allocation,
 ownership contracts, and direct, indirect, and member deferred calls. Modules
 support global, quiver, and module-private visibility. Flecha and Longbow also
-discover and run paired `_test.fl` modules through first-class `test`
-declarations. The linked feature documents define the exact supported forms and
-diagnostics.
+discover and run logical `<name>_test` modules through first-class `test`
+declarations. Test module identity comes from the declaration rather than the
+filename, and several source units may contribute tests to one module. The
+linked feature documents define the exact supported forms and diagnostics.
 
 The [Flecha 0.3.0 milestone](docs/release_0_3.md) expands the standard library
 and its narrow runtime foundations without implying that these larger

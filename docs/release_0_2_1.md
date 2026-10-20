@@ -1,9 +1,8 @@
 # Flecha 0.2.1 module-correctness milestone
 
-Flecha 0.2.1 is an immediate patch release correcting the meaning of modules.
-The current compiler conflates a source file with a module. That coupling makes
-module identity, visibility, imports, and tests depend on filenames in ways
-that are not part of the language model.
+Flecha 0.2.1 corrects the meaning of modules. Flecha 0.2.0 conflated a source
+file with a module, making module identity, visibility, imports, and tests
+depend on filenames in ways that were not part of the language model.
 
 This is a correctness fix rather than a new syntax wave.
 
@@ -146,7 +145,7 @@ structure or enum members, does not re-export privileged declarations, and
 does not make imports module-wide. A test source unit must still import every
 external namespace it uses.
 
-## Required implementation work
+## Implementation delivered
 
 1. Index module headers by source identity, namespace, and declared module
    name instead of resolving imports directly to `<name>.fl`.
@@ -173,10 +172,10 @@ external namespace it uses.
 0.2.1 does not add re-exports, cyclic module dependencies, binary module
 interfaces, nested module syntax, or implicit sharing of imports.
 
-## Release condition
+## Release validation
 
-0.2.1 is ready when parser, loader, semantic, visibility, generic,
-test-discovery, lowering, native-linking, and installed-package tests cover:
+The parser, loader, semantic, visibility, generic, test-discovery, lowering,
+native-linking, and installed-package suites cover:
 
 - two or more source units composing one ordinary logical module;
 - module-private access in both directions across source units;
