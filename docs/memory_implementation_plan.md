@@ -138,8 +138,8 @@ The first milestone may conservatively reject otherwise valid lifetime patterns.
 
 Implementation branch: `feat/defer`. Depends on: 2 and 3.
 
-Implemented behavior and limits: [deferred calls](defer.md). Direct function
-calls are supported; deferred receiver/member calls remain future work.
+Implemented behavior and limits: [deferred calls](defer.md). Direct functions,
+callable values, and resolved structure or enum methods are supported.
 
 - Add `defer call(...);`, initially limited to statically resolved calls. Define
   argument capture at registration, reverse registration order, and

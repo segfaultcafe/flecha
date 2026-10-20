@@ -571,12 +571,27 @@ bool LlvmCodeGenerator::EmitDefer(
     while (scope.deferredCalls[site].statement != &statement) ++site;
     const DeferredCall& deferred = scope.deferredCalls[site];
     const auto& call = statement.Call();
+    std::vector<const lowering::BoundExpression*> captures;
+    if (call.Kind() == lowering::BoundNodeKind::CallExpression) {
+        const auto& direct =
+            static_cast<const lowering::BoundCallExpression&>(call);
+        for (const auto& argument : direct.Arguments())
+            captures.push_back(argument.get());
+    } else if (call.Kind() == lowering::BoundNodeKind::IndirectCallExpression) {
+        const auto& indirect =
+            static_cast<const lowering::BoundIndirectCallExpression&>(call);
+        captures.push_back(&indirect.Callee());
+        for (const auto& argument : indirect.Arguments())
+            captures.push_back(argument.get());
+    } else {
+        return Fail("unsupported deferred call");
+    }
     std::vector<llvm::Value*> captured;
-    for (std::size_t index = 0; index < call.Arguments().size(); ++index) {
-        const auto& argument = *call.Arguments()[index];
+    for (std::size_t index = 0; index < captures.size(); ++index) {
+        const auto& argument = *captures[index];
         llvm::Value* value = EmitExpression(argument);
         if (value == nullptr) return false;
-        const auto type = deferred.argumentTypes[index];
+        const auto type = deferred.captureTypes[index];
         // Views also receive an owned snapshot, so later mutation/destruction
         // of the original string cannot invalidate a pending deferred call.
         if (type.Kind() == semantic::SemanticTypeKind::String ||
@@ -587,7 +602,7 @@ bool LlvmCodeGenerator::EmitDefer(
         if (value == nullptr) return false;
         if ((type.Kind() == semantic::SemanticTypeKind::Tuple ||
              type.ContainsStructure()) &&
-            !deferred.argumentOwnershipTransfers[index])
+            !deferred.captureOwnershipTransfers[index])
             value = EmitValueCopy(value, type, false);
         captured.push_back(value);
     }
@@ -649,10 +664,11 @@ bool LlvmCodeGenerator::EmitDeferredCalls(const CleanupScope& scope) {
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(_context), site),
             invoke);
         _builder.SetInsertPoint(invoke);
-        std::vector<llvm::Value*> arguments, strings;
-        for (std::size_t index = 0; index < deferred.argumentTypes.size();
+        std::vector<llvm::Value*> captured, strings;
+        llvm::Value* retainedCallable = nullptr;
+        for (std::size_t index = 0; index < deferred.captureTypes.size();
              ++index) {
-            const auto type = deferred.argumentTypes[index];
+            const auto type = deferred.captureTypes[index];
             const bool string =
                 type.Kind() == semantic::SemanticTypeKind::String ||
                 type.Kind() == semantic::SemanticTypeKind::StringView;
@@ -668,39 +684,76 @@ bool LlvmCodeGenerator::EmitDeferredCalls(const CleanupScope& scope) {
                         value, semantic::SemanticType(
                                    semantic::SemanticTypeKind::String));
             }
-            arguments.push_back(value);
+            captured.push_back(value);
         }
-        if (call.Function().BuiltIn() == semantic::BuiltInFunction::Free) {
-            EmitFree(arguments.front(), call.Function().ParameterTypes()[0]);
-        } else if (call.Function().BuiltIn() !=
-                   semantic::BuiltInFunction::None) {
-            if (EmitBuiltInOutput(call, arguments) == nullptr) return false;
+        if (deferred.indirect) {
+            const auto& indirect =
+                static_cast<const lowering::BoundIndirectCallExpression&>(call);
+            const auto& signature = indirect.Callee().Type().Signature();
+            llvm::Value* callable = captured.front();
+            retainedCallable = callable;
+            llvm::Value* target =
+                _builder.CreateExtractValue(callable, 0, "function.invoke");
+            llvm::Value* environment = _builder.CreateExtractValue(
+                callable, 1, "function.environment");
+            std::vector<llvm::Value*> arguments;
+            llvm::AllocaInst* resultStorage = nullptr;
+            if (signature.result.ContainsStructure()) {
+                resultStorage = CreateTemporaryAlloca(MapType(signature.result),
+                                                      "defer.result");
+                arguments.push_back(resultStorage);
+            }
+            arguments.push_back(environment);
+            arguments.insert(arguments.end(), captured.begin() + 1,
+                             captured.end());
+            llvm::Value* result = _builder.CreateCall(
+                MapCallableInvokeType(signature), target, arguments,
+                signature.result.Kind() == semantic::SemanticTypeKind::Void ||
+                        signature.result.ContainsStructure()
+                    ? ""
+                    : "defer.indirect.result");
+            if (resultStorage != nullptr)
+                EmitDestroyAt(resultStorage, signature.result);
+            else
+                EmitValueDestroy(result, signature.result);
         } else {
-            if (call.Type().ContainsStructure()) {
+            const auto& direct =
+                static_cast<const lowering::BoundCallExpression&>(call);
+            if (direct.Function().BuiltIn() ==
+                semantic::BuiltInFunction::Free) {
+                EmitFree(captured.front(),
+                         direct.Function().ParameterTypes()[0]);
+            } else if (direct.Function().BuiltIn() !=
+                       semantic::BuiltInFunction::None) {
+                if (EmitBuiltInOutput(direct, captured) == nullptr)
+                    return false;
+            } else if (direct.Type().ContainsStructure()) {
                 // Construct discarded results in their final storage too:
                 // an unsafe tear may rely on the object's address.
-                llvm::AllocaInst* result =
-                    CreateTemporaryAlloca(MapType(call.Type()), "defer.result");
-                std::vector<llvm::Value*> invocation{result};
-                invocation.insert(invocation.end(), arguments.begin(),
-                                  arguments.end());
-                EmitFunctionCall(call.Function(), invocation);
-                EmitDestroyAt(result, call.Type());
+                llvm::AllocaInst* result = CreateTemporaryAlloca(
+                    MapType(direct.Type()), "defer.result");
+                std::vector<llvm::Value*> arguments{result};
+                arguments.insert(arguments.end(), captured.begin(),
+                                 captured.end());
+                EmitFunctionCall(direct.Function(), arguments);
+                EmitDestroyAt(result, direct.Type());
             } else {
                 llvm::Value* result =
-                    EmitFunctionCall(call.Function(), arguments);
-                EmitValueDestroy(result, call.Type());
+                    EmitFunctionCall(direct.Function(), captured);
+                EmitValueDestroy(result, direct.Type());
             }
         }
-        for (std::size_t i = arguments.size(); i > 0; --i)
-            if ((deferred.argumentTypes[i - 1].Kind() ==
+        const std::size_t firstArgument = deferred.indirect ? 1 : 0;
+        for (std::size_t i = captured.size(); i > firstArgument; --i)
+            if ((deferred.captureTypes[i - 1].Kind() ==
                      semantic::SemanticTypeKind::Tuple ||
-                 deferred.argumentTypes[i - 1].ContainsStructure()) &&
-                !deferred.argumentOwnershipTransfers[i - 1])
-                EmitValueDestroy(arguments[i - 1],
-                                 deferred.argumentTypes[i - 1]);
+                 deferred.captureTypes[i - 1].ContainsStructure()) &&
+                !deferred.captureOwnershipTransfers[i - 1])
+                EmitValueDestroy(captured[i - 1], deferred.captureTypes[i - 1]);
         for (auto string = strings.rbegin(); string != strings.rend(); ++string)
             EmitStringDestroy(*string);
+        if (retainedCallable != nullptr)
+            EmitValueDestroy(retainedCallable, deferred.captureTypes.front());
         _builder.CreateBr(check);
     }
     _builder.SetInsertPoint(invalid);
@@ -1583,30 +1636,49 @@ void LlvmCodeGenerator::CollectPositionScopePaths(
         const auto& deferred =
             static_cast<const lowering::BoundDeferStatement&>(*statement);
         const auto& call = deferred.Call();
-        std::vector<semantic::SemanticType> argumentTypes;
-        std::vector<bool> argumentOwnershipTransfers;
+        std::vector<semantic::SemanticType> captureTypes;
+        std::vector<bool> captureOwnershipTransfers;
         std::vector<llvm::Type*> fields{llvm::PointerType::getUnqual(_context),
                                         llvm::Type::getInt32Ty(_context)};
-        for (std::size_t index = 0; index < call.Arguments().size(); ++index) {
-            const semantic::SemanticType type =
-                call.Function().BuiltIn() == semantic::BuiltInFunction::None
-                    ? call.Function().ParameterTypes()[index]
-                    : call.Arguments()[index]->Type();
-            argumentTypes.push_back(type);
-            argumentOwnershipTransfers.push_back(
-                call.Arguments()[index]->Kind() ==
-                    lowering::BoundNodeKind::MoveExpression ||
-                call.Arguments()[index]->Kind() ==
-                    lowering::BoundNodeKind::DirectExpression);
+        const auto addCapture = [&](const lowering::BoundExpression& expression,
+                                    semantic::SemanticType type) {
+            captureTypes.push_back(type);
+            captureOwnershipTransfers.push_back(
+                expression.Kind() == lowering::BoundNodeKind::MoveExpression ||
+                expression.Kind() == lowering::BoundNodeKind::DirectExpression);
             fields.push_back(
                 type.Kind() == semantic::SemanticTypeKind::String ||
                         type.Kind() == semantic::SemanticTypeKind::StringView
                     ? StringType()
                     : MapType(type));
+        };
+        const bool indirect =
+            call.Kind() == lowering::BoundNodeKind::IndirectCallExpression;
+        if (indirect) {
+            const auto& value =
+                static_cast<const lowering::BoundIndirectCallExpression&>(call);
+            addCapture(value.Callee(), value.Callee().Type());
+            for (std::size_t index = 0; index < value.Arguments().size();
+                 ++index)
+                addCapture(*value.Arguments()[index],
+                           value.Callee().Type().Signature().parameters[index]);
+        } else {
+            const auto& direct =
+                static_cast<const lowering::BoundCallExpression&>(call);
+            for (std::size_t index = 0; index < direct.Arguments().size();
+                 ++index) {
+                const semantic::SemanticType type =
+                    direct.Function().BuiltIn() ==
+                            semantic::BuiltInFunction::None
+                        ? direct.Function().ParameterTypes()[index]
+                        : direct.Arguments()[index]->Type();
+                addCapture(*direct.Arguments()[index], type);
+            }
         }
         scope->deferredCalls.push_back(
             {&deferred, llvm::StructType::get(_context, fields),
-             std::move(argumentTypes), std::move(argumentOwnershipTransfers)});
+             std::move(captureTypes), std::move(captureOwnershipTransfers),
+             indirect});
     }
     if (!scope->deferredCalls.empty()) {
         scope->deferredHead = CreateTemporaryAlloca(

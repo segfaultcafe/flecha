@@ -505,9 +505,10 @@ The special pointer-operation syntax and naming remain to be finalized.
 
 ### 8.1 Deferred cleanup
 
-The direct-call implementation is documented in [defer.md](defer.md). Deferred
-`free`, bounded static allocation-effect checks, and `own` / `lend` contracts
-are implemented. External ownership contracts remain future work.
+The function, callable-value, and member-call implementation is documented in
+[defer.md](defer.md). Deferred `free`, bounded static allocation-effect checks,
+and `own` / `lend` contracts are implemented. External ownership contracts
+remain future work.
 
 A deferred call registers when execution reaches it and executes when its
 current enclosing scope exits. It is not hoisted to scope entry. Register

@@ -4,6 +4,10 @@
 
 ### Language
 
+- `defer` now accepts callable values and structure methods in addition to
+  direct functions. Indirect callees are moved into the deferred record, method
+  receivers remain safely borrowed through scope exit, and all forms preserve
+  registration-time evaluation, LIFO execution, and exactly-once teardown.
 - Modules may now be declared with `private module name;`, restricting imports
   to the same quiver. Within a private module, `export` exposes a declaration to
   that quiver rather than globally; wildcard imports and separate source or

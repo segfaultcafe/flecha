@@ -196,9 +196,10 @@ previous live value before constructing its replacement.
 
 Structures with only generated tear hooks and copyable fields may be copied,
 assigned, returned, destructured, and passed by value. Owning string fields are
-deep-copied, including within arrays and tuples. Direct deferred function calls
-capture these values independently at registration and release them after the
-call. Member-call defer syntax remains future work.
+deep-copied, including within arrays and tuples. Deferred function, callable,
+and member calls capture these values independently at registration and release
+them after the call. A checked method receiver remains borrowed through scope
+exit.
 
 A custom tear makes its structure noncopyable, transitively through fields,
 arrays, and tuples. If the tear is safe, the complete value is nevertheless

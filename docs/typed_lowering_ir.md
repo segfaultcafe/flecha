@@ -23,9 +23,10 @@ preserves the language rule that `also` is evaluated only after its owner ran.
 `DumpBoundProgram` produces deterministic, human-readable text intended for
 debugging and tests. It is not Flecha syntax and is not a serialization format.
 
-`BoundDeferStatement` retains a resolved direct call separately from immediate
-expression statements. Its arguments capture at registration, and codegen
-invokes the call during scope cleanup. See [defer.md](defer.md).
+`BoundDeferStatement` retains a resolved direct or indirect call separately
+from immediate expression statements. Code generation captures its callable or
+method receiver and arguments at registration, then invokes the call during
+scope cleanup. See [defer.md](defer.md).
 
 `BoundTupleExpression` retains ordered, typed elements. A
 `BoundDestructureStatement` holds one right-hand side and resolved destinations,

@@ -137,11 +137,13 @@ native code. See [checked_slices.md](checked_slices.md).
 
 ### Deferred calls
 
-`defer` requires a statically resolved direct call (`FLECHA-S0038` otherwise).
-Argument typing, definite assignment, and unsafe permission apply at
-registration. Synthetic capture symbols keep reference/slice loans live until
-their enclosing scope exits, including across backward jumps and control-flow
-joins. See [defer.md](defer.md) for capture and cleanup rules.
+`defer` accepts direct functions, callable values, and resolved structure or
+enum methods (`FLECHA-S0038` otherwise). Callee, receiver, and argument typing,
+definite assignment, moves, and unsafe permission apply at registration.
+Synthetic capture symbols keep callable borrow origins and receiver,
+reference, or slice loans live until their enclosing scope exits, including
+across backward jumps and control-flow joins. See [defer.md](defer.md) for
+capture and cleanup rules.
 
 ### Tuples and destructuring
 

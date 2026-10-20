@@ -57,6 +57,7 @@ struct Deferred final {
     const core::BlockStatement* scope = nullptr;
     const core::Expression* call = nullptr;
     const FunctionSymbol* function = nullptr;
+    Value callee;
     std::vector<Value> arguments;
     bool operator==(const Deferred&) const = default;
 };
@@ -351,6 +352,14 @@ class AllocationChecker final {
             return false;
         }
         for (const auto& deferred : state.deferred)
+            if (RefersTo(deferred.callee, value.identity)) {
+                Report(DiagnosticCode::UnverifiedOwnership, at,
+                       "ownership transfer conflicts with a pending "
+                       "deferred callable",
+                       value.identity);
+                return false;
+            }
+        for (const auto& deferred : state.deferred)
             for (const auto& argument : deferred.arguments)
                 if (RefersTo(argument, value.identity)) {
                     Report(DiagnosticCode::UnverifiedOwnership, at,
@@ -516,6 +525,8 @@ class AllocationChecker final {
         for (auto& [symbol, value] : state.bindings) Retire(value, &call);
         for (auto& [expression, value] : state.values) Retire(value, &call);
         for (Deferred& deferred : state.deferred)
+            Retire(deferred.callee, &call);
+        for (Deferred& deferred : state.deferred)
             for (Value& argument : deferred.arguments) Retire(argument, &call);
         state.resources[&call] = {};
         Value result{ValueKind::Aggregate};
@@ -538,6 +549,8 @@ class AllocationChecker final {
                 held |= Contains(value, identity);
             for (const auto& [expression, value] : state.values)
                 held |= Contains(value, identity);
+            for (const Deferred& deferred : state.deferred)
+                held |= Contains(deferred.callee, identity);
             for (const Deferred& deferred : state.deferred)
                 for (const Value& value : deferred.arguments)
                     held |= Contains(value, identity);
@@ -1589,8 +1602,10 @@ class AllocationChecker final {
         };
         for (const auto& [symbol, value] : state.bindings) check(value);
         for (const auto& [expression, value] : state.values) check(value);
-        for (const Deferred& deferred : state.deferred)
+        for (const Deferred& deferred : state.deferred) {
+            check(deferred.callee);
             for (const Value& value : deferred.arguments) check(value);
+        }
     }
 
     std::vector<State> Leave(
@@ -1754,20 +1769,48 @@ class AllocationChecker final {
                 if (node.memoryDefer) {
                     const core::Expression& call = node.memoryDefer->Call();
                     std::vector<Value> arguments = Arguments(state, call);
+                    Value retainedCallee;
+                    const bool indirect =
+                        call.Kind() == AstNodeKind::CallExpression &&
+                        Callee(call) == nullptr &&
+                        _model.TypeOf(
+                                  static_cast<const core::CallExpression&>(call)
+                                      .Callee())
+                                .Kind() == SemanticTypeKind::Function;
+                    if (indirect) {
+                        const auto& indirectCall =
+                            static_cast<const core::CallExpression&>(call);
+                        retainedCallee = Get(state, indirectCall.Callee());
+                        CheckUse(state, retainedCallee, call);
+                    }
                     for (const Value& value : arguments)
                         CheckUse(state, value, call);
+                    bool owningResult = false;
+                    if (indirect) {
+                        const auto& indirectCall =
+                            static_cast<const core::CallExpression&>(call);
+                        const auto& signature =
+                            _model.TypeOf(indirectCall.Callee()).Signature();
+                        owningResult = std::any_of(
+                            signature.resultContracts.begin(),
+                            signature.resultContracts.end(),
+                            [](OwnershipContract contract) {
+                                return contract == OwnershipContract::Own;
+                            });
+                    }
                     // Even calls without tracked arguments may allocate; they
                     // need execution at cleanup rather than at registration.
-                    if (Relevant(Callee(call), arguments)) {
+                    if (Tracks(retainedCallee) || owningResult ||
+                        Relevant(Callee(call), arguments)) {
                         if (state.deferred.size() >= 128) {
                             Report(DiagnosticCode::UnverifiedOwnership, call,
                                    "cannot verify an unbounded number of "
                                    "deferred pointer operations");
                             continue;
                         }
-                        state.deferred.push_back({node.scopes.back(), &call,
-                                                  Callee(call),
-                                                  std::move(arguments)});
+                        state.deferred.push_back(
+                            {node.scopes.back(), &call, Callee(call),
+                             std::move(retainedCallee), std::move(arguments)});
                     }
                     Drop(state, call);
                     CheckLost(state, *node.memoryDefer);

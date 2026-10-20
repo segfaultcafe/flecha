@@ -2009,23 +2009,77 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                                   *expression)
                                   .Inner();
             AnalyzeExpression(deferred.Call());
-            if (expression->Kind() != core::AstNodeKind::CallExpression) {
+            if (expression->Kind() != core::AstNodeKind::CallExpression &&
+                expression->Kind() != core::AstNodeKind::MemberCallExpression) {
                 Report(diagnostics::DiagnosticCode::InvalidDefer,
                        expression->Range(),
-                       "defer requires a statically resolved function call");
+                       "defer requires a function, callable, or method call");
                 break;
             }
-            const auto& call =
-                static_cast<const core::CallExpression&>(*expression);
-            if (call.Callee().Kind() != core::AstNodeKind::NameExpression)
-                break;
-            const Symbol* symbol = _model.SymbolFor(
-                static_cast<const core::NameExpression&>(call.Callee()));
-            if (symbol == nullptr || symbol->Kind() != SymbolKind::Function)
-                break;
-            const auto& function = static_cast<const FunctionSymbol&>(*symbol);
-            if (function.BuiltIn() == BuiltInFunction::New ||
-                function.BuiltIn() == BuiltInFunction::Take) {
+
+            const FunctionSymbol* function = nullptr;
+            std::vector<std::pair<const core::Expression*, SemanticType>>
+                operands;
+            if (expression->Kind() == core::AstNodeKind::CallExpression) {
+                const auto& call =
+                    static_cast<const core::CallExpression&>(*expression);
+                const SemanticType calleeType = _model.TypeOf(call.Callee());
+                if (call.Callee().Kind() == core::AstNodeKind::NameExpression) {
+                    const Symbol* symbol = _model.SymbolFor(
+                        static_cast<const core::NameExpression&>(
+                            call.Callee()));
+                    if (symbol != nullptr &&
+                        symbol->Kind() == SymbolKind::Function)
+                        function = static_cast<const FunctionSymbol*>(symbol);
+                }
+                if (function == nullptr) {
+                    if (calleeType.Kind() == SemanticTypeKind::Function) {
+                        CheckTransfer(call.Callee(), calleeType);
+                        operands.emplace_back(&call.Callee(), calleeType);
+                    }
+                }
+                const auto* signature =
+                    calleeType.Kind() == SemanticTypeKind::Function
+                        ? &calleeType.Signature()
+                        : nullptr;
+                for (std::size_t index = 0; index < call.Arguments().size();
+                     ++index) {
+                    const SemanticType type =
+                        signature != nullptr &&
+                                (!function || function->BuiltIn() ==
+                                                  BuiltInFunction::None) &&
+                                index < signature->parameters.size()
+                            ? signature->parameters[index]
+                            : _model.TypeOf(*call.Arguments()[index]);
+                    operands.emplace_back(call.Arguments()[index].get(), type);
+                }
+            } else {
+                const auto& call =
+                    static_cast<const core::MemberCallExpression&>(*expression);
+                function = _model.MethodFor(call);
+                if (function == nullptr) {
+                    Report(diagnostics::DiagnosticCode::InvalidDefer,
+                           expression->Range(),
+                           "defer requires a structure method call");
+                    break;
+                }
+                const std::size_t offset = function->HasReceiver() ? 1 : 0;
+                if (offset != 0 && !function->ParameterTypes().empty())
+                    operands.emplace_back(&call.Receiver(),
+                                          function->ParameterTypes()[0]);
+                for (std::size_t index = 0; index < call.Arguments().size();
+                     ++index) {
+                    const SemanticType type =
+                        index + offset < function->ParameterTypes().size()
+                            ? function->ParameterTypes()[index + offset]
+                            : _model.TypeOf(*call.Arguments()[index]);
+                    operands.emplace_back(call.Arguments()[index].get(), type);
+                }
+            }
+
+            if (function != nullptr &&
+                (function->BuiltIn() == BuiltInFunction::New ||
+                 function->BuiltIn() == BuiltInFunction::Take)) {
                 Report(diagnostics::DiagnosticCode::InvalidDefer,
                        expression->Range(),
                        "defer new or take would discard ownership; defer "
@@ -2035,19 +2089,15 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
             }
             std::vector<const Symbol*>& captures =
                 _model._deferredCaptures[&deferred];
-            for (std::size_t index = 0; index < call.Arguments().size();
-                 ++index) {
-                const SemanticType type =
-                    function.BuiltIn() == BuiltInFunction::None &&
-                            index < function.ParameterTypes().size()
-                        ? function.ParameterTypes()[index]
-                        : _model.TypeOf(*call.Arguments()[index]);
+            for (std::size_t index = 0; index < operands.size(); ++index) {
+                const auto [operand, type] = operands[index];
                 const Symbol* capture = nullptr;
-                if (type.IsBorrowed()) {
+                if (type.Kind() != SemanticTypeKind::StringView &&
+                    CanCarryBorrow(type)) {
                     auto owned = std::make_unique<VariableSymbol>(
                         SymbolKind::LocalVariable,
-                        "deferred argument " + std::to_string(index + 1), type,
-                        call.Arguments()[index]->Range(), false);
+                        "deferred operand " + std::to_string(index + 1), type,
+                        operand->Range(), false);
                     capture = owned.get();
                     _model._symbols.push_back(std::move(owned));
                 }
