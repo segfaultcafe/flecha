@@ -22,7 +22,12 @@ The compiler is implemented in modern C++ and currently includes a tokenizer, pa
 - Statically typed primitives, functions, enums with exhaustive matching, tuples, structures, arrays, strings, and error values
 - Explicit `unsafe` features for raw pointers and allocation
 - Checked references and slices, ownership contracts, and definite-assignment analysis
-- Modules and library imports through `root::` and `lib::` paths
+- Structural callable types, closures with explicit capture modes, and
+  consuming `once func` values
+- Modules and library imports through `root::` and `lib::` paths, with global,
+  quiver, and module-private visibility
+- First-class `flecha test` and `longbow test` workflows
+- Generic standard-library callback algorithms and safe owning arrays
 - LLVM IR emission and native executable/object generation
 - Human-readable source diagnostics
 - A small package/project workflow through `longbow`
@@ -220,6 +225,8 @@ make native-poc          # Build and execute a native example; expects 42
 make native-if-also
 make native-functions
 make native-callables
+build/flecha build examples/callback_algorithms.fl --lib std=std/src \
+    -o build/callback-algorithms
 make native-while
 make native-loop-control
 make native-casts

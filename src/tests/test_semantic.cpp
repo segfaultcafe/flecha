@@ -202,6 +202,69 @@ TEST(SemanticCallableTests, ConsumesOnceCallablesAndOwnedCaptures) {
         nullptr);
 }
 
+TEST(SemanticCallableTests, ReportsSecondOnceInvocationAtTheCallee) {
+    const std::string source =
+        "once func Action() => (); "
+        "void main() { Action action = once []() => () {}; "
+        "action(); action(); }";
+    Analysis result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(result, DiagnosticCode::MovedValue);
+
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message, "variable 'action' may have been moved");
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("action();"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("action").size());
+}
+
+TEST(SemanticCallableTests, RejectsOnceToReusableAtTheInitializer) {
+    const std::string source =
+        "func Reusable() => (); once func SingleUse() => (); "
+        "void main() { SingleUse single = once []() => () {}; "
+        "Reusable reusable = single; }";
+    Analysis result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(result, DiagnosticCode::IncompatibleType);
+
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message,
+              "expected 'func() => ()', found 'once func() => ()'");
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("single;"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("single").size());
+}
+
+TEST(SemanticCallableTests, ReportsReusableOwnedCaptureConsumptionAtTheCallee) {
+    const std::string source =
+        "once func Action() => (); func Wrapper() => (); "
+        "void main() { Action action = once []() => () {}; "
+        "Wrapper wrapper = [own action]() => () { action(); }; }";
+    Analysis result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(result, DiagnosticCode::NonCopyableValue);
+
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message,
+              "owned capture 'action' cannot be consumed by a reusable "
+              "closure");
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("action();"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("action").size());
+}
+
+TEST(SemanticCallableTests, ReportsCallableUseAfterDeferAtTheCallee) {
+    const std::string source =
+        "func Action() => (); "
+        "void main() { Action action = []() => () {}; "
+        "defer action(); action(); }";
+    Analysis result = Analyze(source);
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(result, DiagnosticCode::MovedValue);
+
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message, "variable 'action' may have been moved");
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("action();"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("action").size());
+}
+
 TEST(SemanticCallableTests, SpecializesGenericCallableSignaturesStructurally) {
     Analysis result = Analyze(R"(
         func Mapper<T>(T) => (T);

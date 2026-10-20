@@ -131,12 +131,14 @@ Flecha 0.2.0 introduces named callable signatures:
 func Mapper(i32) => (i32);
 func Logger(stringv) => ();
 unsafe func Reader(lend *const u8 source) => (i32);
+once func Task() => (i32);
 ```
 
 A named signature is a normal type. Parameter names are optional unless a
 borrowed result names its source. Results always use a list: `()` means `void`,
 one entry is a single result, and multiple entries form a tuple result.
-Ownership contracts and `unsafe` are part of structural compatibility.
+Ownership contracts, `unsafe`, and `once` are part of structural
+compatibility.
 
 Named functions can be stored, passed, returned, inferred by `:=`, and called
 indirectly:
@@ -177,6 +179,11 @@ compatible regardless of their declaration names. Callable values are
 move-only and use a uniform compiler ABI containing invoke, environment, and
 destroy pointers. Captureless named functions use null environment and destroy
 pointers.
+
+`once func` is a distinct callable kind whose invocation consumes the callable
+value. A second invocation is diagnosed as a moved-value use. A compatible
+reusable callable may move into a once slot, but a once callable cannot become
+reusable. Both kinds use the same compiler ABI.
 
 Captureless anonymous functions use the same signature shape. The empty square
 brackets may be written explicitly or omitted:
@@ -246,8 +253,11 @@ exactly once.
 
 All `own` captured bindings are read-only. Because ordinary callables are
 reusable, their bodies may access an owned capture but cannot transfer or
-otherwise consume it. Consuming a capture from the body remains reserved for a
-future `once func` design.
+otherwise consume it. A `once` anonymous function may move, return, pass to an
+`own` parameter, or free an owned capture because its body can execute only
+once. Consumed captures are removed from the environment's cleanup obligation;
+untouched captures are still destroyed when the callable is destroyed without
+being invoked.
 
 `&name` creates an exclusive checked borrow of writable storage. `&const name`
 creates a shared, read-only borrow. The loan lasts until the closure's last use,
@@ -260,8 +270,16 @@ stored in the environment by value so returned closures retain the underlying
 borrow rather than the creator's parameter slot.
 
 Callable values remain move-only, and moving a closure transfers its
-environment and cleanup responsibility exactly once. `once` functions remain
-future work.
+environment and cleanup responsibility exactly once. Anonymous functions use
+the `once` modifier to opt into a consuming body:
+
+```flecha
+once func Task() => (i32);
+
+Task task = once [own resource]() => (i32) {
+    return consume(resource);
+};
+```
 
 ## 6. Return and yield
 
@@ -982,7 +1000,7 @@ The following decisions are intentionally not finalized:
 - string literal representation and encoding;
 - multi-source, heap-owner, and other more general borrowed-result contracts;
 - union syntax;
-- general move semantics, partial moves, and cleanup for future owning types;
+- partial aggregate moves and cleanup rules for future owning types;
 - allocator interfaces;
 - arithmetic overflow behavior;
 - floating-point equality involving NaN and signed zero;
@@ -999,14 +1017,17 @@ These questions should be resolved by prioritizing predictable behavior, a small
 
 ## 20. Implementation status
 
-The 0.1 compiler implements source-located diagnostics; the lexer, parser,
+The current compiler implements source-located diagnostics; the lexer, parser,
 semantic and ownership analyses; lowering; and LLVM IR, object, and native
 executable emission. Implemented language areas include functions and control
 flow, primitives and conversions, `none`, tuples, errors, enums and matching,
 strings and views, raw pointers and unsafe blocks, checked references, fixed and
-runtime-sized arrays, checked slices, structures and lifecycle hooks, modules,
-explicit generics, raw allocation, ownership contracts, and direct deferred
-calls. The linked feature documents define the exact supported forms and
+runtime-sized arrays, checked slices, structures and lifecycle hooks, explicit
+generics, callable values and closures, single-use callables, raw allocation,
+ownership contracts, and direct, indirect, and member deferred calls. Modules
+support global, quiver, and module-private visibility. Flecha and Longbow also
+discover and run paired `_test.fl` modules through first-class `test`
+declarations. The linked feature documents define the exact supported forms and
 diagnostics.
 
 Near-term work can extend the standard library and tooling without implying

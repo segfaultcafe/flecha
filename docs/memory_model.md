@@ -619,9 +619,10 @@ implementation milestone, const declarations and compound type representation,
 is documented in [const declarations and types](const_types.md). Unsafe pointer operations are documented in [unsafe pointers](unsafe_pointers.md).
 Checked scalar and pointer-slot references are documented in
 [checked references](checked_references.md). Checked slices, system allocation,
-direct deferred calls, explicit cross-function ownership contracts, and
-single-origin borrowed-result contracts are also implemented. More general
-inferred resource effects remain future work. Named and generic
+direct, indirect, and member deferred calls, explicit cross-function ownership
+contracts, general whole-value moves, and single-origin borrowed-result
+contracts are also implemented. More general inferred resource effects remain
+future work. Named and generic
 [error values](error_values.md) are implemented.
 [Tuples and destructuring](tuples.md) are implemented.
 
