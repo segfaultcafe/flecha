@@ -607,6 +607,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 return std::make_unique<BoundCallExpression>(
                     expression.Range(), *method, std::move(arguments));
             }
+            if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
+                    semantic::SemanticTypeKind::Slice &&
+                member.Member() == "data")
+                return std::make_unique<BoundSliceDataExpression>(
+                    expression.Range(), type,
+                    LowerExpression(member.Receiver()));
             if (_semanticModel->TypeOf(member.Receiver()).IsSequence() &&
                 member.Member() != "len")
                 return LowerPlace(expression);

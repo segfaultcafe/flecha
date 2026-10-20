@@ -1074,6 +1074,15 @@ class Expander {
                          type.syntax->TypeForm() == TypeKind::Slice))
                         return Element(type);
                 }
+                if (call.Member() == "data") {
+                    auto type = ExpressionType(call.Receiver());
+                    if (type.syntax &&
+                        type.syntax->TypeForm() == TypeKind::Slice) {
+                        type = Element(type);
+                        ++type.extraPointers;
+                        return type;
+                    }
+                }
                 const auto* owner = Receiver(call);
                 if (!owner) return {};
                 const auto found = concreteMethods.find({owner, call.Member()});

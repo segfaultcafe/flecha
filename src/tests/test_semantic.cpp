@@ -3294,6 +3294,30 @@ TEST(SemanticSliceTests, AcceptsCheckedSlicesCallsConstAndElementReferences) {
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticSliceTests, ExposesDataPointersOnlyInUnsafeCode) {
+    const Analysis valid = Analyze(R"(
+        unsafe *T slice_data<T>([]T values) { return values.data(); }
+        unsafe void use([]i32 writable, []const i32 readable) {
+            *i32 output = writable.data();
+            *const i32 input = readable.data();
+            *output = *input;
+            slice_data<i32>(writable);
+        }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_NE(FindDiagnostic(Analyze("void f([]i32 values) { values.data(); }"),
+                             DiagnosticCode::UnsafeOperation),
+              nullptr);
+    EXPECT_TRUE(Analyze("unsafe void f([]i32 values) { values.data(0); }")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze("unsafe void f() { a := [1]; a.data(); }")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze("unsafe void f([]const i32 values) { *i32 p = "
+                        "values.data(); }")
+                    .diagnostics.HasErrors());
+}
+
 TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
     for (const std::string& source :
          {"void f() { a := [1, 2]; s := a[2:1]; }",

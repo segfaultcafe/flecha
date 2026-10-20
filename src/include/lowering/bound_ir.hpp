@@ -35,6 +35,7 @@ enum class BoundNodeKind {
     SliceExpression,
     ArrayElementExpression,
     ArrayLengthExpression,
+    SliceDataExpression,
     LiteralExpression,
     DirectExpression,
     MoveExpression,
@@ -298,6 +299,21 @@ class BoundArrayLengthExpression final : public BoundExpression {
           _receiver(std::move(receiver)) {}
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::ArrayLengthExpression;
+    }
+    [[nodiscard]] const BoundExpression& Receiver() const { return *_receiver; }
+
+   private:
+    std::unique_ptr<BoundExpression> _receiver;
+};
+
+class BoundSliceDataExpression final : public BoundExpression {
+   public:
+    BoundSliceDataExpression(source::SourceRange range,
+                             semantic::SemanticType type,
+                             std::unique_ptr<BoundExpression> receiver)
+        : BoundExpression(range, type), _receiver(std::move(receiver)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::SliceDataExpression;
     }
     [[nodiscard]] const BoundExpression& Receiver() const { return *_receiver; }
 

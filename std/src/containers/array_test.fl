@@ -214,6 +214,34 @@ test find_if_accepts_an_empty_array(&testing::UnitTest t) {
     asserts::is_true(t, !found and index == 0, "findIf accepts an empty Array");
 }
 
+test predicate_and_fold_members_delegate_to_algorithms(&testing::UnitTest t) {
+    [5]i32 source = [2, 4, 5, 8, 10];
+    values, createError := array::Array<i32>::fromSlice(source[:]);
+    if createError != none {
+        asserts::is_true(t, false, "the setup Array is constructed");
+        return;
+    }
+
+    i32 threshold = 7;
+    hasLargeValue := values.anyOf([copy threshold](value) => {
+        return *value > threshold;
+    });
+    allPositive := values.allOf((value) => {
+        return *value > 0;
+    });
+    evenCount := values.countIf((value) => {
+        return *value % 2 == 0;
+    });
+    total := values.fold<i32>(0, (accumulator, value) => {
+        return accumulator + *value;
+    });
+
+    asserts::is_true(t, hasLargeValue, "Array.anyOf accepts a capturing predicate");
+    asserts::is_true(t, allPositive, "Array.allOf delegates to all_of");
+    asserts::is_true(t, evenCount == 4, "Array.countIf delegates to count_if");
+    asserts::is_true(t, total == 29, "Array.fold delegates to fold");
+}
+
 test sort_orders_values_and_handles_small_arrays(&testing::UnitTest t) {
     empty := array::Array<i32>::init();
     algorithms::sort<i32>(empty.viewRef());

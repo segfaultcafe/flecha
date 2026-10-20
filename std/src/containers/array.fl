@@ -223,3 +223,19 @@ void Array<T>::forEach(&const self, algorithms::Action<T> action) {
 (usize, bool) Array<T>::findIf(&const self, algorithms::Predicate<T> predicate) {
     return algorithms::find_if<T>(self->view(), predicate);
 }
+
+bool Array<T>::anyOf(&const self, algorithms::Predicate<T> predicate) {
+    return algorithms::any_of<T>(self->view(), predicate);
+}
+
+bool Array<T>::allOf(&const self, algorithms::Predicate<T> predicate) {
+    return algorithms::all_of<T>(self->view(), predicate);
+}
+
+usize Array<T>::countIf(&const self, algorithms::Predicate<T> predicate) {
+    return algorithms::count_if<T>(self->view(), predicate);
+}
+
+A Array<T>::fold<A>(&const self, A initial, algorithms::Folder<T, A> folder) {
+    return algorithms::fold<T, A>(self->view(), initial, folder);
+}

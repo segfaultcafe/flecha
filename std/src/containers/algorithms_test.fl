@@ -165,3 +165,97 @@ test array_members_delegate_to_algorithms(&testing::UnitTest t) {
         asserts::is_true(t, getError == none and value == 42, "Array.fill replaces an element");
     }
 }
+
+test predicate_algorithms_short_circuit_and_count(&testing::UnitTest t) {
+    [5]i32 values = [2, 4, 6, 7, 8];
+
+    usize anyVisits = 0;
+    hasOdd := algorithms::any_of<i32>(
+        values[:],
+        [&anyVisits](value) => {
+            anyVisits++;
+            return *value % 2 != 0;
+        }
+    );
+
+    asserts::is_true(t, hasOdd, "any_of finds a matching value");
+    asserts::is_true(t, anyVisits == 4, "any_of stops at the first match");
+
+    usize allVisits = 0;
+    allEven := algorithms::all_of<i32>(
+        values[:],
+        [&allVisits](value) => {
+            allVisits++;
+            return *value % 2 == 0;
+        }
+    );
+
+    asserts::is_false(t, allEven, "all_of rejects the first nonmatching value");
+    asserts::is_true(t, allVisits == 4, "all_of stops at the first mismatch");
+
+    usize countVisits = 0;
+    evenCount := algorithms::count_if<i32>(values[:], [&countVisits](value) => {
+        countVisits++;
+        return *value % 2 == 0;
+    });
+
+    asserts::is_true(t, evenCount == 4, "count_if counts every match");
+    asserts::is_true(t, countVisits == 5, "count_if visits every value");
+
+    [0]i32 empty = [];
+    usize emptyVisits = 0;
+    emptyAny := algorithms::any_of<i32>(empty[:], [&emptyVisits](value) => {
+        emptyVisits++;
+        return *value == 0;
+    });
+    emptyAll := algorithms::all_of<i32>(empty[:], [&emptyVisits](value) => {
+        emptyVisits++;
+        return *value == 0;
+    });
+    emptyCount := algorithms::count_if<i32>(empty[:], [&emptyVisits](value) => {
+        emptyVisits++;
+        return *value == 0;
+    });
+
+    asserts::is_false(t, emptyAny, "any_of is false for an empty slice");
+    asserts::is_true(t, emptyAll, "all_of is true for an empty slice");
+    asserts::is_true(t, emptyCount == 0, "count_if returns zero for an empty slice");
+    asserts::is_true(t, emptyVisits == 0, "empty predicate algorithms do not invoke their predicate");
+}
+
+test fold_reduces_values_and_preserves_empty_initial_value(
+    &testing::UnitTest t
+) {
+    [4]i32 values = [1, 2, 3, 4];
+
+    total := algorithms::fold<i32, i32>(
+        values[:],
+        10,
+        (accumulator, value) => {
+            return accumulator + *value;
+        }
+    );
+
+    asserts::is_true(t, total == 20, "fold reduces values from its initial value");
+
+    ordered := algorithms::fold<i32, i32>(
+        values[:],
+        20,
+        (accumulator, value) => {
+            return accumulator - *value;
+        }
+    );
+
+    asserts::is_true(t, ordered == 10, "fold processes values from left to right");
+
+    [0]i32 empty = [];
+    emptyTotal := algorithms::fold<i32, i32>(
+        empty[:],
+        42,
+        (accumulator, value) => {
+            return accumulator + *value;
+        }
+    );
+
+    asserts::is_true(t, emptyTotal == 42, "fold returns the initial value for an empty slice");
+}

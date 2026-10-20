@@ -66,6 +66,60 @@ permission denied, invalid path, generic read failure, the current `u32` string
 length limit, and allocation failure. The safe `filesystem::read_file` wrapper
 maps those codes to `IoError` or `AllocationError.OutOfMemory`.
 
+## Filesystem paths
+
+The `flecha_runtime_v1_path_exists`, `metadata`, `remove_file`, `rename`, and
+`create_directory` entry points use the same explicit path representation and
+platform conversion as `read_file`. Existence checks report a missing path as
+successful false. Metadata follows symbolic links and reports type `0` for
+other entries, `1` for regular files, and `2` for directories. Its size output
+is the regular-file byte length and zero for other types. Both metadata outputs
+are cleared before path validation. Mutations report missing paths as
+`NotFound`; exclusive directory creation reports an existing path as
+`AlreadyExists`.
+
+The filesystem status table matches the file-stream table: success `0`, not
+found `1`, permission denied `2`, invalid path `3`, already exists `4`, too
+large `5`, out of memory `6`, invalid options `7`, and operation failure `8`.
+`remove_file` does not remove directories. Directory creation is non-recursive
+and uses mode `0777` through the process umask on POSIX.
+
+`flecha_runtime_v1_remove_directory` accepts independent byte booleans for
+force and recursive behavior. Non-recursive removal requires an empty
+directory. Recursive removal never treats a top-level file as a directory.
+Force suppresses `NotFound`; recursive traversal otherwise preserves the same
+status mapping. `DirectoryNotEmpty` is status `9`, leaving generic operation
+failure at its established status `8`.
+
+## File streams
+
+The `flecha_runtime_v1_file_stream_*` entry points expose unbuffered binary file
+handles behind opaque `void*` values. Paths use the same explicit bytes and
+platform rules as `flecha_runtime_v1_read_file`. `open` clears its output before
+validation and transfers one runtime-owned handle only on success. `close`
+always consumes that handle, including when the operating system reports a
+close failure.
+
+Open flags are byte booleans and accept only zero or one. At least one of read
+or write is required; append, truncate, create, and create-new require write
+access. Create-new uses the operating system's exclusive-create operation, so
+checking and creation are atomic. POSIX file creation applies mode `0666`
+through the process umask. Windows paths are validated as UTF-8 and opened as
+UTF-16.
+
+Read and write each perform one system operation, retrying interruptions before
+any transfer. Their count output is reset before validation and reports a
+successful partial transfer normally. A null data pointer is accepted only for
+a zero-length operation. Seek origins are `0` for start, `1` for current, and
+`2` for end. Flush synchronizes writable handles with the backing file and is a
+no-op for read-only handles.
+
+File-stream status values are stable: success `0`, not found `1`, permission
+denied `2`, invalid path `3`, already exists `4`, too large `5`, out of memory
+`6`, invalid options `7`, and operation failure `8`. This table is distinct
+from the older read-file-specific status enum, whose value `4` means a generic
+read failure.
+
 ## Structure values (compiler-private ABI)
 
 Flecha structures use named, non-packed LLVM structures, preserving field order

@@ -1,0 +1,315 @@
+module file;
+
+@imports
+    :: root::io::errors
+    :: root::io::runtime
+    :: root::io::utils;
+
+export enum SeekFrom: u8 {
+    default Start,
+    Current,
+    End
+}
+
+u8 SeekFrom::number(&const self) {
+    return match *self {
+        SeekFrom.Start => 0,
+        SeekFrom.Current => 1,
+        SeekFrom.End => 2,
+    };
+}
+
+export structure OpenOptions {
+    bool read;
+    bool write;
+    bool append;
+    bool truncate;
+    bool create;
+    bool createNew;
+};
+
+OpenOptions OpenOptions::readOnly() {
+    return build OpenOptions {
+        self.read = true;
+    };
+}
+
+OpenOptions OpenOptions::writeOnly() {
+    return build OpenOptions {
+        self.write = true;
+        self.create = true;
+        self.truncate = true;
+    };
+}
+
+OpenOptions OpenOptions::appendOnly() {
+    return build OpenOptions {
+        self.write = true;
+        self.append = true;
+        self.create = true;
+    };
+}
+
+export structure File {
+    private *void handle;
+};
+
+void File::tear(&self) override {
+    if self->handle == null {
+        return;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        runtime::flecha_runtime_v1_file_stream_close(handle);
+    }
+}
+
+File File::zero() override {
+    return build File {
+        self.handle = null;
+    };
+}
+
+(File, error) File::open(stringv path, OpenOptions opts) {
+    err := validate_options(opts);
+    if err != none {
+        return (none, err);
+    }
+
+    *void handle = null;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_file_stream_open(
+            &raw handle,
+            path.data(),
+            path.len().cast<usize>,
+            utils::bool_byte(opts.read),
+            utils::bool_byte(opts.write),
+            utils::bool_byte(opts.append),
+            utils::bool_byte(opts.truncate),
+            utils::bool_byte(opts.create),
+            utils::bool_byte(opts.createNew)
+        );
+
+        err = errors::from_runtime(status, errors::IoError.OpenFailed);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return (build File {
+        self.handle = handle;
+    }, none);
+}
+
+bool File::isOpen(&const self) {
+    return self->handle != null;
+}
+
+(usize, error) File::read(&self, []u8 destination) {
+    if self->handle == null {
+        return (none, errors::IoError.Closed);
+    }
+
+    usize bytesRead = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_file_stream_read(
+            self->handle,
+            destination.data(),
+            destination.len(),
+            &raw bytesRead
+        );
+
+        err := errors::from_runtime(status, errors::IoError.ReadFailed);
+        if err != none {
+            return (bytesRead, err);
+        }
+    }
+
+    return (bytesRead, none);
+}
+
+error File::readExact(&self, []u8 destination) {
+    if self->handle == null {
+        return errors::IoError.Closed;
+    }
+
+    usize offset = 0;
+    while offset < destination.len() {
+        bytesRead, err := self->read(destination[offset:]);
+        if err != none {
+            return err;
+        }
+        if bytesRead == 0 {
+            return errors::IoError.UnexpectedEof;
+        }
+
+        offset = offset + bytesRead;
+    }
+
+    return none;
+}
+
+
+(usize, error) File::write(&self, []const u8 source) {
+    if self->handle == null {
+        return (none, errors::IoError.Closed);
+    }
+
+    usize bytesWritten = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_file_stream_write(
+            self->handle,
+            source.data(),
+            source.len(),
+            &raw bytesWritten
+        );
+
+        err := errors::from_runtime(status, errors::IoError.WriteFailed);
+        if err != none {
+            return (bytesWritten, err);
+        }
+    }
+
+    return (bytesWritten, none);
+}
+
+error File::writeAll(&self, []const u8 source) {
+    if self->handle == null {
+        return errors::IoError.Closed;
+    }
+
+    usize offset = 0;
+    while offset < source.len() {
+        written, err := self->write(source[offset:]);
+        if err != none {
+            return err;
+        }
+        if written == 0 {
+            return errors::IoError.WriteFailed;
+        }
+
+        offset = offset + written;
+    }
+
+    return none;
+}
+
+(usize, error) File::writeString(&self, stringv source) {
+    if self->handle == null {
+        return (none, errors::IoError.Closed);
+    }
+
+    usize bytesWritten = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_file_stream_write(
+            self->handle,
+            source.data(),
+            source.len().cast<usize>,
+            &raw bytesWritten
+        );
+
+        err := errors::from_runtime(status, errors::IoError.WriteFailed);
+        if err != none {
+            return (bytesWritten, err);
+        }
+    }
+
+    return (bytesWritten, none);
+}
+
+error File::writeAllString(&self, stringv source) {
+    if self->handle == null {
+        return errors::IoError.Closed;
+    }
+
+    u32 offset = 0;
+    while offset < source.len() {
+        written, err := self->writeString(
+            source.substr(offset, source.len() - offset)
+        );
+        if err != none {
+            return err;
+        }
+        if written == 0 {
+            return errors::IoError.WriteFailed;
+        }
+
+        offset = offset + written.cast<u32>;
+    }
+
+    return none;
+}
+
+(u64, error) File::seek(&self, i64 offset, SeekFrom origin) {
+    if self->handle == null {
+        return (none, errors::IoError.Closed);
+    }
+
+    u64 position = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_file_stream_seek(
+            self->handle,
+            offset,
+            origin.number(),
+            &raw position
+        );
+
+        err := errors::from_runtime(status, errors::IoError.SeekFailed);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return (position, none);
+}
+
+error File::flush(&self) {
+    if self->handle == null {
+        return errors::IoError.Closed;
+    }
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_file_stream_flush(
+            self->handle
+        );
+
+        return errors::from_runtime(status, errors::IoError.FlushFailed);
+    }
+}
+
+error File::close(&self) {
+    if self->handle == null {
+        return errors::IoError.Closed;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_file_stream_close(handle);
+        return errors::from_runtime(status, errors::IoError.CloseFailed);
+    }
+}
+
+error validate_options(OpenOptions options) {
+    if !options.read && !options.write {
+        return errors::IoError.InvalidOptions;
+    }
+    if options.append && !options.write {
+        return errors::IoError.InvalidOptions;
+    }
+    if options.truncate && !options.write {
+        return errors::IoError.InvalidOptions;
+    }
+    if options.create && !options.write {
+        return errors::IoError.InvalidOptions;
+    }
+    if options.createNew && !options.write {
+        return errors::IoError.InvalidOptions;
+    }
+
+    return none;
+}

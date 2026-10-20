@@ -528,8 +528,8 @@ TEST(LoweringTests, PreservesLoopUpdateAndSnapshotsRangeSources) {
 
 TEST(LoweringTests, RepresentsSlicesBoundsAndEndpointPlaces) {
     LoweredSource result = Lower(
-        "void f() { a := [1, 2, 3]; s := a[1:]; s.front() = 4; "
-        "r := &s.back(); *r = 5; }");
+        "unsafe void f() { a := [1, 2, 3]; s := a[1:]; s.front() = 4; "
+        "r := &s.back(); *r = 5; *i32 p = s.data(); *p = 6; }");
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_NE(result.program, nullptr);
     const std::string dump = DumpBoundProgram(*result.program);
@@ -537,6 +537,7 @@ TEST(LoweringTests, RepresentsSlicesBoundsAndEndpointPlaces) {
     EXPECT_NE(dump.find("(checked-index load s front)"), std::string::npos);
     EXPECT_NE(dump.find("(address (checked-index load s back))"),
               std::string::npos);
+    EXPECT_NE(dump.find("(slice-data load s)"), std::string::npos);
 }
 
 TEST(LoweringTests, RejectsInvalidSlicesBeforeCodeGeneration) {
