@@ -1,0 +1,39 @@
+module math;
+
+export T min<T>(T value, T other) {
+    if value < other {
+        return value;
+    }
+
+    return other;
+}
+
+export T max<T>(T value, T other) {
+    if value > other {
+        return value;
+    }
+
+    return other;
+}
+
+export (T, T) min_max<T>(T value, T other) {
+    if value < other {
+        return (value, other);
+    }
+
+    return (other, value);
+}
+
+export T clamp<T>(T value, T low, T high) {
+    return max<T>(low, min<T>(value, high));
+}
+
+export T abs<T>(T value) {
+    T zero = none;
+
+    if value < zero {
+        return -value; 
+    }
+
+    return value;
+}
