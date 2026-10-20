@@ -92,7 +92,7 @@ add_test(
 set_tests_properties(LanguageTestTests.LongbowDiscovery PROPERTIES
     WORKING_DIRECTORY
         ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project
-    PASS_REGULAR_EXPRESSION "OK \\[1/1\\] tests passed"
+    PASS_REGULAR_EXPRESSION "OK \\[2/2\\] tests passed"
 )
 
 add_test(
