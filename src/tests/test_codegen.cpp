@@ -1573,6 +1573,76 @@ TEST(NativeCompilerTests, DeferredMoveOnlyArgumentsTransferCleanupOnce) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsDeferredIndirectAndMemberCalls) {
+    GeneratedSource result = Generate(R"(
+        func Action(i32) => ();
+        unsafe func Consumer(own *i32) => ();
+        unsafe void consume(own *i32 value) { free(value); }
+        structure Writer { *i32 output; };
+        unsafe Writer Writer::init(*i32 output) override {
+            return build Writer { self.output = output; };
+        }
+        void Writer::flush(&self) {
+            unsafe { *self->output = 20; }
+        }
+        structure Token { *i32 tears; };
+        unsafe Token Token::init(*i32 tears) override {
+            return build Token { self.tears = tears; };
+        }
+        void Token::tear(&self) override {
+            unsafe { (*self->tears)++; }
+        }
+        void schedule(Action callback, Writer writer) {
+            defer callback(40);
+            defer writer.flush();
+            return;
+        }
+
+        i32 main() {
+            indirect := 0;
+            member := 0;
+            tears := 0;
+            unsafe {
+                {
+                    add := 2;
+                    token := Token::init(&raw tears);
+                    Action callback = [copy add, &indirect, own token](value) => {
+                        indirect = value + add;
+                    };
+                    writer := Writer::init(&raw member);
+                    schedule(callback, writer);
+
+                    pointer, failure := new<i32>(42);
+                    if failure != none { return 2; }
+                    Consumer consumer = consume;
+                    defer consumer(pointer);
+                }
+            }
+            if tears != 1 { return 1; }
+            return indirect + member - 20;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_deferred_callable_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_deferred_callable_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, ZeroLengthMoveOnlyRepeatsDestroyTheirInitializer) {
     GeneratedSource result = Generate(R"(
         structure Box { *i32 tears; };

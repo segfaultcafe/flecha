@@ -3477,6 +3477,72 @@ TEST(SemanticDeferTests, CapturesAtRegistrationAndChecksCallsNormally) {
     EXPECT_EQ(diagnostic->range.end.offset, 19);
 }
 
+TEST(SemanticDeferTests, AcceptsIndirectAndMemberCallsAndRetainsTheirState) {
+    Analysis result = Analyze(R"(
+        func Action(i32) => ();
+        void consume(i32 value) {}
+        structure Writer { i32 value; };
+        void Writer::flush(&self) { self->value++; }
+        void f() {
+            Action callback = consume;
+            Writer writer = none;
+            defer callback(1);
+            defer writer.flush();
+        }
+    )");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        func Action() => ();
+        void f() {
+            Action callback = () => {};
+            defer callback();
+            callback();
+        }
+    )"),
+                             DiagnosticCode::MovedValue),
+              nullptr);
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        structure Writer { i32 value; };
+        void Writer::flush(&self) { self->value++; }
+        void f() {
+            Writer writer = none;
+            defer writer.flush();
+            writer.value++;
+        }
+    )"),
+                             DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        func Action() => ();
+        void f() {
+            value := 0;
+            Action callback = [&value]() => { value = 1; };
+            defer callback();
+            value++;
+        }
+    )"),
+                             DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        unsafe func Action() => ();
+        void f(Action callback) { defer callback(); }
+    )"),
+                             DiagnosticCode::UnsafeOperation),
+              nullptr);
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        structure Writer {};
+        unsafe void Writer::flush(&self) {}
+        void f() { Writer writer = none; defer writer.flush(); }
+    )"),
+                             DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
 TEST(SemanticDeferTests, HoldsBorrowedArgumentsUntilTheirScopeEnds) {
     for (const std::string& source :
          {"void g(&i32 r) {} void f() { x := 1; defer g(&x); x++; }",

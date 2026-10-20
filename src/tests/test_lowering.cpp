@@ -564,6 +564,33 @@ TEST(LoweringTests, RetainsDeferredCallInsteadOfAnImmediateExpression) {
     EXPECT_EQ(invalid.program, nullptr);
 }
 
+TEST(LoweringTests, RetainsDeferredIndirectAndMemberCalls) {
+    LoweredSource result = Lower(R"(
+        func Action(i32) => ();
+        structure Writer { i32 value; };
+        void Writer::flush(&self) { self->value++; }
+        void f(Action callback) {
+            Writer writer = none;
+            defer callback(1);
+            defer writer.flush();
+        }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const auto& statements =
+        result.program->Functions()[1]->Body().Statements();
+    ASSERT_EQ(statements.size(), 3);
+    const auto& indirect =
+        static_cast<const BoundDeferStatement&>(*statements[1]);
+    const auto& member =
+        static_cast<const BoundDeferStatement&>(*statements[2]);
+    EXPECT_EQ(indirect.Call().Kind(), BoundNodeKind::IndirectCallExpression);
+    EXPECT_EQ(member.Call().Kind(), BoundNodeKind::CallExpression);
+    const std::string dump = DumpBoundProgram(*result.program);
+    EXPECT_NE(dump.find("defer (call_indirect"), std::string::npos);
+    EXPECT_NE(dump.find("defer (call Writer::flush"), std::string::npos);
+}
+
 TEST(LoweringTests, PreservesTupleEvaluationAndDestructuringTargets) {
     auto result = Lower(
         "(i32, bool) pair() { return (42, true); } void f() { x := 0; (x, bool "
