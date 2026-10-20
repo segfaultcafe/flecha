@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 0.2.1 - 2026-10-20
+
+Flecha 0.2.1 corrects module identity and composition so modules are logical
+scopes assembled from declarations rather than being coupled to filenames.
+
+### Fixed and improved
+
+- Multiple source units with the same declared module name and namespace now
+  form one logical module, share one declaration scope and nominal identity,
+  and may access each other's module declarations in either direction.
+- Imports remain local to the source unit that declares them. Import paths,
+  brace selections, and wildcards resolve declared module names instead of
+  filenames, and repeated imports of one canonical module are deduplicated.
+- Distinct same-named modules can overlap under one implicit import namespace.
+  Unique members resolve normally, collisions are diagnosed at their use site,
+  and explicit aliases keep each origin isolated.
+- `private module` remains compatible but is deprecated and must be consistent
+  across every source unit in a logical module. `export` now always classifies
+  a declaration as public, while the legacy private-module import gate remains.
+- Test pairing and Longbow discovery now use declared `<name>_test` module
+  identity, allowing arbitrarily named files and multiple source units to
+  contribute tests to one generated harness.
+
 ## 0.2.0 - 2026-10-20
 
 Flecha 0.2.0 introduces callable values and closures with explicit ownership,
