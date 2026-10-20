@@ -1,6 +1,7 @@
 # Modules and imports
 
-A module is one `.fl` file. Its declaration comes first and matches the filename:
+A module is currently one `.fl` file. Its declaration comes first and matches
+the filename:
 
 ```flecha
 module formatting;
@@ -153,3 +154,34 @@ ownership errors stop before object emission. An executable's entry module needs
 Neovim highlights `@imports` in light blue, and recognizes `module` and `export`.
 See [Longbow](longbow.md) for project creation and builds and
 [the module example](../examples/modules/src/main.fl) for a runnable project.
+
+## Planned 0.2.1 module correction
+
+The [Flecha 0.2.1 milestone](release_0_2_1.md) corrects a module to mean a
+logical scope rather than one file. The filename will not determine module
+identity, and imports will resolve the assembled logical module rather than an
+individual file.
+
+Every source unit in a logical module can access all module-scope declarations
+from every other source unit, while `@imports` bindings remain source-local.
+Declaration visibility does not depend on which source unit contains the
+declaration. `private module` remains as a deprecated, module-wide import gate;
+all source units must agree on it, and `export` always retains public
+declaration visibility.
+
+Test files pair through their declared logical `_test` module and any number of
+source units may contribute tests to that module. Filenames do not determine
+test pairing.
+
+Distinct same-named logical modules imported without explicit aliases overlap
+under one local namespace. Unique members resolve normally; colliding members
+are ambiguous at their use site. Explicit aliases keep the modules isolated.
+
+The full contract is defined in
+[Module composition](module_composition.md).
+
+This section records planned behavior, not current compiler behavior. Until the
+0.2.1 loader work is implemented, declarations must continue to match their
+file stems, test pairing remains filename-based, and private-module exports are
+downgraded to quiver visibility. Duplicate unaliased import namespaces also
+remain errors.

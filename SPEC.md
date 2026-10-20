@@ -920,6 +920,15 @@ but never module-private types. Directory imports use
 for immediate module files or `root::path::{first, second}` for selected modules.
 Each imported module retains its namespace. See [modules](docs/modules.md).
 
+The current implementation described above still couples modules to files and
+downgrades `export` inside a private module. The immediate
+[0.2.1 module-correctness milestone](docs/release_0_2_1.md) replaces that model
+with filename-independent logical modules, source-local imports, stable
+declaration visibility, deprecated module-wide private imports, and logical
+test-module pairing. Distinct same-named imports will overlap under one local
+namespace, with collisions diagnosed at the member use site and explicit
+aliases providing isolation.
+
 Longbow provides project creation, local checking/building, and execution:
 `longbow new hello`, `longbow check`, `longbow build`, and `longbow run`.
 See [Longbow](docs/longbow.md) for its manifest, library scaffolds, and current
@@ -1030,8 +1039,9 @@ discover and run paired `_test.fl` modules through first-class `test`
 declarations. The linked feature documents define the exact supported forms and
 diagnostics.
 
-Near-term work can extend the standard library and tooling without implying
-that these larger milestones are complete. Stable aggregate ABIs,
+The [Flecha 0.3.0 milestone](docs/release_0_3.md) expands the standard library
+and its narrow runtime foundations without implying that these larger
+milestones are complete. Stable aggregate ABIs,
 cross-compilation, debug information, a formatter and language server, package
 registries, broader resource ownership, and self-hosting remain future work.
 

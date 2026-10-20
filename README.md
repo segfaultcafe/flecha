@@ -270,15 +270,19 @@ Makefile                Convenient build, test, and example targets
 - [`docs/release_0_1.md`](docs/release_0_1.md) — 0.1 distribution contract and release gates
 - [`docs/release_0_1_1.md`](docs/release_0_1_1.md) — v0.1.1 stabilization scope and release condition
 - [`docs/release_0_2.md`](docs/release_0_2.md) — v0.2.0 language and tooling design targets
+- [`docs/release_0_2_1.md`](docs/release_0_2_1.md) — v0.2.1 module-correctness milestone
+- [`docs/release_0_3.md`](docs/release_0_3.md) — v0.3.0 application-capable standard-library milestone
 - [`docs/toolchains.md`](docs/toolchains.md) — supported compiler, LLVM, linker, SDK, and CI versions
 - [`docs/semantic_analysis.md`](docs/semantic_analysis.md) — name binding, types, scopes, and analysis pipeline
 - [`docs/llvm_codegen.md`](docs/llvm_codegen.md) — current LLVM backend scope and limitations
-- [`docs/modules.md`](docs/modules.md) — modules, imports, and package libraries
+- [`docs/modules.md`](docs/modules.md) — current modules, imports, and package libraries
+- [`docs/module_composition.md`](docs/module_composition.md) — corrected 0.2.1 logical-module model
 - [`docs/memory_model.md`](docs/memory_model.md) — memory model proposal and implementation status
 - [`docs/ownership_contracts.md`](docs/ownership_contracts.md) — `own` and `lend` contracts
 - [`docs/checked_references.md`](docs/checked_references.md) — checked reference behavior
 - [`docs/ref_and_slice_returns.md`](docs/ref_and_slice_returns.md) — returned reference and slice contracts
 - [`docs/dynamic_arrays.md`](docs/dynamic_arrays.md) and [`docs/fixed_arrays.md`](docs/fixed_arrays.md) — array features
+- [`docs/math.md`](docs/math.md) — standard-library ordered math operations
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation
 - [`docs/enums.md`](docs/enums.md) — nominal enums, defaults, discriminants, and member functions
 - [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting setup
