@@ -467,18 +467,6 @@ std::string ModuleLoader::VisitModule(
                 targetDirectory == directory && targetName == productionName)
                 testPair = import.resolvedModule;
         }
-        for (std::size_t left = 0; left < module.imports.size(); ++left)
-            for (std::size_t right = left + 1; right < module.imports.size();
-                 ++right)
-                if (!module.imports[left].explicitAlias &&
-                    !module.imports[right].explicitAlias &&
-                    module.imports[left].alias == module.imports[right].alias &&
-                    !module.imports[left].resolvedModule.empty() &&
-                    module.imports[left].resolvedModule ==
-                        module.imports[right].resolvedModule)
-                    Report(module.imports[right].range,
-                           "duplicate import alias '" +
-                               module.imports[right].alias + "'");
         sourceModules.push_back(std::move(module));
     }
 

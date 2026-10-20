@@ -104,14 +104,19 @@ TEST_F(ModuleTests, OverlapsSameNamedImportsAndDiagnosesOnlyCollisions) {
     Write("first/implementation.fl", R"(module errors;
         export i32 parse() { return 20; }
         export i32 collision() { return 1; }
+        export T parse_value<T>(T value) { return value; }
+        export T select<T>(T value) { return value; }
     )");
     Write("second/implementation.fl", R"(module errors;
         export i32 network() { return 22; }
         export i32 collision() { return 2; }
+        export T network_value<T>(T value) { return value; }
+        export T select<T>(T value) { return value; }
     )");
     Write("main.fl", R"(module main;
         @imports :: root::first::errors :: root::second::errors;
-        i32 main() { return errors::parse() + errors::network(); }
+        i32 main() { return errors::parse() + errors::network()
+            + errors::parse_value<i32>(0) + errors::network_value<i32>(0); }
     )");
     EXPECT_EQ(Check(), "");
 
@@ -125,6 +130,13 @@ TEST_F(ModuleTests, OverlapsSameNamedImportsAndDiagnosesOnlyCollisions) {
     EXPECT_NE(ambiguous.find((root / "first/implementation.fl").string()),
               std::string::npos);
     EXPECT_NE(ambiguous.find((root / "second/implementation.fl").string()),
+              std::string::npos);
+
+    Write("main.fl", R"(module main;
+        @imports :: root::first::errors :: root::second::errors;
+        i32 main() { return errors::select<i32>(42); }
+    )");
+    EXPECT_NE(Check().find("ambiguous imported generic name 'errors::select'"),
               std::string::npos);
 
     Write("main.fl", R"(module main;
@@ -236,7 +248,12 @@ TEST_F(ModuleTests, RejectsCyclesAndMissingDeclaredModules) {
 TEST_F(ModuleTests, RejectsDuplicateAliasesAndLocalNameCollisions) {
     Write("a.fl", "module a; export i32 value() { return 1; }");
     Write("main.fl",
-          "module main; @imports :: root::a :: root::a; void main() {}");
+          "module main; @imports :: root::a :: root::a; i32 main() { return "
+          "a::value(); }");
+    EXPECT_EQ(Check(), "");
+    Write("main.fl",
+          "module main; @imports :: root::a as same :: root::a as same; "
+          "void main() {}");
     EXPECT_NE(Check().find("duplicate import alias"), std::string::npos);
     Write("main.fl",
           "module main; @imports :: root::a; void a() {} void main() {}");
@@ -493,8 +510,8 @@ TEST_F(ModuleTests, WildcardsDiscoverTypesAndOnlyImmediateModuleFiles) {
     EXPECT_EQ(Check(), "");
     Write("main.fl",
           "module main; @imports :: root::math::* :: root::math::division; "
-          "void main() {}");
-    EXPECT_NE(Check().find("duplicate import alias"), std::string::npos);
+          "i32 main() { return division::value(); }");
+    EXPECT_EQ(Check(), "");
 }
 TEST_F(ModuleTests, LibraryWildcardsAndEmptyDirectories) {
     Write("library/a.fl", "module a; export i32 value() { return 42; }");
