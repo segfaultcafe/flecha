@@ -83,6 +83,9 @@ class Declaration : public AstNode {
    public:
     using AstNode::AstNode;
     std::string moduleId;
+    // Source units retain independent import scopes even when they contribute
+    // declarations to the same logical module.
+    std::string sourceId;
     bool exported = false;
     bool quiverVisible = false;
     // The source-root-qualified directory that contains this declaration.
@@ -651,6 +654,7 @@ class CallableTypeDeclaration final : public Declaration {
 
 struct Import final {
     bool wildcard = false;
+    bool explicitAlias = false;
     std::vector<std::string> path;
     std::string alias;
     std::string resolvedModule;
@@ -658,6 +662,7 @@ struct Import final {
 };
 struct Module final {
     std::string id;
+    std::string sourceId;
     std::string name;
     std::string file;
     std::string quiverId;

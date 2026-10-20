@@ -319,9 +319,10 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
     _loaded.emplace(loadKey, id);
     _roots.emplace(file, root);
     _active.push_back(loadKey);
-    Module module{id,         unit->moduleName,        file.string(), quiverId,
-                  quiverName, unit->privateModule,     entry,         testFile,
-                  {},         std::move(unit->imports)};
+    Module module{id,          id,                       unit->moduleName,
+                  file.string(), quiverId,               quiverName,
+                  unit->privateModule, entry,             testFile,
+                  {},          std::move(unit->imports)};
     for (auto& import : module.imports) {
         if (import.path.empty()) continue;
         fs::path sourceRoot = root;
@@ -390,6 +391,7 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
     }
     for (auto& declaration : unit->TakeDeclarations()) {
         declaration->moduleId = id;
+        declaration->sourceId = id;
         declaration->quiverId = quiverId;
         _declarations.push_back(std::move(declaration));
     }
