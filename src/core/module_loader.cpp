@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <fstream>
+#include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
 
@@ -11,13 +13,45 @@
 namespace flecha::core {
 namespace fs = std::filesystem;
 namespace {
-bool IsTestFile(const fs::path& file) {
-    return file.extension() == ".fl" && file.stem().string().ends_with("_test");
+struct ModuleHeader final {
+    std::string name;
+    bool privateModule = false;
+};
+
+struct ParsedSource final {
+    fs::path file;
+    std::string sourceId;
+    std::unique_ptr<CompilationUnit> unit;
+};
+
+std::optional<std::string> ReadSource(const fs::path& file) {
+    std::ifstream stream(file);
+    if (!stream) return std::nullopt;
+    std::ostringstream buffer;
+    buffer << stream.rdbuf();
+    return buffer.str();
 }
+
+ModuleHeader ReadHeader(const fs::path& file) {
+    const auto source = ReadSource(file);
+    if (!source) return {};
+    diagnostics::DiagnosticBag ignored;
+    Parser parser(Tokenizer(*source, ignored).Tokenize(), ignored);
+    parser.ParseHeader();
+    return {parser.ModuleName(), parser.PrivateModule()};
+}
+
+bool IsTestModule(std::string_view name) { return name.ends_with("_test"); }
 
 bool IsStandardTestingImport(const Import& import) {
     return import.path ==
            std::vector<std::string>{"lib", "std", "tests", "testing"};
+}
+
+std::string LogicalKey(const std::string& sourceIdentity, const fs::path& root,
+                       const fs::path& directory, const std::string& name) {
+    return sourceIdentity + "\n" + root.generic_string() + "\n" +
+           directory.generic_string() + "\n" + name;
 }
 
 std::string DotLeader(std::string label) {
@@ -46,17 +80,13 @@ std::string StringLiteral(std::string_view value) {
     return escaped;
 }
 
-std::string TestHarnessSource(const CompilationUnit& unit, const fs::path& file,
-                              bool verbose) {
-    const std::string fileName = file.filename().string();
-    const std::string displayPath = DisplayPath(file);
+std::string TestHarnessSource(
+    const std::vector<const FunctionDeclaration*>& tests,
+    const fs::path& entryFile, bool verbose) {
+    const std::string fileName = entryFile.filename().string();
+    const std::string displayPath = DisplayPath(entryFile);
     const std::string escapedFileName = StringLiteral(fileName);
     const std::string escapedDisplayPath = StringLiteral(displayPath);
-    std::size_t testCount = 0;
-    for (const auto& declaration : unit.Declarations())
-        if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
-            static_cast<const FunctionDeclaration&>(*declaration).IsTest())
-            ++testCount;
 
     std::ostringstream source;
     source << "i32 __flecha_test_main() { usize __flecha_passed = 0; "
@@ -66,19 +96,15 @@ std::string TestHarnessSource(const CompilationUnit& unit, const fs::path& file,
         std::string variable;
     };
     std::vector<TestContext> contexts;
-    std::size_t index = 0;
-    for (const auto& declaration : unit.Declarations()) {
-        if (declaration->Kind() != AstNodeKind::FunctionDeclaration) continue;
-        const auto& function =
-            static_cast<const FunctionDeclaration&>(*declaration);
-        if (!function.IsTest()) continue;
+    for (std::size_t index = 0; index < tests.size(); ++index) {
+        const auto& function = *tests[index];
         const std::string context =
-            "__flecha_test_context_" + std::to_string(index++);
+            "__flecha_test_context_" + std::to_string(index);
         contexts.push_back({&function, context});
         source << "testing::UnitTest " << context
-               << " = testing::UnitTest::init(\"" << function.Name() << "\", "
-               << (verbose ? "true" : "false") << "); " << function.Name()
-               << "(&" << context << "); if " << context
+               << " = testing::UnitTest::init(\"" << function.Name()
+               << "\", " << (verbose ? "true" : "false") << "); "
+               << function.Name() << "(&" << context << "); if " << context
                << ".failed() { __flecha_failed++; } else { "
                   "__flecha_passed++; } ";
     }
@@ -86,30 +112,36 @@ std::string TestHarnessSource(const CompilationUnit& unit, const fs::path& file,
     source << "stdoutln(\"" << escapedFileName << "\"); ";
     for (const auto& context : contexts) {
         const auto& function = *context.function;
+        const std::string functionPath =
+            function.Range().start.file.empty()
+                ? escapedDisplayPath
+                : StringLiteral(DisplayPath(function.Range().start.file));
         source << "if " << context.variable << ".failed() { "
                << "stdoutln(\"" << DotLeader("  " + function.Name())
-               << "fail\"); stdoutf(\"    test: " << escapedDisplayPath << ":"
+               << "fail\"); stdoutf(\"    test: " << functionPath << ":"
                << function.NameRange().start.line << ":"
                << function.NameRange().start.column << "\\n\"); "
                << context.variable << ".printOutput(); } ";
         if (verbose)
-            source << "else { stdoutln(\"" << DotLeader("  " + function.Name())
-                   << "ok\"); " << context.variable << ".printOutput(); } ";
+            source << "else { stdoutln(\""
+                   << DotLeader("  " + function.Name()) << "ok\"); "
+                   << context.variable << ".printOutput(); } ";
     }
     source << "stdoutln(\"\"); ";
-    source << "stdoutf(\"FAIL [%d/" << testCount << "] tests passed, but [%d/"
-           << testCount
+    source << "stdoutf(\"FAIL [%d/" << tests.size()
+           << "] tests passed, but [%d/" << tests.size()
            << "] failed\\n\", __flecha_passed, __flecha_failed); return 1; } ";
     if (verbose) {
         source << "stdoutln(\"" << escapedFileName << "\"); ";
         for (const auto& context : contexts)
             source << "stdoutln(\""
-                   << DotLeader("  " + context.function->Name()) << "ok\"); "
-                   << context.variable << ".printOutput(); ";
+                   << DotLeader("  " + context.function->Name())
+                   << "ok\"); " << context.variable << ".printOutput(); ";
         source << "stdoutln(\"\"); ";
     } else
-        source << "stdout(\"" << StringLiteral(DotLeader(fileName)) << "\"); ";
-    source << "stdoutf(\"OK [%d/" << testCount
+        source << "stdout(\"" << StringLiteral(DotLeader(fileName))
+               << "\"); ";
+    source << "stdoutf(\"OK [%d/" << tests.size()
            << "] tests passed\\n\", __flecha_passed); return 0; }";
     return source.str();
 }
@@ -120,6 +152,7 @@ void ModuleLoader::Report(source::SourceRange range,
     _diagnostics.Report(diagnostics::DiagnosticCode::UnknownName, range,
                         message);
 }
+
 std::unique_ptr<CompilationUnit> ModuleLoader::Load(
     const fs::path& entry, fs::path root,
     std::map<std::string, fs::path> libraries, ModuleLoadMode mode,
@@ -146,48 +179,79 @@ std::unique_ptr<CompilationUnit> ModuleLoader::Load(
         }
     }
     root = fs::weakly_canonical(root);
-    Visit(entry, root, true);
+    const fs::path file = fs::weakly_canonical(entry);
+    const ModuleHeader header = ReadHeader(file);
+    if (header.name.empty())
+        LoadLegacyEntry(file, root);
+    else
+        VisitModule(file.parent_path(), header.name, root, true, file);
+
     auto unit = std::make_unique<CompilationUnit>(source::SourceRange{},
                                                   std::move(_declarations));
     unit->modules = std::move(_modules);
     unit->testingModule = std::move(_testingModule);
     return unit;
 }
-std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
-                                bool entry, source::SourceRange importRange,
-                                std::string sourceIdentity,
-                                std::string importingQuiverId) {
-    const fs::path file = fs::weakly_canonical(input);
-    const auto loadKey = std::make_pair(file, sourceIdentity);
-    const fs::path directory = file.parent_path();
+
+void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root) {
+    const auto source = ReadSource(file);
+    const source::SourceLocation origin{0, 1, 1, file.string()};
+    const source::SourceRange fileRange{origin, origin};
+    if (!source) {
+        Report(fileRange, "cannot open module '" + file.string() + "'");
+        return;
+    }
+    diagnostics::DiagnosticBag lexical;
+    auto tokens = Tokenizer(*source, lexical).Tokenize();
+    const auto locate = [&](source::SourceRange range) {
+        range.start.file = file.string();
+        range.end.file = file.string();
+        return range;
+    };
+    for (auto& token : tokens) token.range = locate(token.range);
+    for (const auto& diagnostic : lexical.Diagnostics())
+        _diagnostics.Report(diagnostic.code, locate(diagnostic.range),
+                            diagnostic.message, diagnostic.severity);
+    Parser parser(std::move(tokens), _diagnostics);
+    auto unit = parser.Parse();
+    if (_mode == ModuleLoadMode::Test)
+        Report(fileRange, "'flecha test' requires a declared '<name>_test' module");
+    const std::string sourceId = "$legacy$";
+    _modules.push_back(Module{"", sourceId, "", file.string(), "root\n" +
+                                  root.generic_string() + "\n.",
+                              "root", false, true, false, {}, {}});
+    for (auto& declaration : unit->TakeDeclarations()) {
+        declaration->sourceId = sourceId;
+        _declarations.push_back(std::move(declaration));
+    }
+}
+
+std::string ModuleLoader::VisitModule(
+    const fs::path& inputDirectory, const std::string& name,
+    const fs::path& root, bool entry, const fs::path& entrySource,
+    source::SourceRange importRange, std::string sourceIdentity,
+    std::string importingQuiverId) {
+    const fs::path directory = fs::weakly_canonical(inputDirectory);
     const fs::path relativeDirectory = directory.lexically_relative(root);
     const std::string quiverId = sourceIdentity + "\n" + root.generic_string() +
                                  "\n" + relativeDirectory.generic_string();
     std::string quiverName = sourceIdentity;
     for (const auto& segment : relativeDirectory)
         if (segment != ".") quiverName += "::" + segment.string();
+    const std::string key = LogicalKey(sourceIdentity, root, directory, name);
     const auto reportPrivateImport = [&] {
         Report(importRange,
-               "private module '" + file.stem().string() +
+               "private module '" + name +
                    "' can only be imported from modules in quiver '" +
                    quiverName + "'");
     };
-    if (std::find(_active.begin(), _active.end(), loadKey) != _active.end()) {
-        std::string cycle;
-        for (const auto& active : _active)
-            cycle += active.first.string() + " -> ";
-        Report(importRange, "module import cycle: " + cycle + file.string());
+
+    if (std::find(_active.begin(), _active.end(), key) != _active.end()) {
+        Report(importRange, "module import cycle involving '" + name + "'");
         return {};
     }
-    if (const auto previousRoot = _roots.find(file);
-        previousRoot != _roots.end() && previousRoot->second != root) {
-        Report(importRange,
-               "module is imported with conflicting source roots: " +
-                   file.string());
-        return {};
-    }
-    if (const auto found = _loaded.find(loadKey); found != _loaded.end()) {
-        const auto privacy = _privateModules.find(loadKey);
+    if (const auto found = _loaded.find(key); found != _loaded.end()) {
+        const auto privacy = _privateModules.find(key);
         if (!entry && privacy != _privateModules.end() && privacy->second &&
             importingQuiverId != quiverId)
             reportPrivateImport();
@@ -197,205 +261,290 @@ std::string ModuleLoader::Visit(const fs::path& input, const fs::path& root,
         Report(importRange, "module import depth exceeds 256");
         return {};
     }
-    std::ifstream stream(file);
-    if (!stream) {
-        Report(importRange, "cannot open module '" + file.string() + "'");
+    if (!fs::is_directory(directory)) {
+        Report(importRange,
+               "cannot open module directory '" + directory.string() + "'");
         return {};
     }
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    const std::string source = buffer.str();
-    diagnostics::DiagnosticBag lexical;
-    auto tokens = Tokenizer(source, lexical).Tokenize();
-    const auto locate = [&](source::SourceRange range) {
-        range.start.file = file.string();
-        range.end.file = file.string();
-        return range;
-    };
-    const source::SourceLocation origin{0, 1, 1, file.string()};
-    const source::SourceRange fileRange{origin, origin};
-    for (auto& token : tokens) token.range = locate(token.range);
-    for (const auto& diagnostic : lexical.Diagnostics())
-        _diagnostics.Report(diagnostic.code, locate(diagnostic.range),
-                            diagnostic.message, diagnostic.severity);
-    Parser parser(std::move(tokens), _diagnostics);
-    parser.ParseHeader();
-    const bool testFile = IsTestFile(file);
-    if (testFile && (_mode != ModuleLoadMode::Test || !entry))
-        Report(fileRange,
-               "test modules can only be compiled as the entry of 'flecha "
-               "test'");
-    if (entry && _mode == ModuleLoadMode::Test && !testFile)
-        Report(fileRange,
-               "'flecha test' requires a '<filename>_test.fl' module");
-    fs::path testPair;
-    if (entry && testFile) {
-        const std::string stem = file.stem().string();
-        testPair =
-            file.parent_path() /
-            (stem.substr(0, stem.size() - std::string_view("_test").size()) +
-             ".fl");
-        if (!fs::is_regular_file(testPair))
-            Report(fileRange,
-                   "test module requires sibling production module '" +
-                       testPair.string() + "'");
-        else
-            testPair = fs::weakly_canonical(testPair);
-    }
-    std::vector<Import> expanded;
-    for (const auto& import : parser.Imports()) {
-        if (!import.wildcard) {
-            expanded.push_back(import);
+
+    std::vector<fs::path> sourceFiles;
+    for (const auto& item : fs::directory_iterator(directory)) {
+        if (!item.is_regular_file() || item.path().extension() != ".fl" ||
+            ReadHeader(item.path()).name != name)
             continue;
-        }
-        fs::path sourceRoot = root;
-        std::size_t start = 1;
-        if (import.path[0] == "lib") {
-            if (import.path.size() < 2) continue;
-            const auto library = _libraries.find(import.path[1]);
-            if (library == _libraries.end()) {
-                Report(import.range,
-                       "library '" + import.path[1] + "' is not configured");
-                continue;
-            }
-            sourceRoot = fs::weakly_canonical(library->second);
-            start = 2;
-        } else if (import.path[0] != "root")
-            continue;
-        fs::path directory = sourceRoot;
-        for (std::size_t i = start; i < import.path.size(); ++i)
-            directory /= import.path[i];
-        directory = fs::weakly_canonical(directory);
-        const auto relative = directory.lexically_relative(sourceRoot);
+        const fs::path sourceFile = fs::weakly_canonical(item.path());
+        const fs::path relative = sourceFile.lexically_relative(root);
         if (relative.empty() || *relative.begin() == "..") {
-            Report(import.range, "module path escapes its source root");
+            Report(importRange, "module source escapes its source root: " +
+                                    sourceFile.string());
             continue;
         }
-        if (!fs::is_directory(directory)) {
-            Report(import.range,
-                   "cannot open module directory '" + directory.string() + "'");
+        sourceFiles.push_back(sourceFile);
+    }
+    std::sort(sourceFiles.begin(), sourceFiles.end());
+    if (sourceFiles.empty()) {
+        Report(importRange, "cannot open module '" + name + "' in namespace '" +
+                                quiverName + "'");
+        return {};
+    }
+
+    const bool testModule = IsTestModule(name);
+    const source::SourceLocation namespaceOrigin{0, 1, 1, directory.string()};
+    const source::SourceRange namespaceRange{namespaceOrigin, namespaceOrigin};
+    if (testModule && (_mode != ModuleLoadMode::Test || !entry))
+        Report(namespaceRange,
+               "test modules can only be compiled as the entry of 'flecha test'");
+    if (entry && _mode == ModuleLoadMode::Test && !testModule)
+        Report(namespaceRange,
+               "'flecha test' requires a declared '<name>_test' module");
+
+    const std::string id = "$m" + std::to_string(_loaded.size()) + "$";
+    _loaded.emplace(key, id);
+    _active.push_back(key);
+
+    std::vector<ParsedSource> sources;
+    std::optional<bool> privateModule;
+    for (std::size_t sourceIndex = 0; sourceIndex < sourceFiles.size();
+         ++sourceIndex) {
+        const fs::path& file = sourceFiles[sourceIndex];
+        if (const auto previousRoot = _roots.find(file);
+            previousRoot != _roots.end() && previousRoot->second != root) {
+            Report(namespaceRange,
+                   "module source is loaded with conflicting source roots: " +
+                       file.string());
             continue;
         }
-        std::vector<std::string> names;
-        for (const auto& item : fs::directory_iterator(directory))
-            if (item.is_regular_file() && item.path().extension() == ".fl" &&
-                !IsTestFile(item.path()))
-                names.push_back(item.path().stem().string());
-        std::sort(names.begin(), names.end());
-        for (const auto& name : names) {
-            diagnostics::DiagnosticBag nameDiagnostics;
-            const auto nameTokens = Tokenizer(name, nameDiagnostics).Tokenize();
-            if (nameDiagnostics.HasErrors() || nameTokens.size() != 2 ||
-                nameTokens[0].type != TokenType::Identifier ||
-                nameTokens[0].value != name || name == "root" ||
-                name == "lib") {
-                Report(import.range,
-                       "invalid module filename '" + name + ".fl'");
+        _roots.emplace(file, root);
+        const auto source = ReadSource(file);
+        if (!source) {
+            Report(namespaceRange, "cannot open module source '" + file.string() +
+                                       "'");
+            continue;
+        }
+        diagnostics::DiagnosticBag lexical;
+        auto tokens = Tokenizer(*source, lexical).Tokenize();
+        const auto locate = [&](source::SourceRange range) {
+            range.start.file = file.string();
+            range.end.file = file.string();
+            return range;
+        };
+        const source::SourceLocation fileOrigin{0, 1, 1, file.string()};
+        const source::SourceRange fileRange{fileOrigin, fileOrigin};
+        for (auto& token : tokens) token.range = locate(token.range);
+        for (const auto& diagnostic : lexical.Diagnostics())
+            _diagnostics.Report(diagnostic.code, locate(diagnostic.range),
+                                diagnostic.message, diagnostic.severity);
+        Parser parser(std::move(tokens), _diagnostics);
+        parser.ParseHeader();
+
+        std::vector<Import> expanded;
+        for (const auto& import : parser.Imports()) {
+            if (!import.wildcard) {
+                expanded.push_back(import);
                 continue;
             }
-            Import selected = import;
-            selected.wildcard = false;
-            selected.path.push_back(name);
-            selected.alias = name;
-            expanded.push_back(std::move(selected));
+            fs::path sourceRoot = root;
+            std::size_t start = 1;
+            if (import.path[0] == "lib") {
+                if (import.path.size() < 2) continue;
+                const auto library = _libraries.find(import.path[1]);
+                if (library == _libraries.end()) {
+                    Report(import.range,
+                           "library '" + import.path[1] + "' is not configured");
+                    continue;
+                }
+                sourceRoot = fs::weakly_canonical(library->second);
+                start = 2;
+            }
+            fs::path selectedDirectory = sourceRoot;
+            for (std::size_t i = start; i < import.path.size(); ++i)
+                selectedDirectory /= import.path[i];
+            selectedDirectory = fs::weakly_canonical(selectedDirectory);
+            if (!fs::is_directory(selectedDirectory)) {
+                Report(import.range, "cannot open module directory '" +
+                                         selectedDirectory.string() + "'");
+                continue;
+            }
+            std::set<std::string> names;
+            for (const auto& item : fs::directory_iterator(selectedDirectory)) {
+                if (!item.is_regular_file() ||
+                    item.path().extension() != ".fl")
+                    continue;
+                const std::string selected = ReadHeader(item.path()).name;
+                if (!selected.empty() && !IsTestModule(selected))
+                    names.insert(selected);
+            }
+            for (const auto& selected : names) {
+                Import choice = import;
+                choice.wildcard = false;
+                choice.path.push_back(selected);
+                choice.alias = selected;
+                expanded.push_back(std::move(choice));
+            }
         }
+        parser.SetImports(std::move(expanded));
+        auto unit = parser.Parse();
+        if (unit->moduleName != name)
+            Report(fileRange, "source declares module '" + unit->moduleName +
+                                  "' while loading logical module '" + name +
+                                  "'");
+        if (!privateModule)
+            privateModule = unit->privateModule;
+        else if (*privateModule != unit->privateModule)
+            Report(unit->Range(),
+                   "logical module '" + name +
+                       "' mixes ordinary and private module declarations");
+        sources.push_back(
+            {file, id + "s" + std::to_string(sourceIndex) + "$", std::move(unit)});
     }
-    parser.SetImports(std::move(expanded));
-    auto unit = parser.Parse();
-    _privateModules.emplace(loadKey, unit->privateModule);
-    if (!entry && unit->privateModule && importingQuiverId != quiverId)
+
+    const bool isPrivate = privateModule.value_or(false);
+    _privateModules.emplace(key, isPrivate);
+    if (!entry && isPrivate && importingQuiverId != quiverId)
         reportPrivateImport();
-    if (unit->moduleName.empty() && !entry)
-        Report(unit->Range(), "imported files require a module declaration");
-    if (!unit->moduleName.empty() && unit->moduleName != file.stem().string())
-        Report(unit->Range(), "module '" + unit->moduleName +
-                                  "' must match filename '" +
-                                  file.stem().string() + "'");
-    // Legacy standalone files retain their native names and ABI. Declared
-    // modules get an inaccessible internal prefix, including private functions.
-    const std::string id = unit->moduleName.empty() && entry
-                               ? ""
-                               : "$m" + std::to_string(_loaded.size()) + "$";
-    _loaded.emplace(loadKey, id);
-    _roots.emplace(file, root);
-    _active.push_back(loadKey);
-    Module module{id,          id,                       unit->moduleName,
-                  file.string(), quiverId,               quiverName,
-                  unit->privateModule, entry,             testFile,
-                  {},          std::move(unit->imports)};
-    for (auto& import : module.imports) {
-        if (import.path.empty()) continue;
-        fs::path sourceRoot = root;
-        std::string targetIdentity = sourceIdentity;
-        std::size_t start = 1;
-        if (import.path[0] == "lib") {
-            if (import.path.size() < 3) continue;
-            const auto library = _libraries.find(import.path[1]);
-            if (library == _libraries.end()) {
-                Report(
-                    import.range,
-                    "library '" + import.path[1] +
-                        "' is not configured; supply --lib name=source-root");
+    if (isPrivate && !sources.empty())
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::UnexpectedToken,
+            sources.front().unit->Range(),
+            "'private module' is deprecated; use an ordinary module with "
+            "quiver declarations",
+            diagnostics::DiagnosticSeverity::Warning);
+
+    std::vector<Module> sourceModules;
+    std::string testPair;
+    const std::string productionName =
+        testModule ? name.substr(0, name.size() - std::string_view("_test").size())
+                   : "";
+    for (auto& source : sources) {
+        Module module{id,
+                      source.sourceId,
+                      name,
+                      source.file.string(),
+                      quiverId,
+                      quiverName,
+                      isPrivate,
+                      entry,
+                      testModule,
+                      {},
+                      std::move(source.unit->imports)};
+        for (auto& import : module.imports) {
+            if (import.path.empty()) continue;
+            fs::path sourceRoot = root;
+            std::string targetIdentity = sourceIdentity;
+            std::size_t start = 1;
+            if (import.path[0] == "lib") {
+                if (import.path.size() < 3) continue;
+                const auto library = _libraries.find(import.path[1]);
+                if (library == _libraries.end()) {
+                    Report(import.range,
+                           "library '" + import.path[1] +
+                               "' is not configured; supply --lib "
+                               "name=source-root");
+                    continue;
+                }
+                sourceRoot = fs::weakly_canonical(library->second);
+                targetIdentity = "lib::" + import.path[1];
+                start = 2;
+            } else if (import.path[0] != "root" || import.path.size() < 2)
+                continue;
+            const std::string targetName = import.path.back();
+            fs::path targetDirectory = sourceRoot;
+            for (std::size_t index = start; index + 1 < import.path.size();
+                 ++index)
+                targetDirectory /= import.path[index];
+            targetDirectory = fs::weakly_canonical(targetDirectory);
+            const auto relative = targetDirectory.lexically_relative(sourceRoot);
+            if (relative.empty() || *relative.begin() == "..") {
+                Report(import.range, "module path escapes its source root");
                 continue;
             }
-            sourceRoot = fs::weakly_canonical(library->second);
-            targetIdentity = "lib::" + import.path[1];
-            start = 2;
-        } else if (import.path[0] != "root" || import.path.size() < 2)
-            continue;
-        fs::path target = sourceRoot;
-        for (std::size_t index = start; index < import.path.size(); ++index)
-            target /= import.path[index];
-        target += ".fl";
-        const auto relative =
-            fs::weakly_canonical(target).lexically_relative(sourceRoot);
-        if (relative.empty() || *relative.begin() == "..") {
-            Report(import.range, "module path escapes its source root");
-            continue;
+            import.resolvedModule = VisitModule(
+                targetDirectory, targetName, sourceRoot, false, {}, import.range,
+                targetIdentity, quiverId);
+            if (IsStandardTestingImport(import))
+                _testingModule = import.resolvedModule;
+            if (testModule && targetIdentity == sourceIdentity &&
+                targetDirectory == directory && targetName == productionName)
+                testPair = import.resolvedModule;
         }
-        import.resolvedModule = Visit(target, sourceRoot, false, import.range,
-                                      std::move(targetIdentity), quiverId);
-        if (IsStandardTestingImport(import))
-            _testingModule = import.resolvedModule;
-        if (testFile && !testPair.empty() &&
-            fs::weakly_canonical(target) == testPair)
-            module.testPair = import.resolvedModule;
+        for (std::size_t left = 0; left < module.imports.size(); ++left)
+            for (std::size_t right = left + 1; right < module.imports.size();
+                 ++right)
+                if (!module.imports[left].explicitAlias &&
+                    !module.imports[right].explicitAlias &&
+                    module.imports[left].alias == module.imports[right].alias &&
+                    !module.imports[left].resolvedModule.empty() &&
+                    module.imports[left].resolvedModule ==
+                        module.imports[right].resolvedModule)
+                    Report(module.imports[right].range,
+                           "duplicate import alias '" +
+                               module.imports[right].alias + "'");
+        sourceModules.push_back(std::move(module));
     }
-    _active.pop_back();
-    if (entry && testFile && !testPair.empty() && module.testPair.empty())
-        Report(unit->Range(),
-               "test module must explicitly import its sibling production "
-               "module");
+
+    if (entry && testModule && testPair.empty())
+        Report(namespaceRange,
+               "test module must explicitly import its paired production module '" +
+                   productionName + "'");
+    for (auto& module : sourceModules) {
+        module.testPair = testPair;
+        _modules.push_back(std::move(module));
+    }
+
     if (entry && _mode == ModuleLoadMode::Test) {
+        std::vector<const FunctionDeclaration*> tests;
+        for (const auto& source : sources)
+            for (const auto& declaration : source.unit->Declarations())
+                if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
+                    static_cast<const FunctionDeclaration&>(*declaration)
+                        .IsTest())
+                    tests.push_back(static_cast<const FunctionDeclaration*>(
+                        declaration.get()));
         diagnostics::DiagnosticBag generatedDiagnostics;
         auto generatedTokens =
-            Tokenizer(TestHarnessSource(*unit, file, _verboseTests),
+            Tokenizer(TestHarnessSource(tests, entrySource, _verboseTests),
                       generatedDiagnostics)
                 .Tokenize();
-        Parser generatedParser(std::move(generatedTokens),
-                               generatedDiagnostics);
+        Parser generatedParser(std::move(generatedTokens), generatedDiagnostics);
         Import testingImport;
-        testingImport.path = {"root", "testing"};
+        testingImport.path = {"lib", "std", "tests", "testing"};
         testingImport.alias = "testing";
-        generatedParser.SetImports({std::move(testingImport)});
+        testingImport.resolvedModule = _testingModule;
+        generatedParser.SetImports({testingImport});
         auto generated = generatedParser.Parse();
         for (const auto& diagnostic : generatedDiagnostics.Diagnostics())
             _diagnostics.Report(diagnostic.code, diagnostic.range,
                                 diagnostic.message, diagnostic.severity);
+        const std::string harnessSource = id + "harness$";
+        _modules.push_back(Module{id,
+                                  harnessSource,
+                                  name,
+                                  entrySource.string(),
+                                  quiverId,
+                                  quiverName,
+                                  isPrivate,
+                                  true,
+                                  true,
+                                  testPair,
+                                  {std::move(testingImport)}});
         for (auto& declaration : generated->TakeDeclarations()) {
             if (declaration->Kind() == AstNodeKind::FunctionDeclaration)
-                static_cast<FunctionDeclaration&>(*declaration)
-                    .MarkTestHarness();
-            unit->AddDeclaration(std::move(declaration));
+                static_cast<FunctionDeclaration&>(*declaration).MarkTestHarness();
+            declaration->moduleId = id;
+            declaration->sourceId = harnessSource;
+            declaration->quiverId = quiverId;
+            _declarations.push_back(std::move(declaration));
         }
     }
-    for (auto& declaration : unit->TakeDeclarations()) {
-        declaration->moduleId = id;
-        declaration->sourceId = id;
-        declaration->quiverId = quiverId;
-        _declarations.push_back(std::move(declaration));
-    }
-    _modules.push_back(std::move(module));
+
+    for (auto& source : sources)
+        for (auto& declaration : source.unit->TakeDeclarations()) {
+            declaration->moduleId = id;
+            declaration->sourceId = source.sourceId;
+            declaration->quiverId = quiverId;
+            _declarations.push_back(std::move(declaration));
+        }
+    _active.pop_back();
     return id;
 }
 }  // namespace flecha::core

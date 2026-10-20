@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "diagnostics/diagnostic_bag.hpp"
 #include "semantic_model.hpp"
@@ -18,21 +19,31 @@ class SemanticAnalyzer final {
     [[nodiscard]] SemanticModel Analyze(core::CompilationUnit& unit);
 
    private:
-    void SetModule(const std::string& id);
+    void SetSource(const std::string& id);
     void BindImports(const core::CompilationUnit& unit);
     void ValidateExports(const core::CompilationUnit& unit);
     bool ReportInaccessibleImport(const std::string& name,
                                   source::SourceRange range);
+    bool ReportAmbiguousImport(const std::string& name,
+                               source::SourceRange range);
     std::string TopName(const core::Declaration& declaration,
                         const std::string& name) const;
     std::unordered_map<std::string, Scope*> _moduleScopes;
+    std::unordered_map<std::string, Scope*> _sourceScopes;
+    std::unordered_map<std::string, std::string> _sourceModules;
     std::unordered_map<
         std::string, std::unordered_map<std::string, const core::Declaration*>>
         _inaccessibleImports;
+    std::unordered_map<
+        std::string,
+        std::unordered_map<std::string,
+                           std::vector<const core::Declaration*>>>
+        _ambiguousImports;
     std::unordered_map<std::string, std::string> _quiverNames;
     std::unordered_set<std::string> _entryModules;
     std::unordered_set<std::string> _testModules;
     std::string _currentModule;
+    std::string _currentSource;
     std::string _testingModule;
     bool IsSafePlace(const core::Expression& expression) const;
     bool IsReferencePlace(const core::Expression& expression) const;
