@@ -11,6 +11,7 @@ Named callable signatures use:
 func Mapper(i32) => (i32);
 func Logger(stringv) => ();
 unsafe func Reader(lend *const u8 source) => (i32);
+once func Task() => (i32);
 ```
 
 Captureless anonymous functions use the same signature shape:
@@ -27,6 +28,19 @@ parameter names, omits the result list, and receives its complete signature
 from a typed initializer, argument, or return context. Partial signature
 inference is invalid. Named aliases are structural, while all callable values
 are move-only.
+
+`once func` is a distinct structural callable kind. Calling a once value moves
+and consumes it, so a second call is diagnosed as a moved-value use. A reusable
+callable with the same signature can move into a once slot, but a once callable
+cannot become reusable. Anonymous functions opt into consuming bodies with the
+`once` modifier:
+
+```flecha
+once func Task() => (i32);
+Task task = once [own resource]() => (i32) {
+    return consume(resource);
+};
+```
 
 Nonempty capture lists now support snapshot captures:
 
@@ -163,24 +177,29 @@ in dependency order.
     defer writer.flush();
     ```
 
+11. **Single-use callables — implemented
+    ([#67](https://github.com/segfaultcafe/flecha/issues/67)).** `once func`
+    participates in structural type identity and keeps the existing callable
+    ABI. Invocation consumes the callable and immediately destroys its
+    environment after the body returns. Once bodies may move, return, pass to
+    an `own` parameter, or free their owned captures. Per-capture liveness state
+    prevents the environment destroy thunk from cleaning an already-consumed
+    structure, while untouched captures are still destroyed if the callable is
+    never invoked. Reusable signatures convert to compatible once signatures;
+    the reverse conversion is rejected.
+
 ## Stretch boundary
 
-Single-use `once func` callables are tracked by
-[#67](https://github.com/segfaultcafe/flecha/issues/67) as a non-blocking
-v0.2.0 stretch item. Invoking such a value would consume it, allowing its body
-to consume owned captures and making a second invocation a move error. Its type
-identity, compatibility rules, ABI behavior, and never-invoked destruction
-must be settled before implementation. It may land in v0.2.0 when complete and
-stable, but it must not delay the release. Indirect-call benchmarks remain a
-non-blocking performance follow-up as well.
+Indirect-call benchmarks remain a non-blocking performance follow-up.
 
 ## v0.2.0 release condition
 
 The release is ready only when stages 1 through 10 are complete, their language
 and end-to-end tests pass under the sanitizer and packaged-compiler matrix, and
 the standard-library, editor, examples, and diagnostics agree with the final
-syntax and semantics. The `once func` stretch item and indirect-call benchmark
-are explicitly not release gates.
+syntax and semantics. The implemented `once func` stretch item does not change
+that release gate. The indirect-call benchmark is explicitly not a release
+gate.
 
 ## Language tests (implemented before 0.2.0)
 

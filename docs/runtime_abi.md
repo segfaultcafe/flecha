@@ -160,6 +160,13 @@ specializations, module boundaries, aggregate fields, and methods all retain
 the same three-pointer representation. This is not a C callback ABI or a
 stable cross-version binary interface.
 
+Reusable and `once func` values use this same layout; single-use is a semantic
+type property and does not add a callable field. Invoking a once value transfers
+the three pointers, calls `invoke`, then calls `destroy` before continuing.
+Owned structure captures add compiler-private liveness bits inside the closure
+environment so the destroy thunk skips values moved out by the once body while
+still destroying untouched or never-invoked captures.
+
 Release-package validation executes captureless and capturing callables across
 modules, methods, generic transfers, tuples, arrays, and owned-resource
 captures on every supported native target. Leak-sanitized native tests verify

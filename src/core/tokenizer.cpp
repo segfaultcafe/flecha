@@ -35,6 +35,7 @@ const KeywordMap KEYWORDS = {
     {"override", TokenType::Override},
     {"build", TokenType::Build},
     {"func", TokenType::Func},
+    {"once", TokenType::Once},
     {"unsafe", TokenType::Unsafe},
     {"export", TokenType::Export},
     {"quiver", TokenType::Quiver},

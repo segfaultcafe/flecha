@@ -747,6 +747,7 @@ void SemanticAnalyzer::ResolveCallableTypes(const core::CompilationUnit& unit) {
         SetModule(syntax.moduleId);
         CallableSignature signature;
         signature.isUnsafe = syntax.IsUnsafe();
+        signature.isOnce = syntax.IsOnce();
         std::unordered_set<std::string> parameterNames;
         for (const auto& parameter : syntax.Parameters()) {
             const SemanticType type = ResolveType(parameter->Type());
@@ -1510,7 +1511,8 @@ void SemanticAnalyzer::RegisterFunction(
     auto signature = std::make_shared<const CallableSignature>(
         CallableSignature{returnType, parameterTypes, parameterContracts,
                           ResultContracts(function.ReturnType()),
-                          borrowSourceIndex, function.IsUnsafe()});
+                          borrowSourceIndex, function.IsUnsafe(),
+                          function.HasModifier(core::FunctionModifier::Once)});
     const auto* symbol = static_cast<const FunctionSymbol*>(
         AddSymbol(std::make_unique<FunctionSymbol>(
                       name, std::move(signature), function.NameRange(),
@@ -2140,8 +2142,16 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                 MarkDirectConstruction(_directConstructions,
                                        *returnStatement.Value(), false);
             }
-            if (returnStatement.Value())
-                CheckTransfer(*returnStatement.Value(), expected);
+            if (returnStatement.Value()) {
+                const bool consumingReturn =
+                    _currentFunction != nullptr &&
+                    expected.Kind() != SemanticTypeKind::Tuple &&
+                    !_currentFunction->Signature().resultContracts.empty() &&
+                    _currentFunction->Signature().resultContracts.front() ==
+                        core::OwnershipContract::Own;
+                CheckTransfer(*returnStatement.Value(), expected,
+                              consumingReturn);
+            }
             if (_currentFunction && returnStatement.Value() &&
                 expected.Kind() == SemanticTypeKind::String &&
                 actual.Kind() != SemanticTypeKind::String &&
@@ -4054,6 +4064,22 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
             if (!IsAssignable(input, argument))
                 Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                        value->Range(), TypeMismatch(input, argument));
+        } else if (_currentFunction != nullptr && _currentFunction->IsOnce()) {
+            const core::Expression* source = value.get();
+            while (source->Kind() == core::AstNodeKind::ParenthesizedExpression)
+                source =
+                    &static_cast<const core::ParenthesizedExpression&>(*source)
+                         .Inner();
+            if (source->Kind() == core::AstNodeKind::NameExpression) {
+                const Symbol* symbol = _model.SymbolFor(
+                    static_cast<const core::NameExpression&>(*source));
+                const auto* capture =
+                    symbol != nullptr ? _model.CaptureFor(*symbol) : nullptr;
+                if (capture != nullptr &&
+                    capture->Mode() ==
+                        core::AnonymousFunctionExpression::CaptureMode::Own)
+                    CheckTransfer(*value, argument, true);
+            }
         }
     }
     SemanticType parameter = input;
@@ -4181,6 +4207,8 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         calleeType.Kind() == SemanticTypeKind::Function
             ? &calleeType.Signature()
             : nullptr;
+    if (signature != nullptr && signature->isOnce)
+        CheckTransfer(expression.Callee(), calleeType);
     std::vector<SemanticType> argumentTypes;
     for (std::size_t index = 0; index < expression.Arguments().size();
          ++index) {
@@ -4193,7 +4221,11 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                 : SemanticType::Error();
         argumentTypes.push_back(
             AnalyzeExpression(*expression.Arguments()[index], expected));
-        CheckTransfer(*expression.Arguments()[index], expected);
+        const bool consuming = signature != nullptr &&
+                               index < signature->parameterContracts.size() &&
+                               signature->parameterContracts[index] ==
+                                   core::OwnershipContract::Own;
+        CheckTransfer(*expression.Arguments()[index], expected, consuming);
     }
     if (calleeType.IsError()) return SemanticType::Error();
     if (signature == nullptr) {
@@ -4791,7 +4823,8 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
 }
 
 void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
-                                     SemanticType type) {
+                                     SemanticType type,
+                                     bool consumingOwnership) {
     const core::Expression* source = &expression;
     while (source->Kind() == core::AstNodeKind::ParenthesizedExpression)
         source =
@@ -4799,6 +4832,34 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
     const bool semanticDefault = IsNoneLiteral(*source);
     const SemanticType sourceType = _model.TypeOf(expression);
     if (sourceType.ContainsOwnedBuffer()) type = sourceType;
+    const Symbol* sourceSymbol =
+        source->Kind() == core::AstNodeKind::NameExpression
+            ? _model.SymbolFor(
+                  static_cast<const core::NameExpression&>(*source))
+            : nullptr;
+    const auto* sourceCapture =
+        sourceSymbol != nullptr ? _model.CaptureFor(*sourceSymbol) : nullptr;
+    const bool ownedCapture =
+        sourceCapture != nullptr &&
+        sourceCapture->Mode() ==
+            core::AnonymousFunctionExpression::CaptureMode::Own;
+    if (consumingOwnership && ownedCapture) {
+        if (_currentFunction == nullptr || !_currentFunction->IsOnce()) {
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   expression.Range(),
+                   "owned capture '" + sourceSymbol->Name() +
+                       "' cannot be consumed by a reusable closure");
+            return;
+        }
+        if (type.IsImmovable()) {
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   expression.Range(),
+                   "'" + type.Name() + "' is immovable; borrow it instead");
+            return;
+        }
+        _model._transfers.insert_or_assign(&expression, TransferKind::Move);
+        return;
+    }
     if (_currentFunction && CopyMayAllocate(type) &&
         source->Kind() != core::AstNodeKind::BuildExpression &&
         source->Kind() != core::AstNodeKind::CallExpression &&
@@ -4818,7 +4879,7 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
         CheckTransfer(
             static_cast<const core::ParenthesizedExpression&>(expression)
                 .Inner(),
-            type);
+            type, consumingOwnership);
         return;
     }
     if (expression.Kind() == core::AstNodeKind::BuildExpression ||
@@ -4851,7 +4912,8 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
             const auto* capture = _model.CaptureFor(*symbol);
             if (capture != nullptr &&
                 capture->Mode() ==
-                    core::AnonymousFunctionExpression::CaptureMode::Own) {
+                    core::AnonymousFunctionExpression::CaptureMode::Own &&
+                (_currentFunction == nullptr || !_currentFunction->IsOnce())) {
                 Report(diagnostics::DiagnosticCode::NonCopyableValue,
                        expression.Range(),
                        "owned capture '" + symbol->Name() +
@@ -4868,7 +4930,8 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
             static_cast<const core::TupleExpression&>(expression);
         for (std::size_t i = 0;
              i < tuple.Elements().size() && i < type.Elements().size(); ++i)
-            CheckTransfer(*tuple.Elements()[i], type.Elements()[i]);
+            CheckTransfer(*tuple.Elements()[i], type.Elements()[i],
+                          consumingOwnership);
         _model._transfers.insert_or_assign(&expression, TransferKind::Direct);
         return;
     }
@@ -4878,7 +4941,7 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
             static_cast<const core::ArrayExpression&>(expression);
         if (!array.IsRepeat() || array.Length() <= 1) {
             for (const auto& element : array.Elements())
-                CheckTransfer(*element, *type.Target());
+                CheckTransfer(*element, *type.Target(), consumingOwnership);
             _model._transfers.insert_or_assign(&expression,
                                                TransferKind::Direct);
             return;
@@ -4887,7 +4950,8 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
     if (expression.Kind() == core::AstNodeKind::MatchExpression) {
         const auto& match =
             static_cast<const core::MatchExpression&>(expression);
-        for (const auto& arm : match.Arms()) CheckTransfer(arm->Value(), type);
+        for (const auto& arm : match.Arms())
+            CheckTransfer(arm->Value(), type, consumingOwnership);
         _model._transfers.insert_or_assign(&expression, TransferKind::Direct);
         return;
     }
@@ -5068,7 +5132,10 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                 : SemanticType::Error();
         const SemanticType actual =
             AnalyzeExpression(*expression.Arguments()[i], expected);
-        CheckTransfer(*expression.Arguments()[i], expected);
+        CheckTransfer(*expression.Arguments()[i], expected,
+                      i + offset < function->ParameterTypes().size() &&
+                          function->ParameterContract(i + offset) ==
+                              core::OwnershipContract::Own);
         if (!IsAssignable(expected, actual) && !CanReborrow(expected, actual))
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                    expression.Arguments()[i]->Range(),

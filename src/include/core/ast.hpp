@@ -394,6 +394,7 @@ enum class FunctionModifier : std::uint8_t {
     Private,
     Override,
     Unsafe,
+    Once,
     Export,
     Extern,
     Inline,
@@ -597,7 +598,8 @@ class CallableTypeDeclaration final : public Declaration {
                             source::SourceRange nameRange,
                             std::vector<std::unique_ptr<Parameter>> parameters,
                             std::vector<std::unique_ptr<TypeNode>> results,
-                            bool isUnsafe, std::string borrowSource = {},
+                            bool isUnsafe, bool isOnce,
+                            std::string borrowSource = {},
                             source::SourceRange borrowSourceRange = {})
         : Declaration(range),
           _name(std::move(name)),
@@ -605,6 +607,7 @@ class CallableTypeDeclaration final : public Declaration {
           _parameters(std::move(parameters)),
           _results(std::move(results)),
           _isUnsafe(isUnsafe),
+          _isOnce(isOnce),
           _borrowSource(std::move(borrowSource)),
           _borrowSourceRange(borrowSourceRange) {}
 
@@ -624,6 +627,7 @@ class CallableTypeDeclaration final : public Declaration {
         return _results;
     }
     [[nodiscard]] bool IsUnsafe() const { return _isUnsafe; }
+    [[nodiscard]] bool IsOnce() const { return _isOnce; }
     [[nodiscard]] bool HasBorrowSource() const {
         return !_borrowSource.empty();
     }
@@ -640,6 +644,7 @@ class CallableTypeDeclaration final : public Declaration {
     std::vector<std::unique_ptr<Parameter>> _parameters;
     std::vector<std::unique_ptr<TypeNode>> _results;
     bool _isUnsafe;
+    bool _isOnce;
     std::string _borrowSource;
     source::SourceRange _borrowSourceRange;
 };

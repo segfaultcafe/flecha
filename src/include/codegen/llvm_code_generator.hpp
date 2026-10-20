@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "lowering/bound_ir.hpp"
@@ -67,7 +68,7 @@ class LlvmCodeGenerator final {
     void EmitArrayElements(llvm::Value* storage, semantic::SemanticType type,
                            bool reverse,
                            const std::function<void(llvm::Value*)>& action);
-    llvm::AllocaInst* LifetimeFlag(llvm::Value* storage);
+    llvm::Value* LifetimeFlag(llvm::Value* storage);
     [[nodiscard]] llvm::Type* MapType(semantic::SemanticType type);
     [[nodiscard]] llvm::StructType* StringViewType();
     [[nodiscard]] llvm::StructType* StringType();
@@ -210,7 +211,8 @@ class LlvmCodeGenerator final {
         _blockScopes;
     std::unordered_map<const semantic::StructureType*, llvm::StructType*>
         _structureTypes;
-    std::unordered_map<llvm::Value*, llvm::AllocaInst*> _lifetimeFlags;
+    std::unordered_map<llvm::Value*, llvm::Value*> _lifetimeFlags;
+    std::unordered_set<llvm::Value*> _ownedCaptureStorage;
     // Fresh owned results already have independent storage. The first owning
     // destination can transfer them instead of cloning their contents.
     std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedStrings;

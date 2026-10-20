@@ -135,6 +135,16 @@ scope constraints as references. Slice range sources receive shared reborrows.
 `FLECHA-S0037` reports statically invalid slice bounds; dynamic bounds trap in
 native code. See [checked_slices.md](checked_slices.md).
 
+### Single-use callables
+
+`once func` is structurally distinct from `func`. A compatible reusable
+callable is assignable to a once destination, but the reverse conversion is
+not. Every indirect call through a once signature records a move of the callee,
+so definite assignment reports a second invocation or later use with
+`FLECHA-S0027`. Inside a once anonymous function, an `own` capture may be moved,
+returned through an owning contract, passed to an owning parameter, or freed;
+the same operations remain invalid in reusable closures.
+
 ### Deferred calls
 
 `defer` accepts direct functions, callable values, and resolved structure or

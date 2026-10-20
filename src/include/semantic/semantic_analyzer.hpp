@@ -71,7 +71,8 @@ class SemanticAnalyzer final {
     SemanticType AnalyzeBuild(const core::BuildExpression& expression);
     SemanticType AnalyzeStructureCall(
         const core::MemberCallExpression& expression, SemanticType receiver);
-    void CheckTransfer(const core::Expression& expression, SemanticType type);
+    void CheckTransfer(const core::Expression& expression, SemanticType type,
+                       bool consumingOwnership = false);
     void WarnForNontrivialDefault(SemanticType type, source::SourceRange range);
     void ClassifyTrivialZeros(const core::CompilationUnit& unit);
     void RecordZeroDependency(SemanticType type);

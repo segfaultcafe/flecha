@@ -28,6 +28,11 @@ from immediate expression statements. Code generation captures its callable or
 method receiver and arguments at registration, then invokes the call during
 scope cleanup. See [defer.md](defer.md).
 
+An indirect call through a `once func` signature lowers its callee as a
+`BoundMoveExpression`. The backend invokes that transferred callable and runs
+its destroy thunk immediately after the call. The callable value keeps the
+same three-pointer representation as a reusable function.
+
 `BoundTupleExpression` retains ordered, typed elements. A
 `BoundDestructureStatement` holds one right-hand side and resolved destinations,
 including declaration/assignment flags and blank discards. It is not expanded
