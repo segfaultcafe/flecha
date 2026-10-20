@@ -822,10 +822,7 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
                     "duplicate or conflicting visibility modifier '" +
                         visibility + "'");
             } else if (modifier.type == TokenType::Export) {
-                if (_modulePrivate)
-                    declaration->quiverVisible = true;
-                else
-                    declaration->exported = true;
+                declaration->exported = true;
             } else {
                 declaration->quiverVisible = true;
             }
@@ -2196,6 +2193,7 @@ void Parser::ParseHeader() {
                             Consume(TokenType::Identifier, "import alias");
                         if (!alias) break;
                         import.alias = alias->value;
+                        import.explicitAlias = true;
                     }
                 }
                 import.range.end = Current().range.start;
@@ -2228,8 +2226,13 @@ void Parser::SetImports(std::vector<Import> imports) {
 std::unique_ptr<CompilationUnit> Parser::Parse() {
     const source::SourceLocation start = _tokens.front().range.start;
     ParseHeader();
+    std::map<std::string, bool> aliases;
     for (const auto& import : _imports) {
-        if (!import.wildcard && !_importAliases.insert(import.alias).second)
+        if (import.wildcard) continue;
+        const auto [previous, inserted] =
+            aliases.emplace(import.alias, import.explicitAlias);
+        (void)_importAliases.insert(import.alias);
+        if (!inserted && (import.explicitAlias || previous->second))
             _diagnostics.Report(
                 diagnostics::DiagnosticCode::DuplicateDeclaration, import.range,
                 "duplicate import alias '" + import.alias + "'");

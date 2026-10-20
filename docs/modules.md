@@ -1,33 +1,48 @@
 # Modules and imports
 
-A module is one `.fl` file. Its declaration comes first and matches the filename:
+Beginning with Flecha 0.2.1, a module is a logical scope assembled from source
+units, not a single file. Every `.fl` file declares the logical module it
+contributes to, and the filename does not determine module identity.
+
+A logical module is identified by its source identity, namespace directory,
+and declared module name. For example, both files below contribute to the same
+`formatting` module:
 
 ```flecha
+// text.fl
 module formatting;
 
-export void print_result(usize index) {
+void prefix() {
     stdout("Found at index: ");
+}
+
+export void print_result(usize index) {
+    prefix();
     stdoutln(index);
 }
 ```
 
-A module may be restricted to its quiver:
-
 ```flecha
-private module formatting;
+// numbers.fl
+module formatting;
 
-export void print_result(usize index) {}
+export void print_missing() {
+    prefix();
+    stdoutln("none");
+}
 ```
 
-Only modules in the same quiver may import a private module. Within a private
-module, `export` means quiver-wide visibility rather than global visibility;
-unmarked declarations remain visible only inside that module.
+Importing `root::ui::formatting` loads every source unit declaring
+`module formatting;` directly under `src/ui`. Neither `text` nor `numbers` is
+importable merely because it is a filename.
 
-For `src/ui/formatting.fl`, the import path is
-`root::ui::formatting`. Directories supply the namespace path; the module
-declaration contains only the filename stem.
+All source units in one logical module share declarations and nominal identity.
+Unmarked, `quiver`, and exported module declarations are visible to sibling
+source units in both directions. Duplicate top-level names across those units
+are errors. Private structure and enum members retain their exact owning-type
+boundary.
 
-## Import blocks
+## Import blocks are source-local
 
 ```flecha
 module main;
@@ -46,28 +61,26 @@ i32 main() {
 }
 ```
 
-The `@imports` block follows the module declaration and precedes other declarations.
-One semicolon terminates the entire block. Whitespace and newlines do not delimit
-entries; `@imports :: root::math;` is equally valid. The multiline form above is
-idiomatic. `root` and `lib` are reserved import-path segments: `:: root` and
-`:: lib` start entries, so those words cannot name imported modules or intermediate
-directories. Import aliases use `as` and must not collide with another import or
-a top-level declaration in the same module.
+The `@imports` block follows the module declaration and precedes other
+declarations. One semicolon terminates the block. Whitespace and newlines do
+not delimit entries; `@imports :: root::math;` is equally valid.
 
-`root` resolves against the current source root. `lib::<library>::<module path>`
-resolves against a configured library's source root. When that library imports
-`root::helper`, it resolves its own helper, not the application's helper.
-The final path segment becomes the local namespace unless an alias is supplied.
-Imported functions use `algorithms::index_of<i32>(values[:], 30)`. Imported
-types use `containers::Box`; static methods use `containers::Box::init(...)`. Existing
-instance member syntax is unchanged. Qualified error types and variants work as
-`containers::ContainerError.Empty`.
+Imports belong to the source unit that declares them. Another source unit in
+the same logical module inherits the shared module declarations, but it does
+not inherit import aliases and must repeat any external imports it uses.
+Dependencies' imports are not re-exported.
 
-Imports expose a namespace rather than injecting declarations into the local
-scope. Dependencies' imports are not re-exported. Importing a module does not
-execute initialization code.
+`root` resolves against the current source root. A library import of the form
+`lib::<library>::<namespace>::<module>` resolves against that configured
+library's source root. When a library imports `root::helper`, it resolves its
+own helper rather than the application's helper.
 
-Directory imports support all immediate modules or selected module names:
+The declared module name becomes the local namespace unless an alias is
+supplied with `as`. Imported functions, types, static methods, and error
+variants remain qualified, for example `algorithms::index_of<i32>(...)`,
+`containers::Box`, and `errors::IoError.NotFound`.
+
+Directory imports select declared logical module names:
 
 ```flecha
 @imports
@@ -75,67 +88,106 @@ Directory imports support all immediate modules or selected module names:
     :: lib::std::containers::{array, algorithms};
 ```
 
-`*` imports every `.fl` file directly in the directory, in filename order; it does
-not recurse into subdirectories. An existing empty directory imports nothing.
-Braces select module files, not declarations within a module. Each module keeps
-its filename as its namespace, so calls still use `algorithms::contains<i32>(values[:], 2)`.
-Duplicate namespaces are errors; use separate explicit imports with `as` to
-resolve collisions. A wildcard or brace group cannot take a collective alias.
+`*` discovers every logical module declared directly in the directory and does
+not recurse. Braces select module names, not declarations or filenames. A
+logical module appears once even when several files contribute to it, and a
+repeated import of the same canonical module is deduplicated.
+
+## Overlapping same-named imports
+
+Distinct modules may share a declared name. Without explicit aliases, their
+accessible declarations overlap under one local namespace:
+
+```flecha
+@imports
+    :: lib::parser::errors
+    :: lib::network::errors;
+
+errors::ParseError
+errors::ConnectionError
+```
+
+A member supplied by only one origin resolves normally. If multiple origins
+supply the requested member, the use is ambiguous and the diagnostic lists the
+candidates. Explicit aliases isolate the namespaces:
+
+```flecha
+@imports
+    :: lib::parser::errors as parser_errors
+    :: lib::network::errors as network_errors;
+```
+
+Overlap affects lookup only; it never merges nominal types, generic
+specializations, error families, or module-private scopes. Duplicate explicit
+aliases remain errors.
 
 ## Visibility
 
 Top-level declarations have three visibility levels:
 
 ```flecha
-export void public_api() {}  // every importing module
+export void public_api() {}  // every allowed importer
 quiver void shared_api() {}  // modules in the same quiver
-void module_api() {}         // this module only
+void module_api() {}         // this logical module only
 ```
 
-For an ordinary `module`, these meanings apply exactly as written. For a
-`private module`, both `export` and `quiver` declarations are quiver-visible.
-The module itself cannot be imported across its quiver boundary, including by
-wildcard imports.
+| Declaration | Sibling source units | Same quiver | Outside quiver |
+| --- | --- | --- | --- |
+| Unmarked | Yes | No | No |
+| `quiver` | Yes | Yes | No |
+| `export` | Yes | Yes | Yes, when the module is importable |
 
-A module is one `.fl` file. A quiver is the set of modules in one immediate
-directory under the same source-root or library identity. A nested directory is
-a different quiver, and matching directory names in separate roots or libraries
-do not share visibility. Directory imports (`::*`) still import every immediate
-module, but never widen declaration visibility.
+A quiver is the set of logical modules in one immediate directory under the
+same source-root or library identity. Nested directories and matching paths in
+separate roots are different quivers. Wildcard imports never widen declaration
+visibility.
 
-`quiver` and `export` apply only to module-scope declarations. A structure or
-enum gives its reach to all non-private fields and methods; member functions
-cannot carry either modifier. `private` fields and methods are accessible only
-from methods of their exact owning structure or enum. Methods must be defined in
-their owner's module, and importing a type does not permit adding methods to it.
+An exported API may expose only exported nominal types. A quiver API may also
+expose quiver-visible nominal types from the same quiver, but not unmarked
+module-private types. These checks cover functions, fields, methods, enums,
+errors, callable signatures, generics, and generated specializations.
 
-An exported API may expose only exported nominal types. A quiver API may expose
-exported types and quiver types from the same quiver, but not module-private
-types. These checks include free functions, public fields, methods, enums,
-errors, callable signatures, generic declarations, and generated nominal
-specializations. An exported generic instantiated with a quiver type remains
-usable within that quiver but cannot leak through an exported API. Private
-fields and private methods may use module-private types. `tear` remains
-compiler-invoked only. Ownership contracts, unsafe permission, constness,
-borrowing, noncopyability, and immovability are enforced across every boundary.
+## Deprecated private modules
+
+`private module name;` remains accepted for compatibility but emits a
+deprecation warning. It is a module-wide import gate: all source units in the
+logical module must use `private module`, and only importers in the same quiver
+may import it. Mixing ordinary and private declarations of one logical module
+is an error.
+
+`export` always retains public declaration visibility, including inside a
+legacy private module. It no longer becomes `quiver` implicitly; the module's
+import gate is what prevents outside access. New code should prefer an ordinary
+module with explicit `quiver` declarations.
+
+## Logical test modules
+
+Tests pair by declared module name rather than filename. A logical module named
+`<name>_test` pairs with `<name>` in the same namespace and source identity.
+Any number of arbitrarily named source units may contribute tests:
+
+```text
+arithmetic_cases.fl  -> module numeric_test;
+boundary_cases.fl    -> module numeric_test;
+```
+
+Running either source unit with `flecha test` loads the complete test module and
+generates one harness containing tests from both. Longbow discovers declared
+`_test` modules and runs each logical test module once. Imports remain
+source-local in test modules too.
+
+The paired test module can access module-private top-level declarations in its
+production module. That privilege does not expose private structure or enum
+members and does not re-export production declarations.
 
 ## Compilation and identity
 
-The compiler loads the reachable source graph, gives each module a separate scope,
-and compiles the graph together. The same canonical file reached through a diamond
-is loaded once. Different modules may use identical declaration names without
-sharing function, structure, or error-family identities. Cycles, missing modules,
-filename mismatches, private-module imports from a different quiver, duplicate
-aliases, and paths escaping a source root are errors. A file cannot be interpreted
-against two conflicting source roots.
-Import nesting is limited to 256 levels with a diagnostic rather than unbounded
-recursion.
-
-Imported files require a module declaration. Legacy standalone files without one
-remain supported, preserving their native symbols. Such files cannot use
-`@imports`. `export` is Flecha visibility, not a C ABI export directive.
-Separate binary-module interfaces, re-exports, cyclic modules, and FFI linkage
-contracts are not part of this implementation.
+The compiler loads the reachable logical-module graph and compiles it together.
+Different logical modules retain distinct function, structure, generic, and
+error-family identities even when their declared names match. Cyclic imports,
+missing declared modules, mixed private-module status, paths escaping a source
+root, and conflicting source roots are errors. Import nesting is limited to 256
+levels with a diagnostic.
 
 ```sh
 flecha check src/main.fl --root src
@@ -144,12 +196,15 @@ flecha build src/main.fl --root src --lib std=../standard_library/src -o program
 ```
 
 Without `--root`, the compiler uses the nearest ancestor directory named `src`,
-or the entry file's directory if none exists. `--lib` explicitly maps library names
-to source directories; it does not download or invent a standard library.
-Diagnostics include the originating source file and line/column. Compiler and
-ownership errors stop before object emission. An executable's entry module needs
-`i32 main()` or `void main()`; a void entry returns process status zero.
+or the entry file's directory if none exists. `--lib` maps a library name to a
+source directory. Diagnostics preserve the originating source file and
+line/column.
 
-Neovim highlights `@imports` in light blue, and recognizes `module` and `export`.
-See [Longbow](longbow.md) for project creation and builds and
+Legacy standalone entry files without a module declaration remain supported,
+but imported source units require one and standalone files cannot use
+`@imports`. Separate binary-module interfaces, re-exports, cyclic modules, and
+FFI linkage contracts remain outside this implementation.
+
+See [Logical module composition](module_composition.md) for the precise 0.2.1
+contract, [Longbow](longbow.md) for project workflows, and
 [the module example](../examples/modules/src/main.fl) for a runnable project.

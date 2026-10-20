@@ -2,6 +2,7 @@
 #define FLECHA_CORE_PARSER_HPP
 
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -26,6 +27,8 @@ class Parser {
     void SetPrivateModule(bool privateModule) {
         _modulePrivate = privateModule;
     }
+    [[nodiscard]] const std::string& ModuleName() const { return _moduleName; }
+    [[nodiscard]] bool PrivateModule() const { return _modulePrivate; }
     [[nodiscard]] std::unique_ptr<CompilationUnit> Parse();
 
    private:

@@ -28,11 +28,13 @@ jobs configure with `FLECHA_RELEASE_BUILD=ON`, which always reports exactly the
 package version and never includes a Git or dirty-worktree suffix.
 
 `check` runs the complete frontend without creating an artifact. `build` emits
-and links a host-native executable with the Flecha runtime. `test` requires a
-`_test.fl` entry module, builds a temporary native runner, executes every test
-declaration in that module, and returns a nonzero status when any test records
-a failure. Its default output is one dot-leader status line for the test file;
-`--verbose` instead shows one status line per test. Assertion failures retain
+and links a host-native executable with the Flecha runtime. `test` requires an
+entry source unit declaring a logical `<name>_test` module, loads every source
+unit contributing to that module, builds a temporary native runner, executes
+all of its test declarations, and returns a nonzero status when any test
+records a failure. Test filenames are arbitrary. Its default output is one
+dot-leader status line for the logical test module; `--verbose` instead shows
+one status line per test. Assertion failures retain
 their detailed `testing::UnitTest` output beneath the failed test and include
 the test declaration's `file:line:column` location. This location identifies
 the test function, not an inferred defect inside the production function.

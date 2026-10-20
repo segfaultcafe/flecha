@@ -13,9 +13,9 @@
 namespace flecha::core {
 enum class ModuleLoadMode { Runtime, Test };
 
-// Loads each canonical source once. Modules retain separate semantic scopes;
-// only their declaration storage is combined for the existing lowering
-// pipeline.
+// Loads source units into logical modules. Source units retain independent
+// import scopes while declarations with the same logical module identity share
+// one semantic scope and native namespace.
 class ModuleLoader final {
    public:
     explicit ModuleLoader(diagnostics::DiagnosticBag& diagnostics)
@@ -27,19 +27,21 @@ class ModuleLoader final {
         bool verboseTests = false);
 
    private:
-    std::string Visit(const std::filesystem::path& file,
-                      const std::filesystem::path& root, bool entry,
-                      source::SourceRange importRange = {},
-                      std::string sourceIdentity = "root",
-                      std::string importingQuiverId = {});
+    std::string VisitModule(const std::filesystem::path& directory,
+                            const std::string& name,
+                            const std::filesystem::path& root, bool entry,
+                            const std::filesystem::path& entrySource = {},
+                            source::SourceRange importRange = {},
+                            std::string sourceIdentity = "root",
+                            std::string importingQuiverId = {});
+    void LoadLegacyEntry(const std::filesystem::path& file,
+                         const std::filesystem::path& root);
     void Report(source::SourceRange range, const std::string& message);
     diagnostics::DiagnosticBag& _diagnostics;
-    std::map<std::pair<std::filesystem::path, std::string>, std::string>
-        _loaded;
-    std::map<std::pair<std::filesystem::path, std::string>, bool>
-        _privateModules;
+    std::map<std::string, std::string> _loaded;
+    std::map<std::string, bool> _privateModules;
     std::map<std::filesystem::path, std::filesystem::path> _roots;
-    std::vector<std::pair<std::filesystem::path, std::string>> _active;
+    std::vector<std::string> _active;
     std::map<std::string, std::filesystem::path> _libraries;
     std::vector<Module> _modules;
     std::vector<std::unique_ptr<Declaration>> _declarations;

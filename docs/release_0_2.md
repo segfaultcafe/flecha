@@ -214,6 +214,10 @@ longbow test [--verbose]
 
 ### Test modules
 
+> Historical 0.2.0 behavior: Flecha 0.2.1 replaced filename-based test pairing
+> with declared logical `<name>_test` modules. See the
+> [0.2.1 module correction](release_0_2_1.md).
+
 A test source file is named `<filename>_test.fl` and declares
 `module <filename>_test;`. It pairs with exactly one production module: the
 sibling `<filename>.fl` file in the same directory. The production module must
