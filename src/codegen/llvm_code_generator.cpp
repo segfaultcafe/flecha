@@ -96,6 +96,7 @@ llvm::Type* LlvmCodeGenerator::MapType(semantic::SemanticType type) {
         }
         case semantic::SemanticTypeKind::Slice:
         case semantic::SemanticTypeKind::OwnedBuffer:
+        case semantic::SemanticTypeKind::OwnedSlice:
             return llvm::StructType::get(
                 _context, {llvm::PointerType::getUnqual(_context),
                            MapType(semantic::SemanticType(
@@ -435,6 +436,8 @@ void LlvmCodeGenerator::EmitValueDestroy(llvm::Value* value,
     }
     if (type.Kind() == semantic::SemanticTypeKind::String)
         EmitStringDestroy(value);
+    if (type.Kind() == semantic::SemanticTypeKind::OwnedSlice)
+        EmitFree(value, type);
     if (type.Kind() == semantic::SemanticTypeKind::Array && type.OwnsStorage())
         for (std::size_t i = type.Length(); i > 0; --i)
             EmitValueDestroy(_builder.CreateExtractValue(value, i - 1),
@@ -805,7 +808,8 @@ llvm::Value* LlvmCodeGenerator::CoerceValue(
         destinationType.Kind() == semantic::SemanticTypeKind::Pointer)
         return value;
     if (sourceType.Kind() == semantic::SemanticTypeKind::Null &&
-        destinationType.Kind() == semantic::SemanticTypeKind::OwnedBuffer)
+        (destinationType.Kind() == semantic::SemanticTypeKind::OwnedBuffer ||
+         destinationType.Kind() == semantic::SemanticTypeKind::OwnedSlice))
         return llvm::Constant::getNullValue(MapType(destinationType));
     if (sourceType.Kind() == semantic::SemanticTypeKind::OwnedBuffer &&
         destinationType.Kind() == semantic::SemanticTypeKind::Pointer &&
@@ -1632,6 +1636,7 @@ bool LlvmCodeGenerator::EmitFunction(
                             if (scope->deferredHead != nullptr) return true;
                             for (const auto& storage : scope->ownedValues)
                                 if (storage.type.ContainsStructure() ||
+                                    storage.type.ContainsOwnedSlice() ||
                                     storage.type.Kind() ==
                                         semantic::SemanticTypeKind::Function)
                                     return true;
@@ -2298,7 +2303,9 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
     llvm::Value* right = EmitExpression(expression.Right());
     if (left == nullptr || right == nullptr) return nullptr;
     if (leftType.Kind() == semantic::SemanticTypeKind::OwnedBuffer ||
-        rightType.Kind() == semantic::SemanticTypeKind::OwnedBuffer) {
+        leftType.Kind() == semantic::SemanticTypeKind::OwnedSlice ||
+        rightType.Kind() == semantic::SemanticTypeKind::OwnedBuffer ||
+        rightType.Kind() == semantic::SemanticTypeKind::OwnedSlice) {
         left = _builder.CreateExtractValue(left, 0, "owner.left.data");
         right = _builder.CreateExtractValue(right, 0, "owner.right.data");
         llvm::Value* equal = _builder.CreateICmpEQ(left, right, "owner.equal");
@@ -2710,7 +2717,8 @@ llvm::Value* LlvmCodeGenerator::EmitSlice(
     llvm::Value* length;
     const auto receiverKind = expression.Receiver().Type().Kind();
     if (receiverKind == semantic::SemanticTypeKind::Slice ||
-        receiverKind == semantic::SemanticTypeKind::OwnedBuffer) {
+        receiverKind == semantic::SemanticTypeKind::OwnedBuffer ||
+        receiverKind == semantic::SemanticTypeKind::OwnedSlice) {
         llvm::Value* source = EmitExpression(expression.Receiver());
         if (source == nullptr) return nullptr;
         data = _builder.CreateExtractValue(source, 0);
@@ -2784,7 +2792,9 @@ llvm::Value* LlvmCodeGenerator::EmitAddress(
         const bool slice = index.Receiver().Type().Kind() ==
                                semantic::SemanticTypeKind::Slice ||
                            index.Receiver().Type().Kind() ==
-                               semantic::SemanticTypeKind::OwnedBuffer;
+                               semantic::SemanticTypeKind::OwnedBuffer ||
+                           index.Receiver().Type().Kind() ==
+                               semantic::SemanticTypeKind::OwnedSlice;
         llvm::Value* descriptor =
             (slice || heap) ? EmitExpression(index.Receiver()) : nullptr;
         if (slice && descriptor == nullptr) return nullptr;
@@ -2898,7 +2908,9 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
             if (length.Receiver().Type().Kind() ==
                     semantic::SemanticTypeKind::Slice ||
                 length.Receiver().Type().Kind() ==
-                    semantic::SemanticTypeKind::OwnedBuffer) {
+                    semantic::SemanticTypeKind::OwnedBuffer ||
+                length.Receiver().Type().Kind() ==
+                    semantic::SemanticTypeKind::OwnedSlice) {
                 llvm::Value* descriptor = EmitExpression(length.Receiver());
                 return descriptor == nullptr ? nullptr
                                              : _builder.CreateExtractValue(
@@ -3324,6 +3336,8 @@ void LlvmCodeGenerator::EmitDestroyAt(llvm::Value* storage,
         });
     } else if (type.Kind() == Kind::String)
         EmitStringDestroy(_builder.CreateLoad(MapType(type), storage));
+    else if (type.Kind() == Kind::OwnedSlice)
+        EmitFree(_builder.CreateLoad(MapType(type), storage), type);
     else if (type.Kind() == Kind::Function)
         EmitValueDestroy(_builder.CreateLoad(MapType(type), storage), type);
 }
@@ -3592,7 +3606,8 @@ llvm::Value* LlvmCodeGenerator::EmitAllocation(
 llvm::Value* LlvmCodeGenerator::EmitFree(llvm::Value* owner,
                                          semantic::SemanticType ownerType) {
     llvm::Value* pointer =
-        ownerType.Kind() == semantic::SemanticTypeKind::OwnedBuffer
+        (ownerType.Kind() == semantic::SemanticTypeKind::OwnedBuffer ||
+         ownerType.Kind() == semantic::SemanticTypeKind::OwnedSlice)
             ? _builder.CreateExtractValue(owner, 0, "free.data")
             : owner;
     const semantic::SemanticType target = *ownerType.Target();

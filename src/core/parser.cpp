@@ -326,12 +326,16 @@ std::unique_ptr<TypeNode> Parser::ParseType(bool allowOwn, bool allowLend,
         const Token contract = Advance();
         auto type = ParseType();
         if (!type) return nullptr;
-        if (type->TypeForm() != TypeKind::Pointer ||
-            (contract.type == TokenType::Own ? !allowOwn : !allowLend)) {
+        const bool ownedSlice = contract.type == TokenType::Own &&
+                                type->TypeForm() == TypeKind::Slice;
+        if ((!ownedSlice && type->TypeForm() != TypeKind::Pointer) ||
+            (!ownedSlice &&
+             (contract.type == TokenType::Own ? !allowOwn : !allowLend))) {
             _diagnostics.Report(
                 diagnostics::DiagnosticCode::UnexpectedToken, contract.range,
-                "ownership contracts require a raw pointer parameter, owning "
-                "return, or owning field; references never own or lend");
+                "ownership contracts require an owning slice or a raw pointer "
+                "parameter, owning return, or owning field; references never "
+                "own or lend");
             return nullptr;
         }
         type->SetContract(contract.type == TokenType::Own
@@ -1647,7 +1651,7 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
         if (expression->Kind() == AstNodeKind::NameExpression &&
             static_cast<const NameExpression&>(*expression).Name() == "new" &&
             Match(TokenType::Less)) {
-            auto type = ParseType();
+            auto type = ParseType(true);
             if (!type ||
                 !ConsumeTypeArgumentClose("'>' after allocation type") ||
                 !Consume(TokenType::LParen, "'(' after new<T>"))

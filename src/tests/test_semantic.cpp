@@ -5454,6 +5454,7 @@ TEST(SemanticMemoryTests, ContractsNeverQualifyReferencesOrOrdinaryStorage) {
     for (const std::string& source : {
              "void f(own &i32 x) {}",
              "void f(lend &i32 x) {}",
+             "void f(lend []i32 x) {}",
              "void f(own i32 x) {}",
              "unsafe lend *i32 f() { return null; }",
              "structure Box { lend *i32 p; };",
@@ -5498,6 +5499,56 @@ TEST(SemanticMemoryTests, RuntimeArraysUseCountsAndExistingOwnershipContracts) {
         "return; } "
         "defer free(p); p[0] = 42; read(p); }");
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, OwningSlicesAreSafeManagedMoveOnlyBuffers) {
+    auto valid = Analyze(
+        "void consume(own []const i32 values) { values.len(); } "
+        "void f() { values, failure := new<own []i32>(2); "
+        "if failure != none { return; } values[0] = 42; "
+        "view := values[:]; view[1] = view[0]; consume(values); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    EXPECT_NE(
+        FindDiagnostic(Analyze("void consume(own []i32 values) {} void f() { "
+                               "values, failure := new<own []i32>(2); "
+                               "consume(values); values.len(); }"),
+                       DiagnosticCode::MovedValue),
+        nullptr);
+    EXPECT_TRUE(Analyze("void f() { values, failure := new<own []const "
+                        "i32>(2); values[0] = 1; }")
+                    .diagnostics.HasErrors());
+}
+
+TEST(SemanticReferenceTests, StructuresCanStoreSliceBorrows) {
+    const std::string writer =
+        "structure Writer { []u8 destination; usize position; }; "
+        "Writer Writer::init([]u8 destination) <- destination override { "
+        "return build Writer { self.destination = destination; "
+        "self.position = 0; }; } ";
+    auto valid = Analyze(
+        writer +
+        "usize use([]u8 destination) { writer := Writer::init(destination); "
+        "writer.destination[0] = 7; return writer.destination.len(); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(writer +
+                    "u8 conflict([]u8 destination) { writer := "
+                    "Writer::init(destination); destination[0] = 1; return "
+                    "writer.destination[0]; }"),
+            DiagnosticCode::BorrowConflict),
+        nullptr);
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(writer +
+                    "Writer escape([]u8 destination) <- destination { "
+                    "[1]u8 local = none; return Writer::init(local[:]); }"),
+            DiagnosticCode::InvalidBorrowContract),
+        nullptr);
 }
 
 TEST(SemanticMemoryTests,

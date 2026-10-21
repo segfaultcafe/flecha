@@ -15,9 +15,19 @@ using Kind = core::AstNodeKind;
 
 bool ContainsBorrowed(SemanticType type) {
     if (type.HasBorrowedLifetime()) return true;
-    if (type.Kind() != SemanticTypeKind::Tuple) return false;
-    return std::any_of(type.Elements().begin(), type.Elements().end(),
-                       ContainsBorrowed);
+    if (type.Kind() == SemanticTypeKind::Tuple)
+        return std::any_of(type.Elements().begin(), type.Elements().end(),
+                           ContainsBorrowed);
+    if (type.Kind() == SemanticTypeKind::Array)
+        return ContainsBorrowed(*type.Target());
+    if (type.Kind() == SemanticTypeKind::Structure &&
+        type.Structure()->validLayout)
+        return std::any_of(type.Structure()->fields.begin(),
+                           type.Structure()->fields.end(),
+                           [](const StructureField& field) {
+                               return ContainsBorrowed(field.type);
+                           });
+    return false;
 }
 
 bool CanCarryBorrow(SemanticType type) {
@@ -29,7 +39,8 @@ bool CanCarryBorrow(SemanticType type) {
     if (type.Kind() == SemanticTypeKind::Array ||
         type.Kind() == SemanticTypeKind::OwnedBuffer)
         return CanCarryBorrow(*type.Target());
-    if (type.Kind() == SemanticTypeKind::Structure)
+    if (type.Kind() == SemanticTypeKind::Structure &&
+        type.Structure()->validLayout)
         return std::any_of(type.Structure()->fields.begin(),
                            type.Structure()->fields.end(),
                            [](const StructureField& field) {
@@ -46,7 +57,20 @@ bool TracksBorrow(const Symbol* symbol) {
 }
 
 bool IsExclusiveBorrow(SemanticType type) {
-    return type.IsBorrowed() && !type.Target()->IsConst();
+    if (type.IsBorrowed()) return !type.Target()->IsConst();
+    if (type.Kind() == SemanticTypeKind::Array)
+        return IsExclusiveBorrow(*type.Target());
+    if (type.Kind() == SemanticTypeKind::Tuple)
+        return std::any_of(type.Elements().begin(), type.Elements().end(),
+                           IsExclusiveBorrow);
+    if (type.Kind() == SemanticTypeKind::Structure &&
+        type.Structure()->validLayout)
+        return std::any_of(type.Structure()->fields.begin(),
+                           type.Structure()->fields.end(),
+                           [](const StructureField& field) {
+                               return IsExclusiveBorrow(field.type);
+                           });
+    return false;
 }
 
 const core::Expression& Unwrap(const core::Expression& expression) {
@@ -592,11 +616,8 @@ class BorrowChecker final {
                                       value.origins.end());
                 result.elements.push_back(std::move(value));
             }
-        } else if (CanCarryBorrow(type)) {
-            result.origins = source.origins;
-            result.temporary = _nextTemporary++;
-            _temporaries.push_back({result, false, result.temporary});
-        }
+        } else if (CanCarryBorrow(type))
+            return Borrow(source, IsExclusiveBorrow(type), range);
         return result;
     }
 

@@ -467,8 +467,9 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             if ((literal.LiteralType() == TokenType::None ||
                  (literal.LiteralType() == TokenType::Null &&
                   (expected.Kind() == semantic::SemanticTypeKind::Pointer ||
+                   expected.Kind() == semantic::SemanticTypeKind::OwnedBuffer ||
                    expected.Kind() ==
-                       semantic::SemanticTypeKind::OwnedBuffer))) &&
+                       semantic::SemanticTypeKind::OwnedSlice))) &&
                 !expected.IsError() &&
                 expected.Kind() != semantic::SemanticTypeKind::None) {
                 return std::make_unique<BoundLiteralExpression>(
@@ -547,6 +548,7 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                       kind == semantic::SemanticTypeKind::Char)) ||
                     kind == semantic::SemanticTypeKind::Pointer ||
                     kind == semantic::SemanticTypeKind::OwnedBuffer ||
+                    kind == semantic::SemanticTypeKind::OwnedSlice ||
                     kind == semantic::SemanticTypeKind::Null)
                     return other;
                 return semantic::SemanticType::Error();

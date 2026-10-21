@@ -116,17 +116,47 @@ bool HasOwnershipContract(const core::TypeNode& type) {
 }
 
 bool HasBorrowedResult(SemanticType type) {
-    if (type.HasBorrowedLifetime()) return true;
-    if (type.Kind() != SemanticTypeKind::Tuple) return false;
-    return std::any_of(type.Elements().begin(), type.Elements().end(),
-                       HasBorrowedResult);
+    std::unordered_set<const StructureType*> structures;
+    const auto contains = [&](const auto& self,
+                              SemanticType candidate) -> bool {
+        if (candidate.HasBorrowedLifetime()) return true;
+        if (candidate.Kind() == SemanticTypeKind::Tuple)
+            return std::any_of(
+                candidate.Elements().begin(), candidate.Elements().end(),
+                [&](SemanticType element) { return self(self, element); });
+        if (candidate.Kind() == SemanticTypeKind::Array)
+            return self(self, *candidate.Target());
+        if (candidate.Kind() == SemanticTypeKind::Structure) {
+            if (!candidate.Structure()->validLayout) return false;
+            if (!structures.insert(candidate.Structure()).second) return false;
+            for (const StructureField& field : candidate.Structure()->fields)
+                if (self(self, field.type)) return true;
+        }
+        return false;
+    };
+    return contains(contains, type);
 }
 
 bool RequiresBorrowSource(SemanticType type) {
-    if (type.IsBorrowed()) return true;
-    if (type.Kind() != SemanticTypeKind::Tuple) return false;
-    return std::any_of(type.Elements().begin(), type.Elements().end(),
-                       RequiresBorrowSource);
+    std::unordered_set<const StructureType*> structures;
+    const auto contains = [&](const auto& self,
+                              SemanticType candidate) -> bool {
+        if (candidate.IsBorrowed()) return true;
+        if (candidate.Kind() == SemanticTypeKind::Tuple)
+            return std::any_of(
+                candidate.Elements().begin(), candidate.Elements().end(),
+                [&](SemanticType element) { return self(self, element); });
+        if (candidate.Kind() == SemanticTypeKind::Array)
+            return self(self, *candidate.Target());
+        if (candidate.Kind() == SemanticTypeKind::Structure) {
+            if (!candidate.Structure()->validLayout) return false;
+            if (!structures.insert(candidate.Structure()).second) return false;
+            for (const StructureField& field : candidate.Structure()->fields)
+                if (self(self, field.type)) return true;
+        }
+        return false;
+    };
+    return contains(contains, type);
 }
 
 bool CanCarryBorrow(SemanticType type) {
@@ -140,9 +170,11 @@ bool CanCarryBorrow(SemanticType type) {
                 candidate.Elements().begin(), candidate.Elements().end(),
                 [&](SemanticType element) { return self(self, element); });
         if (candidate.Kind() == SemanticTypeKind::Array ||
-            candidate.Kind() == SemanticTypeKind::OwnedBuffer)
+            candidate.Kind() == SemanticTypeKind::OwnedBuffer ||
+            candidate.Kind() == SemanticTypeKind::OwnedSlice)
             return self(self, *candidate.Target());
         if (candidate.Kind() == SemanticTypeKind::Structure) {
+            if (!candidate.Structure()->validLayout) return false;
             if (!structures.insert(candidate.Structure()).second) return false;
             for (const StructureField& field : candidate.Structure()->fields)
                 if (self(self, field.type)) return true;
@@ -236,7 +268,7 @@ std::optional<std::uint64_t> StorageSize(SemanticType type,
         if (!type.Structure()->validLayout) return std::nullopt;
         std::uint64_t size = 0;
         for (const auto& field : type.Structure()->fields) {
-            const auto bytes = StorageSize(field.type);
+            const auto bytes = StorageSize(field.type, true);
             if (!bytes || *bytes > MAX_BYTES - 16 ||
                 size > MAX_BYTES - *bytes - 16)
                 return std::nullopt;
@@ -295,6 +327,7 @@ std::optional<std::uint64_t> StorageSize(SemanticType type,
         case SemanticTypeKind::Pointer:
             return sizeof(void*);
         case SemanticTypeKind::OwnedBuffer:
+        case SemanticTypeKind::OwnedSlice:
             return 2 * sizeof(void*);
         case SemanticTypeKind::Function:
             return 3 * sizeof(void*);
@@ -781,6 +814,10 @@ SemanticType SemanticAnalyzer::ResolveTypeSyntax(const core::TypeNode& type) {
         return SemanticType(SemanticTypeKind::OwnedBuffer,
                             ResolveTypeSyntax(*type.Target()->Target()),
                             type.IsConst());
+    if (type.TypeForm() == core::TypeKind::Slice &&
+        type.Contract() == core::OwnershipContract::Own)
+        return SemanticType(SemanticTypeKind::OwnedSlice,
+                            ResolveTypeSyntax(*type.Target()), type.IsConst());
     const SemanticTypeKind kind =
         type.TypeForm() == core::TypeKind::Pointer ? SemanticTypeKind::Pointer
         : type.TypeForm() == core::TypeKind::Reference
@@ -903,7 +940,8 @@ SemanticType SemanticAnalyzer::ResolveType(const core::TypeNode& type,
     const SemanticType result = ResolveTypeSyntax(type);
     const SemanticType* layer = &result;
     if (layer->Kind() == SemanticTypeKind::Slice ||
-        layer->Kind() == SemanticTypeKind::OwnedBuffer) {
+        layer->Kind() == SemanticTypeKind::OwnedBuffer ||
+        layer->Kind() == SemanticTypeKind::OwnedSlice) {
         if (!IsArrayElement(layer->Target()->WithoutConst()))
             Report(diagnostics::DiagnosticCode::UnsupportedCompoundType,
                    type.Range(),
@@ -964,6 +1002,7 @@ void SemanticAnalyzer::ValidateTupleType(SemanticType type,
                  element.Kind() != SemanticTypeKind::Char &&
                  element.Kind() != SemanticTypeKind::Pointer &&
                  element.Kind() != SemanticTypeKind::OwnedBuffer &&
+                 element.Kind() != SemanticTypeKind::OwnedSlice &&
                  element.Kind() != SemanticTypeKind::String &&
                  element.Kind() != SemanticTypeKind::Function &&
                  !(allowBorrowed && element.HasBorrowedLifetime()))
@@ -1729,8 +1768,9 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     ValidateExports(unit);
     for (const auto& structure : _model._structures)
         for (const auto& field : structure->fields)
-            if (field.syntax->Type().Contract() ==
-                core::OwnershipContract::Own) {
+            if (field.syntax->Type().TypeForm() == core::TypeKind::Pointer &&
+                field.syntax->Type().Contract() ==
+                    core::OwnershipContract::Own) {
                 if (!structure->tear)
                     Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                            field.syntax->Range(),
@@ -2601,6 +2641,11 @@ std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
                 range, TypeKind::Pointer, std::move(slice), type.IsConst());
             break;
         }
+        case SemanticTypeKind::OwnedSlice:
+            result = std::make_unique<core::TypeNode>(
+                range, TypeKind::Slice, TypeSyntax(*type.Target(), range),
+                type.IsConst());
+            break;
         case SemanticTypeKind::Reference:
             result = std::make_unique<core::TypeNode>(
                 range, TypeKind::Reference, TypeSyntax(*type.Target(), range),
@@ -2631,7 +2676,9 @@ std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
             result = primitive(PrimitiveType::Void);
             break;
     }
-    result->SetContract(contract);
+    result->SetContract(type.Kind() == SemanticTypeKind::OwnedSlice
+                            ? core::OwnershipContract::Own
+                            : contract);
     return result;
 }
 
@@ -3681,7 +3728,8 @@ SemanticType SemanticAnalyzer::PlaceType(
         const SemanticType value = _model.TypeOf(call.Receiver());
         if (value.Kind() == SemanticTypeKind::Slice ||
             value.Kind() == SemanticTypeKind::Pointer ||
-            value.Kind() == SemanticTypeKind::OwnedBuffer)
+            value.Kind() == SemanticTypeKind::OwnedBuffer ||
+            value.Kind() == SemanticTypeKind::OwnedSlice)
             return *value.Target();
         const SemanticType place = PlaceType(call.Receiver());
         if (place.Kind() == SemanticTypeKind::Array)
@@ -3705,7 +3753,8 @@ SemanticType SemanticAnalyzer::PlaceType(
         const SemanticType value = _model.TypeOf(index.Receiver());
         if (value.Kind() == SemanticTypeKind::Slice ||
             value.Kind() == SemanticTypeKind::Pointer ||
-            value.Kind() == SemanticTypeKind::OwnedBuffer)
+            value.Kind() == SemanticTypeKind::OwnedBuffer ||
+            value.Kind() == SemanticTypeKind::OwnedSlice)
             return *value.Target();
         const SemanticType receiver = PlaceType(index.Receiver());
         if (receiver.Kind() == SemanticTypeKind::Array)
@@ -4143,12 +4192,14 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
         Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                expression.Range(), "zero cannot allocate or free storage");
     if (_currentFunction) _forbiddenZeroEffects.insert(_currentFunction);
-    RequireUnsafe(expression.Range());
     const bool allocate = intrinsic == BuiltInFunction::New;
     SemanticType element = SemanticType::Error();
     const bool dynamic =
         allocate && expression.TypeArgument() &&
         expression.TypeArgument()->TypeForm() == core::TypeKind::Slice;
+    const bool safeOwner = dynamic && expression.TypeArgument()->Contract() ==
+                                          core::OwnershipContract::Own;
+    if (!safeOwner) RequireUnsafe(expression.Range());
     if (allocate) {
         if (!expression.TypeArgument())
             Report(diagnostics::DiagnosticCode::InvalidAllocation,
@@ -4225,7 +4276,8 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
     SemanticType result(SemanticTypeKind::Void);
     if (allocate) {
         result = SemanticType(std::vector<SemanticType>{
-            SemanticType(dynamic ? SemanticTypeKind::OwnedBuffer
+            SemanticType(dynamic ? (safeOwner ? SemanticTypeKind::OwnedSlice
+                                              : SemanticTypeKind::OwnedBuffer)
                                  : SemanticTypeKind::Pointer,
                          element),
             SemanticType(SemanticTypeKind::ErrorValue)});
@@ -4592,7 +4644,8 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
                    expression.Range(), "array/slice len expects no arguments");
         return SemanticType(SemanticTypeKind::USize);
     }
-    if (receiver.Kind() == SemanticTypeKind::Slice &&
+    if ((receiver.Kind() == SemanticTypeKind::Slice ||
+         receiver.Kind() == SemanticTypeKind::OwnedSlice) &&
         expression.Member() == "data") {
         RequireUnsafe(expression.Range());
         if (!arguments.empty())
@@ -4824,7 +4877,9 @@ void SemanticAnalyzer::ResolveStructureFields() {
     std::unordered_set<const StructureType*> visiting;
     std::function<bool(SemanticType)> validate = [&](SemanticType type) {
         if (type.Kind() == SemanticTypeKind::Pointer ||
-            type.Kind() == SemanticTypeKind::OwnedBuffer)
+            type.Kind() == SemanticTypeKind::OwnedBuffer ||
+            type.Kind() == SemanticTypeKind::OwnedSlice ||
+            type.Kind() == SemanticTypeKind::Slice)
             return true;
         if (type.Kind() == SemanticTypeKind::Structure) {
             auto* structure = const_cast<StructureType*>(type.Structure());

@@ -52,6 +52,20 @@ bool SemanticType::ContainsOwnedBuffer() const {
     return false;
 }
 
+bool SemanticType::ContainsOwnedSlice() const {
+    if (_kind == SemanticTypeKind::OwnedSlice) return true;
+    if (_kind == SemanticTypeKind::Structure) {
+        if (!_structure->validLayout) return false;
+        for (const auto& field : _structure->fields)
+            if (field.type.ContainsOwnedSlice()) return true;
+    }
+    if (_kind == SemanticTypeKind::Array) return Target()->ContainsOwnedSlice();
+    if (_kind == SemanticTypeKind::Tuple)
+        for (const auto& element : Elements())
+            if (element.ContainsOwnedSlice()) return true;
+    return false;
+}
+
 bool SemanticType::IsZeroable() const {
     if (_kind == SemanticTypeKind::Enum) return _enum->defaultValue.has_value();
     if (_kind == SemanticTypeKind::Structure)
@@ -65,7 +79,8 @@ bool SemanticType::IsZeroable() const {
     return IsNumeric() || _kind == SemanticTypeKind::Bool ||
            _kind == SemanticTypeKind::Char ||
            _kind == SemanticTypeKind::Pointer ||
-           _kind == SemanticTypeKind::OwnedBuffer;
+           _kind == SemanticTypeKind::OwnedBuffer ||
+           _kind == SemanticTypeKind::OwnedSlice;
 }
 
 bool SemanticType::IsTriviallyZeroable() const {
@@ -84,12 +99,15 @@ bool SemanticType::IsTriviallyZeroable() const {
     return IsNumeric() || _kind == SemanticTypeKind::Bool ||
            _kind == SemanticTypeKind::Char ||
            _kind == SemanticTypeKind::Pointer ||
-           _kind == SemanticTypeKind::OwnedBuffer;
+           _kind == SemanticTypeKind::OwnedBuffer ||
+           _kind == SemanticTypeKind::OwnedSlice;
 }
 
 bool SemanticType::IsCopyable() const {
     if (_kind == SemanticTypeKind::Function) return false;
-    if (_kind == SemanticTypeKind::OwnedBuffer) return false;
+    if (_kind == SemanticTypeKind::OwnedBuffer ||
+        _kind == SemanticTypeKind::OwnedSlice)
+        return false;
     if (_kind == SemanticTypeKind::Structure) {
         if (!_structure->validLayout || _structure->tear) return false;
         for (const auto& field : _structure->fields)
@@ -121,6 +139,7 @@ bool SemanticType::OwnsStorage() const {
     if (_kind == SemanticTypeKind::Structure) return true;
     if (_kind == SemanticTypeKind::Array) return Target()->OwnsStorage();
     if (_kind == SemanticTypeKind::String) return true;
+    if (_kind == SemanticTypeKind::OwnedSlice) return true;
     if (_kind == SemanticTypeKind::Function) return true;
     if (_kind == SemanticTypeKind::Tuple)
         for (const auto& element : Elements())
@@ -160,8 +179,10 @@ SemanticType SemanticType::FromSyntax(const core::TypeNode& type) {
         return SemanticType(std::move(elements), type.IsConst());
     }
     if (type.TypeForm() == core::TypeKind::Slice)
-        return SemanticType(SemanticTypeKind::Slice, FromSyntax(*type.Target()),
-                            type.IsConst());
+        return SemanticType(type.Contract() == core::OwnershipContract::Own
+                                ? SemanticTypeKind::OwnedSlice
+                                : SemanticTypeKind::Slice,
+                            FromSyntax(*type.Target()), type.IsConst());
     if (type.TypeForm() == core::TypeKind::Array)
         return SemanticType(SemanticTypeKind::Array, FromSyntax(*type.Target()),
                             type.IsConst(), type.Length());
@@ -239,6 +260,8 @@ std::string SemanticType::Name() const {
             return "[]" + _target->Name();
         case SemanticTypeKind::OwnedBuffer:
             return "*[]" + _target->Name();
+        case SemanticTypeKind::OwnedSlice:
+            return "own []" + _target->Name();
         case SemanticTypeKind::Array:
             return "[" + std::to_string(_length) + "]" + _target->Name();
         case SemanticTypeKind::Pointer:
@@ -402,6 +425,11 @@ bool IsAssignable(SemanticType destination, SemanticType source) {
     if (destination.Kind() == SemanticTypeKind::OwnedBuffer &&
         source.Kind() == SemanticTypeKind::Null)
         return true;
+    if (destination.Kind() == SemanticTypeKind::OwnedSlice &&
+        source.Kind() == SemanticTypeKind::OwnedSlice)
+        return destination.Target()->WithoutConst() ==
+                   source.Target()->WithoutConst() &&
+               (destination.Target()->IsConst() || !source.Target()->IsConst());
     if (destination.Kind() == SemanticTypeKind::String &&
         source.Kind() == SemanticTypeKind::StringView) {
         return true;
