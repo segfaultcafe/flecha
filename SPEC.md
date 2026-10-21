@@ -895,6 +895,10 @@ Runtime-sized scalar and supported trivially copyable structure storage uses
 representation supports checked unsafe indexing without allocator queries. See
 [dynamic arrays](docs/dynamic_arrays.md) for the implemented limits and the
 Flecha `RawArray<T>` library and its safe `Array<T>` wrapper.
+The preferred compiler-managed form is `new<own []T>(count)`, returning a
+move-only `own []T` value with safe checked access and automatic destruction.
+Owning slices may be stored in structures; `own []T` may be weakened by move to
+`own []const T`.
 On failure, new returns null and `AllocationError.OutOfMemory` without evaluating
 the initializer. Free runs typed teardown and accepts null. See
 [raw allocation](docs/raw_allocation.md) for the unsafe contract and current limits.
@@ -905,9 +909,11 @@ external pointer validity still requires a caller contract.
 
 Raw-pointer contracts use `lend *T` parameters, consuming `own *T` parameters,
 `own *T` returns (including tuple elements), and `own *T` structure fields.
-References never take either qualifier. Ownership remains separate from const
-and nullability. See [ownership contracts](docs/ownership_contracts.md) for
-transfer, teardown, and initial implementation restrictions.
+`own []T` is instead a first-class managed owner, not a raw-pointer contract.
+References and borrowed slices never take `own` or `lend`. Ownership remains
+separate from const and nullability. See
+[ownership contracts](docs/ownership_contracts.md) for raw-pointer transfer,
+teardown, and initial implementation restrictions.
 
 The language should avoid hidden allocation in:
 
