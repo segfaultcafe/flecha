@@ -5,7 +5,8 @@ The foundational numeric and integer modules are imported separately:
 ```flecha
 @imports
     :: lib::std::math::math
-    :: lib::std::math::integer;
+    :: lib::std::math::integer
+    :: lib::std::math::errors;
 ```
 
 ## Numeric operations
@@ -47,8 +48,36 @@ exponent and uses exponentiation by squaring. `gcd` and `lcm` ignore input signs
 and return a nonnegative result when that result is representable. `gcd(0, 0)`
 and any `lcm` call containing zero return zero.
 
-These functions do not yet add overflow detection beyond primitive Flecha
-arithmetic. In particular, `pow` and `lcm` may exceed their result type, and the
-positive magnitude of a signed type's minimum value is not representable in
-that same type. Callers must keep results within range until checked, wrapping,
-and saturating arithmetic APIs define those cases explicitly.
+## Checked arithmetic
+
+Checked operations return the arithmetic result together with an
+`errors::ArithmeticError`. An exact operation returns `none` as its error:
+
+```flecha
+sum, sumError := integer::checked_add<i32>(left, right);
+difference, subError := integer::checked_sub<i32>(left, right);
+product, mulError := integer::checked_mul<i32>(left, right);
+quotient, divError := integer::checked_div<i32>(left, right);
+```
+
+Addition, subtraction, and multiplication report
+`ArithmeticError.Overflow` when the mathematical result is outside the result
+type. Division reports `ArithmeticError.DivisionByZero` for a zero divisor and
+`ArithmeticError.Overflow` when a signed minimum value is divided by negative
+one.
+
+## Saturating arithmetic
+
+Saturating operations preserve representable results and clamp overflow to the
+nearest bound of `T`:
+
+```flecha
+sum := integer::saturating_add<i32>(left, right);
+difference := integer::saturating_sub<i32>(left, right);
+product := integer::saturating_mul<i32>(left, right);
+```
+
+Primitive `+`, `-`, and `*` continue to wrap at the integer width. In
+particular, `pow` and `lcm` use those primitive operations and may wrap if their
+mathematical result is outside `T`; callers that require another policy must
+check their input range explicitly.

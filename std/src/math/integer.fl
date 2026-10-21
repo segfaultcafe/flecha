@@ -1,5 +1,7 @@
 module integer;
 
+@imports :: root::math::errors;
+
 export bool is_even<T: integer>(T value) {
     return value % 2 == 0;
 }
@@ -71,4 +73,96 @@ export T lcm<T: integer>(T left, T right) {
     }
 
     return result;
+}
+
+export (T, errors::ArithmeticError) checked_add<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_add(right);
+    if overflowed {
+        return (none, errors::ArithmeticError.Overflow);
+    }
+
+    return (result, none);
+}
+
+export (T, errors::ArithmeticError) checked_sub<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_sub(right);
+    if overflowed {
+        return (none, errors::ArithmeticError.Overflow);
+    }
+
+    return (result, none);
+}
+
+export (T, errors::ArithmeticError) checked_mul<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_mul(right);
+    if overflowed {
+        return (none, errors::ArithmeticError.Overflow);
+    }
+
+    return (result, none);
+}
+
+export (T, errors::ArithmeticError) checked_div<T: integer>(T left, T right) {
+    T zero = none;
+    T negativeOne = (-1).cast<T>;
+
+    if right == zero {
+        return (none, errors::ArithmeticError.DivisionByZero);
+    }
+
+    if T.isof<signed_integer> and left == T.min_value and right == negativeOne {
+        return (none, errors::ArithmeticError.Overflow);
+    }
+
+    return (left / right, none);
+}
+
+export T saturating_add<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_add(right);
+    if !overflowed {
+        return result;
+    }
+
+    T zero = none;
+    if T.isof<unsigned_integer> or left > zero {
+        return T.max_value;
+    }
+
+    return T.min_value;
+}
+
+export T saturating_sub<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_sub(right);
+    if !overflowed {
+        return result;
+    }
+
+    if T.isof<unsigned_integer> {
+        return T.min_value;
+    }
+
+    T zero = none;
+    if right < zero {
+        return T.max_value;
+    }
+
+    return T.min_value;
+}
+
+export T saturating_mul<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_mul(right);
+    if !overflowed {
+        return result;
+    }
+
+    if T.isof<unsigned_integer> {
+        return T.max_value;
+    }
+
+    T zero = none;
+    if (left < zero) != (right < zero) {
+        return T.min_value;
+    }
+
+    return T.max_value;
 }

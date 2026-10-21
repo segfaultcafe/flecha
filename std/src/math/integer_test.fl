@@ -2,6 +2,7 @@ module integer_test;
 
 @imports
     :: root::math::integer
+    :: root::math::errors
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
@@ -58,4 +59,47 @@ test lcm_handles_factors_signs_and_zero(&testing::UnitTest t) {
     asserts::is_true(t, integer::lcm<i32>(0, 9) == 0, "a zero left value has an lcm of zero");
     asserts::is_true(t, integer::lcm<i32>(9, 0) == 0, "a zero right value has an lcm of zero");
     asserts::is_true(t, integer::lcm<usize>(12, 18) == 36, "lcm accepts unsigned integers");
+}
+
+test checked_arithmetic_reports_exact_results_and_failures(&testing::UnitTest t) {
+    sum, sumError := integer::checked_add<i8>(20, 22);
+    asserts::is_true(t, sum == 42 and sumError == none, "checked_add returns an exact sum");
+
+    _, addOverflow := integer::checked_add<i8>(i8.max_value, 1);
+    asserts::is_true(t, addOverflow == errors::ArithmeticError.Overflow, "checked_add reports signed overflow");
+
+    _, subOverflow := integer::checked_sub<u8>(0, 1);
+    asserts::is_true(t, subOverflow == errors::ArithmeticError.Overflow, "checked_sub reports unsigned underflow");
+
+    _, mulOverflow := integer::checked_mul<i8>(64, 2);
+    asserts::is_true(t, mulOverflow == errors::ArithmeticError.Overflow, "checked_mul reports signed overflow");
+
+    quotient, quotientError := integer::checked_div<i8>(84, 2);
+    asserts::is_true(t, quotient == 42 and quotientError == none, "checked_div returns an exact quotient");
+
+    _, divisionByZero := integer::checked_div<i8>(42, 0);
+    asserts::is_true(t, divisionByZero == errors::ArithmeticError.DivisionByZero, "checked_div reports division by zero");
+
+    _, divisionOverflow := integer::checked_div<i8>(i8.min_value, -1);
+    asserts::is_true(t, divisionOverflow == errors::ArithmeticError.Overflow, "checked_div reports minimum divided by negative one");
+}
+
+test saturating_add_and_sub_clamp_at_integer_bounds(&testing::UnitTest t) {
+    asserts::is_true(t, integer::saturating_add<i8>(20, 22) == 42, "saturating_add preserves an exact sum");
+    asserts::is_true(t, integer::saturating_add<i8>(i8.max_value, 1) == i8.max_value, "saturating_add clamps positive signed overflow");
+    asserts::is_true(t, integer::saturating_add<i8>(i8.min_value, -1) == i8.min_value, "saturating_add clamps negative signed overflow");
+    asserts::is_true(t, integer::saturating_add<u8>(u8.max_value, 1) == u8.max_value, "saturating_add clamps unsigned overflow");
+
+    asserts::is_true(t, integer::saturating_sub<i8>(44, 2) == 42, "saturating_sub preserves an exact difference");
+    asserts::is_true(t, integer::saturating_sub<i8>(i8.max_value, -1) == i8.max_value, "saturating_sub clamps positive signed overflow");
+    asserts::is_true(t, integer::saturating_sub<i8>(i8.min_value, 1) == i8.min_value, "saturating_sub clamps negative signed overflow");
+    asserts::is_true(t, integer::saturating_sub<u8>(0, 1) == u8.min_value, "saturating_sub clamps unsigned underflow");
+}
+
+test saturating_mul_clamps_using_the_mathematical_sign(&testing::UnitTest t) {
+    asserts::is_true(t, integer::saturating_mul<i8>(21, 2) == 42, "saturating_mul preserves an exact product");
+    asserts::is_true(t, integer::saturating_mul<i8>(64, 2) == i8.max_value, "saturating_mul clamps positive signed overflow");
+    asserts::is_true(t, integer::saturating_mul<i8>(-64, 2) == i8.min_value, "saturating_mul clamps negative signed overflow");
+    asserts::is_true(t, integer::saturating_mul<i8>(i8.min_value, -1) == i8.max_value, "saturating_mul clamps minimum times negative one");
+    asserts::is_true(t, integer::saturating_mul<u8>(16, 16) == u8.max_value, "saturating_mul clamps unsigned overflow");
 }
