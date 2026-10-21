@@ -13,6 +13,7 @@
     {"include": "#moduleDeclarations"},
     {"include": "#namespaces"},
     {"include": "#typeSets"},
+    {"include": "#floatingConstants"},
     {"include": "#integerLimits"},
     {"include": "#types"},
     {"include": "#modifiers"},
@@ -105,6 +106,26 @@
         "2": {"name": "punctuation.accessor.flecha"},
         "3": {"name": "constant.numeric.integer.bound.flecha"}
       }
+    },
+    "floatingConstants": {
+      "patterns": [
+        {
+          "match": "\\b(f32|f64)(\\s*\\.\\s*)(nan|infinity|negative_infinity|min_value|max_value|min_positive|epsilon)\\b",
+          "captures": {
+            "1": {"name": "storage.type.primitive.flecha"},
+            "2": {"name": "punctuation.accessor.flecha"},
+            "3": {"name": "constant.numeric.float.property.flecha"}
+          }
+        },
+        {
+          "match": "\\b([A-Z][A-Za-z0-9_]*)(\\s*\\.\\s*)(nan|infinity|negative_infinity|min_positive|epsilon)\\b",
+          "captures": {
+            "1": {"name": "storage.type.primitive.flecha"},
+            "2": {"name": "punctuation.accessor.flecha"},
+            "3": {"name": "constant.numeric.float.property.flecha"}
+          }
+        }
+      ]
     },
     "types": {
       "patterns": [

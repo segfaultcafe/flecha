@@ -407,12 +407,27 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const auto& member =
                 static_cast<const core::MemberAccessExpression&>(expression);
             if (_semanticModel->FieldFor(member)) return LowerPlace(expression);
-            if (type.IsInteger() &&
-                (member.Member() == "min_value" ||
-                 member.Member() == "max_value"))
+            if (type.IsInteger() && (member.Member() == "min_value" ||
+                                     member.Member() == "max_value"))
                 return std::make_unique<BoundIntegerLimitExpression>(
-                    expression.Range(), type,
-                    member.Member() == "max_value");
+                    expression.Range(), type, member.Member() == "max_value");
+            if (type.IsFloating()) {
+                FloatingConstant constant = FloatingConstant::NaN;
+                if (member.Member() == "infinity")
+                    constant = FloatingConstant::Infinity;
+                else if (member.Member() == "negative_infinity")
+                    constant = FloatingConstant::NegativeInfinity;
+                else if (member.Member() == "min_value")
+                    constant = FloatingConstant::Minimum;
+                else if (member.Member() == "max_value")
+                    constant = FloatingConstant::Maximum;
+                else if (member.Member() == "min_positive")
+                    constant = FloatingConstant::MinimumPositive;
+                else if (member.Member() == "epsilon")
+                    constant = FloatingConstant::Epsilon;
+                return std::make_unique<BoundFloatingConstantExpression>(
+                    expression.Range(), type, constant);
+            }
             if (type.Kind() == semantic::SemanticTypeKind::Enum) {
                 for (const auto& variant : type.Enum()->variants)
                     if (variant.name == member.Member())

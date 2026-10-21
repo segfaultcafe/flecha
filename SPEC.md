@@ -324,6 +324,30 @@ Integer sizes are part of their type names. `isize` and `usize` have the native 
 
 Implicit conversion between distinct primitive types should be avoided. In particular, integers, booleans, and pointers remain differently typed even when their representations or zero values coincide.
 
+`f32` and `f64` use IEEE 754 binary32 and binary64 semantics. Each floating
+type exposes contextual compile-time constants:
+
+```flecha
+quiet := f32.nan;
+positiveInfinity := f64.infinity;
+negativeInfinity := f64.negative_infinity;
+smallestFinite := f32.min_value;
+largestFinite := f32.max_value;
+smallestNormal := f32.min_positive;
+unitRoundoff := f32.epsilon;
+```
+
+`min_value` is the most negative finite value, `max_value` is the most positive
+finite value, `min_positive` is the smallest positive normal value, and
+`epsilon` is the difference between one and the next representable value.
+`nan` is a canonical quiet NaN. The properties also work through a type
+parameter constrained by `floating_point`.
+
+Floating `==` and `===` are ordered: NaN is unequal to every value, including
+itself. Consequently `!=` and `!==` are true if either operand is NaN. Ordered
+comparisons `<`, `<=`, `>`, and `>=` are false if either operand is NaN.
+Positive and negative zero compare equal under both equality forms.
+
 Integer `+`, `-`, and `*` use two's-complement wrapping at the width of the
 operand type. Their result is the mathematical result reduced modulo `2^N`,
 including for signed integer types. Code that must distinguish an exact result
@@ -547,9 +571,7 @@ i32(0) === i32(0); // true
 i32(0) === u32(0); // false
 ```
 
-Strict equality is semantic type-and-value equality, not necessarily raw byte equality. Padding, floating-point representations, and other representation details must not silently turn `===` into a memory comparison. A separate explicit operation may be provided for comparing raw representations.
-
-The behavior of floating-point NaNs and signed zero under both equality operators remains to be specified.
+Strict equality is semantic type-and-value equality, not necessarily raw byte equality. Padding, floating-point representations, and other representation details must not silently turn `===` into a memory comparison. A separate explicit operation may be provided for comparing raw representations. IEEE floating-point values follow the NaN and signed-zero rules specified in the primitive-types section.
 
 ## 10. Tuples and multiple return values
 
@@ -1072,7 +1094,6 @@ The following decisions are intentionally not finalized:
 - partial aggregate moves and cleanup rules for future owning types;
 - allocator interfaces;
 - arithmetic overflow behavior;
-- floating-point equality involving NaN and signed zero;
 - compile-time execution and metaprogramming;
 - tuple layout and ABI rules;
 - optional values distinct from primitive zero;

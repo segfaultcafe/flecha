@@ -36,6 +36,7 @@ syntax match flechaAllocation /\<new\>\ze\s*</
 syntax match flechaAllocation /\<take\>\ze\s*(/
 syntax match flechaCastMethod /\.cast\>\ze\s*</
 syntax match flechaIsOfMethod /\.isof\>\ze\s*</
+syntax match flechaFloatConstant /\%(\<\%(f32\|f64\|[A-Z][A-Za-z0-9_]*\)\s*\.\s*\)\@<=\%(nan\|infinity\|negative_infinity\|min_value\|max_value\|min_positive\|epsilon\)\>/
 syntax match flechaIntegerLimit /\%(\<\%(i8\|i16\|i32\|i64\|isize\|u8\|u16\|u32\|u64\|usize\|[A-Z][A-Za-z0-9_]*\)\s*\.\s*\)\@<=\%(min_value\|max_value\)\>/
 syntax match flechaNamespace /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*::/
 syntax match flechaLabel /#\s*[A-Za-z_][A-Za-z0-9_]*/
@@ -58,6 +59,7 @@ highlight default flechaSelf guifg=#5F87AF ctermfg=67
 highlight default flechaTest guifg=#D4AF37 ctermfg=178
 highlight default flechaFuncKeyword guifg=#569CD6 ctermfg=68
 highlight default flechaBuiltinTypeSet guifg=#87CEFA ctermfg=117
+highlight default flechaFloatConstant guifg=#C49A00 ctermfg=178
 highlight default flechaIntegerLimit guifg=#C49A00 ctermfg=178
 highlight default link flechaType Type
 highlight default link flechaTypeSetKeyword Statement

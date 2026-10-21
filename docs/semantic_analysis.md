@@ -75,6 +75,13 @@ qualifiers at each layer. [Raw pointers](unsafe_pointers.md) require unsafe
 permission for dereference; [checked references](checked_references.md) use
 safe dereference and a separate borrow/move pass on the shared control-flow graph.
 
+Floating-point type properties `nan`, `infinity`, `negative_infinity`,
+`min_value`, `max_value`, `min_positive`, and `epsilon` resolve contextually for
+`f32`, `f64`, and specialized `floating_point` parameters. Floating equality
+uses IEEE ordered equality and unordered inequality: NaN never equals a value,
+while `!=` is true when either operand is NaN. Relational comparisons remain
+ordered and therefore return false for NaN operands.
+
 Calls currently require a directly resolved function symbol. Analysis checks
 callability, argument count, and each known argument type. Function values and
 overloads are not yet part of the language model.

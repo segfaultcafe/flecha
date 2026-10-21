@@ -1159,6 +1159,70 @@ TEST(NativeCompilerTests, EmitsIntegerTypeLimits) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, EmitsIeeeFloatingPointConstantsAndComparisons) {
+    GeneratedSource result = Generate(R"(
+        bool different(f64 left, f64 right) { return left != right; }
+
+        (T, T) special<T: floating_point>() {
+            return (T.infinity, T.nan);
+        }
+
+        i32 main() {
+            f64 nan = f64.nan;
+            if nan == nan { return 1; }
+            if !different(nan, nan) { return 2; }
+            if nan < 0.0 or nan <= 0.0 or nan > 0.0 or nan >= 0.0 {
+                return 3;
+            }
+            if !(nan !== nan) { return 4; }
+
+            if f32.infinity <= f32.max_value { return 5; }
+            if f32.negative_infinity >= f32.min_value { return 6; }
+            if f32.negative_infinity != -f32.infinity { return 7; }
+            if f64.min_value != -f64.max_value { return 8; }
+            if f32.min_positive <= (0.0 as f32) { return 9; }
+
+            f32 one = 1.0 as f32;
+            if one + f32.epsilon == one { return 10; }
+            if one + f32.epsilon / (2.0 as f32) != one { return 11; }
+            if (-0.0) != 0.0 or !((-0.0) === 0.0) { return 12; }
+
+            f64 one64 = 1.0;
+            if one64 + f64.epsilon == one64 { return 13; }
+            if one64 + f64.epsilon / 2.0 != one64 { return 14; }
+            if f64.min_positive <= 0.0 { return 15; }
+            if f32.max_value + f32.max_value != f32.infinity { return 16; }
+
+            infinity, genericNan := special<f32>();
+            if infinity != f32.infinity or !(genericNan != genericNan) {
+                return 17;
+            }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+    ASSERT_NE(result.module, nullptr);
+    EXPECT_NE(ModuleText(*result.module).find("fcmp une"), std::string::npos);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_ieee_constants_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_ieee_constants_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsCapturelessAnonymousFunctions) {
     GeneratedSource result = Generate(R"(
         func Mapper(i32) => (i32);

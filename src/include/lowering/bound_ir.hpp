@@ -47,6 +47,7 @@ enum class BoundNodeKind {
     IncrementExpression,
     BinaryExpression,
     IntegerLimitExpression,
+    FloatingConstantExpression,
     OverflowingArithmeticExpression,
     AssignmentExpression,
     CallExpression,
@@ -537,6 +538,31 @@ class BoundIntegerLimitExpression final : public BoundExpression {
 
    private:
     bool _maximum;
+};
+
+enum class FloatingConstant {
+    NaN,
+    Infinity,
+    NegativeInfinity,
+    Minimum,
+    Maximum,
+    MinimumPositive,
+    Epsilon,
+};
+
+class BoundFloatingConstantExpression final : public BoundExpression {
+   public:
+    BoundFloatingConstantExpression(source::SourceRange range,
+                                    semantic::SemanticType type,
+                                    FloatingConstant constant)
+        : BoundExpression(range, type), _constant(constant) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::FloatingConstantExpression;
+    }
+    [[nodiscard]] FloatingConstant Constant() const { return _constant; }
+
+   private:
+    FloatingConstant _constant;
 };
 
 class BoundIncrementExpression final : public BoundExpression {

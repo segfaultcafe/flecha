@@ -59,6 +59,26 @@ std::string OperatorText(TokenType type) {
     }
 }
 
+std::string FloatingConstantText(FloatingConstant constant) {
+    switch (constant) {
+        case FloatingConstant::NaN:
+            return "nan";
+        case FloatingConstant::Infinity:
+            return "infinity";
+        case FloatingConstant::NegativeInfinity:
+            return "negative_infinity";
+        case FloatingConstant::Minimum:
+            return "min_value";
+        case FloatingConstant::Maximum:
+            return "max_value";
+        case FloatingConstant::MinimumPositive:
+            return "min_positive";
+        case FloatingConstant::Epsilon:
+            return "epsilon";
+    }
+    return "?";
+}
+
 class Dumper final {
    public:
     std::string Dump(const BoundProgram& program) {
@@ -439,6 +459,14 @@ class Dumper final {
                 _stream << "(" << limit.Type().Name() << "."
                         << (limit.IsMaximum() ? "max_value" : "min_value")
                         << ")";
+                break;
+            }
+            case BoundNodeKind::FloatingConstantExpression: {
+                const auto& constant =
+                    static_cast<const BoundFloatingConstantExpression&>(
+                        expression);
+                _stream << "(" << constant.Type().Name() << "."
+                        << FloatingConstantText(constant.Constant()) << ")";
                 break;
             }
             case BoundNodeKind::OverflowingArithmeticExpression: {

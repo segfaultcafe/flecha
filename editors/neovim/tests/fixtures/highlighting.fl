@@ -80,6 +80,13 @@ bool integer_value<T>() { return T.isof<integer>; }
 i32 signed_low = i32.min_value;
 usize native_high = usize.max_value;
 T generic_high<T: integer>() { return T.max_value; }
+f32 quiet_nan = f32.nan;
+f64 positive_infinity = f64.infinity;
+f32 negative_infinity = f32.negative_infinity;
+f32 smallest_finite = f32.min_value;
+f32 largest_finite = f32.max_value;
+f32 smallest_normal = f32.min_positive;
+T generic_epsilon<T: floating_point>() { return T.epsilon; }
 min_value := 0;
 max_value := 1;
 u8 bit_mask = ~(15 as u8) & (12 as u8) | (1 as u8) << 3 >> 1;

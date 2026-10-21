@@ -67,6 +67,12 @@
             "settings": {
               "foreground": "#C49A00"
             }
+          },
+          {
+            "scope": "constant.numeric.float.property.flecha",
+            "settings": {
+              "foreground": "#C49A00"
+            }
           }
         ]
       }

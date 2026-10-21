@@ -42,6 +42,12 @@ std::optional<SemanticType> PrimitiveNumericType(const std::string& name) {
     return std::nullopt;
 }
 
+bool IsFloatingConstant(std::string_view name) {
+    return name == "nan" || name == "infinity" || name == "negative_infinity" ||
+           name == "min_value" || name == "max_value" ||
+           name == "min_positive" || name == "epsilon";
+}
+
 bool IsArrayElement(SemanticType type) {
     if (type.IsConst()) return false;
     if (type.Kind() == SemanticTypeKind::Array)
@@ -3445,10 +3451,14 @@ SemanticType SemanticAnalyzer::AnalyzeMemberAccess(
         if (const auto primitive = PrimitiveNumericType(receiver.Name())) {
             if (expression.Access() != TokenType::Dot)
                 Report(diagnostics::DiagnosticCode::InvalidMember,
-                       expression.Range(), "integer type properties use '.'");
-            if (!primitive->IsInteger() ||
-                (expression.Member() != "min_value" &&
-                 expression.Member() != "max_value")) {
+                       expression.Range(), "numeric type properties use '.'");
+            const bool integerProperty =
+                primitive->IsInteger() && (expression.Member() == "min_value" ||
+                                           expression.Member() == "max_value");
+            const bool floatingProperty =
+                primitive->IsFloating() &&
+                IsFloatingConstant(expression.Member());
+            if (!integerProperty && !floatingProperty) {
                 Report(diagnostics::DiagnosticCode::InvalidMember,
                        expression.MemberRange(),
                        "type '" + std::string(primitive->Name()) +

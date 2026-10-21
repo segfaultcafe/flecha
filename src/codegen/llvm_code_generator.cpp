@@ -1,5 +1,7 @@
 #include "codegen/llvm_code_generator.hpp"
 
+#include <llvm/ADT/APFloat.h>
+#include <llvm/ADT/APInt.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -2422,7 +2424,7 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
                             : _builder.CreateICmpEQ(left, right, "eq");
         case TokenType::NotEqual:
         case TokenType::StrictNotEqual:
-            return floating ? _builder.CreateFCmpONE(left, right, "fne")
+            return floating ? _builder.CreateFCmpUNE(left, right, "fne")
                             : _builder.CreateICmpNE(left, right, "ne");
         case TokenType::Less:
             if (floating) return _builder.CreateFCmpOLT(left, right, "flt");
@@ -2495,6 +2497,41 @@ llvm::Value* LlvmCodeGenerator::EmitIntegerLimit(
     else if (!isUnsigned)
         value = llvm::APInt::getSignedMinValue(bits);
     return llvm::ConstantInt::get(type, value);
+}
+
+llvm::Value* LlvmCodeGenerator::EmitFloatingConstant(
+    const lowering::BoundFloatingConstantExpression& expression) {
+    llvm::Type* type = MapType(expression.Type());
+    if (type == nullptr || !type->isFloatingPointTy()) return nullptr;
+
+    const bool single =
+        expression.Type().Kind() == semantic::SemanticTypeKind::F32;
+    const llvm::fltSemantics& semantics =
+        single ? llvm::APFloat::IEEEsingle() : llvm::APFloat::IEEEdouble();
+    switch (expression.Constant()) {
+        case lowering::FloatingConstant::NaN:
+            return llvm::ConstantFP::getNaN(type);
+        case lowering::FloatingConstant::Infinity:
+            return llvm::ConstantFP::getInfinity(type);
+        case lowering::FloatingConstant::NegativeInfinity:
+            return llvm::ConstantFP::getInfinity(type, true);
+        case lowering::FloatingConstant::Minimum:
+            return llvm::ConstantFP::get(
+                type, llvm::APFloat::getLargest(semantics, true));
+        case lowering::FloatingConstant::Maximum:
+            return llvm::ConstantFP::get(type,
+                                         llvm::APFloat::getLargest(semantics));
+        case lowering::FloatingConstant::MinimumPositive:
+            return llvm::ConstantFP::get(
+                type, llvm::APFloat::getSmallestNormalized(semantics));
+        case lowering::FloatingConstant::Epsilon: {
+            const llvm::APInt bits =
+                single ? llvm::APInt(32, UINT64_C(0x34000000))
+                       : llvm::APInt(64, UINT64_C(0x3cb0000000000000));
+            return llvm::ConstantFP::get(type, llvm::APFloat(semantics, bits));
+        }
+    }
+    return nullptr;
 }
 
 llvm::Value* LlvmCodeGenerator::EmitStringConcat(
@@ -2978,6 +3015,10 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
         case lowering::BoundNodeKind::IntegerLimitExpression:
             return EmitIntegerLimit(
                 static_cast<const lowering::BoundIntegerLimitExpression&>(
+                    expression));
+        case lowering::BoundNodeKind::FloatingConstantExpression:
+            return EmitFloatingConstant(
+                static_cast<const lowering::BoundFloatingConstantExpression&>(
                     expression));
         case lowering::BoundNodeKind::OverflowingArithmeticExpression:
             return EmitOverflowingArithmetic(

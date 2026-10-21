@@ -2187,11 +2187,10 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpression() {
         case TokenType::F32:
         case TokenType::F64:
             // Primitive type names are expressions only as the receiver of a
-            // contextual type property such as `i32.max_value`.
+            // contextual type property such as `i32.max_value` or `f32.nan`.
             if (Peek(1).type != TokenType::Dot) {
-                _diagnostics.Report(
-                    diagnostics::DiagnosticCode::ExpectedToken, token.range,
-                    "expected an expression");
+                _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                                    token.range, "expected an expression");
                 return nullptr;
             }
             Advance();

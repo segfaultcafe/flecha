@@ -5887,9 +5887,40 @@ TEST(SemanticGenericTests, ResolvesContextualIntegerTypeLimits) {
         ADD_FAILURE() << diagnostic.message;
 
     for (const auto& source : {
-             "void main() { value := f32.min_value; }",
              "void main() { value := i32.unknown_limit; }",
              "void main() { i32 value = 1; other := value.max_value; }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, ResolvesContextualFloatingPointConstants) {
+    auto valid = Analyze(R"(
+        (T, T, T, T, T, T, T) constants<T: floating_point>() {
+            return (T.nan, T.infinity, T.negative_infinity, T.min_value,
+                    T.max_value, T.min_positive, T.epsilon);
+        }
+
+        void main() {
+            f32 nan = f32.nan;
+            f32 infinity = f32.infinity;
+            f64 negative = f64.negative_infinity;
+            f64 minimum = f64.min_value;
+            f64 maximum = f64.max_value;
+            f32 positive = f32.min_positive;
+            f32 epsilon = f32.epsilon;
+            constants<f64>();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    for (const auto& source : {
+             "void main() { value := f32.unknown_constant; }",
+             "void main() { value := i32.nan; }",
+             "void main() { f32 value = 1.0; other := value.infinity; }",
          }) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
