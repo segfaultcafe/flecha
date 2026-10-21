@@ -97,8 +97,17 @@ trailing := bits::trailing_zeros<u32>(value);
 left := bits::rotate_left<u32>(value, count);
 right := bits::rotate_right<u32>(value, count);
 reversed := bits::swap_bytes<u32>(value);
+mirrored := bits::reverse<u32>(value);
+power := bits::is_power_of_two<u32>(value);
+high := bits::highest_one<u32>(value);
+low := bits::lowest_one<u32>(value);
+lowerPower := bits::bit_floor<u32>(value);
+upperPower, ceilError := bits::checked_bit_ceil<u32>(value);
 ```
 
 Zero has a full type width of both leading and trailing zeros. Rotation counts
 are reduced modulo the width, so zero, full-width, and larger rotations are
 defined. `width<usize>()` follows the target pointer width.
+`highest_one`, `lowest_one`, and `bit_floor` return zero when given zero.
+`checked_bit_ceil` maps zero to one and reports `ArithmeticError.Overflow` when
+the next power of two is not representable in the input type.

@@ -2,6 +2,7 @@ module bits_test;
 
 @imports
     :: root::math::bits
+    :: root::math::errors
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
@@ -58,4 +59,61 @@ test byte_swapping_reverses_storage_order(&testing::UnitTest t) {
 
     usize native = 42;
     asserts::is_true(t, bits::swap_bytes<usize>(bits::swap_bytes<usize>(native)) == native, "swapping native bytes twice restores the value");
+}
+
+test reverse_mirrors_every_bit_in_the_type_width(&testing::UnitTest t) {
+    asserts::is_true(t, bits::reverse<u8>(0) == 0, "reversing zero remains zero");
+    asserts::is_true(t, bits::reverse<u8>(1) == 128, "reverse moves the low bit to the high bit");
+    asserts::is_true(t, bits::reverse<u8>(22) == 104, "reverse mirrors a mixed byte");
+    asserts::is_true(t, bits::reverse<u16>(4660) == 11336, "reverse mirrors all sixteen bits");
+
+    u32 value = 305419896;
+    asserts::is_true(t, bits::reverse<u32>(bits::reverse<u32>(value)) == value, "reversing twice restores a u32 value");
+}
+
+test power_of_two_detection_excludes_zero_and_mixed_values(&testing::UnitTest t) {
+    asserts::is_false(t, bits::is_power_of_two<u8>(0), "zero is not a power of two");
+    asserts::is_true(t, bits::is_power_of_two<u8>(1), "one is the zeroth power of two");
+    asserts::is_true(t, bits::is_power_of_two<u8>(2), "two is a power of two");
+    asserts::is_true(t, bits::is_power_of_two<u8>(128), "the highest u8 bit is a power of two");
+    asserts::is_false(t, bits::is_power_of_two<u8>(3), "two set bits are not a power of two");
+    asserts::is_false(t, bits::is_power_of_two<u8>(u8.max_value), "an all-one value is not a power of two");
+}
+
+test highest_and_lowest_one_isolate_set_bits(&testing::UnitTest t) {
+    asserts::is_true(t, bits::highest_one<u8>(0) == 0, "zero has no highest set bit");
+    asserts::is_true(t, bits::lowest_one<u8>(0) == 0, "zero has no lowest set bit");
+    asserts::is_true(t, bits::highest_one<u8>(40) == 32, "highest_one isolates the most significant set bit");
+    asserts::is_true(t, bits::lowest_one<u8>(40) == 8, "lowest_one isolates the least significant set bit");
+    asserts::is_true(t, bits::highest_one<u8>(u8.max_value) == 128, "highest_one handles an all-one value");
+    asserts::is_true(t, bits::lowest_one<u8>(u8.max_value) == 1, "lowest_one handles an all-one value");
+    asserts::is_true(t, bits::highest_one<u32>(65537) == 65536, "highest_one preserves the input type width");
+}
+
+test bit_floor_rounds_down_to_a_representable_power(&testing::UnitTest t) {
+    asserts::is_true(t, bits::bit_floor<u8>(0) == 0, "the bit floor of zero is zero");
+    asserts::is_true(t, bits::bit_floor<u8>(1) == 1, "a power of two is its own bit floor");
+    asserts::is_true(t, bits::bit_floor<u8>(3) == 2, "bit_floor rounds three down to two");
+    asserts::is_true(t, bits::bit_floor<u8>(127) == 64, "bit_floor rounds below the high bit");
+    asserts::is_true(t, bits::bit_floor<u8>(u8.max_value) == 128, "bit_floor always remains representable");
+}
+
+test checked_bit_ceil_rounds_up_and_reports_overflow(&testing::UnitTest t) {
+    zero, zeroError := bits::checked_bit_ceil<u8>(0);
+    asserts::is_true(t, zero == 1 and zeroError == none, "zero rounds up to one");
+
+    exact, exactError := bits::checked_bit_ceil<u8>(128);
+    asserts::is_true(t, exact == 128 and exactError == none, "a power of two remains unchanged");
+
+    rounded, roundedError := bits::checked_bit_ceil<u8>(65);
+    asserts::is_true(t, rounded == 128 and roundedError == none, "a non-power rounds to the next power of two");
+
+    wider, widerError := bits::checked_bit_ceil<u16>(257);
+    asserts::is_true(t, wider == 512 and widerError == none, "checked_bit_ceil works across unsigned widths");
+
+    _, overflow := bits::checked_bit_ceil<u8>(129);
+    asserts::is_true(t, overflow == errors::ArithmeticError.Overflow, "rounding beyond the high bit reports overflow");
+
+    _, maximumOverflow := bits::checked_bit_ceil<u64>(u64.max_value);
+    asserts::is_true(t, maximumOverflow == errors::ArithmeticError.Overflow, "the maximum value cannot round upward");
 }
