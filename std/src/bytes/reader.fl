@@ -1,0 +1,92 @@
+module cursor;
+
+@imports
+    :: root::bytes::endian
+    :: root::bytes::errors
+    :: root::math::bits;
+
+export structure Reader {
+    private []const u8 source;
+    private usize position;
+};
+
+Reader Reader::init([]const u8 source) <-source override {
+    return build Reader {
+        self.source = source;
+        self.position = 0;
+    };
+}
+
+usize Reader::position(&const self) {
+    return self->position;
+}
+
+usize Reader::len(&const self) {
+    return self->source.len();
+}
+
+usize Reader::remaining(&const self) {
+    return self->source.len() - self->position;
+}
+
+bool Reader::empty(&const self) {
+    return self->remaining() == 0;
+}
+
+(u8, errors::ByteError) Reader::readByte(&self) {
+    if self->empty() {
+        return (none, errors::ByteError.UnexpectedEnd);
+    }
+
+    u8 value = self->source[self->position];
+    self->position++;
+
+    return (value, none);
+}
+
+([]const u8, errors::ByteError) Reader::read(&self, usize count) <-self {
+    if count > self->remaining() {
+        return (
+            self->source[self->position:self->position],
+            errors::ByteError.UnexpectedEnd
+        );
+    }
+
+    usize start = self->position;
+    self->position = self->position + count;
+    return (self->source[start:self->position], none);
+}
+
+(T, errors::ByteError) Reader::readLittle<
+    T: endian::fixed_unsigned_integer
+>(&self) {
+    usize byteCount = bits::width<T>() / 8;
+    if byteCount > self->remaining() {
+        return (none, errors::ByteError.UnexpectedEnd);
+    }
+
+    value, err := endian::read_little<T>(self->source[self->position:]);
+    if err != none {
+        return (none, err);
+    }
+
+    self->position = self->position + byteCount;
+    return (value, none);
+}
+
+(T, errors::ByteError) Reader::readBig<
+    T: endian::fixed_unsigned_integer
+>(&self) {
+    usize byteCount = bits::width<T>() / 8;
+    if byteCount > self->remaining() {
+        return (none, errors::ByteError.UnexpectedEnd);
+    }
+
+    value, err := endian::read_big<T>(self->source[self->position:]);
+    if err != none {
+        return (none, err);
+    }
+
+    self->position = self->position + byteCount;
+    return (value, none);
+}

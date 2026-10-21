@@ -6,6 +6,7 @@ module std;
     :: root::containers::errors as containers_errors
     :: root::containers::algorithms
     :: root::bytes::endian
+    :: root::bytes::cursor
     :: root::bytes::errors as bytes_errors
     :: root::io::filesystem
     :: root::io::file
