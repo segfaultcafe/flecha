@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.2.2 - 2026-10-21
+
+Flecha 0.2.2 fixes zero-state classification for structures containing
+move-only runtime-array owners.
+
+### Fixed
+
+- Null `*[]T` owning buffers now count as trivially zeroable when classifying
+  structure `zero()` implementations and generated initializers.
+- Structures with an equivalent trivial zero state can use `none` directly,
+  including when nested in tuple results, without weakening move-only
+  ownership.
+
 ## 0.2.1 - 2026-10-20
 
 Flecha 0.2.1 corrects module identity and composition so modules are logical
