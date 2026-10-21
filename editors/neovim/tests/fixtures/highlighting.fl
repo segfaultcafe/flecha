@@ -77,6 +77,11 @@ typeset scalar_numbers {
 };
 T constrained<T: numeric>(T value) { return value; }
 bool integer_value<T>() { return T.isof<integer>; }
+i32 signed_low = i32.min_value;
+usize native_high = usize.max_value;
+T generic_high<T: integer>() { return T.max_value; }
+min_value := 0;
+max_value := 1;
 i32 namespaced_answer = integer::answer();
 func Mapper<T>(T) => (T);
 once func Action() => ();

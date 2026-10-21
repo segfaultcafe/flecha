@@ -13,6 +13,7 @@
     {"include": "#moduleDeclarations"},
     {"include": "#namespaces"},
     {"include": "#typeSets"},
+    {"include": "#integerLimits"},
     {"include": "#types"},
     {"include": "#modifiers"},
     {"include": "#control"},
@@ -96,6 +97,14 @@
     "typeSets": {
       "name": "support.type.typeset.builtin.flecha",
       "match": "\\b(?:signed_integer|unsigned_integer|integer|floating_point|numeric)\\b"
+    },
+    "integerLimits": {
+      "match": "\\b(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|[A-Z][A-Za-z0-9_]*)(\\s*\\.\\s*)(min_value|max_value)\\b",
+      "captures": {
+        "1": {"name": "storage.type.primitive.flecha"},
+        "2": {"name": "punctuation.accessor.flecha"},
+        "3": {"name": "constant.numeric.integer.bound.flecha"}
+      }
     },
     "types": {
       "patterns": [
