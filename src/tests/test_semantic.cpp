@@ -5819,6 +5819,60 @@ TEST(SemanticGenericTests, FoldsTypeSetMembershipExpressions) {
         ADD_FAILURE() << diagnostic.message;
 }
 
+TEST(SemanticGenericTests, TypesOverflowingIntegerArithmetic) {
+    auto valid = Analyze(R"(
+        (T, bool) add<T: integer>(T left, T right) {
+            result, overflowed := left.overflow_add(right);
+            return (result, overflowed);
+        }
+        void main() {
+            sum, add_overflow := add<i8>(127, 1);
+            difference, sub_overflow := (0 as u8).overflow_sub(1);
+            product, mul_overflow := (64 as i8).overflow_mul(2);
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    for (const auto& source : {
+             "void main() { 1.0.overflow_add(2.0); }",
+             "void main() { (1 as i8).overflow_add(1 as i16); }",
+             "void main() { (1 as i8).overflow_mul(); }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, ResolvesContextualIntegerTypeLimits) {
+    auto valid = Analyze(R"(
+        (T, T) bounds<T: integer>() {
+            return (T.min_value, T.max_value);
+        }
+
+        i32 min_value() { return 1; }
+
+        void main() {
+            low, high := bounds<i8>();
+            i32 direct_low = i32.min_value;
+            u64 direct_high = u64.max_value;
+            i32 minimum = min_value();
+            i32 maximum = minimum;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    for (const auto& source : {
+             "void main() { value := f32.min_value; }",
+             "void main() { value := i32.unknown_limit; }",
+             "void main() { i32 value = 1; other := value.max_value; }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
 TEST(SemanticGenericTests, RejectsInvalidTypeSetDefinitionsAndConstraints) {
     for (const auto& source : {
              "typeset first { second, }; typeset second { first, };",

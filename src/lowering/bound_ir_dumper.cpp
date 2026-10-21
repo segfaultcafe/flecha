@@ -423,6 +423,38 @@ class Dumper final {
                 _stream << ")";
                 break;
             }
+            case BoundNodeKind::IntegerLimitExpression: {
+                const auto& limit =
+                    static_cast<const BoundIntegerLimitExpression&>(
+                        expression);
+                _stream << "(" << limit.Type().Name() << "."
+                        << (limit.IsMaximum() ? "max_value" : "min_value")
+                        << ")";
+                break;
+            }
+            case BoundNodeKind::OverflowingArithmeticExpression: {
+                const auto& arithmetic =
+                    static_cast<const BoundOverflowingArithmeticExpression&>(
+                        expression);
+                _stream << "(overflowing_";
+                switch (arithmetic.Operation()) {
+                    case OverflowingArithmeticOperation::Add:
+                        _stream << "add";
+                        break;
+                    case OverflowingArithmeticOperation::Subtract:
+                        _stream << "sub";
+                        break;
+                    case OverflowingArithmeticOperation::Multiply:
+                        _stream << "mul";
+                        break;
+                }
+                _stream << " ";
+                WriteExpression(arithmetic.Left());
+                _stream << " ";
+                WriteExpression(arithmetic.Right());
+                _stream << ")";
+                break;
+            }
             case BoundNodeKind::AssignmentExpression: {
                 const BoundAssignmentExpression& assignment =
                     static_cast<const BoundAssignmentExpression&>(expression);

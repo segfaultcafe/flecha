@@ -407,6 +407,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const auto& member =
                 static_cast<const core::MemberAccessExpression&>(expression);
             if (_semanticModel->FieldFor(member)) return LowerPlace(expression);
+            if (type.IsInteger() &&
+                (member.Member() == "min_value" ||
+                 member.Member() == "max_value"))
+                return std::make_unique<BoundIntegerLimitExpression>(
+                    expression.Range(), type,
+                    member.Member() == "max_value");
             if (type.Kind() == semantic::SemanticTypeKind::Enum) {
                 for (const auto& variant : type.Enum()->variants)
                     if (variant.name == member.Member())
@@ -612,6 +618,23 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                         *argument, method->ParameterTypes()[arguments.size()]));
                 return std::make_unique<BoundCallExpression>(
                     expression.Range(), *method, std::move(arguments));
+            }
+            if (_semanticModel->TypeOf(member.Receiver()).IsInteger() &&
+                (member.Member() == "overflow_add" ||
+                 member.Member() == "overflow_sub" ||
+                 member.Member() == "overflow_mul")) {
+                OverflowingArithmeticOperation operation =
+                    OverflowingArithmeticOperation::Add;
+                if (member.Member() == "overflow_sub")
+                    operation = OverflowingArithmeticOperation::Subtract;
+                else if (member.Member() == "overflow_mul")
+                    operation = OverflowingArithmeticOperation::Multiply;
+                const semantic::SemanticType valueType =
+                    _semanticModel->TypeOf(member.Receiver()).WithoutConst();
+                return std::make_unique<BoundOverflowingArithmeticExpression>(
+                    expression.Range(), type, operation,
+                    LowerExpression(member.Receiver(), valueType),
+                    LowerExpression(*member.Arguments()[0], valueType));
             }
             if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
                     semantic::SemanticTypeKind::Slice &&

@@ -324,6 +324,42 @@ Integer sizes are part of their type names. `isize` and `usize` have the native 
 
 Implicit conversion between distinct primitive types should be avoided. In particular, integers, booleans, and pointers remain differently typed even when their representations or zero values coincide.
 
+Integer `+`, `-`, and `*` use two's-complement wrapping at the width of the
+operand type. Their result is the mathematical result reduced modulo `2^N`,
+including for signed integer types. Code that must distinguish an exact result
+from an overflow uses the overflowing primitives below.
+
+Every integer type exposes its inclusive bounds as contextual compile-time
+properties:
+
+```flecha
+smallest := i32.min_value;
+largest := i32.max_value;
+
+(T, T) bounds<T: integer>() {
+    return (T.min_value, T.max_value);
+}
+```
+
+`min_value` and `max_value` are ordinary identifiers, not reserved keywords.
+They are recognized as properties only after a concrete integer type or an
+integer-constrained type parameter. The bounds of `isize` and `usize` follow
+the native pointer width of the compilation target.
+
+Integer values provide low-level overflowing arithmetic methods:
+
+```flecha
+sum, addOverflow := left.overflow_add(right);
+difference, subOverflow := left.overflow_sub(right);
+product, mulOverflow := left.overflow_mul(right);
+```
+
+Both operands must have the same integer type. Each operation returns the
+wrapped result in that type and a `bool` that is `true` exactly when the
+mathematical result is outside the type's range. These primitives support the
+standard library's checked, wrapping, and saturating arithmetic policies; they
+do not implicitly change the behavior of ordinary arithmetic operators.
+
 ### 7.1 Enums
 
 Enums are nominal scalar types with an integer backing and qualified variants:

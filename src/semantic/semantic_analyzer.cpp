@@ -26,6 +26,22 @@ std::string TypeMismatch(SemanticType expected, SemanticType actual) {
            std::string(actual.Name()) + "'";
 }
 
+std::optional<SemanticType> PrimitiveNumericType(const std::string& name) {
+    if (name == "i8") return SemanticType(SemanticTypeKind::I8);
+    if (name == "i16") return SemanticType(SemanticTypeKind::I16);
+    if (name == "i32") return SemanticType(SemanticTypeKind::I32);
+    if (name == "i64") return SemanticType(SemanticTypeKind::I64);
+    if (name == "isize") return SemanticType(SemanticTypeKind::ISize);
+    if (name == "u8") return SemanticType(SemanticTypeKind::U8);
+    if (name == "u16") return SemanticType(SemanticTypeKind::U16);
+    if (name == "u32") return SemanticType(SemanticTypeKind::U32);
+    if (name == "u64") return SemanticType(SemanticTypeKind::U64);
+    if (name == "usize") return SemanticType(SemanticTypeKind::USize);
+    if (name == "f32") return SemanticType(SemanticTypeKind::F32);
+    if (name == "f64") return SemanticType(SemanticTypeKind::F64);
+    return std::nullopt;
+}
+
 bool IsArrayElement(SemanticType type) {
     if (type.IsConst()) return false;
     if (type.Kind() == SemanticTypeKind::Array)
@@ -3423,10 +3439,27 @@ SemanticType SemanticAnalyzer::AnalyzeName(
 SemanticType SemanticAnalyzer::AnalyzeMemberAccess(
     const core::MemberAccessExpression& expression) {
     const Symbol* symbol = nullptr;
-    if (expression.Receiver().Kind() == core::AstNodeKind::NameExpression)
-        symbol = _currentScope->Lookup(
-            static_cast<const core::NameExpression&>(expression.Receiver())
-                .Name());
+    if (expression.Receiver().Kind() == core::AstNodeKind::NameExpression) {
+        const auto& receiver =
+            static_cast<const core::NameExpression&>(expression.Receiver());
+        if (const auto primitive = PrimitiveNumericType(receiver.Name())) {
+            if (expression.Access() != TokenType::Dot)
+                Report(diagnostics::DiagnosticCode::InvalidMember,
+                       expression.Range(), "integer type properties use '.'");
+            if (!primitive->IsInteger() ||
+                (expression.Member() != "min_value" &&
+                 expression.Member() != "max_value")) {
+                Report(diagnostics::DiagnosticCode::InvalidMember,
+                       expression.MemberRange(),
+                       "type '" + std::string(primitive->Name()) +
+                           "' has no type property '" + expression.Member() +
+                           "'");
+                return SemanticType::Error();
+            }
+            return *primitive;
+        }
+        symbol = _currentScope->Lookup(receiver.Name());
+    }
     if (symbol && symbol->Kind() == SymbolKind::EnumType) {
         if (expression.Access() != TokenType::Dot)
             Report(diagnostics::DiagnosticCode::InvalidMember,
@@ -4461,6 +4494,11 @@ bool IsStringViewIndex(SemanticType type) {
            type.Kind() == SemanticTypeKind::U32;
 }
 
+bool IsOverflowingArithmeticMember(const std::string& member) {
+    return member == "overflow_add" || member == "overflow_sub" ||
+           member == "overflow_mul";
+}
+
 }  // namespace
 
 SemanticType SemanticAnalyzer::AnalyzeMemberCall(
@@ -4478,6 +4516,31 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
     if (expression.Access() != TokenType::Dot)
         Report(diagnostics::DiagnosticCode::InvalidMember, expression.Range(),
                "this member requires '.'");
+    if (receiver.IsInteger() &&
+        IsOverflowingArithmeticMember(expression.Member())) {
+        const SemanticType valueType = receiver.WithoutConst();
+        std::vector<SemanticType> arguments;
+        arguments.reserve(expression.Arguments().size());
+        for (const auto& argument : expression.Arguments())
+            arguments.push_back(AnalyzeExpression(*argument, valueType));
+        if (arguments.size() != 1) {
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "member '" + expression.Member() +
+                       "' expects 1 argument, found " +
+                       std::to_string(arguments.size()));
+        } else if (!arguments[0].IsError() &&
+                   !(arguments[0].WithoutConst() == valueType)) {
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Arguments()[0]->Range(),
+                   "overflowing arithmetic requires matching integer types; "
+                   "expected '" +
+                       valueType.Name() + "', found '" + arguments[0].Name() +
+                       "'");
+        }
+        return SemanticType(std::vector<SemanticType>{
+            valueType, SemanticType(SemanticTypeKind::Bool)});
+    }
     std::vector<SemanticType> arguments;
     arguments.reserve(expression.Arguments().size());
     for (const std::unique_ptr<core::Expression>& argument :

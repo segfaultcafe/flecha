@@ -18,6 +18,13 @@ using Tokens = std::vector<Token>;
 using Arguments = std::vector<Tokens>;
 using Callback = std::function<void(AstNode&, bool)>;
 
+bool IsPrimitiveNumericTypeName(const std::string& name) {
+    return name == "i8" || name == "i16" || name == "i32" ||
+           name == "i64" || name == "isize" || name == "u8" ||
+           name == "u16" || name == "u32" || name == "u64" ||
+           name == "usize" || name == "f32" || name == "f64";
+}
+
 // One structural walk is shared by rewriting, substitution-site discovery, and
 // template checks. Re-parsing templates preserves all existing desugarings.
 void Walk(const AstNode& input, const Callback& callback) {
@@ -1629,6 +1636,7 @@ class Expander {
         }
         if (node.Kind() == AstNodeKind::NameExpression) {
             auto& name = static_cast<NameExpression&>(node);
+            if (IsPrimitiveNumericTypeName(name.Name())) return;
             if (Local(name.Name())) {
                 if (!name.typeArguments.empty())
                     Error(name.Range(),

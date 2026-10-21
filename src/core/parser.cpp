@@ -2118,6 +2118,28 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpression() {
             Advance();
             return std::make_unique<LiteralExpression>(token.range, token.type,
                                                        token.value);
+        case TokenType::I8:
+        case TokenType::I16:
+        case TokenType::I32:
+        case TokenType::I64:
+        case TokenType::ISize:
+        case TokenType::U8:
+        case TokenType::U16:
+        case TokenType::U32:
+        case TokenType::U64:
+        case TokenType::USize:
+        case TokenType::F32:
+        case TokenType::F64:
+            // Primitive type names are expressions only as the receiver of a
+            // contextual type property such as `i32.max_value`.
+            if (Peek(1).type != TokenType::Dot) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::ExpectedToken, token.range,
+                    "expected an expression");
+                return nullptr;
+            }
+            Advance();
+            return std::make_unique<NameExpression>(token.range, token.value);
         case TokenType::Identifier: {
             Advance();
             std::string name = token.value;

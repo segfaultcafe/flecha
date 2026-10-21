@@ -2415,6 +2415,57 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
     }
 }
 
+llvm::Value* LlvmCodeGenerator::EmitOverflowingArithmetic(
+    const lowering::BoundOverflowingArithmeticExpression& expression) {
+    llvm::Value* left = EmitExpression(expression.Left());
+    llvm::Value* right = EmitExpression(expression.Right());
+    if (left == nullptr || right == nullptr) return nullptr;
+
+    const bool isUnsigned = IsUnsigned(expression.Left().Type());
+    llvm::Intrinsic::ID intrinsic = llvm::Intrinsic::not_intrinsic;
+    std::string_view name;
+    switch (expression.Operation()) {
+        case lowering::OverflowingArithmeticOperation::Add:
+            intrinsic = isUnsigned ? llvm::Intrinsic::uadd_with_overflow
+                                   : llvm::Intrinsic::sadd_with_overflow;
+            name = "overflowing.add";
+            break;
+        case lowering::OverflowingArithmeticOperation::Subtract:
+            intrinsic = isUnsigned ? llvm::Intrinsic::usub_with_overflow
+                                   : llvm::Intrinsic::ssub_with_overflow;
+            name = "overflowing.sub";
+            break;
+        case lowering::OverflowingArithmeticOperation::Multiply:
+            intrinsic = isUnsigned ? llvm::Intrinsic::umul_with_overflow
+                                   : llvm::Intrinsic::smul_with_overflow;
+            name = "overflowing.mul";
+            break;
+    }
+#if LLVM_VERSION_MAJOR >= 20
+    llvm::Function* function = llvm::Intrinsic::getOrInsertDeclaration(
+        _module.get(), intrinsic, {left->getType()});
+#else
+    llvm::Function* function = llvm::Intrinsic::getDeclaration(
+        _module.get(), intrinsic, {left->getType()});
+#endif
+    return _builder.CreateCall(function, {left, right}, name);
+}
+
+llvm::Value* LlvmCodeGenerator::EmitIntegerLimit(
+    const lowering::BoundIntegerLimitExpression& expression) {
+    llvm::Type* type = MapType(expression.Type());
+    if (type == nullptr || !type->isIntegerTy()) return nullptr;
+    const unsigned bits = type->getIntegerBitWidth();
+    const bool isUnsigned = IsUnsigned(expression.Type());
+    llvm::APInt value = llvm::APInt::getZero(bits);
+    if (expression.IsMaximum())
+        value = isUnsigned ? llvm::APInt::getAllOnes(bits)
+                           : llvm::APInt::getSignedMaxValue(bits);
+    else if (!isUnsigned)
+        value = llvm::APInt::getSignedMinValue(bits);
+    return llvm::ConstantInt::get(type, value);
+}
+
 llvm::Value* LlvmCodeGenerator::EmitStringConcat(
     llvm::Value* left, semantic::SemanticType leftType, llvm::Value* right,
     semantic::SemanticType rightType) {
@@ -2892,6 +2943,15 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
         case lowering::BoundNodeKind::BinaryExpression:
             return EmitBinary(
                 static_cast<const lowering::BoundBinaryExpression&>(
+                    expression));
+        case lowering::BoundNodeKind::IntegerLimitExpression:
+            return EmitIntegerLimit(
+                static_cast<const lowering::BoundIntegerLimitExpression&>(
+                    expression));
+        case lowering::BoundNodeKind::OverflowingArithmeticExpression:
+            return EmitOverflowingArithmetic(
+                static_cast<
+                    const lowering::BoundOverflowingArithmeticExpression&>(
                     expression));
         case lowering::BoundNodeKind::AssignmentExpression: {
             const lowering::BoundAssignmentExpression& assignment =
