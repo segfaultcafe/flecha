@@ -43,6 +43,20 @@ errors::ByteError Writer::writeByte(&self, u8 value) {
     return none;
 }
 
+errors::ByteError Writer::writeString(&self, stringv value) {
+    const usize LEN = value.len().cast<usize>;
+    if LEN > self->remaining() {
+        return errors::ByteError.InsufficientSpace;
+    }
+
+    loop u32 index = 0; index < value.len(); index++ {
+        self->destination[self->position + index.cast<usize>] = value[index];
+    }
+
+    self->position = self->position + LEN;
+    return none;
+}
+
 errors::ByteError Writer::write(&self, []const u8 source) {
     if source.len() > self->remaining() {
         return errors::ByteError.InsufficientSpace;

@@ -88,6 +88,52 @@ test write_copies_exactly_and_failed_writes_are_transactional(
     );
 }
 
+test write_string_copies_bytes_and_requires_complete_space(
+    &testing::UnitTest t
+) {
+    [8]u8 destination = [170; 8];
+
+    {
+        writer := cursor::Writer::init(destination[:]);
+        emptyError := writer.writeString("");
+        escapedError := writer.writeString("A\nB");
+        exactError := writer.writeString("bytes");
+        fullError := writer.writeString("!");
+
+        asserts::is_true(t, emptyError == none, "an empty string write succeeds");
+        asserts::is_true(
+            t,
+            escapedError == none,
+            "writeString copies escaped string bytes"
+        );
+        asserts::is_true(t, exactError == none, "an exact-fit string succeeds");
+        asserts::is_true(
+            t,
+            fullError == errors::ByteError.InsufficientSpace,
+            "a string write requires complete space"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 8 and writer.full(),
+            "empty and failed string writes do not advance"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 65 and destination[1] == 10 and
+            destination[2] == 66,
+        "writeString preserves each source byte"
+    );
+    asserts::is_true(
+        t,
+        destination[3] == 98 and destination[4] == 121 and
+            destination[5] == 116 and destination[6] == 101 and
+            destination[7] == 115,
+        "writeString fills the remaining destination exactly"
+    );
+}
+
 test typed_writes_follow_endian_order_and_fail_transactionally(
     &testing::UnitTest t
 ) {

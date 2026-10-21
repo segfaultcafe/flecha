@@ -74,8 +74,10 @@ keeps the mutable destination loan active for the writer's lifetime.
 `position()`, `len()`, and `remaining()` have the same meanings as on `Reader`;
 `full()` reports whether no writable bytes remain.
 
-`writeByte(value)` writes one byte. `write(source)` copies the complete source
-or writes nothing, and a zero-length source succeeds. `writeLittle<T>` and
+`writeByte(value)` writes one byte. `write(source)` copies the complete byte
+slice or writes nothing, and a zero-length source succeeds.
+`writeString(value)` applies the same exact-write behavior to the bytes of a
+`stringv`; it performs no text encoding or allocation. `writeLittle<T>` and
 `writeBig<T>` encode the fixed-width unsigned types supported by `endian`.
 
 Every failed write returns `ByteError.InsufficientSpace` and changes neither the
