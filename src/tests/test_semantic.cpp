@@ -3560,6 +3560,26 @@ TEST(SemanticMemoryTests, RuntimeArrayOwnersPreserveLengthAndMoveOwnership) {
                     .diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests,
+     StructuresWithOwningBuffersCanBeTriviallyZeroable) {
+    auto result = Analyze(R"(
+        structure Buffer { *[]u8 storage; usize length; };
+        Buffer Buffer::zero() override {
+            return build Buffer {};
+        }
+        (Buffer, error) fail(error failure) { return (none, failure); }
+        void use() {
+            Buffer first = none;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.Structures().size(), 1u);
+    EXPECT_TRUE(SemanticType(result.model.Structures()[0].get())
+                    .IsTriviallyZeroable());
+}
+
 TEST(SemanticSliceTests, EnforcesReadOnlyElementsAndFixedHandles) {
     for (const std::string& source :
          {"void f() { const [1]i32 a = [1]; []i32 s = a[:]; }",
