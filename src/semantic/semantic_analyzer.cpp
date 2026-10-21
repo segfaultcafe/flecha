@@ -3227,7 +3227,9 @@ void SemanticAnalyzer::ClassifyTrivialZeros(const core::CompilationUnit& unit) {
         }
         return type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool ||
                type.Kind() == SemanticTypeKind::Char ||
-               type.Kind() == SemanticTypeKind::Pointer;
+               type.Kind() == SemanticTypeKind::Pointer ||
+               type.Kind() == SemanticTypeKind::OwnedBuffer ||
+               type.Kind() == SemanticTypeKind::OwnedSlice;
     };
 
     trivialValue = [&](const core::Expression& expression,
@@ -4984,7 +4986,9 @@ void SemanticAnalyzer::GenerateInitializers() {
         if (type.Kind() != SemanticTypeKind::Structure)
             return type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool ||
                    type.Kind() == SemanticTypeKind::Char ||
-                   type.Kind() == SemanticTypeKind::Pointer;
+                   type.Kind() == SemanticTypeKind::Pointer ||
+                   type.Kind() == SemanticTypeKind::OwnedBuffer ||
+                   type.Kind() == SemanticTypeKind::OwnedSlice;
         const StructureType* nested = type.Structure();
         if (nested->zero) return true;
         if (const auto found = zeroable.find(nested); found != zeroable.end())

@@ -5543,6 +5543,43 @@ TEST(SemanticMemoryTests, OwningSlicesAreSafeManagedMoveOnlyBuffers) {
                     .diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests, StructuresWithOwningSlicesAreTriviallyZeroable) {
+    auto generated = Analyze(R"(
+        structure Buffer { own []u8 storage; usize length; };
+        Buffer make() { return none; }
+        (Buffer, error) fail(error failure) { return (none, failure); }
+        void use() {
+            Buffer first = none;
+            second, failure := fail(none);
+            Buffer moved = first;
+        }
+    )");
+    for (const auto& diagnostic : generated.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(generated.diagnostics.HasErrors());
+    ASSERT_EQ(generated.model.Structures().size(), 1u);
+    EXPECT_NE(generated.model.Structures()[0]->zero, nullptr);
+    EXPECT_TRUE(SemanticType(generated.model.Structures()[0].get())
+                    .IsTriviallyZeroable());
+
+    auto overridden = Analyze(R"(
+        structure Buffer { own []u8 storage; usize length; };
+        Buffer Buffer::zero() override {
+            return build Buffer {
+                self.storage = none;
+                self.length = 0;
+            };
+        }
+        (Buffer, error) fail(error failure) { return (none, failure); }
+    )");
+    for (const auto& diagnostic : overridden.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(overridden.diagnostics.HasErrors());
+    ASSERT_EQ(overridden.model.Structures().size(), 1u);
+    EXPECT_TRUE(SemanticType(overridden.model.Structures()[0].get())
+                    .IsTriviallyZeroable());
+}
+
 TEST(SemanticReferenceTests, StructuresCanStoreSliceBorrows) {
     const std::string writer =
         "structure Writer { []u8 destination; usize position; }; "

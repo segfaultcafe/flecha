@@ -28,6 +28,13 @@ owning slice. `data()` remains unsafe because it exposes a raw pointer. Adding
 `const` to the element type is a one-way permission weakening:
 `own []T` can move into `own []const T`, but not the reverse.
 
+An empty owning slice is trivially zeroable. Structures containing owning
+slices therefore receive a generated trivial `zero()` when their other fields
+are also trivially zeroable. An equivalent explicit `zero()` override remains
+trivial, so `none` can directly construct those structures, including within
+tuple results. The structure remains move-only because zero construction does
+not duplicate a live owner.
+
 The original manual form remains available for raw-memory work and backwards
 compatibility:
 
