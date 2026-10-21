@@ -8,5 +8,10 @@ module std;
     :: root::io::filesystem
     :: root::io::file
     :: root::io::errors as io_errors
+    :: root::math::math
+    :: root::math::integer
+    :: root::math::float
+    :: root::math::bits
+    :: root::math::errors as math_errors
     :: root::tests::testing
     :: root::tests::asserts;
