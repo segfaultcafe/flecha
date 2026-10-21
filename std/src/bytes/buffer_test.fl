@@ -1,0 +1,42 @@
+module buffer_test;
+
+@imports
+    :: root::bytes::buffer
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+(buffer::Buffer, error) zero_buffer_result(error failure) {
+    return (none, failure);
+}
+
+test buffer_is_trivially_zeroable_inside_tuple_results(
+    &testing::UnitTest t
+) {
+    value, failure := zero_buffer_result(AllocationError.OutOfMemory);
+
+    asserts::is_true(
+        t,
+        failure == AllocationError.OutOfMemory,
+        "tuple result preserves its error"
+    );
+    asserts::is_true(t, value.len() == 0, "zero Buffer has no bytes");
+    asserts::is_true(t, value.capacity() == 0, "zero Buffer has no allocation");
+    asserts::is_true(t, value.empty(), "zero Buffer is empty and usable");
+}
+
+test buffer_with_capacity_constructs_a_usable_owner(&testing::UnitTest t) {
+    value, allocationError := buffer::Buffer::withCapacity(2);
+
+    asserts::is_true(
+        t,
+        allocationError == none,
+        "Buffer allocation succeeds"
+    );
+    if allocationError != none {
+        return;
+    }
+
+    asserts::is_true(t, value.len() == 0, "new Buffer starts empty");
+    asserts::is_true(t, value.capacity() == 2, "Buffer preserves its capacity");
+    asserts::is_true(t, value.empty(), "new Buffer reports empty");
+}

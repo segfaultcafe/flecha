@@ -1,0 +1,83 @@
+module buffer;
+
+export structure Buffer {
+    private own []u8 storage;
+    private usize length;
+};
+
+(Buffer, error) Buffer::withCapacity(usize capacity) {
+    storage, err := new<own []u8>(capacity);
+    if err != none {
+        return (none, err);
+    }
+
+    return (build Buffer {
+        self.storage = storage;
+        self.length = 0;
+    }, none);
+}
+
+usize Buffer::len(&const self) {
+    return self->length;
+}
+
+usize Buffer::capacity(&const self) {
+    return self->storage.len();
+}
+
+error Buffer::reserve(&self, usize capacity) {
+    if capacity <= self->capacity() {
+        return none;
+    }
+
+    replacement, err := new<own []u8>(capacity);
+    if err != none {
+        return err;
+    }
+
+    loop usize index = 0; index < self->length; index++ {
+        replacement[index] = self->storage[index];
+    }
+
+    self->storage = replacement;
+    return none;
+}
+
+bool Buffer::empty(&const self) {
+    return self->length == 0;
+}
+
+error Buffer::writeByte(&self, u8 value) {
+    if self->length != self->capacity() {
+        self->pushValue(value);
+        return none;
+    }
+
+    usize required = self->length + 1;
+    if required <= self->length {
+        return AllocationError.OutOfMemory;
+    }
+
+    const usize INIT_CAPACITY = 8;
+    usize nextCapacity = INIT_CAPACITY;
+
+    if self->capacity() != 0 {
+        nextCapacity = self->capacity() * 2;
+    } also nextCapacity <= self->capacity() {
+        nextCapacity = required;
+    }
+
+    err := self->reserve(nextCapacity);
+    if err != none {
+        return err;
+    }
+
+    self->pushValue(value);
+
+    return none;
+}
+
+private void Buffer::pushValue(&self, u8 value) {
+    self->storage[self->length] = value;
+    self->length++;
+}
