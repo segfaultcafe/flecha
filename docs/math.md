@@ -5,6 +5,7 @@ The foundational numeric and integer modules are imported separately:
 ```flecha
 @imports
     :: lib::std::math::math
+    :: lib::std::math::float
     :: lib::std::math::integer
     :: lib::std::math::bits
     :: lib::std::math::errors;
@@ -27,9 +28,27 @@ direction := math::sign<i32>(value);
 internally, so reversed bounds are accepted and normalized. `abs` and `sign`
 also accept unsigned integers and floating-point values.
 
-Floating-point calls inherit Flecha's comparison behavior. Code requiring
-consensus-stable behavior should reject NaN before using ordering operations
-until NaN ordering is fully specified.
+Floating-point calls inherit Flecha's IEEE comparison behavior. Every ordered
+comparison with NaN is false, so callers that require an ordered result should
+reject NaN first, for example with `value != value`.
+
+## Floating-point classification
+
+The `float` module classifies both `f32` and `f64` values through the
+`floating_point` type set:
+
+```flecha
+nan := float::is_nan<f64>(value);
+infinite := float::is_infinite<f64>(value);
+finite := float::is_finite<f64>(value);
+normal := float::is_normal<f64>(value);
+subnormal := float::is_subnormal<f64>(value);
+```
+
+`is_infinite` accepts both positive and negative infinity. A normal value is a
+finite value whose magnitude is at least `T.min_positive`. A subnormal value is
+finite and nonzero, with a magnitude below `T.min_positive`; positive and
+negative zero are therefore neither normal nor subnormal.
 
 ## Integer operations
 
