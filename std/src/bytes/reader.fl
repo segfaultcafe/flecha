@@ -40,7 +40,6 @@ bool Reader::empty(&const self) {
 
     u8 value = self->source[self->position];
     self->position++;
-
     return (value, none);
 }
 
