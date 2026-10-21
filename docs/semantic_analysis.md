@@ -66,11 +66,21 @@ coerced. Integer literals may adopt an expected integer type with a range check;
 unconstrained literals retain the table defaults. `none` is contextually
 assignable to non-void, non-reference value types, matching
 the language specification's universal-zero rule. Arithmetic requires equal
-numeric operand types; comparisons produce `bool`; logical/bitwise operators
-require equal boolean or integer types. Recursive compound types preserve
+numeric operand types; comparisons produce `bool`; logical/legacy bitwise
+operators require equal boolean or integer types. Symbolic integer operators
+`&` and `|` require equal integer operands, while `~` requires one integer
+operand. Shifts preserve the left integer type and require a `usize` count.
+Recursive compound types preserve
 qualifiers at each layer. [Raw pointers](unsafe_pointers.md) require unsafe
 permission for dereference; [checked references](checked_references.md) use
 safe dereference and a separate borrow/move pass on the shared control-flow graph.
+
+Floating-point type properties `nan`, `infinity`, `negative_infinity`,
+`min_value`, `max_value`, `min_positive`, and `epsilon` resolve contextually for
+`f32`, `f64`, and specialized `floating_point` parameters. Floating equality
+uses IEEE ordered equality and unordered inequality: NaN never equals a value,
+while `!=` is true when either operand is NaN. Relational comparisons remain
+ordered and therefore return false for NaN operands.
 
 Calls currently require a directly resolved function symbol. Analysis checks
 callability, argument count, and each known argument type. Function values and

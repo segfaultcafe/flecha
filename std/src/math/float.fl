@@ -1,0 +1,26 @@
+module float;
+
+export bool is_nan<T: floating_point>(T value) {
+    return value != value;
+}
+
+export bool is_infinite<T: floating_point>(T value) {
+    return value == T.infinity or value == T.negative_infinity;
+}
+
+export bool is_finite<T: floating_point>(T value) {
+    return !is_nan<T>(value) and !is_infinite<T>(value);
+}
+
+export bool is_normal<T: floating_point>(T value) {
+    return is_finite<T>(value)
+        and (value >= T.min_positive or value <= -T.min_positive);
+}
+
+export bool is_subnormal<T: floating_point>(T value) {
+    T zero = none;
+
+    return is_finite<T>(value)
+        and value != zero
+        and !is_normal<T>(value);
+}

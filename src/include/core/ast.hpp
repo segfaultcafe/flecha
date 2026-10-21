@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,6 +22,7 @@ enum class AstNodeKind {
     CallableTypeDeclaration,
     ErrorDeclaration,
     EnumDeclaration,
+    TypeSetDeclaration,
     StructureDeclaration,
     StructureField,
     BuildExpression,
@@ -60,6 +62,7 @@ enum class AstNodeKind {
     IndexExpression,
     SliceExpression,
     CastExpression,
+    IsOfExpression,
 };
 
 class AstNode {
@@ -97,6 +100,8 @@ class Declaration : public AstNode {
     // desugaring.
     std::vector<std::string> genericParameters;
     std::vector<std::string> ownerParameters;
+    // Constraints are type-set names keyed by the generic parameter name.
+    std::map<std::string, std::string> genericConstraints;
     std::vector<Token> templateTokens;
     std::vector<std::pair<std::size_t, std::size_t>> parameterTokenRanges;
     std::size_t nameTokenIndex = 0;
@@ -318,6 +323,32 @@ class EnumDeclaration final : public Declaration {
     source::SourceRange _nameRange;
     std::unique_ptr<TypeNode> _backingType;
     std::vector<EnumVariant> _variants;
+};
+
+class TypeSetDeclaration final : public Declaration {
+   public:
+    TypeSetDeclaration(source::SourceRange range, std::string name,
+                       source::SourceRange nameRange,
+                       std::vector<std::unique_ptr<TypeNode>> members)
+        : Declaration(range),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _members(std::move(members)) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::TypeSetDeclaration;
+    }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] source::SourceRange NameRange() const { return _nameRange; }
+    [[nodiscard]] const std::vector<std::unique_ptr<TypeNode>>& Members()
+        const {
+        return _members;
+    }
+
+   private:
+    std::string _name;
+    source::SourceRange _nameRange;
+    std::vector<std::unique_ptr<TypeNode>> _members;
 };
 
 class StructureField final : public AstNode {
@@ -681,6 +712,7 @@ class CompilationUnit final : public AstNode {
         : AstNode(range), _declarations(std::move(declarations)) {}
 
     std::vector<std::unique_ptr<Declaration>> genericTemplates;
+    std::vector<std::unique_ptr<Declaration>> typeSets;
     std::map<std::string, const Declaration*> genericAliases;
     bool genericsExpanded = false;
     void AddDeclaration(std::unique_ptr<Declaration> declaration) {
@@ -1173,6 +1205,45 @@ class CastExpression final : public Expression {
    private:
     std::unique_ptr<Expression> _expression;
     std::unique_ptr<TypeNode> _targetType;
+};
+
+class IsOfExpression final : public Expression {
+   public:
+    IsOfExpression(source::SourceRange range,
+                   std::unique_ptr<Expression> expression,
+                   std::unique_ptr<TypeNode> target)
+        : Expression(range),
+          _expression(std::move(expression)),
+          _target(std::move(target)) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::IsOfExpression;
+    }
+    [[nodiscard]] const Expression& Value() const { return *_expression; }
+    [[nodiscard]] const TypeNode& Target() const { return *_target; }
+    [[nodiscard]] TypeNode& Target() { return *_target; }
+    [[nodiscard]] const std::vector<std::unique_ptr<TypeNode>>& Candidates()
+        const {
+        return _candidates;
+    }
+    void SetCandidates(std::vector<std::unique_ptr<TypeNode>> candidates,
+                       bool typeSetQuery) {
+        _candidates = std::move(candidates);
+        _typeSetQuery = typeSetQuery;
+    }
+    [[nodiscard]] bool IsTypeSetQuery() const { return _typeSetQuery; }
+    void SetResult(bool result) { _result = result; }
+    [[nodiscard]] bool Result() const {
+        assert(_result.has_value());
+        return *_result;
+    }
+
+   private:
+    std::unique_ptr<Expression> _expression;
+    std::unique_ptr<TypeNode> _target;
+    std::vector<std::unique_ptr<TypeNode>> _candidates;
+    bool _typeSetQuery = false;
+    std::optional<bool> _result;
 };
 
 class UnaryExpression final : public Expression {

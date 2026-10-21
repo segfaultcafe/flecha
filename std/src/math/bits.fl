@@ -1,0 +1,145 @@
+module bits;
+
+@imports :: root::math::errors;
+
+export usize width<T: unsigned_integer>() {
+    T remaining = T.max_value;
+    usize result = 0;
+
+    while remaining != 0 {
+        result++;
+        remaining = remaining >> 1;
+    }
+
+    return result;
+}
+
+export usize count_ones<T: unsigned_integer>(T value) {
+    usize result = 0;
+
+    while value != 0 {
+        value = value & (value - 1);
+        result++;
+    }
+
+    return result;
+}
+
+export usize count_zeros<T: unsigned_integer>(T value) {
+    return width<T>() - count_ones<T>(value);
+}
+
+export usize leading_zeros<T: unsigned_integer>(T value) {
+    usize significantBits = 0;
+
+    while value != 0 {
+        significantBits++;
+        value = value >> 1;
+    }
+
+    return width<T>() - significantBits;
+}
+
+export usize trailing_zeros<T: unsigned_integer>(T value) {
+    if value == 0 {
+        return width<T>();
+    }
+
+    usize result = 0;
+    while (value & 1) == 0 {
+        result++;
+        value = value >> 1;
+    }
+
+    return result;
+}
+
+export T rotate_left<T: unsigned_integer>(T value, usize count) {
+    usize bits = width<T>();
+    count = count % bits;
+
+    if count == 0 {
+        return value;
+    }
+
+    return (value << count) | (value >> (bits - count));
+}
+
+export T rotate_right<T: unsigned_integer>(T value, usize count) {
+    usize bits = width<T>();
+    count = count % bits;
+
+    if count == 0 {
+        return value;
+    }
+
+    return (value >> count) | (value << (bits - count));
+}
+
+export T swap_bytes<T: unsigned_integer>(T value) {
+    usize bytes = width<T>() / 8;
+    T result = none;
+
+    while bytes > 0 {
+        result = (result << 8) | (value & 255);
+        value = value >> 8;
+        bytes = bytes - 1;
+    }
+
+    return result;
+}
+
+export T reverse<T: unsigned_integer>(T value) {
+    usize remaining = width<T>();
+    T result = none;
+
+    while remaining > 0 {
+        result = (result << 1) | (value & 1);
+        value = value >> 1;
+        remaining = remaining - 1;
+    }
+
+    return result;
+}
+
+export bool is_power_of_two<T: unsigned_integer>(T value) {
+    return value != 0 and (value & (value - 1)) == 0;
+}
+
+export T highest_one<T: unsigned_integer>(T value) {
+    if value == 0 {
+        return none;
+    }
+
+    T one = 1;
+    shift := width<T>() - leading_zeros<T>(value) - 1;
+    return one << shift;
+}
+
+export T lowest_one<T: unsigned_integer>(T value) {
+    return value & (~value + 1);
+}
+
+export T bit_floor<T: unsigned_integer>(T value) {
+    return highest_one<T>(value);
+}
+
+export (T, errors::ArithmeticError) checked_bit_ceil<T: unsigned_integer>(
+    T value
+) {
+    if value <= 1 {
+        return (1, none);
+    }
+
+    if is_power_of_two<T>(value) {
+        return (value, none);
+    }
+
+    floor := bit_floor<T>(value);
+    result, overflowed := floor.overflow_add(floor);
+    if overflowed {
+        return (none, errors::ArithmeticError.Overflow);
+    }
+
+    return (result, none);
+}

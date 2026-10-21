@@ -1,0 +1,105 @@
+module integer_test;
+
+@imports
+    :: root::math::integer
+    :: root::math::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test parity_classifies_signed_and_unsigned_integers(&testing::UnitTest t) {
+    asserts::is_true(t, integer::is_even<i32>(-4), "is_even accepts a negative even integer");
+    asserts::is_false(t, integer::is_even<i32>(-3), "is_even rejects a negative odd integer");
+    asserts::is_true(t, integer::is_even<i32>(0), "zero is even");
+    asserts::is_true(t, integer::is_odd<i32>(3), "is_odd accepts a positive odd integer");
+    asserts::is_false(t, integer::is_odd<i32>(4), "is_odd rejects a positive even integer");
+    asserts::is_true(t, integer::is_even<usize>(8), "is_even accepts an unsigned integer");
+    asserts::is_true(t, integer::is_odd<usize>(9), "is_odd accepts an unsigned integer");
+}
+
+test multiple_of_handles_factors_signs_and_zero(&testing::UnitTest t) {
+    asserts::is_true(t, integer::is_multiple_of<i32>(12, 3), "a value is a multiple of its factor");
+    asserts::is_true(t, integer::is_multiple_of<i32>(-12, 3), "negative values can be multiples");
+    asserts::is_true(t, integer::is_multiple_of<i32>(12, -3), "negative divisors are supported");
+    asserts::is_true(t, integer::is_multiple_of<i32>(0, 3), "zero is a multiple of a nonzero divisor");
+    asserts::is_false(t, integer::is_multiple_of<i32>(12, 5), "a non-factor is rejected");
+    asserts::is_false(t, integer::is_multiple_of<i32>(12, 0), "a zero divisor is rejected");
+    asserts::is_false(t, integer::is_multiple_of<i32>(0, 0), "zero is not a multiple of zero");
+}
+
+test pow_handles_identity_and_positive_exponents(&testing::UnitTest t) {
+    asserts::is_true(t, integer::pow<i32>(7, 0) == 1, "an exponent of zero returns one");
+    asserts::is_true(t, integer::pow<i32>(7, 1) == 7, "an exponent of one returns the base");
+    asserts::is_true(t, integer::pow<i32>(2, 10) == 1024, "pow raises a positive base");
+    asserts::is_true(t, integer::pow<i32>(-2, 3) == -8, "pow preserves an odd negative sign");
+    asserts::is_true(t, integer::pow<i32>(-2, 4) == 16, "pow produces a positive even power");
+    asserts::is_true(t, integer::pow<usize>(3, 4) == 81, "pow accepts an unsigned base");
+}
+
+test gcd_handles_order_signs_and_zero(&testing::UnitTest t) {
+    asserts::is_true(t, integer::gcd<i32>(54, 24) == 6, "gcd finds a common divisor");
+    asserts::is_true(t, integer::gcd<i32>(24, 54) == 6, "gcd is independent of argument order");
+    asserts::is_true(t, integer::gcd<i32>(-54, 24) == 6, "gcd normalizes a negative left value");
+    asserts::is_true(t, integer::gcd<i32>(54, -24) == 6, "gcd normalizes a negative right value");
+    asserts::is_true(t, integer::gcd<i32>(-54, -24) == 6, "gcd normalizes two negative values");
+    asserts::is_true(t, integer::gcd<i32>(17, 13) == 1, "coprime values have a gcd of one");
+    asserts::is_true(t, integer::gcd<i32>(0, 9) == 9, "gcd accepts a zero left value");
+    asserts::is_true(t, integer::gcd<i32>(9, 0) == 9, "gcd accepts a zero right value");
+    asserts::is_true(t, integer::gcd<i32>(0, 0) == 0, "the gcd of two zero values is zero");
+    asserts::is_true(t, integer::gcd<i32>(-2147483647 - 1, -1) == 1, "gcd avoids minimum divided by negative one");
+    asserts::is_true(t, integer::gcd<usize>(48, 18) == 6, "gcd accepts unsigned integers");
+}
+
+test lcm_handles_factors_signs_and_zero(&testing::UnitTest t) {
+    asserts::is_true(t, integer::lcm<i32>(21, 6) == 42, "lcm finds the least common multiple");
+    asserts::is_true(t, integer::lcm<i32>(6, 21) == 42, "lcm is independent of argument order");
+    asserts::is_true(t, integer::lcm<i32>(-21, 6) == 42, "lcm normalizes a negative left value");
+    asserts::is_true(t, integer::lcm<i32>(21, -6) == 42, "lcm normalizes a negative right value");
+    asserts::is_true(t, integer::lcm<i32>(-21, -6) == 42, "lcm normalizes two negative values");
+    asserts::is_true(t, integer::lcm<i32>(7, 7) == 7, "lcm accepts equal values");
+    asserts::is_true(t, integer::lcm<i32>(0, 9) == 0, "a zero left value has an lcm of zero");
+    asserts::is_true(t, integer::lcm<i32>(9, 0) == 0, "a zero right value has an lcm of zero");
+    asserts::is_true(t, integer::lcm<usize>(12, 18) == 36, "lcm accepts unsigned integers");
+}
+
+test checked_arithmetic_reports_exact_results_and_failures(&testing::UnitTest t) {
+    sum, sumError := integer::checked_add<i8>(20, 22);
+    asserts::is_true(t, sum == 42 and sumError == none, "checked_add returns an exact sum");
+
+    _, addOverflow := integer::checked_add<i8>(i8.max_value, 1);
+    asserts::is_true(t, addOverflow == errors::ArithmeticError.Overflow, "checked_add reports signed overflow");
+
+    _, subOverflow := integer::checked_sub<u8>(0, 1);
+    asserts::is_true(t, subOverflow == errors::ArithmeticError.Overflow, "checked_sub reports unsigned underflow");
+
+    _, mulOverflow := integer::checked_mul<i8>(64, 2);
+    asserts::is_true(t, mulOverflow == errors::ArithmeticError.Overflow, "checked_mul reports signed overflow");
+
+    quotient, quotientError := integer::checked_div<i8>(84, 2);
+    asserts::is_true(t, quotient == 42 and quotientError == none, "checked_div returns an exact quotient");
+
+    _, divisionByZero := integer::checked_div<i8>(42, 0);
+    asserts::is_true(t, divisionByZero == errors::ArithmeticError.DivisionByZero, "checked_div reports division by zero");
+
+    _, divisionOverflow := integer::checked_div<i8>(i8.min_value, -1);
+    asserts::is_true(t, divisionOverflow == errors::ArithmeticError.Overflow, "checked_div reports minimum divided by negative one");
+}
+
+test saturating_add_and_sub_clamp_at_integer_bounds(&testing::UnitTest t) {
+    asserts::is_true(t, integer::saturating_add<i8>(20, 22) == 42, "saturating_add preserves an exact sum");
+    asserts::is_true(t, integer::saturating_add<i8>(i8.max_value, 1) == i8.max_value, "saturating_add clamps positive signed overflow");
+    asserts::is_true(t, integer::saturating_add<i8>(i8.min_value, -1) == i8.min_value, "saturating_add clamps negative signed overflow");
+    asserts::is_true(t, integer::saturating_add<u8>(u8.max_value, 1) == u8.max_value, "saturating_add clamps unsigned overflow");
+
+    asserts::is_true(t, integer::saturating_sub<i8>(44, 2) == 42, "saturating_sub preserves an exact difference");
+    asserts::is_true(t, integer::saturating_sub<i8>(i8.max_value, -1) == i8.max_value, "saturating_sub clamps positive signed overflow");
+    asserts::is_true(t, integer::saturating_sub<i8>(i8.min_value, 1) == i8.min_value, "saturating_sub clamps negative signed overflow");
+    asserts::is_true(t, integer::saturating_sub<u8>(0, 1) == u8.min_value, "saturating_sub clamps unsigned underflow");
+}
+
+test saturating_mul_clamps_using_the_mathematical_sign(&testing::UnitTest t) {
+    asserts::is_true(t, integer::saturating_mul<i8>(21, 2) == 42, "saturating_mul preserves an exact product");
+    asserts::is_true(t, integer::saturating_mul<i8>(64, 2) == i8.max_value, "saturating_mul clamps positive signed overflow");
+    asserts::is_true(t, integer::saturating_mul<i8>(-64, 2) == i8.min_value, "saturating_mul clamps negative signed overflow");
+    asserts::is_true(t, integer::saturating_mul<i8>(i8.min_value, -1) == i8.max_value, "saturating_mul clamps minimum times negative one");
+    asserts::is_true(t, integer::saturating_mul<u8>(16, 16) == u8.max_value, "saturating_mul clamps unsigned overflow");
+}

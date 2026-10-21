@@ -61,8 +61,15 @@ endif()
 
 file(READ "${EDITOR_ROOT}/syntaxes/flecha.tmLanguage.json" grammar)
 foreach(required IN ITEMS
-        enum match test func once copy own lend quiver
-        "storage.type.function.flecha" "=>")
+        enum match test func once copy own lend quiver typeset isof
+        min_value max_value
+        nan infinity negative_infinity min_positive epsilon
+        signed_integer unsigned_integer integer floating_point numeric
+        "storage.type.function.flecha"
+        "storage.type.typeset.flecha"
+        "entity.name.type.typeset.flecha"
+        "support.type.typeset.builtin.flecha"
+        "constant.numeric.integer.bound.flecha" "=>" "<<" ">>" "~")
     string(FIND "${grammar}" "${required}" position)
     if(position EQUAL -1)
         message(FATAL_ERROR "VS Code grammar does not cover ${required}")
@@ -71,7 +78,10 @@ endforeach()
 
 foreach(required IN ITEMS
         "keyword.other.test.flecha" "#FFD700"
-        "storage.type.function.flecha" "#569CD6")
+        "storage.type.function.flecha" "#569CD6"
+        "support.type.typeset.builtin.flecha" "#87CEFA"
+        "constant.numeric.integer.bound.flecha" "#C49A00"
+        "constant.numeric.float.property.flecha" "#C49A00")
     string(FIND "${manifest}" "${required}" position)
     if(position EQUAL -1)
         message(FATAL_ERROR "VS Code manifest does not style ${required}")

@@ -1983,6 +1983,29 @@ TEST(SemanticDiagnosticTests, ChecksOperatorsConditionsReturnsAndVoidLocals) {
               nullptr);
 }
 
+TEST(SemanticOperatorTests, TypesIntegerBitwiseAndShiftOperators) {
+    Analysis analysis = Analyze(R"(
+        u8 combine(u8 left, u8 right, usize count) {
+            return (~(left & right) | (left ^ right)) << count >> count;
+        }
+        i8 preserve_sign(i8 value, usize count) { return value >> count; }
+        u8 contextual() { return ~0 | (1 << 7); }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticOperatorTests, RejectsInvalidBitwiseAndShiftOperands) {
+    for (const std::string& expression :
+         {"true & false", "(1 as i32) | (2 as u8)", "~false", "1.0 ^ 2.0",
+          "(1 as u8) << (1 as i32)", "(1 as u8) >> false"}) {
+        SCOPED_TRACE(expression);
+        EXPECT_NE(FindDiagnostic(Analyze("void f() { " + expression + "; }"),
+                                 DiagnosticCode::InvalidOperand),
+                  nullptr);
+    }
+}
+
 TEST(SemanticDiagnosticTests, RequiresReturnsOnEveryReachableValuePath) {
     Analysis missing = Analyze(
         "i32 empty() {} "
@@ -5753,6 +5776,168 @@ TEST(SemanticGenericTests,
     EXPECT_FALSE(
         Analyze("T plus<T>(T value) { return value + value; } void main() {}")
             .diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests, EnforcesBuiltinTypeSetConstraints) {
+    auto valid = Analyze(R"(
+        T integer_identity<T: integer>(T value) { return value; }
+        T numeric_identity<T: numeric>(T value) { return value; }
+        void main() {
+            integer_identity<i32>(1);
+            integer_identity<usize>(1);
+            numeric_identity<f64>(1.5);
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    auto invalid = Analyze(R"(
+        T integer_identity<T: integer>(T value) { return value; }
+        void main() { integer_identity<f64>(1.5); }
+    )");
+    EXPECT_TRUE(invalid.diagnostics.HasErrors());
+    bool constraint = false;
+    for (const auto& diagnostic : invalid.diagnostics.Diagnostics())
+        constraint |=
+            diagnostic.message.find("does not satisfy type set 'integer'") !=
+            std::string::npos;
+    EXPECT_TRUE(constraint);
+}
+
+TEST(SemanticGenericTests, SupportsNestedAndNominalCustomTypeSets) {
+    auto result = Analyze(R"(
+        structure UserId { i32 value; };
+        structure Box<T> { T value; };
+        typeset identifiers { integer, UserId, };
+        typeset application_values { identifiers, f64, Box<u32>, };
+        T identity<T: application_values>(T value) { return value; }
+        void main() {
+            identity<i32>(1);
+            identity<f64>(1.5);
+            identity<UserId>(UserId::init());
+            identity<Box<u32>>(Box<u32>::init());
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_EQ(result.unit->typeSets.size(), 2u);
+}
+
+TEST(SemanticGenericTests, FoldsTypeSetMembershipExpressions) {
+    auto result = Analyze(R"(
+        typeset exact { i32, };
+        bool is_number<T>() { return T.isof<numeric>; }
+        bool is_exact<T>() { return T.isof<exact>; }
+        void main() {
+            bool a = is_number<i32>();
+            bool b = is_number<bool>();
+            bool c = is_exact<i32>();
+            bool d = is_exact<i64>();
+            bool e = 3.isof<i32>;
+            bool f = 3.isof<numeric>;
+            bool g = 3.isof<f64>;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticGenericTests, TypesOverflowingIntegerArithmetic) {
+    auto valid = Analyze(R"(
+        (T, bool) add<T: integer>(T left, T right) {
+            result, overflowed := left.overflow_add(right);
+            return (result, overflowed);
+        }
+        void main() {
+            sum, add_overflow := add<i8>(127, 1);
+            difference, sub_overflow := (0 as u8).overflow_sub(1);
+            product, mul_overflow := (64 as i8).overflow_mul(2);
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    for (const auto& source : {
+             "void main() { 1.0.overflow_add(2.0); }",
+             "void main() { (1 as i8).overflow_add(1 as i16); }",
+             "void main() { (1 as i8).overflow_mul(); }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, ResolvesContextualIntegerTypeLimits) {
+    auto valid = Analyze(R"(
+        (T, T) bounds<T: integer>() {
+            return (T.min_value, T.max_value);
+        }
+
+        i32 min_value() { return 1; }
+
+        void main() {
+            low, high := bounds<i8>();
+            i32 direct_low = i32.min_value;
+            u64 direct_high = u64.max_value;
+            i32 minimum = min_value();
+            i32 maximum = minimum;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    for (const auto& source : {
+             "void main() { value := i32.unknown_limit; }",
+             "void main() { i32 value = 1; other := value.max_value; }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, ResolvesContextualFloatingPointConstants) {
+    auto valid = Analyze(R"(
+        (T, T, T, T, T, T, T) constants<T: floating_point>() {
+            return (T.nan, T.infinity, T.negative_infinity, T.min_value,
+                    T.max_value, T.min_positive, T.epsilon);
+        }
+
+        void main() {
+            f32 nan = f32.nan;
+            f32 infinity = f32.infinity;
+            f64 negative = f64.negative_infinity;
+            f64 minimum = f64.min_value;
+            f64 maximum = f64.max_value;
+            f32 positive = f32.min_positive;
+            f32 epsilon = f32.epsilon;
+            constants<f64>();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    for (const auto& source : {
+             "void main() { value := f32.unknown_constant; }",
+             "void main() { value := i32.nan; }",
+             "void main() { f32 value = 1.0; other := value.infinity; }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, RejectsInvalidTypeSetDefinitionsAndConstraints) {
+    for (const auto& source : {
+             "typeset first { second, }; typeset second { first, };",
+             "T identity<T: missing>(T value) { return value; }",
+             "i32 value() { return 0; } T identity<T: value>(T input) { "
+             "return input; }",
+             "typeset integer { bool, };",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
 }
 
 TEST(SemanticGenericTests, BoundsExpandingRecursion) {

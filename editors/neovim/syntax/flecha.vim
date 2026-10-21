@@ -10,13 +10,18 @@ syntax keyword flechaType i8 i16 i32 i64 isize
 syntax keyword flechaType u8 u16 u32 u64 usize
 syntax keyword flechaType f32 f64 bool char void string stringv error AllocationError
 syntax match flechaType /\<[A-Z][A-Za-z0-9_]*\>/
+syntax match flechaBuiltinTypeSet /\<\%(signed_integer\|unsigned_integer\|integer\|floating_point\|numeric\)\>/
 
 syntax keyword flechaModifier unsafe once export quiver extern inline comptime copy own lend const constptr constref volatile private override
 syntax keyword flechaFuncKeyword func
+syntax keyword flechaTypeSetKeyword typeset nextgroup=flechaTypeSetName skipwhite
+syntax match flechaTypeSetName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaTest test
 syntax keyword flechaConditional if else also match
 syntax keyword flechaRepeat while for loop range
-syntax keyword flechaStatement return yield proceed break defer module enum structure build
+syntax keyword flechaStatement return yield proceed break defer enum structure build
+syntax keyword flechaStatement module nextgroup=flechaModuleName skipwhite
+syntax match flechaModuleName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaJump jumpto nextgroup=flechaJumpTarget skipwhite
 syntax keyword flechaCast as
 syntax keyword flechaBoolean true false
@@ -24,12 +29,16 @@ syntax keyword flechaConstant none null
 syntax keyword flechaSelf self
 syntax keyword flechaWordOperator and or
 
-syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<=\|>=\|&&\|||\|[&=+*\/%^!<>-]/
+syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>\|<=\|>=\|&&\|||\|[&|~=+*\/%^!<>-]/
 syntax match flechaRawAddress /\%(&\s*\)\@<=raw\>/
 syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?(/
 syntax match flechaAllocation /\<new\>\ze\s*</
 syntax match flechaAllocation /\<take\>\ze\s*(/
 syntax match flechaCastMethod /\.cast\>\ze\s*</
+syntax match flechaIsOfMethod /\.isof\>\ze\s*</
+syntax match flechaFloatConstant /\%(\<\%(f32\|f64\|[A-Z][A-Za-z0-9_]*\)\s*\.\s*\)\@<=\%(nan\|infinity\|negative_infinity\|min_value\|max_value\|min_positive\|epsilon\)\>/
+syntax match flechaIntegerLimit /\%(\<\%(i8\|i16\|i32\|i64\|isize\|u8\|u16\|u32\|u64\|usize\|[A-Z][A-Za-z0-9_]*\)\s*\.\s*\)\@<=\%(min_value\|max_value\)\>/
+syntax match flechaNamespace /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*::/
 syntax match flechaLabel /#\s*[A-Za-z_][A-Za-z0-9_]*/
 syntax match flechaJumpTarget /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 
@@ -49,7 +58,14 @@ highlight default flechaImports guifg=#87CEFA ctermfg=117
 highlight default flechaSelf guifg=#5F87AF ctermfg=67
 highlight default flechaTest guifg=#D4AF37 ctermfg=178
 highlight default flechaFuncKeyword guifg=#569CD6 ctermfg=68
+highlight default flechaBuiltinTypeSet guifg=#87CEFA ctermfg=117
+highlight default flechaFloatConstant guifg=#C49A00 ctermfg=178
+highlight default flechaIntegerLimit guifg=#C49A00 ctermfg=178
 highlight default link flechaType Type
+highlight default link flechaTypeSetKeyword Statement
+highlight default link flechaTypeSetName Type
+highlight default link flechaModuleName Identifier
+highlight default link flechaNamespace Identifier
 highlight default link flechaModifier StorageClass
 highlight default link flechaConditional Conditional
 highlight default link flechaRepeat Repeat
@@ -63,6 +79,7 @@ highlight default link flechaOperator Operator
 highlight default link flechaRawAddress Keyword
 highlight default link flechaFunction Function
 highlight default link flechaCastMethod Function
+highlight default link flechaIsOfMethod Function
 highlight default link flechaAllocation Function
 highlight default link flechaLabel Label
 highlight default link flechaJumpTarget Label

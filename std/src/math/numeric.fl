@@ -1,0 +1,54 @@
+module math;
+
+export T min<T: numeric>(T value, T other) {
+    if value < other {
+        return value;
+    }
+
+    return other;
+}
+
+export T max<T: numeric>(T value, T other) {
+    if value > other {
+        return value;
+    }
+
+    return other;
+}
+
+export (T, T) min_max<T: numeric>(T value, T other) {
+    if value < other {
+        return (value, other);
+    }
+
+    return (other, value);
+}
+
+export T clamp<T: numeric>(T value, T low, T high) {
+    lower, upper := min_max<T>(low, high);
+    return max<T>(lower, min<T>(value, upper));
+}
+
+export T abs<T: numeric>(T value) {
+    T zero = none;
+
+    if value < zero {
+        return -value;
+    }
+
+    return value;
+}
+
+export T sign<T: numeric>(T value) {
+    T zero = none;
+
+    if value < zero {
+        return (-1) as T;
+    }
+
+    if value > zero {
+        return 1 as T;
+    }
+
+    return zero;
+}

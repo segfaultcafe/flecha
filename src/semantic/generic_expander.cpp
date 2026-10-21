@@ -18,6 +18,13 @@ using Tokens = std::vector<Token>;
 using Arguments = std::vector<Tokens>;
 using Callback = std::function<void(AstNode&, bool)>;
 
+bool IsPrimitiveNumericTypeName(const std::string& name) {
+    return name == "i8" || name == "i16" || name == "i32" ||
+           name == "i64" || name == "isize" || name == "u8" ||
+           name == "u16" || name == "u32" || name == "u64" ||
+           name == "usize" || name == "f32" || name == "f64";
+}
+
 // One structural walk is shared by rewriting, substitution-site discovery, and
 // template checks. Re-parsing templates preserves all existing desugarings.
 void Walk(const AstNode& input, const Callback& callback) {
@@ -65,6 +72,11 @@ void Walk(const AstNode& input, const Callback& callback) {
         case AstNodeKind::EnumDeclaration: {
             NODE(EnumDeclaration);
             optional(n.BackingType());
+            break;
+        }
+        case AstNodeKind::TypeSetDeclaration: {
+            NODE(TypeSetDeclaration);
+            list(n.Members());
             break;
         }
         case AstNodeKind::StructureField: {
@@ -185,6 +197,12 @@ void Walk(const AstNode& input, const Callback& callback) {
             visit(n.TargetType());
             break;
         }
+        case AstNodeKind::IsOfExpression: {
+            NODE(IsOfExpression);
+            visit(n.Value());
+            visit(n.Target());
+            break;
+        }
         case AstNodeKind::UnaryExpression: {
             NODE(UnaryExpression);
             visit(n.Operand());
@@ -262,6 +280,8 @@ std::string Name(const Declaration& declaration) {
         return static_cast<const EnumDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::CallableTypeDeclaration)
         return static_cast<const CallableTypeDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::TypeSetDeclaration)
+        return static_cast<const TypeSetDeclaration&>(declaration).Name();
     return static_cast<const ErrorDeclaration&>(declaration).Name();
 }
 bool Template(const Declaration& d) {
@@ -307,7 +327,10 @@ class Expander {
             }
             const auto [existing, inserted] = declarations.emplace(
                 std::make_pair(d->moduleId, Name(*d)), d.get());
-            if (!inserted && (Template(*d) || Template(*existing->second)))
+            if (!inserted &&
+                (Template(*d) || Template(*existing->second) ||
+                 d->Kind() == AstNodeKind::TypeSetDeclaration ||
+                 existing->second->Kind() == AstNodeKind::TypeSetDeclaration))
                 diagnostics.Report(DiagnosticCode::DuplicateDeclaration,
                                    d->Range(),
                                    "duplicate declaration '" + Name(*d) + "'");
@@ -317,6 +340,16 @@ class Expander {
                         Error(d->Range(),
                               "import alias conflicts with declaration '" +
                                   import.alias + "'");
+        }
+        {
+            std::set<const Declaration*> visiting, validated;
+            for (const auto& [key, declaration] : declarations) {
+                (void)key;
+                if (declaration->Kind() == AstNodeKind::TypeSetDeclaration)
+                    ValidateTypeSet(
+                        static_cast<const TypeSetDeclaration&>(*declaration),
+                        visiting, validated);
+            }
         }
         std::map<std::pair<const Declaration*, std::string>,
                  const FunctionDeclaration*>
@@ -386,7 +419,9 @@ class Expander {
                     DiagnosticCode::InvalidExtern, declaration->Range(),
                     "extern declarations cannot have generic parameters");
             Validate(*declaration);
-            if (Template(*declaration))
+            if (declaration->Kind() == AstNodeKind::TypeSetDeclaration)
+                unit.typeSets.push_back(std::move(declaration));
+            else if (Template(*declaration))
                 unit.genericTemplates.push_back(std::move(declaration));
             else
                 unit.AddDeclaration(std::move(declaration));
@@ -411,6 +446,198 @@ class Expander {
    private:
     void Error(source::SourceRange range, const std::string& message) {
         diagnostics.Report(DiagnosticCode::InvalidGeneric, range, message);
+    }
+    static bool BuiltinTypeSet(const std::string& name) {
+        return name == "signed_integer" || name == "unsigned_integer" ||
+               name == "integer" || name == "floating_point" ||
+               name == "numeric";
+    }
+    static bool PrimitiveMember(const Tokens& argument,
+                                const std::string& set) {
+        std::size_t index = 0;
+        if (index < argument.size() && argument[index].type == TokenType::Const)
+            ++index;
+        if (index + 1 != argument.size()) return false;
+        const TokenType type = argument[index].type;
+        const bool signedInteger =
+            type == TokenType::I8 || type == TokenType::I16 ||
+            type == TokenType::I32 || type == TokenType::I64 ||
+            type == TokenType::ISize;
+        const bool unsignedInteger =
+            type == TokenType::U8 || type == TokenType::U16 ||
+            type == TokenType::U32 || type == TokenType::U64 ||
+            type == TokenType::USize;
+        const bool floatingPoint =
+            type == TokenType::F32 || type == TokenType::F64;
+        if (set == "signed_integer") return signedInteger;
+        if (set == "unsigned_integer") return unsignedInteger;
+        if (set == "integer") return signedInteger || unsignedInteger;
+        if (set == "floating_point") return floatingPoint;
+        return set == "numeric" &&
+               (signedInteger || unsignedInteger || floatingPoint);
+    }
+    static Tokens Unqualified(Tokens tokens) {
+        if (!tokens.empty() && tokens.front().type == TokenType::Const)
+            tokens.erase(tokens.begin());
+        return tokens;
+    }
+    const Declaration* LookupFrom(const std::string& name,
+                                  const Declaration& context,
+                                  source::SourceRange range,
+                                  bool diagnose = true) {
+        Declaration* saved = current;
+        current = const_cast<Declaration*>(&context);
+        const Declaration* result =
+            Lookup(name, context.moduleId, range, diagnose);
+        current = saved;
+        return result;
+    }
+    bool Satisfies(const Tokens& argument, const std::string& setName,
+                   const Declaration& context, source::SourceRange range,
+                   std::set<const Declaration*>& visiting) {
+        if (BuiltinTypeSet(setName)) return PrimitiveMember(argument, setName);
+        const Declaration* declaration =
+            LookupFrom(setName, context, range, true);
+        if (!declaration) {
+            Error(range, "unknown type set '" + setName + "'");
+            return false;
+        }
+        if (declaration->Kind() != AstNodeKind::TypeSetDeclaration) {
+            Error(range, "'" + setName + "' is not a type set");
+            return false;
+        }
+        if (!visiting.insert(declaration).second) {
+            Error(range, "cyclic type-set definition involving '" +
+                             Name(*declaration) + "'");
+            return false;
+        }
+
+        const auto& set = static_cast<const TypeSetDeclaration&>(*declaration);
+        for (const auto& member : set.Members()) {
+            if (member->TypeForm() == TypeKind::Named &&
+                member->typeArguments.empty()) {
+                const std::string& nestedName = member->Name();
+                if (BuiltinTypeSet(nestedName)) {
+                    if (PrimitiveMember(argument, nestedName)) {
+                        visiting.erase(declaration);
+                        return true;
+                    }
+                    continue;
+                }
+                const Declaration* nested = LookupFrom(nestedName, *declaration,
+                                                       member->Range(), false);
+                if (nested &&
+                    nested->Kind() == AstNodeKind::TypeSetDeclaration) {
+                    if (Satisfies(argument, nestedName, *declaration,
+                                  member->Range(), visiting)) {
+                        visiting.erase(declaration);
+                        return true;
+                    }
+                    continue;
+                }
+            }
+
+            Declaration* saved = current;
+            current = const_cast<Declaration*>(declaration);
+            Tokens concrete = TypeTokens(const_cast<TypeNode&>(*member),
+                                         declaration->moduleId);
+            current = saved;
+            if (Key({Unqualified(concrete)}) == Key({Unqualified(argument)})) {
+                visiting.erase(declaration);
+                return true;
+            }
+        }
+        visiting.erase(declaration);
+        return false;
+    }
+    bool Satisfies(const Tokens& argument, const std::string& setName,
+                   const Declaration& context, source::SourceRange range) {
+        std::set<const Declaration*> visiting;
+        return Satisfies(argument, setName, context, range, visiting);
+    }
+    bool ValidateConstraints(const Declaration& origin,
+                             const Arguments& arguments,
+                             source::SourceRange range) {
+        bool valid = true;
+        const std::size_t offset = origin.ownerParameters.size();
+        for (std::size_t index = 0; index < origin.genericParameters.size();
+             ++index) {
+            const auto found =
+                origin.genericConstraints.find(origin.genericParameters[index]);
+            if (found == origin.genericConstraints.end()) continue;
+            if (offset + index >= arguments.size() ||
+                !Satisfies(arguments[offset + index], found->second, origin,
+                           range)) {
+                Error(range, "type argument for '" +
+                                 origin.genericParameters[index] +
+                                 "' does not satisfy type set '" +
+                                 found->second + "'");
+                valid = false;
+            }
+        }
+        return valid;
+    }
+    bool VisibleTypeSetMember(const Declaration& member,
+                              const TypeSetDeclaration& set) const {
+        if (set.exported) return member.exported;
+        if (set.quiverVisible)
+            return member.exported ||
+                   (member.quiverVisible && member.quiverId == set.quiverId);
+        return true;
+    }
+    void ValidateTypeSet(const TypeSetDeclaration& set,
+                         std::set<const Declaration*>& visiting,
+                         std::set<const Declaration*>& validated) {
+        if (validated.contains(&set)) return;
+        if (BuiltinTypeSet(set.Name())) {
+            Error(set.NameRange(),
+                  "cannot redeclare built-in type set '" + set.Name() + "'");
+            validated.insert(&set);
+            return;
+        }
+        if (!visiting.insert(&set).second) {
+            Error(set.Range(),
+                  "cyclic type-set definition involving '" + set.Name() + "'");
+            return;
+        }
+        for (const auto& member : set.Members()) {
+            const Declaration* declaration = nullptr;
+            if (member->TypeForm() == TypeKind::Named &&
+                member->typeArguments.empty() && BuiltinTypeSet(member->Name()))
+                continue;
+            if (member->TypeForm() == TypeKind::Named &&
+                member->typeArguments.empty() &&
+                !BuiltinTypeSet(member->Name())) {
+                declaration =
+                    LookupFrom(member->Name(), set, member->Range(), false);
+                if (declaration &&
+                    declaration->Kind() == AstNodeKind::TypeSetDeclaration) {
+                    if (!VisibleTypeSetMember(*declaration, set))
+                        Error(member->Range(),
+                              "visible type sets cannot include less-visible "
+                              "type sets");
+                    ValidateTypeSet(
+                        static_cast<const TypeSetDeclaration&>(*declaration),
+                        visiting, validated);
+                    continue;
+                }
+            }
+
+            Declaration* saved = current;
+            current = const_cast<TypeSetDeclaration*>(&set);
+            Tokens tokens =
+                TypeTokens(const_cast<TypeNode&>(*member), set.moduleId);
+            current = saved;
+            (void)tokens;
+            if (!declaration && member->TypeForm() == TypeKind::Named)
+                declaration =
+                    LookupFrom(member->Name(), set, member->Range(), false);
+            if (declaration && !VisibleTypeSetMember(*declaration, set))
+                Error(member->Range(),
+                      "visible type sets cannot include less-visible types");
+        }
+        visiting.erase(&set);
+        validated.insert(&set);
     }
     bool Local(const std::string& name) const {
         for (const auto& scope : locals)
@@ -438,10 +665,9 @@ class Expander {
             return alias->second;
         std::string target = module, shortName = name;
         const auto separator = name.find("::");
-        const Module* source =
-            current && modules.contains(current->sourceId)
-                ? modules.at(current->sourceId)
-                : nullptr;
+        const Module* source = current && modules.contains(current->sourceId)
+                                   ? modules.at(current->sourceId)
+                                   : nullptr;
         if (separator != std::string::npos) {
             const auto prefix = name.substr(0, separator);
             shortName = name.substr(separator + 2);
@@ -592,6 +818,38 @@ class Expander {
     }
     void Validate(const Declaration& declaration) {
         if (!Template(declaration)) return;
+        const Declaration* constraintApi = &declaration;
+        if (declaration.Kind() == AstNodeKind::FunctionDeclaration) {
+            const auto& function =
+                static_cast<const FunctionDeclaration&>(declaration);
+            if (!function.Owner().empty() &&
+                !function.HasModifier(FunctionModifier::Private)) {
+                const Declaration* owner = Lookup(
+                    function.Owner(), function.moduleId, function.Range());
+                if (owner) constraintApi = owner;
+            }
+        }
+        for (const auto& [parameter, constraint] :
+             declaration.genericConstraints) {
+            (void)parameter;
+            if (BuiltinTypeSet(constraint)) continue;
+            const Declaration* set =
+                LookupFrom(constraint, declaration, declaration.Range(), true);
+            if (!set)
+                Error(declaration.Range(),
+                      "unknown type set '" + constraint + "'");
+            else if (set->Kind() != AstNodeKind::TypeSetDeclaration)
+                Error(declaration.Range(),
+                      "'" + constraint + "' is not a type set");
+            else if (constraintApi->exported && !set->exported)
+                Error(declaration.Range(),
+                      "exported generics cannot use non-exported type sets");
+            else if (constraintApi->quiverVisible && !set->exported &&
+                     !(set->quiverVisible &&
+                       set->quiverId == constraintApi->quiverId))
+                Error(declaration.Range(),
+                      "quiver generics cannot use module-private type sets");
+        }
         std::set<std::string> parameters(declaration.genericParameters.begin(),
                                          declaration.genericParameters.end());
         parameters.insert(declaration.ownerParameters.begin(),
@@ -655,6 +913,7 @@ class Expander {
     Declaration* Clone(const Declaration& origin, const Arguments& arguments,
                        const std::string& name, source::SourceRange at,
                        const std::string& owner = {}) {
+        if (!ValidateConstraints(origin, arguments, at)) return nullptr;
         if (generatedDeclarations >= 2048 ||
             (current && current->instantiationOrigins.size() >= 64) ||
             generatedTokens + origin.templateTokens.size() > 1000000) {
@@ -677,8 +936,19 @@ class Expander {
         for (std::size_t i = 0; i < parameters.size(); ++i)
             substitutions[parameters[i]] = arguments[i];
         std::set<std::size_t> sites;
+        std::map<std::size_t, const IsOfExpression*> isOfSites;
         Walk(origin, [&](AstNode& node, bool enter) {
             if (!enter) return;
+            if (node.Kind() == AstNodeKind::IsOfExpression) {
+                const auto& expression =
+                    static_cast<const IsOfExpression&>(node);
+                if (expression.Value().Kind() == AstNodeKind::NameExpression) {
+                    const auto& receiver =
+                        static_cast<const NameExpression&>(expression.Value());
+                    if (substitutions.contains(receiver.Name()))
+                        isOfSites[receiver.Range().start.offset] = &expression;
+                }
+            }
             std::string parameter;
             if (node.Kind() == AstNodeKind::Type)
                 parameter = static_cast<TypeNode&>(node).Name();
@@ -698,6 +968,28 @@ class Expander {
                 if (i >= begin && i < end) erase = true;
             if (erase) continue;
             Token token = origin.templateTokens[i];
+            // A type parameter is not a value expression after substitution
+            // (`i32.isof<...>` cannot be parsed), so fold these queries while
+            // cloning the specialization.
+            if (const auto found = isOfSites.find(token.range.start.offset);
+                found != isOfSites.end()) {
+                const auto& query = *found->second;
+                const auto& receiver =
+                    static_cast<const NameExpression&>(query.Value());
+                const bool member =
+                    MatchesIsOfTarget(substitutions[receiver.Name()], query,
+                                      origin, substitutions);
+                token.type = member ? TokenType::True : TokenType::False;
+                token.value = member ? "true" : "false";
+                tokens.push_back(std::move(token));
+                while (i + 1 < origin.templateTokens.size() &&
+                       origin.templateTokens[i + 1].range.start.file ==
+                           query.Range().start.file &&
+                       origin.templateTokens[i + 1].range.end.offset <=
+                           query.Range().end.offset)
+                    ++i;
+                continue;
+            }
             if (i == origin.nameTokenIndex) {
                 token.value = name;
                 tokens.push_back(token);
@@ -932,6 +1224,114 @@ class Expander {
             result->typeArguments.push_back(CopyType(*type));
         return result;
     }
+    void AddBuiltinCandidates(const std::string& set, source::SourceRange range,
+                              std::vector<std::unique_ptr<TypeNode>>& result) {
+        const auto add = [&](PrimitiveType type) {
+            result.push_back(std::make_unique<TypeNode>(range, type));
+        };
+        if (set == "signed_integer" || set == "integer" || set == "numeric") {
+            add(PrimitiveType::I8);
+            add(PrimitiveType::I16);
+            add(PrimitiveType::I32);
+            add(PrimitiveType::I64);
+            add(PrimitiveType::ISize);
+        }
+        if (set == "unsigned_integer" || set == "integer" || set == "numeric") {
+            add(PrimitiveType::U8);
+            add(PrimitiveType::U16);
+            add(PrimitiveType::U32);
+            add(PrimitiveType::U64);
+            add(PrimitiveType::USize);
+        }
+        if (set == "floating_point" || set == "numeric") {
+            add(PrimitiveType::F32);
+            add(PrimitiveType::F64);
+        }
+    }
+    void CollectTypeSetCandidates(
+        const TypeSetDeclaration& set,
+        std::vector<std::unique_ptr<TypeNode>>& result,
+        std::set<const Declaration*>& visiting) {
+        if (!visiting.insert(&set).second) return;
+        for (const auto& member : set.Members()) {
+            if (member->TypeForm() == TypeKind::Named &&
+                member->typeArguments.empty()) {
+                if (BuiltinTypeSet(member->Name())) {
+                    AddBuiltinCandidates(member->Name(), member->Range(),
+                                         result);
+                    continue;
+                }
+                const Declaration* nested =
+                    LookupFrom(member->Name(), set, member->Range(), false);
+                if (nested &&
+                    nested->Kind() == AstNodeKind::TypeSetDeclaration) {
+                    CollectTypeSetCandidates(
+                        static_cast<const TypeSetDeclaration&>(*nested), result,
+                        visiting);
+                    continue;
+                }
+            }
+            auto candidate = CopyType(*member);
+            Declaration* saved = current;
+            current = const_cast<TypeSetDeclaration*>(&set);
+            TypeTokens(*candidate, set.moduleId);
+            current = saved;
+            result.push_back(std::move(candidate));
+        }
+        visiting.erase(&set);
+    }
+    void PrepareIsOf(IsOfExpression& expression) {
+        std::vector<std::unique_ptr<TypeNode>> candidates;
+        auto& target = expression.Target();
+        if (target.TypeForm() == TypeKind::Named &&
+            target.typeArguments.empty()) {
+            if (BuiltinTypeSet(target.Name())) {
+                AddBuiltinCandidates(target.Name(), target.Range(), candidates);
+                expression.SetCandidates(std::move(candidates), true);
+                return;
+            }
+            const Declaration* set =
+                Lookup(target.Name(), current->moduleId, target.Range(), false);
+            if (set && set->Kind() == AstNodeKind::TypeSetDeclaration) {
+                std::set<const Declaration*> visiting;
+                CollectTypeSetCandidates(
+                    static_cast<const TypeSetDeclaration&>(*set), candidates,
+                    visiting);
+                expression.SetCandidates(std::move(candidates), true);
+                return;
+            }
+        }
+        auto candidate = CopyType(target);
+        TypeTokens(*candidate, current->moduleId);
+        candidates.push_back(std::move(candidate));
+        expression.SetCandidates(std::move(candidates), false);
+    }
+    bool MatchesIsOfTarget(const Tokens& argument,
+                           const IsOfExpression& expression,
+                           const Declaration& origin,
+                           const std::map<std::string, Tokens>& substitutions) {
+        const TypeNode& target = expression.Target();
+        if (target.TypeForm() == TypeKind::Named &&
+            target.typeArguments.empty()) {
+            if (const auto substituted = substitutions.find(target.Name());
+                substituted != substitutions.end())
+                return Key({argument}) == Key({substituted->second});
+            if (BuiltinTypeSet(target.Name()))
+                return Satisfies(argument, target.Name(), origin,
+                                 target.Range());
+            const Declaration* set =
+                LookupFrom(target.Name(), origin, target.Range(), false);
+            if (set && set->Kind() == AstNodeKind::TypeSetDeclaration)
+                return Satisfies(argument, target.Name(), origin,
+                                 target.Range());
+        }
+        auto concrete = CopyType(target);
+        Declaration* saved = current;
+        current = const_cast<Declaration*>(&origin);
+        Tokens targetTokens = TypeTokens(*concrete, origin.moduleId);
+        current = saved;
+        return Key({argument}) == Key({targetTokens});
+    }
     std::unique_ptr<TypeNode> CopyView(TypeView view,
                                        source::SourceRange range) {
         if (!view.syntax) return nullptr;
@@ -1145,6 +1545,8 @@ class Expander {
     }
     void Rewrite(AstNode& node, bool enter) {
         if (failedBudget) return;
+        if (enter && node.Kind() == AstNodeKind::IsOfExpression)
+            PrepareIsOf(static_cast<IsOfExpression&>(node));
         if (node.Kind() == AstNodeKind::BuildExpression) {
             if (enter) {
                 locals.emplace_back();
@@ -1234,6 +1636,7 @@ class Expander {
         }
         if (node.Kind() == AstNodeKind::NameExpression) {
             auto& name = static_cast<NameExpression&>(node);
+            if (IsPrimitiveNumericTypeName(name.Name())) return;
             if (Local(name.Name())) {
                 if (!name.typeArguments.empty())
                     Error(name.Range(),

@@ -48,6 +48,14 @@ TEST(TokenizerTests, RecognizesTestKeyword) {
     EXPECT_EQ(tokens[1].type, TokenType::Identifier);
 }
 
+TEST(TokenizerTests, RecognizesTypeSetKeyword) {
+    const std::vector<Token> tokens = Tokenize("typeset numbers");
+
+    ASSERT_EQ(tokens.size(), 3u);
+    EXPECT_EQ(tokens[0].type, TokenType::TypeSet);
+    EXPECT_EQ(tokens[1].type, TokenType::Identifier);
+}
+
 TEST(TokenizerTests, RecognizesFunctionModifiersAndReservedWords) {
     std::vector<Token> tokens = Tokenize(
         "export quiver extern inline comptime yield if else while proceed "
@@ -84,6 +92,19 @@ TEST(TokenizerTests, RecognizesMultiCharacterOperators) {
     EXPECT_EQ(tokens[8].type, TokenType::And);
     EXPECT_EQ(tokens[9].type, TokenType::Or);
     EXPECT_EQ(tokens[10].type, TokenType::EOF_TOKEN);
+}
+
+TEST(TokenizerTests, RecognizesBitwiseAndShiftOperators) {
+    const std::vector<Token> tokens = Tokenize("& | ^ ~ << >>");
+    const std::vector<TokenType> expected = {
+        TokenType::Ampersand, TokenType::BitOr,     TokenType::Xor,
+        TokenType::BitNot,    TokenType::ShiftLeft, TokenType::ShiftRight,
+        TokenType::EOF_TOKEN,
+    };
+
+    ASSERT_EQ(tokens.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        EXPECT_EQ(tokens[index].type, expected[index]);
 }
 
 TEST(TokenizerTests, RecognizesBorrowResultArrow) {

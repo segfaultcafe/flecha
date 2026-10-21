@@ -1,0 +1,73 @@
+module math_test;
+
+@imports
+    :: root::math::math
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test min_and_max_order_numeric_values(&testing::UnitTest t) {
+    asserts::is_true(
+        t,
+        math::min<i32>(7, -2) == -2 and math::min<i32>(-2, 7) == -2,
+        "min returns the smaller value regardless of argument order"
+    );
+    asserts::is_true(
+        t,
+        math::max<i32>(7, -2) == 7 and math::max<i32>(-2, 7) == 7,
+        "max returns the larger value regardless of argument order"
+    );
+    asserts::is_true(
+        t,
+        math::min<i32>(4, 4) == 4 and math::max<i32>(4, 4) == 4,
+        "min and max accept equal values"
+    );
+}
+
+test min_max_returns_an_ordered_pair(&testing::UnitTest t) {
+    low, high := math::min_max<i32>(9, -3);
+    asserts::is_true(t, low == -3 and high == 9, "min_max orders reversed values");
+
+    alreadyLow, alreadyHigh := math::min_max<i32>(-3, 9);
+    asserts::is_true(
+        t,
+        alreadyLow == -3 and alreadyHigh == 9,
+        "min_max preserves an ordered pair"
+    );
+
+    equalLow, equalHigh := math::min_max<i32>(5, 5);
+    asserts::is_true(
+        t,
+        equalLow == 5 and equalHigh == 5,
+        "min_max accepts equal values"
+    );
+}
+
+test clamp_handles_bounds_and_interior_values(&testing::UnitTest t) {
+    asserts::is_true(t, math::clamp<i32>(-5, 0, 10) == 0, "clamp applies the lower bound");
+    asserts::is_true(t, math::clamp<i32>(5, 0, 10) == 5, "clamp preserves an interior value");
+    asserts::is_true(t, math::clamp<i32>(15, 0, 10) == 10, "clamp applies the upper bound");
+    asserts::is_true(t, math::clamp<i32>(0, 0, 10) == 0, "clamp includes the lower bound");
+    asserts::is_true(t, math::clamp<i32>(10, 0, 10) == 10, "clamp includes the upper bound");
+    asserts::is_true(t, math::clamp<i32>(5, 10, 0) == 5, "clamp normalizes reversed bounds");
+    asserts::is_true(t, math::clamp<i32>(-5, 10, 0) == 0, "clamp outside of range");
+    asserts::is_true(t, math::clamp<i32>(15, 10, 0) == 10, "clamp outside of range 2");
+}
+
+test abs_handles_signed_unsigned_and_floating_values(&testing::UnitTest t) {
+    asserts::is_true(t, math::abs<i32>(-8) == 8, "abs negates a negative integer");
+    asserts::is_true(t, math::abs<i32>(0) == 0, "abs preserves integer zero");
+    asserts::is_true(t, math::abs<i32>(8) == 8, "abs preserves a positive integer");
+    asserts::is_true(t, math::abs<usize>(8) == 8, "abs accepts an unsigned integer");
+    asserts::is_true(t, math::abs<f64>(-1.5) == 1.5, "abs negates a negative float");
+}
+
+test sign_classifies_signed_unsigned_and_floating_values(&testing::UnitTest t) {
+    asserts::is_true(t, math::sign<i32>(-8) == -1, "sign classifies a negative integer");
+    asserts::is_true(t, math::sign<i32>(0) == 0, "sign classifies integer zero");
+    asserts::is_true(t, math::sign<i32>(8) == 1, "sign classifies a positive integer");
+    asserts::is_true(t, math::sign<usize>(0) == 0, "sign accepts unsigned zero");
+    asserts::is_true(t, math::sign<usize>(8) == 1, "sign accepts a positive unsigned integer");
+    asserts::is_true(t, math::sign<f64>(-1.5) == -1.0, "sign classifies a negative float");
+    asserts::is_true(t, math::sign<f64>(0.0) == 0.0, "sign classifies floating-point zero");
+    asserts::is_true(t, math::sign<f64>(1.5) == 1.0, "sign classifies a positive float");
+}

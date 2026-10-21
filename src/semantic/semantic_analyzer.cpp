@@ -26,6 +26,28 @@ std::string TypeMismatch(SemanticType expected, SemanticType actual) {
            std::string(actual.Name()) + "'";
 }
 
+std::optional<SemanticType> PrimitiveNumericType(const std::string& name) {
+    if (name == "i8") return SemanticType(SemanticTypeKind::I8);
+    if (name == "i16") return SemanticType(SemanticTypeKind::I16);
+    if (name == "i32") return SemanticType(SemanticTypeKind::I32);
+    if (name == "i64") return SemanticType(SemanticTypeKind::I64);
+    if (name == "isize") return SemanticType(SemanticTypeKind::ISize);
+    if (name == "u8") return SemanticType(SemanticTypeKind::U8);
+    if (name == "u16") return SemanticType(SemanticTypeKind::U16);
+    if (name == "u32") return SemanticType(SemanticTypeKind::U32);
+    if (name == "u64") return SemanticType(SemanticTypeKind::U64);
+    if (name == "usize") return SemanticType(SemanticTypeKind::USize);
+    if (name == "f32") return SemanticType(SemanticTypeKind::F32);
+    if (name == "f64") return SemanticType(SemanticTypeKind::F64);
+    return std::nullopt;
+}
+
+bool IsFloatingConstant(std::string_view name) {
+    return name == "nan" || name == "infinity" || name == "negative_infinity" ||
+           name == "min_value" || name == "max_value" ||
+           name == "min_positive" || name == "epsilon";
+}
+
 bool IsArrayElement(SemanticType type) {
     if (type.IsConst()) return false;
     if (type.Kind() == SemanticTypeKind::Array)
@@ -534,8 +556,8 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                 }
                 if (!name.empty()) {
                     auto& found = candidates[import.alias + "::" + name];
-                    if (std::find(found.begin(), found.end(), declaration.get()) ==
-                        found.end())
+                    if (std::find(found.begin(), found.end(),
+                                  declaration.get()) == found.end())
                         found.push_back(declaration.get());
                 }
             }
@@ -718,8 +740,7 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
             declarationScope = module->second;
     }
     const bool declared = declarationScope->DeclareAs(localName, *result);
-    if (localName != result->Name())
-        (void)declarationScope->Declare(*result);
+    if (localName != result->Name()) (void)declarationScope->Declare(*result);
     if (!declared) {
         Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
                result->DeclarationRange(),
@@ -2445,6 +2466,10 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
             type = AnalyzeCast(
                 static_cast<const core::CastExpression&>(expression));
             break;
+        case core::AstNodeKind::IsOfExpression:
+            type = AnalyzeIsOf(
+                static_cast<const core::IsOfExpression&>(expression));
+            break;
         default:
             break;
     }
@@ -2455,6 +2480,25 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
          expression.Kind() == core::AstNodeKind::BuildExpression))
         RecordCleanupEffects(type);
     return type;
+}
+
+SemanticType SemanticAnalyzer::AnalyzeIsOf(
+    const core::IsOfExpression& expression) {
+    SemanticType value = AnalyzeExpression(expression.Value());
+    bool result = false;
+    for (const auto& candidateSyntax : expression.Candidates()) {
+        SemanticType candidate = ResolveType(*candidateSyntax);
+        if (expression.IsTypeSetQuery()) {
+            value = value.WithoutConst();
+            candidate = candidate.WithoutConst();
+        }
+        if (value == candidate) {
+            result = true;
+            break;
+        }
+    }
+    const_cast<core::IsOfExpression&>(expression).SetResult(result);
+    return SemanticType(SemanticTypeKind::Bool);
 }
 
 std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
@@ -3401,10 +3445,31 @@ SemanticType SemanticAnalyzer::AnalyzeName(
 SemanticType SemanticAnalyzer::AnalyzeMemberAccess(
     const core::MemberAccessExpression& expression) {
     const Symbol* symbol = nullptr;
-    if (expression.Receiver().Kind() == core::AstNodeKind::NameExpression)
-        symbol = _currentScope->Lookup(
-            static_cast<const core::NameExpression&>(expression.Receiver())
-                .Name());
+    if (expression.Receiver().Kind() == core::AstNodeKind::NameExpression) {
+        const auto& receiver =
+            static_cast<const core::NameExpression&>(expression.Receiver());
+        if (const auto primitive = PrimitiveNumericType(receiver.Name())) {
+            if (expression.Access() != TokenType::Dot)
+                Report(diagnostics::DiagnosticCode::InvalidMember,
+                       expression.Range(), "numeric type properties use '.'");
+            const bool integerProperty =
+                primitive->IsInteger() && (expression.Member() == "min_value" ||
+                                           expression.Member() == "max_value");
+            const bool floatingProperty =
+                primitive->IsFloating() &&
+                IsFloatingConstant(expression.Member());
+            if (!integerProperty && !floatingProperty) {
+                Report(diagnostics::DiagnosticCode::InvalidMember,
+                       expression.MemberRange(),
+                       "type '" + std::string(primitive->Name()) +
+                           "' has no type property '" + expression.Member() +
+                           "'");
+                return SemanticType::Error();
+            }
+            return *primitive;
+        }
+        symbol = _currentScope->Lookup(receiver.Name());
+    }
     if (symbol && symbol->Kind() == SymbolKind::EnumType) {
         if (expression.Access() != TokenType::Dot)
             Report(diagnostics::DiagnosticCode::InvalidMember,
@@ -3663,6 +3728,9 @@ SemanticType SemanticAnalyzer::PlaceType(
 SemanticType SemanticAnalyzer::AnalyzeUnary(
     const core::UnaryExpression& expression, SemanticType expected) {
     const TokenType operation = expression.OperatorType();
+    const bool expectsInteger = operation == TokenType::Sub ||
+                                operation == TokenType::Add ||
+                                operation == TokenType::BitNot;
     SemanticType operand = SemanticType::Error();
     const core::Expression* literal = &expression.Operand();
     while (literal->Kind() == core::AstNodeKind::ParenthesizedExpression)
@@ -3684,9 +3752,7 @@ SemanticType SemanticAnalyzer::AnalyzeUnary(
     } else {
         operand = AnalyzeExpression(
             expression.Operand(),
-            operation == TokenType::Sub || operation == TokenType::Add
-                ? expected
-                : SemanticType::Error());
+            expectsInteger ? expected : SemanticType::Error());
     }
     if (operand.IsError()) return operand;
     if (expression.IsReferenceDeref() &&
@@ -3782,6 +3848,7 @@ SemanticType SemanticAnalyzer::AnalyzeUnary(
         operand.Kind() == SemanticTypeKind::Bool) {
         return operand;
     }
+    if (operation == TokenType::BitNot && operand.IsInteger()) return operand;
     Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
            "operator is not defined for type '" + std::string(operand.Name()) +
                "'");
@@ -3791,6 +3858,8 @@ SemanticType SemanticAnalyzer::AnalyzeUnary(
 SemanticType SemanticAnalyzer::AnalyzeBinary(
     const core::BinaryExpression& expression, SemanticType expected) {
     const TokenType operation = expression.OperatorType();
+    const bool shift =
+        operation == TokenType::ShiftLeft || operation == TokenType::ShiftRight;
     const bool valueEquality =
         operation == TokenType::Equal || operation == TokenType::NotEqual;
     const bool strictEquality = operation == TokenType::StrictEqual ||
@@ -3799,8 +3868,10 @@ SemanticType SemanticAnalyzer::AnalyzeBinary(
         expression.Left(),
         expected.IsInteger() ? expected : SemanticType::Error());
     SemanticType right = AnalyzeExpression(
-        expression.Right(), left.IsInteger() ? left : SemanticType::Error());
-    if (right.IsInteger() && !expected.IsInteger() &&
+        expression.Right(),
+        shift ? SemanticType(SemanticTypeKind::USize)
+              : (left.IsInteger() ? left : SemanticType::Error()));
+    if (!shift && right.IsInteger() && !expected.IsInteger() &&
         expression.Left().Kind() == core::AstNodeKind::LiteralExpression)
         left = AnalyzeExpression(expression.Left(), right);
     if (valueEquality && left.Kind() == SemanticTypeKind::None &&
@@ -3921,6 +3992,12 @@ SemanticType SemanticAnalyzer::AnalyzeBinary(
             (left.Kind() == SemanticTypeKind::Bool || left.IsInteger())) {
             return left;
         }
+    } else if (operation == TokenType::Ampersand ||
+               operation == TokenType::BitOr) {
+        if (same && left.IsInteger()) return left;
+    } else if (shift) {
+        if (left.IsInteger() && right.Kind() == SemanticTypeKind::USize)
+            return left;
     } else if (operation == TokenType::Less ||
                operation == TokenType::LessEqual ||
                operation == TokenType::Greater ||
@@ -4439,6 +4516,11 @@ bool IsStringViewIndex(SemanticType type) {
            type.Kind() == SemanticTypeKind::U32;
 }
 
+bool IsOverflowingArithmeticMember(const std::string& member) {
+    return member == "overflow_add" || member == "overflow_sub" ||
+           member == "overflow_mul";
+}
+
 }  // namespace
 
 SemanticType SemanticAnalyzer::AnalyzeMemberCall(
@@ -4456,6 +4538,31 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
     if (expression.Access() != TokenType::Dot)
         Report(diagnostics::DiagnosticCode::InvalidMember, expression.Range(),
                "this member requires '.'");
+    if (receiver.IsInteger() &&
+        IsOverflowingArithmeticMember(expression.Member())) {
+        const SemanticType valueType = receiver.WithoutConst();
+        std::vector<SemanticType> arguments;
+        arguments.reserve(expression.Arguments().size());
+        for (const auto& argument : expression.Arguments())
+            arguments.push_back(AnalyzeExpression(*argument, valueType));
+        if (arguments.size() != 1) {
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "member '" + expression.Member() +
+                       "' expects 1 argument, found " +
+                       std::to_string(arguments.size()));
+        } else if (!arguments[0].IsError() &&
+                   !(arguments[0].WithoutConst() == valueType)) {
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Arguments()[0]->Range(),
+                   "overflowing arithmetic requires matching integer types; "
+                   "expected '" +
+                       valueType.Name() + "', found '" + arguments[0].Name() +
+                       "'");
+        }
+        return SemanticType(std::vector<SemanticType>{
+            valueType, SemanticType(SemanticTypeKind::Bool)});
+    }
     std::vector<SemanticType> arguments;
     arguments.reserve(expression.Arguments().size());
     for (const std::unique_ptr<core::Expression>& argument :

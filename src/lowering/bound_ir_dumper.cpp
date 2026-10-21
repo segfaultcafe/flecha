@@ -22,6 +22,14 @@ std::string OperatorText(TokenType type) {
             return "%";
         case TokenType::Xor:
             return "^";
+        case TokenType::BitOr:
+            return "|";
+        case TokenType::BitNot:
+            return "~";
+        case TokenType::ShiftLeft:
+            return "<<";
+        case TokenType::ShiftRight:
+            return ">>";
         case TokenType::Bang:
             return "!";
         case TokenType::Equal:
@@ -32,6 +40,8 @@ std::string OperatorText(TokenType type) {
             return "===";
         case TokenType::StrictNotEqual:
             return "!==";
+        case TokenType::Ampersand:
+            return "&";
         case TokenType::And:
             return "and";
         case TokenType::Or:
@@ -47,6 +57,26 @@ std::string OperatorText(TokenType type) {
         default:
             return "?";
     }
+}
+
+std::string FloatingConstantText(FloatingConstant constant) {
+    switch (constant) {
+        case FloatingConstant::NaN:
+            return "nan";
+        case FloatingConstant::Infinity:
+            return "infinity";
+        case FloatingConstant::NegativeInfinity:
+            return "negative_infinity";
+        case FloatingConstant::Minimum:
+            return "min_value";
+        case FloatingConstant::Maximum:
+            return "max_value";
+        case FloatingConstant::MinimumPositive:
+            return "min_positive";
+        case FloatingConstant::Epsilon:
+            return "epsilon";
+    }
+    return "?";
 }
 
 class Dumper final {
@@ -420,6 +450,45 @@ class Dumper final {
                 WriteExpression(binary.Left());
                 _stream << " ";
                 WriteExpression(binary.Right());
+                _stream << ")";
+                break;
+            }
+            case BoundNodeKind::IntegerLimitExpression: {
+                const auto& limit =
+                    static_cast<const BoundIntegerLimitExpression&>(expression);
+                _stream << "(" << limit.Type().Name() << "."
+                        << (limit.IsMaximum() ? "max_value" : "min_value")
+                        << ")";
+                break;
+            }
+            case BoundNodeKind::FloatingConstantExpression: {
+                const auto& constant =
+                    static_cast<const BoundFloatingConstantExpression&>(
+                        expression);
+                _stream << "(" << constant.Type().Name() << "."
+                        << FloatingConstantText(constant.Constant()) << ")";
+                break;
+            }
+            case BoundNodeKind::OverflowingArithmeticExpression: {
+                const auto& arithmetic =
+                    static_cast<const BoundOverflowingArithmeticExpression&>(
+                        expression);
+                _stream << "(overflowing_";
+                switch (arithmetic.Operation()) {
+                    case OverflowingArithmeticOperation::Add:
+                        _stream << "add";
+                        break;
+                    case OverflowingArithmeticOperation::Subtract:
+                        _stream << "sub";
+                        break;
+                    case OverflowingArithmeticOperation::Multiply:
+                        _stream << "mul";
+                        break;
+                }
+                _stream << " ";
+                WriteExpression(arithmetic.Left());
+                _stream << " ";
+                WriteExpression(arithmetic.Right());
                 _stream << ")";
                 break;
             }

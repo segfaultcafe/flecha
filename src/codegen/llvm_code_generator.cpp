@@ -1,5 +1,7 @@
 #include "codegen/llvm_code_generator.hpp"
 
+#include <llvm/ADT/APFloat.h>
+#include <llvm/ADT/APInt.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -2119,6 +2121,8 @@ llvm::Value* LlvmCodeGenerator::EmitUnary(
                        : _builder.CreateNeg(operand, "neg");
         case TokenType::Bang:
             return _builder.CreateNot(operand, "not");
+        case TokenType::BitNot:
+            return _builder.CreateNot(operand, "bitnot");
         default:
             Fail("unsupported LLVM unary operator");
             return nullptr;
@@ -2362,6 +2366,33 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
     }
     const bool floating = expression.Left().Type().IsFloating();
     const bool unsignedValue = IsUnsigned(expression.Left().Type());
+    if (expression.OperatorType() == TokenType::ShiftLeft ||
+        expression.OperatorType() == TokenType::ShiftRight) {
+        auto* valueType = llvm::cast<llvm::IntegerType>(left->getType());
+        auto* countType = llvm::cast<llvm::IntegerType>(right->getType());
+        const unsigned width = valueType->getBitWidth();
+        llvm::Value* oversized = _builder.CreateICmpUGE(
+            right, llvm::ConstantInt::get(countType, width), "shift.oversized");
+        llvm::Value* safeCount = _builder.CreateSelect(
+            oversized, llvm::ConstantInt::get(countType, 0), right,
+            "shift.safe_count");
+        safeCount =
+            _builder.CreateIntCast(safeCount, valueType, false, "shift.count");
+        llvm::Value* shifted = nullptr;
+        llvm::Value* oversizedValue = llvm::ConstantInt::get(valueType, 0);
+        if (expression.OperatorType() == TokenType::ShiftLeft) {
+            shifted = _builder.CreateShl(left, safeCount, "shl");
+        } else if (unsignedValue) {
+            shifted = _builder.CreateLShr(left, safeCount, "lshr");
+        } else {
+            shifted = _builder.CreateAShr(left, safeCount, "ashr");
+            oversizedValue = _builder.CreateAShr(
+                left, llvm::ConstantInt::get(valueType, width - 1),
+                "shift.sign_fill");
+        }
+        return _builder.CreateSelect(oversized, oversizedValue, shifted,
+                                     "shift.result");
+    }
     switch (expression.OperatorType()) {
         case TokenType::Add:
             return floating ? _builder.CreateFAdd(left, right, "fadd")
@@ -2380,8 +2411,10 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
             return unsignedValue ? _builder.CreateURem(left, right, "urem")
                                  : _builder.CreateSRem(left, right, "srem");
         case TokenType::And:
+        case TokenType::Ampersand:
             return _builder.CreateAnd(left, right, "and");
         case TokenType::Or:
+        case TokenType::BitOr:
             return _builder.CreateOr(left, right, "or");
         case TokenType::Xor:
             return _builder.CreateXor(left, right, "xor");
@@ -2391,7 +2424,7 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
                             : _builder.CreateICmpEQ(left, right, "eq");
         case TokenType::NotEqual:
         case TokenType::StrictNotEqual:
-            return floating ? _builder.CreateFCmpONE(left, right, "fne")
+            return floating ? _builder.CreateFCmpUNE(left, right, "fne")
                             : _builder.CreateICmpNE(left, right, "ne");
         case TokenType::Less:
             if (floating) return _builder.CreateFCmpOLT(left, right, "flt");
@@ -2413,6 +2446,92 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
             Fail("unsupported LLVM binary operator");
             return nullptr;
     }
+}
+
+llvm::Value* LlvmCodeGenerator::EmitOverflowingArithmetic(
+    const lowering::BoundOverflowingArithmeticExpression& expression) {
+    llvm::Value* left = EmitExpression(expression.Left());
+    llvm::Value* right = EmitExpression(expression.Right());
+    if (left == nullptr || right == nullptr) return nullptr;
+
+    const bool isUnsigned = IsUnsigned(expression.Left().Type());
+    llvm::Intrinsic::ID intrinsic = llvm::Intrinsic::not_intrinsic;
+    std::string_view name;
+    switch (expression.Operation()) {
+        case lowering::OverflowingArithmeticOperation::Add:
+            intrinsic = isUnsigned ? llvm::Intrinsic::uadd_with_overflow
+                                   : llvm::Intrinsic::sadd_with_overflow;
+            name = "overflowing.add";
+            break;
+        case lowering::OverflowingArithmeticOperation::Subtract:
+            intrinsic = isUnsigned ? llvm::Intrinsic::usub_with_overflow
+                                   : llvm::Intrinsic::ssub_with_overflow;
+            name = "overflowing.sub";
+            break;
+        case lowering::OverflowingArithmeticOperation::Multiply:
+            intrinsic = isUnsigned ? llvm::Intrinsic::umul_with_overflow
+                                   : llvm::Intrinsic::smul_with_overflow;
+            name = "overflowing.mul";
+            break;
+    }
+#if LLVM_VERSION_MAJOR >= 20
+    llvm::Function* function = llvm::Intrinsic::getOrInsertDeclaration(
+        _module.get(), intrinsic, {left->getType()});
+#else
+    llvm::Function* function = llvm::Intrinsic::getDeclaration(
+        _module.get(), intrinsic, {left->getType()});
+#endif
+    return _builder.CreateCall(function, {left, right}, name);
+}
+
+llvm::Value* LlvmCodeGenerator::EmitIntegerLimit(
+    const lowering::BoundIntegerLimitExpression& expression) {
+    llvm::Type* type = MapType(expression.Type());
+    if (type == nullptr || !type->isIntegerTy()) return nullptr;
+    const unsigned bits = type->getIntegerBitWidth();
+    const bool isUnsigned = IsUnsigned(expression.Type());
+    llvm::APInt value = llvm::APInt::getZero(bits);
+    if (expression.IsMaximum())
+        value = isUnsigned ? llvm::APInt::getAllOnes(bits)
+                           : llvm::APInt::getSignedMaxValue(bits);
+    else if (!isUnsigned)
+        value = llvm::APInt::getSignedMinValue(bits);
+    return llvm::ConstantInt::get(type, value);
+}
+
+llvm::Value* LlvmCodeGenerator::EmitFloatingConstant(
+    const lowering::BoundFloatingConstantExpression& expression) {
+    llvm::Type* type = MapType(expression.Type());
+    if (type == nullptr || !type->isFloatingPointTy()) return nullptr;
+
+    const bool single =
+        expression.Type().Kind() == semantic::SemanticTypeKind::F32;
+    const llvm::fltSemantics& semantics =
+        single ? llvm::APFloat::IEEEsingle() : llvm::APFloat::IEEEdouble();
+    switch (expression.Constant()) {
+        case lowering::FloatingConstant::NaN:
+            return llvm::ConstantFP::getNaN(type);
+        case lowering::FloatingConstant::Infinity:
+            return llvm::ConstantFP::getInfinity(type);
+        case lowering::FloatingConstant::NegativeInfinity:
+            return llvm::ConstantFP::getInfinity(type, true);
+        case lowering::FloatingConstant::Minimum:
+            return llvm::ConstantFP::get(
+                type, llvm::APFloat::getLargest(semantics, true));
+        case lowering::FloatingConstant::Maximum:
+            return llvm::ConstantFP::get(type,
+                                         llvm::APFloat::getLargest(semantics));
+        case lowering::FloatingConstant::MinimumPositive:
+            return llvm::ConstantFP::get(
+                type, llvm::APFloat::getSmallestNormalized(semantics));
+        case lowering::FloatingConstant::Epsilon: {
+            const llvm::APInt bits =
+                single ? llvm::APInt(32, UINT64_C(0x34000000))
+                       : llvm::APInt(64, UINT64_C(0x3cb0000000000000));
+            return llvm::ConstantFP::get(type, llvm::APFloat(semantics, bits));
+        }
+    }
+    return nullptr;
 }
 
 llvm::Value* LlvmCodeGenerator::EmitStringConcat(
@@ -2892,6 +3011,19 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
         case lowering::BoundNodeKind::BinaryExpression:
             return EmitBinary(
                 static_cast<const lowering::BoundBinaryExpression&>(
+                    expression));
+        case lowering::BoundNodeKind::IntegerLimitExpression:
+            return EmitIntegerLimit(
+                static_cast<const lowering::BoundIntegerLimitExpression&>(
+                    expression));
+        case lowering::BoundNodeKind::FloatingConstantExpression:
+            return EmitFloatingConstant(
+                static_cast<const lowering::BoundFloatingConstantExpression&>(
+                    expression));
+        case lowering::BoundNodeKind::OverflowingArithmeticExpression:
+            return EmitOverflowingArithmetic(
+                static_cast<
+                    const lowering::BoundOverflowingArithmeticExpression&>(
                     expression));
         case lowering::BoundNodeKind::AssignmentExpression: {
             const lowering::BoundAssignmentExpression& assignment =
