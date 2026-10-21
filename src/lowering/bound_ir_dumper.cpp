@@ -22,6 +22,14 @@ std::string OperatorText(TokenType type) {
             return "%";
         case TokenType::Xor:
             return "^";
+        case TokenType::BitOr:
+            return "|";
+        case TokenType::BitNot:
+            return "~";
+        case TokenType::ShiftLeft:
+            return "<<";
+        case TokenType::ShiftRight:
+            return ">>";
         case TokenType::Bang:
             return "!";
         case TokenType::Equal:
@@ -32,6 +40,8 @@ std::string OperatorText(TokenType type) {
             return "===";
         case TokenType::StrictNotEqual:
             return "!==";
+        case TokenType::Ampersand:
+            return "&";
         case TokenType::And:
             return "and";
         case TokenType::Or:
@@ -425,8 +435,7 @@ class Dumper final {
             }
             case BoundNodeKind::IntegerLimitExpression: {
                 const auto& limit =
-                    static_cast<const BoundIntegerLimitExpression&>(
-                        expression);
+                    static_cast<const BoundIntegerLimitExpression&>(expression);
                 _stream << "(" << limit.Type().Name() << "."
                         << (limit.IsMaximum() ? "max_value" : "min_value")
                         << ")";

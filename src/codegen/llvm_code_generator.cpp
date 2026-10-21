@@ -2119,6 +2119,8 @@ llvm::Value* LlvmCodeGenerator::EmitUnary(
                        : _builder.CreateNeg(operand, "neg");
         case TokenType::Bang:
             return _builder.CreateNot(operand, "not");
+        case TokenType::BitNot:
+            return _builder.CreateNot(operand, "bitnot");
         default:
             Fail("unsupported LLVM unary operator");
             return nullptr;
@@ -2362,6 +2364,33 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
     }
     const bool floating = expression.Left().Type().IsFloating();
     const bool unsignedValue = IsUnsigned(expression.Left().Type());
+    if (expression.OperatorType() == TokenType::ShiftLeft ||
+        expression.OperatorType() == TokenType::ShiftRight) {
+        auto* valueType = llvm::cast<llvm::IntegerType>(left->getType());
+        auto* countType = llvm::cast<llvm::IntegerType>(right->getType());
+        const unsigned width = valueType->getBitWidth();
+        llvm::Value* oversized = _builder.CreateICmpUGE(
+            right, llvm::ConstantInt::get(countType, width), "shift.oversized");
+        llvm::Value* safeCount = _builder.CreateSelect(
+            oversized, llvm::ConstantInt::get(countType, 0), right,
+            "shift.safe_count");
+        safeCount =
+            _builder.CreateIntCast(safeCount, valueType, false, "shift.count");
+        llvm::Value* shifted = nullptr;
+        llvm::Value* oversizedValue = llvm::ConstantInt::get(valueType, 0);
+        if (expression.OperatorType() == TokenType::ShiftLeft) {
+            shifted = _builder.CreateShl(left, safeCount, "shl");
+        } else if (unsignedValue) {
+            shifted = _builder.CreateLShr(left, safeCount, "lshr");
+        } else {
+            shifted = _builder.CreateAShr(left, safeCount, "ashr");
+            oversizedValue = _builder.CreateAShr(
+                left, llvm::ConstantInt::get(valueType, width - 1),
+                "shift.sign_fill");
+        }
+        return _builder.CreateSelect(oversized, oversizedValue, shifted,
+                                     "shift.result");
+    }
     switch (expression.OperatorType()) {
         case TokenType::Add:
             return floating ? _builder.CreateFAdd(left, right, "fadd")
@@ -2380,8 +2409,10 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
             return unsignedValue ? _builder.CreateURem(left, right, "urem")
                                  : _builder.CreateSRem(left, right, "srem");
         case TokenType::And:
+        case TokenType::Ampersand:
             return _builder.CreateAnd(left, right, "and");
         case TokenType::Or:
+        case TokenType::BitOr:
             return _builder.CreateOr(left, right, "or");
         case TokenType::Xor:
             return _builder.CreateXor(left, right, "xor");

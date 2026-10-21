@@ -512,7 +512,8 @@ TEST(ParserTests, AppendsMissingEndOfFileTokenSafely) {
 TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "bool check() { return a or b and c ^ d == e < f + g * h; }",
+        "bool check() { return a or b and c | d ^ e & f == g < h << i + j * "
+        "k; }",
         diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
@@ -524,20 +525,32 @@ TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
         static_cast<const BinaryExpression&>(logicalOr.Right());
     EXPECT_EQ(logicalAnd.OperatorType(), TokenType::And);
 
-    const BinaryExpression& xorExpression =
+    const BinaryExpression& bitwiseOr =
         static_cast<const BinaryExpression&>(logicalAnd.Right());
+    EXPECT_EQ(bitwiseOr.OperatorType(), TokenType::BitOr);
+
+    const BinaryExpression& xorExpression =
+        static_cast<const BinaryExpression&>(bitwiseOr.Right());
     EXPECT_EQ(xorExpression.OperatorType(), TokenType::Xor);
 
-    const BinaryExpression& equality =
+    const BinaryExpression& bitwiseAnd =
         static_cast<const BinaryExpression&>(xorExpression.Right());
+    EXPECT_EQ(bitwiseAnd.OperatorType(), TokenType::Ampersand);
+
+    const BinaryExpression& equality =
+        static_cast<const BinaryExpression&>(bitwiseAnd.Right());
     EXPECT_EQ(equality.OperatorType(), TokenType::Equal);
 
     const BinaryExpression& comparison =
         static_cast<const BinaryExpression&>(equality.Right());
     EXPECT_EQ(comparison.OperatorType(), TokenType::Less);
 
-    const BinaryExpression& addition =
+    const BinaryExpression& shift =
         static_cast<const BinaryExpression&>(comparison.Right());
+    EXPECT_EQ(shift.OperatorType(), TokenType::ShiftLeft);
+
+    const BinaryExpression& addition =
+        static_cast<const BinaryExpression&>(shift.Right());
     EXPECT_EQ(addition.OperatorType(), TokenType::Add);
 
     const BinaryExpression& multiplication =

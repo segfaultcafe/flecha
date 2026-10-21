@@ -148,31 +148,57 @@ bool Parser::StartsType() const {
 }
 
 bool Parser::ScanType(std::size_t& offset) const {
-    if (Peek(offset).type == TokenType::Own ||
-        Peek(offset).type == TokenType::Lend)
+    bool pendingGreater = false;
+    return ScanType(offset, pendingGreater) && !pendingGreater;
+}
+
+TokenType Parser::ScanToken(std::size_t offset, bool pendingGreater) const {
+    return pendingGreater ? TokenType::Greater : Peek(offset).type;
+}
+
+bool Parser::ScanGreater(std::size_t& offset, bool& pendingGreater) const {
+    if (pendingGreater) {
+        pendingGreater = false;
         ++offset;
-    if (Peek(offset).type == TokenType::Const) ++offset;
-    const TokenType token = Peek(offset).type;
+        return true;
+    }
+    if (Peek(offset).type == TokenType::Greater) {
+        ++offset;
+        return true;
+    }
+    if (Peek(offset).type == TokenType::ShiftRight) {
+        pendingGreater = true;
+        return true;
+    }
+    return false;
+}
+
+bool Parser::ScanType(std::size_t& offset, bool& pendingGreater) const {
+    if (ScanToken(offset, pendingGreater) == TokenType::Own ||
+        ScanToken(offset, pendingGreater) == TokenType::Lend)
+        ++offset;
+    if (ScanToken(offset, pendingGreater) == TokenType::Const) ++offset;
+    const TokenType token = ScanToken(offset, pendingGreater);
     if (token == TokenType::Mul || token == TokenType::Ampersand ||
         token == TokenType::ConstPtr || token == TokenType::ConstRef) {
         ++offset;
-        return ScanType(offset);
+        return ScanType(offset, pendingGreater);
     }
     if (token == TokenType::LBracket) {
         ++offset;
         if (Peek(offset).type == TokenType::NumberLiteral) ++offset;
         if (Peek(offset).type != TokenType::RBracket) return false;
         ++offset;
-        return ScanType(offset);
+        return ScanType(offset, pendingGreater);
     }
     if (token == TokenType::LParen) {
         ++offset;
-        if (!ScanType(offset)) return false;
+        if (!ScanType(offset, pendingGreater)) return false;
         if (Peek(offset).type != TokenType::Comma) return false;
         do {
             ++offset;
             if (Peek(offset).type == TokenType::RParen) break;
-            if (!ScanType(offset)) return false;
+            if (!ScanType(offset, pendingGreater)) return false;
         } while (Peek(offset).type == TokenType::Comma);
         if (Peek(offset).type != TokenType::RParen) return false;
         ++offset;
@@ -187,23 +213,27 @@ bool Parser::ScanType(std::size_t& offset) const {
             offset += 2;
         if (token == TokenType::Identifier &&
             Peek(offset).type == TokenType::Less)
-            return ScanTypeArguments(offset);
+            return ScanTypeArguments(offset, pendingGreater);
         return true;
     }
     return false;
 }
 
 bool Parser::ScanTypeArguments(std::size_t& offset) const {
-    if (Peek(offset).type != TokenType::Less) return false;
+    bool pendingGreater = false;
+    return ScanTypeArguments(offset, pendingGreater) && !pendingGreater;
+}
+
+bool Parser::ScanTypeArguments(std::size_t& offset,
+                               bool& pendingGreater) const {
+    if (ScanToken(offset, pendingGreater) != TokenType::Less) return false;
     ++offset;
-    if (!ScanType(offset)) return false;
-    while (Peek(offset).type == TokenType::Comma) {
+    if (!ScanType(offset, pendingGreater)) return false;
+    while (ScanToken(offset, pendingGreater) == TokenType::Comma) {
         ++offset;
-        if (!ScanType(offset)) return false;
+        if (!ScanType(offset, pendingGreater)) return false;
     }
-    if (Peek(offset).type != TokenType::Greater) return false;
-    ++offset;
-    return true;
+    return ScanGreater(offset, pendingGreater);
 }
 
 std::vector<std::unique_ptr<TypeNode>> Parser::ParseTypeArguments() {
@@ -214,7 +244,7 @@ std::vector<std::unique_ptr<TypeNode>> Parser::ParseTypeArguments() {
         if (!argument) break;
         arguments.push_back(std::move(argument));
     } while (Match(TokenType::Comma));
-    Consume(TokenType::Greater, "'>' after type arguments");
+    ConsumeTypeArgumentClose("'>' after type arguments");
     return arguments;
 }
 
@@ -248,7 +278,7 @@ std::vector<std::string> Parser::ParseGenericParameters(
             if (constraints) (*constraints)[parameter->value] = std::move(name);
         }
     } while (Match(TokenType::Comma));
-    Consume(TokenType::Greater, "'>' after type parameters");
+    ConsumeTypeArgumentClose("'>' after type parameters");
     return parameters;
 }
 
@@ -262,6 +292,24 @@ const Token* Parser::Consume(TokenType type, std::string_view expectation) {
                         "expected " + std::string(expectation) + ", found '" +
                             Current().value + "'");
     return nullptr;
+}
+
+const Token* Parser::ConsumeTypeArgumentClose(std::string_view expectation) {
+    if (!Check(TokenType::ShiftRight))
+        return Consume(TokenType::Greater, expectation);
+
+    // A lexer-level `>>` is a shift in expressions, but closes two adjacent
+    // generic argument lists in type context. Consume its first byte now and
+    // leave a synthetic `>` at the current parser position for the owner.
+    const Token combined = Current();
+    source::SourceLocation middle = combined.range.start;
+    ++middle.offset;
+    ++middle.column;
+    _splitGreater =
+        Token(TokenType::Greater, ">", {combined.range.start, middle});
+    _tokens[_position] =
+        Token(TokenType::Greater, ">", {middle, combined.range.end});
+    return &_splitGreater;
 }
 
 void Parser::ReportUnexpectedToken(std::string_view context) {
@@ -1493,25 +1541,32 @@ int Parser::BinaryPrecedence(TokenType type) const {
             return 1;
         case TokenType::And:
             return 2;
-        case TokenType::Xor:
+        case TokenType::BitOr:
             return 3;
+        case TokenType::Xor:
+            return 4;
+        case TokenType::Ampersand:
+            return 5;
         case TokenType::Equal:
         case TokenType::NotEqual:
         case TokenType::StrictEqual:
         case TokenType::StrictNotEqual:
-            return 4;
+            return 6;
         case TokenType::Less:
         case TokenType::LessEqual:
         case TokenType::Greater:
         case TokenType::GreaterEqual:
-            return 5;
+            return 7;
+        case TokenType::ShiftLeft:
+        case TokenType::ShiftRight:
+            return 8;
         case TokenType::Add:
         case TokenType::Sub:
-            return 6;
+            return 9;
         case TokenType::Mul:
         case TokenType::Div:
         case TokenType::Mod:
-            return 7;
+            return 10;
         default:
             return 0;
     }
@@ -1522,9 +1577,10 @@ int Parser::UnaryPrecedence(TokenType type) const {
         case TokenType::Add:
         case TokenType::Sub:
         case TokenType::Bang:
+        case TokenType::BitNot:
         case TokenType::Mul:
         case TokenType::Ampersand:
-            return 8;
+            return 11;
         default:
             return 0;
     }
@@ -1593,7 +1649,7 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             Match(TokenType::Less)) {
             auto type = ParseType();
             if (!type ||
-                !Consume(TokenType::Greater, "'>' after allocation type") ||
+                !ConsumeTypeArgumentClose("'>' after allocation type") ||
                 !Consume(TokenType::LParen, "'(' after new<T>"))
                 return expression;
             source::SourceLocation end = expression->Range().end;
@@ -1647,7 +1703,7 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
                 std::unique_ptr<TypeNode> target = ParseType();
                 if (target == nullptr) return expression;
                 const Token* close =
-                    Consume(TokenType::Greater, "'>' after isof target");
+                    ConsumeTypeArgumentClose("'>' after isof target");
                 const source::SourceLocation end =
                     close == nullptr ? target->Range().end : close->range.end;
                 expression = std::make_unique<IsOfExpression>(
@@ -1659,7 +1715,7 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
                 std::unique_ptr<TypeNode> targetType = ParseType();
                 if (targetType == nullptr) return expression;
                 const Token* close =
-                    Consume(TokenType::Greater, "'>' after cast type");
+                    ConsumeTypeArgumentClose("'>' after cast type");
                 const source::SourceLocation end = close == nullptr
                                                        ? targetType->Range().end
                                                        : close->range.end;

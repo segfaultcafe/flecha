@@ -1983,6 +1983,29 @@ TEST(SemanticDiagnosticTests, ChecksOperatorsConditionsReturnsAndVoidLocals) {
               nullptr);
 }
 
+TEST(SemanticOperatorTests, TypesIntegerBitwiseAndShiftOperators) {
+    Analysis analysis = Analyze(R"(
+        u8 combine(u8 left, u8 right, usize count) {
+            return (~(left & right) | (left ^ right)) << count >> count;
+        }
+        i8 preserve_sign(i8 value, usize count) { return value >> count; }
+        u8 contextual() { return ~0 | (1 << 7); }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticOperatorTests, RejectsInvalidBitwiseAndShiftOperands) {
+    for (const std::string& expression :
+         {"true & false", "(1 as i32) | (2 as u8)", "~false", "1.0 ^ 2.0",
+          "(1 as u8) << (1 as i32)", "(1 as u8) >> false"}) {
+        SCOPED_TRACE(expression);
+        EXPECT_NE(FindDiagnostic(Analyze("void f() { " + expression + "; }"),
+                                 DiagnosticCode::InvalidOperand),
+                  nullptr);
+    }
+}
+
 TEST(SemanticDiagnosticTests, RequiresReturnsOnEveryReachableValuePath) {
     Analysis missing = Analyze(
         "i32 empty() {} "

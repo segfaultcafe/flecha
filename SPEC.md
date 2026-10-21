@@ -329,6 +329,20 @@ operand type. Their result is the mathematical result reduced modulo `2^N`,
 including for signed integer types. Code that must distinguish an exact result
 from an overflow uses the overflowing primitives below.
 
+Integer bit operations use `&` (and), `|` (or), `^` (exclusive or), and `~`
+(complement). Both operands of a binary bit operation have the same integer
+type, and the result keeps that type. `~` likewise preserves its integer
+operand's type.
+
+Shifts use `value << count` and `value >> count`. The left operand may have any
+integer type, the count has type `usize`, and the result keeps the left
+operand's type. Left shift discards bits above that width. Unsigned right shift
+fills with zero; signed right shift sign-extends. A count greater than or equal
+to the value width is defined: left shift and unsigned right shift produce
+zero, while signed right shift produces zero for non-negative values and `-1`
+for negative values. Shift expressions therefore never inherit undefined or
+poison behavior from the code-generation target.
+
 Every integer type exposes its inclusive bounds as contextual compile-time
 properties:
 

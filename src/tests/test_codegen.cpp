@@ -1010,6 +1010,60 @@ TEST(NativeCompilerTests, ReportsSignedAndUnsignedIntegerOverflow) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsDefinedIntegerBitwiseAndShiftOperations) {
+    GeneratedSource result = Generate(R"(
+        u8 shift_left(u8 value, usize count) { return value << count; }
+        u8 shift_right(u8 value, usize count) { return value >> count; }
+        i8 signed_shift_right(i8 value, usize count) {
+            return value >> count;
+        }
+        T generic_bits<T: integer>(T left, T right) {
+            return ~(left & right) | (left ^ right);
+        }
+
+        i32 main() {
+            if ((12 as u8) & (10 as u8)) != (8 as u8) { return 1; }
+            if ((12 as u8) | (10 as u8)) != (14 as u8) { return 2; }
+            if ((12 as u8) ^ (10 as u8)) != (6 as u8) { return 3; }
+            if ~(0 as u8) != (255 as u8) { return 4; }
+            if shift_left(1, 7) != (128 as u8) { return 5; }
+            if shift_right(128, 7) != (1 as u8) { return 6; }
+            if signed_shift_right(-2, 1) != (-1 as i8) { return 7; }
+            if shift_left(1, 8) != (0 as u8) { return 8; }
+            if shift_right(255, 8) != (0 as u8) { return 9; }
+            if signed_shift_right(-1, 8) != (-1 as i8) { return 10; }
+            if shift_left(1, usize.max_value) != (0 as u8) { return 11; }
+            if signed_shift_right(1, 8) != (0 as i8) { return 12; }
+            if generic_bits<u8>(12, 10) != (247 as u8) { return 13; }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+    ASSERT_NE(result.module, nullptr);
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find(" shl "), std::string::npos);
+    EXPECT_NE(ir.find(" lshr "), std::string::npos);
+    EXPECT_NE(ir.find(" ashr "), std::string::npos);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_bitwise_shift_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_bitwise_shift_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, WrapsOrdinaryIntegerArithmeticAtTypeWidth) {
     GeneratedSource result = Generate(R"(
         i32 main() {

@@ -1,0 +1,88 @@
+module bits;
+
+export usize width<T: unsigned_integer>() {
+    T remaining = T.max_value;
+    usize result = 0;
+
+    while remaining != 0 {
+        result++;
+        remaining = remaining >> 1;
+    }
+
+    return result;
+}
+
+export usize count_ones<T: unsigned_integer>(T value) {
+    usize result = 0;
+
+    while value != 0 {
+        value = value & (value - 1);
+        result++;
+    }
+
+    return result;
+}
+
+export usize count_zeros<T: unsigned_integer>(T value) {
+    return width<T>() - count_ones<T>(value);
+}
+
+export usize leading_zeros<T: unsigned_integer>(T value) {
+    usize significantBits = 0;
+
+    while value != 0 {
+        significantBits++;
+        value = value >> 1;
+    }
+
+    return width<T>() - significantBits;
+}
+
+export usize trailing_zeros<T: unsigned_integer>(T value) {
+    if value == 0 {
+        return width<T>();
+    }
+
+    usize result = 0;
+    while (value & 1) == 0 {
+        result++;
+        value = value >> 1;
+    }
+
+    return result;
+}
+
+export T rotate_left<T: unsigned_integer>(T value, usize count) {
+    usize bits = width<T>();
+    count = count % bits;
+
+    if count == 0 {
+        return value;
+    }
+
+    return (value << count) | (value >> (bits - count));
+}
+
+export T rotate_right<T: unsigned_integer>(T value, usize count) {
+    usize bits = width<T>();
+    count = count % bits;
+
+    if count == 0 {
+        return value;
+    }
+
+    return (value >> count) | (value << (bits - count));
+}
+
+export T swap_bytes<T: unsigned_integer>(T value) {
+    usize bytes = width<T>() / 8;
+    T result = none;
+
+    while bytes > 0 {
+        result = (result << 8) | (value & 255);
+        value = value >> 8;
+        bytes = bytes - 1;
+    }
+
+    return result;
+}

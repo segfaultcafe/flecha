@@ -3718,6 +3718,9 @@ SemanticType SemanticAnalyzer::PlaceType(
 SemanticType SemanticAnalyzer::AnalyzeUnary(
     const core::UnaryExpression& expression, SemanticType expected) {
     const TokenType operation = expression.OperatorType();
+    const bool expectsInteger = operation == TokenType::Sub ||
+                                operation == TokenType::Add ||
+                                operation == TokenType::BitNot;
     SemanticType operand = SemanticType::Error();
     const core::Expression* literal = &expression.Operand();
     while (literal->Kind() == core::AstNodeKind::ParenthesizedExpression)
@@ -3739,9 +3742,7 @@ SemanticType SemanticAnalyzer::AnalyzeUnary(
     } else {
         operand = AnalyzeExpression(
             expression.Operand(),
-            operation == TokenType::Sub || operation == TokenType::Add
-                ? expected
-                : SemanticType::Error());
+            expectsInteger ? expected : SemanticType::Error());
     }
     if (operand.IsError()) return operand;
     if (expression.IsReferenceDeref() &&
@@ -3837,6 +3838,7 @@ SemanticType SemanticAnalyzer::AnalyzeUnary(
         operand.Kind() == SemanticTypeKind::Bool) {
         return operand;
     }
+    if (operation == TokenType::BitNot && operand.IsInteger()) return operand;
     Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
            "operator is not defined for type '" + std::string(operand.Name()) +
                "'");
@@ -3846,6 +3848,8 @@ SemanticType SemanticAnalyzer::AnalyzeUnary(
 SemanticType SemanticAnalyzer::AnalyzeBinary(
     const core::BinaryExpression& expression, SemanticType expected) {
     const TokenType operation = expression.OperatorType();
+    const bool shift =
+        operation == TokenType::ShiftLeft || operation == TokenType::ShiftRight;
     const bool valueEquality =
         operation == TokenType::Equal || operation == TokenType::NotEqual;
     const bool strictEquality = operation == TokenType::StrictEqual ||
@@ -3854,8 +3858,10 @@ SemanticType SemanticAnalyzer::AnalyzeBinary(
         expression.Left(),
         expected.IsInteger() ? expected : SemanticType::Error());
     SemanticType right = AnalyzeExpression(
-        expression.Right(), left.IsInteger() ? left : SemanticType::Error());
-    if (right.IsInteger() && !expected.IsInteger() &&
+        expression.Right(),
+        shift ? SemanticType(SemanticTypeKind::USize)
+              : (left.IsInteger() ? left : SemanticType::Error()));
+    if (!shift && right.IsInteger() && !expected.IsInteger() &&
         expression.Left().Kind() == core::AstNodeKind::LiteralExpression)
         left = AnalyzeExpression(expression.Left(), right);
     if (valueEquality && left.Kind() == SemanticTypeKind::None &&
@@ -3976,6 +3982,12 @@ SemanticType SemanticAnalyzer::AnalyzeBinary(
             (left.Kind() == SemanticTypeKind::Bool || left.IsInteger())) {
             return left;
         }
+    } else if (operation == TokenType::Ampersand ||
+               operation == TokenType::BitOr) {
+        if (same && left.IsInteger()) return left;
+    } else if (shift) {
+        if (left.IsInteger() && right.Kind() == SemanticTypeKind::USize)
+            return left;
     } else if (operation == TokenType::Less ||
                operation == TokenType::LessEqual ||
                operation == TokenType::Greater ||

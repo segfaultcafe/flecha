@@ -6,6 +6,7 @@ The foundational numeric and integer modules are imported separately:
 @imports
     :: lib::std::math::math
     :: lib::std::math::integer
+    :: lib::std::math::bits
     :: lib::std::math::errors;
 ```
 
@@ -81,3 +82,23 @@ Primitive `+`, `-`, and `*` continue to wrap at the integer width. In
 particular, `pow` and `lcm` use those primitive operations and may wrap if their
 mathematical result is outside `T`; callers that require another policy must
 check their input range explicitly.
+
+## Bit operations
+
+The `bits` module provides portable operations for the `unsigned_integer` type
+set:
+
+```flecha
+bits := bits::width<u32>();
+ones := bits::count_ones<u32>(value);
+zeros := bits::count_zeros<u32>(value);
+leading := bits::leading_zeros<u32>(value);
+trailing := bits::trailing_zeros<u32>(value);
+left := bits::rotate_left<u32>(value, count);
+right := bits::rotate_right<u32>(value, count);
+reversed := bits::swap_bytes<u32>(value);
+```
+
+Zero has a full type width of both leading and trailing zeros. Rotation counts
+are reduced modulo the width, so zero, full-width, and larger rotations are
+defined. `width<usize>()` follows the target pointer width.

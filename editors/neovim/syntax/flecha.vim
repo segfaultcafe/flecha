@@ -29,7 +29,7 @@ syntax keyword flechaConstant none null
 syntax keyword flechaSelf self
 syntax keyword flechaWordOperator and or
 
-syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<=\|>=\|&&\|||\|[&=+*\/%^!<>-]/
+syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>\|<=\|>=\|&&\|||\|[&|~=+*\/%^!<>-]/
 syntax match flechaRawAddress /\%(&\s*\)\@<=raw\>/
 syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?(/
 syntax match flechaAllocation /\<new\>\ze\s*</

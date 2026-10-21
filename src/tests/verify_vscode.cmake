@@ -68,7 +68,7 @@ foreach(required IN ITEMS
         "storage.type.typeset.flecha"
         "entity.name.type.typeset.flecha"
         "support.type.typeset.builtin.flecha"
-        "constant.numeric.integer.bound.flecha" "=>")
+        "constant.numeric.integer.bound.flecha" "=>" "<<" ">>" "~")
     string(FIND "${grammar}" "${required}" position)
     if(position EQUAL -1)
         message(FATAL_ERROR "VS Code grammar does not cover ${required}")

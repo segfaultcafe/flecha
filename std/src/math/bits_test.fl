@@ -1,0 +1,61 @@
+module bits_test;
+
+@imports
+    :: root::math::bits
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test width_matches_every_unsigned_integer_type(&testing::UnitTest t) {
+    asserts::is_true(t, bits::width<u8>() == 8, "u8 has eight bits");
+    asserts::is_true(t, bits::width<u16>() == 16, "u16 has sixteen bits");
+    asserts::is_true(t, bits::width<u32>() == 32, "u32 has thirty-two bits");
+    asserts::is_true(t, bits::width<u64>() == 64, "u64 has sixty-four bits");
+
+    nativeWidth := bits::width<usize>();
+    asserts::is_true(t, nativeWidth == 32 or nativeWidth == 64, "usize follows the target pointer width");
+}
+
+test population_counts_include_zero_and_full_values(&testing::UnitTest t) {
+    asserts::is_true(t, bits::count_ones<u8>(0) == 0, "zero has no set bits");
+    asserts::is_true(t, bits::count_ones<u8>(170) == 4, "count_ones counts an alternating byte");
+    asserts::is_true(t, bits::count_ones<u8>(u8.max_value) == 8, "an all-one byte has eight set bits");
+    asserts::is_true(t, bits::count_ones<u16>(61680) == 8, "count_ones works across two bytes");
+    asserts::is_true(t, bits::count_ones<u32>(u32.max_value) == 32, "count_ones covers u32");
+    asserts::is_true(t, bits::count_ones<u64>(u64.max_value) == 64, "count_ones covers u64");
+
+    asserts::is_true(t, bits::count_zeros<u8>(0) == 8, "zero has every bit clear");
+    asserts::is_true(t, bits::count_zeros<u8>(170) == 4, "count_zeros counts an alternating byte");
+    asserts::is_true(t, bits::count_zeros<u32>(u32.max_value) == 0, "an all-one value has no clear bits");
+}
+
+test leading_and_trailing_zero_counts_cover_boundaries(&testing::UnitTest t) {
+    asserts::is_true(t, bits::leading_zeros<u8>(0) == 8, "zero has a full width of leading zeros");
+    asserts::is_true(t, bits::leading_zeros<u8>(1) == 7, "one has seven leading zeros in u8");
+    asserts::is_true(t, bits::leading_zeros<u8>(16) == 3, "leading_zeros finds the highest set bit");
+    asserts::is_true(t, bits::leading_zeros<u8>(128) == 0, "the high bit leaves no leading zeros");
+    asserts::is_true(t, bits::leading_zeros<u32>(1) == 31, "leading_zeros preserves the generic width");
+
+    asserts::is_true(t, bits::trailing_zeros<u8>(0) == 8, "zero has a full width of trailing zeros");
+    asserts::is_true(t, bits::trailing_zeros<u8>(1) == 0, "one has no trailing zeros");
+    asserts::is_true(t, bits::trailing_zeros<u8>(40) == 3, "trailing_zeros finds the lowest set bit");
+    asserts::is_true(t, bits::trailing_zeros<u8>(128) == 7, "the high bit has seven trailing zeros");
+}
+
+test rotations_normalize_counts_and_wrap_bits(&testing::UnitTest t) {
+    asserts::is_true(t, bits::rotate_left<u8>(129, 1) == 3, "rotate_left wraps the high bit");
+    asserts::is_true(t, bits::rotate_right<u8>(129, 1) == 192, "rotate_right wraps the low bit");
+    asserts::is_true(t, bits::rotate_left<u8>(129, 0) == 129, "a zero left rotation is unchanged");
+    asserts::is_true(t, bits::rotate_right<u8>(129, 8) == 129, "a full right rotation is unchanged");
+    asserts::is_true(t, bits::rotate_left<u8>(129, 17) == 3, "large rotation counts are reduced by width");
+    asserts::is_true(t, bits::rotate_left<u16>(4660, 8) == 13330, "rotation works across bytes");
+}
+
+test byte_swapping_reverses_storage_order(&testing::UnitTest t) {
+    asserts::is_true(t, bits::swap_bytes<u8>(171) == 171, "swapping one byte is unchanged");
+    asserts::is_true(t, bits::swap_bytes<u16>(4660) == 13330, "swap_bytes reverses u16 bytes");
+    asserts::is_true(t, bits::swap_bytes<u32>(305419896) == 2018915346, "swap_bytes reverses u32 bytes");
+    asserts::is_true(t, bits::swap_bytes<u64>(72623859790382856) == 578437695752307201, "swap_bytes reverses u64 bytes");
+
+    usize native = 42;
+    asserts::is_true(t, bits::swap_bytes<usize>(bits::swap_bytes<usize>(native)) == native, "swapping native bytes twice restores the value");
+}

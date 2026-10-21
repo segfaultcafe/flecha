@@ -66,8 +66,11 @@ coerced. Integer literals may adopt an expected integer type with a range check;
 unconstrained literals retain the table defaults. `none` is contextually
 assignable to non-void, non-reference value types, matching
 the language specification's universal-zero rule. Arithmetic requires equal
-numeric operand types; comparisons produce `bool`; logical/bitwise operators
-require equal boolean or integer types. Recursive compound types preserve
+numeric operand types; comparisons produce `bool`; logical/legacy bitwise
+operators require equal boolean or integer types. Symbolic integer operators
+`&` and `|` require equal integer operands, while `~` requires one integer
+operand. Shifts preserve the left integer type and require a `usize` count.
+Recursive compound types preserve
 qualifiers at each layer. [Raw pointers](unsafe_pointers.md) require unsafe
 permission for dereference; [checked references](checked_references.md) use
 safe dereference and a separate borrow/move pass on the shared control-flow graph.
