@@ -30,6 +30,7 @@ const KeywordMap KEYWORDS = {
     {"module", TokenType::Module},
     {"test", TokenType::Test},
     {"enum", TokenType::Enum},
+    {"typeset", TokenType::TypeSet},
     {"structure", TokenType::Structure},
     {"private", TokenType::Private},
     {"override", TokenType::Override},
@@ -208,6 +209,8 @@ Token Tokenizer::NextToken() {
             return makeToken(TokenType::Mod);
         case '^':
             return makeToken(TokenType::Xor);
+        case '~':
+            return makeToken(TokenType::BitNot);
         case '@':
             return makeToken(TokenType::At);
         case '#':
@@ -231,9 +234,11 @@ Token Tokenizer::NextToken() {
             return makeToken(TokenType::Bang);
         case '<':
             if (Match('-')) return makeToken(TokenType::LeftArrow);
+            if (Match('<')) return makeToken(TokenType::ShiftLeft);
             return makeToken(Match('=') ? TokenType::LessEqual
                                         : TokenType::Less);
         case '>':
+            if (Match('>')) return makeToken(TokenType::ShiftRight);
             return makeToken(Match('=') ? TokenType::GreaterEqual
                                         : TokenType::Greater);
         case '&':
@@ -241,7 +246,7 @@ Token Tokenizer::NextToken() {
             return makeToken(TokenType::Ampersand);
         case '|':
             if (Match('|')) return makeToken(TokenType::Or);
-            break;
+            return makeToken(TokenType::BitOr);
         case '"': {
             string value;
             bool valid = true;

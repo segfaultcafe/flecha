@@ -891,6 +891,338 @@ TEST(NativeCompilerTests, RunsGenericCallablesWithCapturingClosures) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, FoldsTypeSetMembershipAtSpecialization) {
+    GeneratedSource result = Generate(R"(
+        structure UserId { i32 value; };
+        typeset identifier { integer, UserId, };
+        bool is_numeric<T>() { return T.isof<numeric>; }
+        bool is_identifier<T>() { return T.isof<identifier>; }
+        bool is_i32<T>() { return T.isof<i32>; }
+        bool same<T, U>() { return T.isof<U>; }
+        i32 main() {
+            if !is_numeric<i32>() { return 1; }
+            if is_numeric<bool>() { return 2; }
+            if !is_identifier<UserId>() { return 3; }
+            if is_identifier<f64>() { return 4; }
+            if !3.isof<i32> { return 5; }
+            if !3.isof<numeric> { return 6; }
+            if 3.isof<f64> { return 7; }
+            if !is_i32<i32>() { return 8; }
+            if is_i32<f64>() { return 9; }
+            if !UserId::init().isof<UserId> { return 10; }
+            if !UserId::init().isof<identifier> { return 11; }
+            if !same<i32, i32>() { return 12; }
+            if same<i32, i64>() { return 13; }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() / "flecha_native_type_set_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "native_type_set_test", executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, ReportsSignedAndUnsignedIntegerOverflow) {
+    GeneratedSource result = Generate(R"(
+        (T, bool) add<T: integer>(T left, T right) {
+            result, overflowed := left.overflow_add(right);
+            return (result, overflowed);
+        }
+
+        i32 main() {
+            signed_sum, signed_add_overflow := add<i8>(127, 1);
+            if signed_sum != ((-127 - 1) as i8) or !signed_add_overflow {
+                return 1;
+            }
+
+            signed_difference, signed_sub_overflow :=
+                ((-127 - 1) as i8).overflow_sub(1);
+            if signed_difference != (127 as i8) or !signed_sub_overflow {
+                return 2;
+            }
+
+            signed_product, signed_mul_overflow :=
+                (64 as i8).overflow_mul(2);
+            if signed_product != ((-127 - 1) as i8) or
+                !signed_mul_overflow {
+                return 3;
+            }
+
+            unsigned_sum, unsigned_add_overflow :=
+                (255 as u8).overflow_add(1);
+            if unsigned_sum != (0 as u8) or !unsigned_add_overflow {
+                return 4;
+            }
+
+            unsigned_difference, unsigned_sub_overflow :=
+                (0 as u8).overflow_sub(1);
+            if unsigned_difference != (255 as u8) or
+                !unsigned_sub_overflow {
+                return 5;
+            }
+
+            unsigned_product, unsigned_mul_overflow :=
+                (16 as u8).overflow_mul(16);
+            if unsigned_product != (0 as u8) or !unsigned_mul_overflow {
+                return 6;
+            }
+
+            exact, exact_overflow := (20 as i32).overflow_add(22);
+            if exact != 42 or exact_overflow { return 7; }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+    ASSERT_NE(result.module, nullptr);
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("llvm.sadd.with.overflow.i8"), std::string::npos);
+    EXPECT_NE(ir.find("llvm.usub.with.overflow.i8"), std::string::npos);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_overflowing_arithmetic_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_overflowing_arithmetic_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsDefinedIntegerBitwiseAndShiftOperations) {
+    GeneratedSource result = Generate(R"(
+        u8 shift_left(u8 value, usize count) { return value << count; }
+        u8 shift_right(u8 value, usize count) { return value >> count; }
+        i8 signed_shift_right(i8 value, usize count) {
+            return value >> count;
+        }
+        T generic_bits<T: integer>(T left, T right) {
+            return ~(left & right) | (left ^ right);
+        }
+
+        i32 main() {
+            if ((12 as u8) & (10 as u8)) != (8 as u8) { return 1; }
+            if ((12 as u8) | (10 as u8)) != (14 as u8) { return 2; }
+            if ((12 as u8) ^ (10 as u8)) != (6 as u8) { return 3; }
+            if ~(0 as u8) != (255 as u8) { return 4; }
+            if shift_left(1, 7) != (128 as u8) { return 5; }
+            if shift_right(128, 7) != (1 as u8) { return 6; }
+            if signed_shift_right(-2, 1) != (-1 as i8) { return 7; }
+            if shift_left(1, 8) != (0 as u8) { return 8; }
+            if shift_right(255, 8) != (0 as u8) { return 9; }
+            if signed_shift_right(-1, 8) != (-1 as i8) { return 10; }
+            if shift_left(1, usize.max_value) != (0 as u8) { return 11; }
+            if signed_shift_right(1, 8) != (0 as i8) { return 12; }
+            if generic_bits<u8>(12, 10) != (247 as u8) { return 13; }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+    ASSERT_NE(result.module, nullptr);
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find(" shl "), std::string::npos);
+    EXPECT_NE(ir.find(" lshr "), std::string::npos);
+    EXPECT_NE(ir.find(" ashr "), std::string::npos);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_bitwise_shift_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_bitwise_shift_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, WrapsOrdinaryIntegerArithmeticAtTypeWidth) {
+    GeneratedSource result = Generate(R"(
+        i32 main() {
+            i8 signed_max = 127;
+            i8 signed_min = -127 - 1;
+            i8 signed_one = 1;
+            i8 signed_sixty_four = 64;
+            if signed_max + signed_one != signed_min { return 1; }
+            if signed_min - signed_one != signed_max { return 2; }
+            if signed_sixty_four * (2 as i8) != signed_min { return 3; }
+
+            u8 unsigned_max = 255;
+            u8 unsigned_zero = 0;
+            u8 unsigned_one = 1;
+            u8 unsigned_sixteen = 16;
+            if unsigned_max + unsigned_one != unsigned_zero { return 4; }
+            if unsigned_zero - unsigned_one != unsigned_max { return 5; }
+            if unsigned_sixteen * unsigned_sixteen != unsigned_zero {
+                return 6;
+            }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_wrapping_arithmetic_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_wrapping_arithmetic_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, EmitsIntegerTypeLimits) {
+    GeneratedSource result = Generate(R"(
+        (T, T) bounds<T: integer>() {
+            return (T.min_value, T.max_value);
+        }
+
+        i32 main() {
+            i8_low, i8_high := bounds<i8>();
+            if i8_low != ((-127 - 1) as i8) or i8_high != (127 as i8) {
+                return 1;
+            }
+            if u8.min_value != (0 as u8) or
+                u8.max_value != (255 as u8) {
+                return 2;
+            }
+            if i16.min_value - (1 as i16) != i16.max_value {
+                return 3;
+            }
+            if u64.max_value + (1 as u64) != u64.min_value {
+                return 4;
+            }
+            if isize.min_value - (1 as isize) != isize.max_value {
+                return 5;
+            }
+            if usize.max_value + (1 as usize) != usize.min_value {
+                return 6;
+            }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_integer_limits_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_integer_limits_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, EmitsIeeeFloatingPointConstantsAndComparisons) {
+    GeneratedSource result = Generate(R"(
+        bool different(f64 left, f64 right) { return left != right; }
+
+        (T, T) special<T: floating_point>() {
+            return (T.infinity, T.nan);
+        }
+
+        i32 main() {
+            f64 nan = f64.nan;
+            if nan == nan { return 1; }
+            if !different(nan, nan) { return 2; }
+            if nan < 0.0 or nan <= 0.0 or nan > 0.0 or nan >= 0.0 {
+                return 3;
+            }
+            if !(nan !== nan) { return 4; }
+
+            if f32.infinity <= f32.max_value { return 5; }
+            if f32.negative_infinity >= f32.min_value { return 6; }
+            if f32.negative_infinity != -f32.infinity { return 7; }
+            if f64.min_value != -f64.max_value { return 8; }
+            if f32.min_positive <= (0.0 as f32) { return 9; }
+
+            f32 one = 1.0 as f32;
+            if one + f32.epsilon == one { return 10; }
+            if one + f32.epsilon / (2.0 as f32) != one { return 11; }
+            if (-0.0) != 0.0 or !((-0.0) === 0.0) { return 12; }
+
+            f64 one64 = 1.0;
+            if one64 + f64.epsilon == one64 { return 13; }
+            if one64 + f64.epsilon / 2.0 != one64 { return 14; }
+            if f64.min_positive <= 0.0 { return 15; }
+            if f32.max_value + f32.max_value != f32.infinity { return 16; }
+
+            infinity, genericNan := special<f32>();
+            if infinity != f32.infinity or !(genericNan != genericNan) {
+                return 17;
+            }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+    ASSERT_NE(result.module, nullptr);
+    EXPECT_NE(ModuleText(*result.module).find("fcmp une"), std::string::npos);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_ieee_constants_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_ieee_constants_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsCapturelessAnonymousFunctions) {
     GeneratedSource result = Generate(R"(
         func Mapper(i32) => (i32);

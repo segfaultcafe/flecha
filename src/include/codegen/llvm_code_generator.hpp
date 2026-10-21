@@ -129,6 +129,12 @@ class LlvmCodeGenerator final {
         const lowering::BoundCastExpression& expression);
     [[nodiscard]] llvm::Value* EmitBinary(
         const lowering::BoundBinaryExpression& expression);
+    [[nodiscard]] llvm::Value* EmitIntegerLimit(
+        const lowering::BoundIntegerLimitExpression& expression);
+    [[nodiscard]] llvm::Value* EmitFloatingConstant(
+        const lowering::BoundFloatingConstantExpression& expression);
+    [[nodiscard]] llvm::Value* EmitOverflowingArithmetic(
+        const lowering::BoundOverflowingArithmeticExpression& expression);
     [[nodiscard]] llvm::Value* EmitValueEquality(llvm::Value* left,
                                                  llvm::Value* right,
                                                  semantic::SemanticType type);

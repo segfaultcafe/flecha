@@ -242,6 +242,39 @@ TEST(ParserTests, ParsesGenericCallableSignatures) {
     EXPECT_EQ(transform.Results()[0]->Name(), "U");
 }
 
+TEST(ParserTests, ParsesTypeSetsAndGenericConstraints) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        typeset indices { u8, u16, usize, };
+        structure Box<T: indices> { T value; };
+        bool accepts<T: numeric, U: indices>(T value, U index) {
+            return T.isof<floating_point>;
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 3u);
+    const auto& set =
+        static_cast<const TypeSetDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(set.Name(), "indices");
+    ASSERT_EQ(set.Members().size(), 3u);
+    EXPECT_EQ(set.Members()[2]->Type(), PrimitiveType::USize);
+
+    const auto& box =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[1]);
+    EXPECT_EQ(box.genericConstraints.at("T"), "indices");
+    const auto& accepts =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[2]);
+    EXPECT_EQ(accepts.genericConstraints.at("T"), "numeric");
+    EXPECT_EQ(accepts.genericConstraints.at("U"), "indices");
+    const auto& returned = static_cast<const ReturnStatement&>(
+        *accepts.Body().Statements().front());
+    EXPECT_EQ(returned.Value()->Kind(), AstNodeKind::IsOfExpression);
+}
+
 TEST(ParserTests, ParsesCapturelessAnonymousFunctionForms) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(R"(
@@ -479,7 +512,8 @@ TEST(ParserTests, AppendsMissingEndOfFileTokenSafely) {
 TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "bool check() { return a or b and c ^ d == e < f + g * h; }",
+        "bool check() { return a or b and c | d ^ e & f == g < h << i + j * "
+        "k; }",
         diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
@@ -491,20 +525,32 @@ TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
         static_cast<const BinaryExpression&>(logicalOr.Right());
     EXPECT_EQ(logicalAnd.OperatorType(), TokenType::And);
 
-    const BinaryExpression& xorExpression =
+    const BinaryExpression& bitwiseOr =
         static_cast<const BinaryExpression&>(logicalAnd.Right());
+    EXPECT_EQ(bitwiseOr.OperatorType(), TokenType::BitOr);
+
+    const BinaryExpression& xorExpression =
+        static_cast<const BinaryExpression&>(bitwiseOr.Right());
     EXPECT_EQ(xorExpression.OperatorType(), TokenType::Xor);
 
-    const BinaryExpression& equality =
+    const BinaryExpression& bitwiseAnd =
         static_cast<const BinaryExpression&>(xorExpression.Right());
+    EXPECT_EQ(bitwiseAnd.OperatorType(), TokenType::Ampersand);
+
+    const BinaryExpression& equality =
+        static_cast<const BinaryExpression&>(bitwiseAnd.Right());
     EXPECT_EQ(equality.OperatorType(), TokenType::Equal);
 
     const BinaryExpression& comparison =
         static_cast<const BinaryExpression&>(equality.Right());
     EXPECT_EQ(comparison.OperatorType(), TokenType::Less);
 
-    const BinaryExpression& addition =
+    const BinaryExpression& shift =
         static_cast<const BinaryExpression&>(comparison.Right());
+    EXPECT_EQ(shift.OperatorType(), TokenType::ShiftLeft);
+
+    const BinaryExpression& addition =
+        static_cast<const BinaryExpression&>(shift.Right());
     EXPECT_EQ(addition.OperatorType(), TokenType::Add);
 
     const BinaryExpression& multiplication =

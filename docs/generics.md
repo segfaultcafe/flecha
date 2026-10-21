@@ -73,10 +73,14 @@ unsafe permissions, visibility, or lifecycle rules.
 Templates are parsed when loaded. Parameter-name collisions, malformed generic
 declarations, and private types exposed by exported generic signatures are
 rejected even without an instantiation. Concrete signatures and bodies are
-checked when instantiated. Operations must be valid for the supplied types;
-there are no named constraints or traits in this first version. Instantiating a
-structure also checks its ordinary methods. Methods with additional type
-parameters are checked when explicitly instantiated on their actual receiver.
+checked when instantiated. Operations must be valid for the supplied types. A
+type parameter may additionally name a closed [type-set
+constraint](type_sets.md), such as `T: integer`. The constraint is checked
+before specialization, and ordinary body checking still follows. Type sets
+restrict identity; they do not grant operations or provide dynamic dispatch.
+Instantiating a structure also checks its ordinary methods. Methods with
+additional type parameters are checked when explicitly instantiated on their
+actual receiver.
 
 Export and import rules match ordinary declarations. A specialization resolves
 helpers in the defining module, while argument types retain their identity from
@@ -103,9 +107,10 @@ AST declarations, caches specializations, and preserves source/module identity.
 The normal semantic, allocation, lowering, and native code generation passes
 then process those declarations. Generic templates themselves emit no code.
 
-There is no generic-argument inference, default type argument, variadic parameter pack,
-constant generic parameter, user specialization override, or separate compiled
-generic interface yet. The standard library provides [`RawArray<T>`](dynamic_arrays.md),
-implemented in Flecha. Its runtime storage currently supports numeric, boolean,
-and character elements; pointers and structures are not yet supported. Element
-restrictions are enforced when the relevant generic operations are instantiated.
+There is no generic-argument inference, default type argument, variadic
+parameter pack, constant generic parameter, user specialization override,
+trait system, or separate compiled generic interface yet. The standard library
+provides [`RawArray<T>`](dynamic_arrays.md), implemented in Flecha. Its runtime
+storage currently supports numeric, boolean, and character elements; pointers
+and structures are not yet supported. Element restrictions are enforced when
+the relevant generic operations are instantiated.

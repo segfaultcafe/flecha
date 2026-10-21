@@ -45,13 +45,21 @@ class Parser {
     const Token& Advance();
     bool Match(TokenType type);
     const Token* Consume(TokenType type, std::string_view expectation);
+    const Token* ConsumeTypeArgumentClose(std::string_view expectation);
     [[nodiscard]] bool StartsType() const;
     [[nodiscard]] bool IsTypeToken(TokenType type) const;
     bool ScanType(std::size_t& offset) const;
+    bool ScanType(std::size_t& offset, bool& pendingGreater) const;
     bool ScanTypeArguments(std::size_t& offset) const;
+    bool ScanTypeArguments(std::size_t& offset, bool& pendingGreater) const;
+    [[nodiscard]] TokenType ScanToken(std::size_t offset,
+                                      bool pendingGreater) const;
+    bool ScanGreater(std::size_t& offset, bool& pendingGreater) const;
     std::vector<std::unique_ptr<TypeNode>> ParseTypeArguments();
-    std::vector<std::string> ParseGenericParameters();
+    std::vector<std::string> ParseGenericParameters(
+        std::map<std::string, std::string>* constraints = nullptr);
     std::unique_ptr<StructureDeclaration> ParseStructureDeclaration();
+    std::unique_ptr<TypeSetDeclaration> ParseTypeSetDeclaration();
     std::unique_ptr<ErrorDeclaration> ParseErrorDeclaration();
     std::unique_ptr<EnumDeclaration> ParseEnumDeclaration();
     std::unique_ptr<Declaration> ParseDeclaration();
@@ -105,6 +113,7 @@ class Parser {
     std::string _anonymousFunctionPrefix;
     std::size_t _position = 0;
     std::size_t _rangeId = 0;
+    Token _splitGreater;
     diagnostics::DiagnosticBag& _diagnostics;
 };
 

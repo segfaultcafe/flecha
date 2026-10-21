@@ -46,6 +46,9 @@ enum class BoundNodeKind {
     UnaryExpression,
     IncrementExpression,
     BinaryExpression,
+    IntegerLimitExpression,
+    FloatingConstantExpression,
+    OverflowingArithmeticExpression,
     AssignmentExpression,
     CallExpression,
     IndirectCallExpression,
@@ -489,6 +492,77 @@ class BoundBinaryExpression final : public BoundExpression {
     std::unique_ptr<BoundExpression> _left;
     TokenType _operatorType;
     std::unique_ptr<BoundExpression> _right;
+};
+
+enum class OverflowingArithmeticOperation {
+    Add,
+    Subtract,
+    Multiply,
+};
+
+class BoundOverflowingArithmeticExpression final : public BoundExpression {
+   public:
+    BoundOverflowingArithmeticExpression(
+        source::SourceRange range, semantic::SemanticType type,
+        OverflowingArithmeticOperation operation,
+        std::unique_ptr<BoundExpression> left,
+        std::unique_ptr<BoundExpression> right)
+        : BoundExpression(range, type),
+          _operation(operation),
+          _left(std::move(left)),
+          _right(std::move(right)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::OverflowingArithmeticExpression;
+    }
+    [[nodiscard]] OverflowingArithmeticOperation Operation() const {
+        return _operation;
+    }
+    [[nodiscard]] const BoundExpression& Left() const { return *_left; }
+    [[nodiscard]] const BoundExpression& Right() const { return *_right; }
+
+   private:
+    OverflowingArithmeticOperation _operation;
+    std::unique_ptr<BoundExpression> _left;
+    std::unique_ptr<BoundExpression> _right;
+};
+
+class BoundIntegerLimitExpression final : public BoundExpression {
+   public:
+    BoundIntegerLimitExpression(source::SourceRange range,
+                                semantic::SemanticType type, bool maximum)
+        : BoundExpression(range, type), _maximum(maximum) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::IntegerLimitExpression;
+    }
+    [[nodiscard]] bool IsMaximum() const { return _maximum; }
+
+   private:
+    bool _maximum;
+};
+
+enum class FloatingConstant {
+    NaN,
+    Infinity,
+    NegativeInfinity,
+    Minimum,
+    Maximum,
+    MinimumPositive,
+    Epsilon,
+};
+
+class BoundFloatingConstantExpression final : public BoundExpression {
+   public:
+    BoundFloatingConstantExpression(source::SourceRange range,
+                                    semantic::SemanticType type,
+                                    FloatingConstant constant)
+        : BoundExpression(range, type), _constant(constant) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::FloatingConstantExpression;
+    }
+    [[nodiscard]] FloatingConstant Constant() const { return _constant; }
+
+   private:
+    FloatingConstant _constant;
 };
 
 class BoundIncrementExpression final : public BoundExpression {

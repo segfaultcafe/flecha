@@ -79,7 +79,8 @@ TEST_F(ModuleTests, ComposesLogicalModulesAcrossArbitraryFilenames) {
               std::string::npos);
 }
 TEST_F(ModuleTests, KeepsImportsLocalToTheirSourceUnit) {
-    Write("dependency.fl", "module dependency; export i32 value() { return 42; }");
+    Write("dependency.fl",
+          "module dependency; export i32 value() { return 42; }");
     Write("one.fl", R"(module shared; @imports :: root::dependency;
         export i32 one() { return dependency::value(); }
     )");
@@ -209,6 +210,77 @@ TEST_F(ModuleTests, GenericCallableExportsRespectTypeVisibility) {
           "module main; @imports :: root::callbacks; void main() {}");
     EXPECT_NE(Check().find("cannot expose non-exported types"),
               std::string::npos);
+}
+TEST_F(ModuleTests, TypeSetsFollowModuleAndQuiverVisibility) {
+    Write("sets.fl", R"(module sets;
+        export structure UserId { i32 value; };
+        export typeset identifiers { integer, UserId, };
+        export T identity<T: identifiers>(T value) { return value; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::sets;
+        T local_identity<T: sets::identifiers>(T value) { return value; }
+        i32 main() {
+            local_identity<i32>(1);
+            return sets::identity<i32>(42);
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("sets.fl", R"(module sets;
+        typeset hidden { integer, };
+        export T identity<T: hidden>(T value) { return value; }
+    )");
+    EXPECT_NE(
+        Check().find("exported generics cannot use non-exported type sets"),
+        std::string::npos);
+
+    Write("sets.fl", R"(module sets;
+        structure Hidden { i32 value; };
+        export typeset leaked { Hidden, };
+    )");
+    EXPECT_NE(
+        Check().find("visible type sets cannot include less-visible types"),
+        std::string::npos);
+
+    Write("sets.fl", R"(module sets;
+        quiver typeset nearby { integer, };
+    )");
+    Write("main.fl", R"(module main; @imports :: root::sets;
+        T identity<T: sets::nearby>(T value) { return value; }
+        i32 main() { return identity<i32>(42); }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("nested/main.fl", R"(module main; @imports :: root::sets;
+        T identity<T: sets::nearby>(T value) { return value; }
+        i32 main() { return identity<i32>(42); }
+    )");
+    EXPECT_NE(
+        CheckAt("nested/main.fl").find("'sets::nearby' is quiver-visible"),
+        std::string::npos);
+}
+TEST_F(ModuleTests, ModuleNamesDoNotShadowBuiltinTypeSets) {
+    Write("integer.fl", R"(module integer;
+        export structure Marker { i32 value; };
+        export i32 answer() { return 42; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::integer;
+        typeset values { integer, integer::Marker, };
+
+        T constrained<T: integer>(T value) { return value; }
+        T accepted<T: values>(T value) { return value; }
+        bool is_integer<T>() { return T.isof<integer>; }
+
+        i32 main() {
+            integer::Marker marker = integer::Marker::init();
+            accepted<integer::Marker>(marker);
+            if !is_integer<i32>() { return 1; }
+            if !3.isof<integer> { return 2; }
+            return integer::answer() + constrained<i32>(0);
+        }
+    )");
+
+    EXPECT_EQ(Check(), "");
 }
 TEST_F(ModuleTests, PrivateDeclarationsAndTransitiveImportsDoNotLeak) {
     Write("hidden.fl",
@@ -393,8 +465,7 @@ TEST_F(ModuleTests, AggregatesTestsFromMultipleArbitrarilyNamedSources) {
             if math::secret() < 0 { t->fail(); }
         }
     )");
-    EXPECT_EQ(CheckAt("boundary_cases.fl",
-                      flecha::core::ModuleLoadMode::Test),
+    EXPECT_EQ(CheckAt("boundary_cases.fl", flecha::core::ModuleLoadMode::Test),
               "");
 }
 TEST_F(ModuleTests, RejectsDuplicateDeclarationsAndMixedModulePrivacy) {

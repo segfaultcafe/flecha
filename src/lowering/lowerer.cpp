@@ -407,6 +407,27 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const auto& member =
                 static_cast<const core::MemberAccessExpression&>(expression);
             if (_semanticModel->FieldFor(member)) return LowerPlace(expression);
+            if (type.IsInteger() && (member.Member() == "min_value" ||
+                                     member.Member() == "max_value"))
+                return std::make_unique<BoundIntegerLimitExpression>(
+                    expression.Range(), type, member.Member() == "max_value");
+            if (type.IsFloating()) {
+                FloatingConstant constant = FloatingConstant::NaN;
+                if (member.Member() == "infinity")
+                    constant = FloatingConstant::Infinity;
+                else if (member.Member() == "negative_infinity")
+                    constant = FloatingConstant::NegativeInfinity;
+                else if (member.Member() == "min_value")
+                    constant = FloatingConstant::Minimum;
+                else if (member.Member() == "max_value")
+                    constant = FloatingConstant::Maximum;
+                else if (member.Member() == "min_positive")
+                    constant = FloatingConstant::MinimumPositive;
+                else if (member.Member() == "epsilon")
+                    constant = FloatingConstant::Epsilon;
+                return std::make_unique<BoundFloatingConstantExpression>(
+                    expression.Range(), type, constant);
+            }
             if (type.Kind() == semantic::SemanticTypeKind::Enum) {
                 for (const auto& variant : type.Enum()->variants)
                     if (variant.name == member.Member())
@@ -480,6 +501,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 static_cast<const core::CastExpression&>(expression);
             return std::make_unique<BoundCastExpression>(
                 expression.Range(), type, LowerExpression(cast.Value()));
+        }
+        case core::AstNodeKind::IsOfExpression: {
+            const auto& isOf =
+                static_cast<const core::IsOfExpression&>(expression);
+            return std::make_unique<BoundLiteralExpression>(
+                expression.Range(), type, isOf.Result() ? "true" : "false");
         }
         case core::AstNodeKind::UnaryExpression: {
             const core::UnaryExpression& unary =
@@ -606,6 +633,23 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                         *argument, method->ParameterTypes()[arguments.size()]));
                 return std::make_unique<BoundCallExpression>(
                     expression.Range(), *method, std::move(arguments));
+            }
+            if (_semanticModel->TypeOf(member.Receiver()).IsInteger() &&
+                (member.Member() == "overflow_add" ||
+                 member.Member() == "overflow_sub" ||
+                 member.Member() == "overflow_mul")) {
+                OverflowingArithmeticOperation operation =
+                    OverflowingArithmeticOperation::Add;
+                if (member.Member() == "overflow_sub")
+                    operation = OverflowingArithmeticOperation::Subtract;
+                else if (member.Member() == "overflow_mul")
+                    operation = OverflowingArithmeticOperation::Multiply;
+                const semantic::SemanticType valueType =
+                    _semanticModel->TypeOf(member.Receiver()).WithoutConst();
+                return std::make_unique<BoundOverflowingArithmeticExpression>(
+                    expression.Range(), type, operation,
+                    LowerExpression(member.Receiver(), valueType),
+                    LowerExpression(*member.Arguments()[0], valueType));
             }
             if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
                     semantic::SemanticTypeKind::Slice &&

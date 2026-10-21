@@ -88,8 +88,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check patch whitespace
+      - name: Check patch for conflict markers
         if: github.event_name == 'pull_request'
+        run: >-
+          git -c core.whitespace=-trailing-space,-space-before-tab
+          diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+      - name: Report patch whitespace
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
         run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
 
       - name: Install dependencies

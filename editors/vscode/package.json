@@ -55,6 +55,24 @@
             "settings": {
               "foreground": "#569CD6"
             }
+          },
+          {
+            "scope": "support.type.typeset.builtin.flecha",
+            "settings": {
+              "foreground": "#87CEFA"
+            }
+          },
+          {
+            "scope": "constant.numeric.integer.bound.flecha",
+            "settings": {
+              "foreground": "#C49A00"
+            }
+          },
+          {
+            "scope": "constant.numeric.float.property.flecha",
+            "settings": {
+              "foreground": "#C49A00"
+            }
           }
         ]
       }

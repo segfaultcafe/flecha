@@ -324,6 +324,80 @@ Integer sizes are part of their type names. `isize` and `usize` have the native 
 
 Implicit conversion between distinct primitive types should be avoided. In particular, integers, booleans, and pointers remain differently typed even when their representations or zero values coincide.
 
+`f32` and `f64` use IEEE 754 binary32 and binary64 semantics. Each floating
+type exposes contextual compile-time constants:
+
+```flecha
+quiet := f32.nan;
+positiveInfinity := f64.infinity;
+negativeInfinity := f64.negative_infinity;
+smallestFinite := f32.min_value;
+largestFinite := f32.max_value;
+smallestNormal := f32.min_positive;
+unitRoundoff := f32.epsilon;
+```
+
+`min_value` is the most negative finite value, `max_value` is the most positive
+finite value, `min_positive` is the smallest positive normal value, and
+`epsilon` is the difference between one and the next representable value.
+`nan` is a canonical quiet NaN. The properties also work through a type
+parameter constrained by `floating_point`.
+
+Floating `==` and `===` are ordered: NaN is unequal to every value, including
+itself. Consequently `!=` and `!==` are true if either operand is NaN. Ordered
+comparisons `<`, `<=`, `>`, and `>=` are false if either operand is NaN.
+Positive and negative zero compare equal under both equality forms.
+
+Integer `+`, `-`, and `*` use two's-complement wrapping at the width of the
+operand type. Their result is the mathematical result reduced modulo `2^N`,
+including for signed integer types. Code that must distinguish an exact result
+from an overflow uses the overflowing primitives below.
+
+Integer bit operations use `&` (and), `|` (or), `^` (exclusive or), and `~`
+(complement). Both operands of a binary bit operation have the same integer
+type, and the result keeps that type. `~` likewise preserves its integer
+operand's type.
+
+Shifts use `value << count` and `value >> count`. The left operand may have any
+integer type, the count has type `usize`, and the result keeps the left
+operand's type. Left shift discards bits above that width. Unsigned right shift
+fills with zero; signed right shift sign-extends. A count greater than or equal
+to the value width is defined: left shift and unsigned right shift produce
+zero, while signed right shift produces zero for non-negative values and `-1`
+for negative values. Shift expressions therefore never inherit undefined or
+poison behavior from the code-generation target.
+
+Every integer type exposes its inclusive bounds as contextual compile-time
+properties:
+
+```flecha
+smallest := i32.min_value;
+largest := i32.max_value;
+
+(T, T) bounds<T: integer>() {
+    return (T.min_value, T.max_value);
+}
+```
+
+`min_value` and `max_value` are ordinary identifiers, not reserved keywords.
+They are recognized as properties only after a concrete integer type or an
+integer-constrained type parameter. The bounds of `isize` and `usize` follow
+the native pointer width of the compilation target.
+
+Integer values provide low-level overflowing arithmetic methods:
+
+```flecha
+sum, addOverflow := left.overflow_add(right);
+difference, subOverflow := left.overflow_sub(right);
+product, mulOverflow := left.overflow_mul(right);
+```
+
+Both operands must have the same integer type. Each operation returns the
+wrapped result in that type and a `bool` that is `true` exactly when the
+mathematical result is outside the type's range. These primitives support the
+standard library's checked, wrapping, and saturating arithmetic policies; they
+do not implicitly change the behavior of ordinary arithmetic operators.
+
 ### 7.1 Enums
 
 Enums are nominal scalar types with an integer backing and qualified variants:
@@ -497,9 +571,7 @@ i32(0) === i32(0); // true
 i32(0) === u32(0); // false
 ```
 
-Strict equality is semantic type-and-value equality, not necessarily raw byte equality. Padding, floating-point representations, and other representation details must not silently turn `===` into a memory comparison. A separate explicit operation may be provided for comparing raw representations.
-
-The behavior of floating-point NaNs and signed zero under both equality operators remains to be specified.
+Strict equality is semantic type-and-value equality, not necessarily raw byte equality. Padding, floating-point representations, and other representation details must not silently turn `===` into a memory comparison. A separate explicit operation may be provided for comparing raw representations. IEEE floating-point values follow the NaN and signed-zero rules specified in the primitive-types section.
 
 ## 10. Tuples and multiple return values
 
@@ -1004,6 +1076,12 @@ References remain valid function parameters and cannot be stored in structure
 fields. Existing ownership, const, visibility, and lifecycle rules apply.
 See [generics](docs/generics.md) for the implemented rules and limits.
 
+Generic parameters may use closed compile-time type-set constraints, as in
+`T identity<T: numeric>(T value)`. Built-in numeric sets and custom
+`typeset name { members, };` declarations are supported. `T.isof<name>` folds
+to a boolean during specialization. Type sets have ordinary module visibility
+and no runtime representation. See [type sets](docs/type_sets.md).
+
 ## 19. Open design questions
 
 The following decisions are intentionally not finalized:
@@ -1016,7 +1094,6 @@ The following decisions are intentionally not finalized:
 - partial aggregate moves and cleanup rules for future owning types;
 - allocator interfaces;
 - arithmetic overflow behavior;
-- floating-point equality involving NaN and signed zero;
 - compile-time execution and metaprogramming;
 - tuple layout and ABI rules;
 - optional values distinct from primitive zero;
