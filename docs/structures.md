@@ -34,8 +34,12 @@ The declaration ends with `;`. Fields and methods are public by default.
 `private T field;` and a `private { ... }` field group are equivalent. A private
 member is accessible only inside methods belonging to its structure, including
 access through another instance. A build block does not grant private access
-by itself. Fields and methods cannot share names; `init`, `zero`, and `tear` are
-reserved lifecycle names. Types may refer to later structure declarations.
+by itself. Fields and methods may share a name because field access and method
+calls are syntactically distinct: `value.position` accesses a field, while
+`value.position()` calls a method. The same distinction applies through a
+reference or pointer: `self->position` and `self->position()`. The names `init`,
+`zero`, and `tear` remain reserved for lifecycle methods and cannot be used as
+field names. Types may refer to later structure declarations.
 
 Structure values use `.`, while references and pointers use `->`, for both
 fields and methods:

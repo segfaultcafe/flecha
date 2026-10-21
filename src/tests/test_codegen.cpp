@@ -386,6 +386,43 @@ TEST(NativeCompilerTests, RunsManagedSlicesStoredAsStructureBorrows) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsFieldsAndMethodsWithTheSameName) {
+    GeneratedSource result = Generate(R"(
+        structure Cursor { usize position; };
+        usize Cursor::position(&const self) { return self->position; }
+        usize Cursor::throughReference(&const self) {
+            return self->position();
+        }
+        i32 main() {
+            cursor := Cursor::init();
+            cursor.position = 14;
+            direct := cursor.position();
+            reference := &cursor;
+            return (direct + reference->position() +
+                reference->throughReference()).cast<i32>;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_field_method_name_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_field_method_name_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(LlvmCodeGeneratorTests, ExtractsCheckedSliceDataPointers) {
     GeneratedSource result = Generate(R"(
         unsafe i32 first([]const i32 values) { return *values.data(); }

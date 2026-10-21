@@ -372,14 +372,6 @@ class Expander {
                 Error(method->Range(),
                       "duplicate method declaration '" + method->Name() + "'");
             if (Template(*method) &&
-                owner->Kind() == AstNodeKind::StructureDeclaration)
-                for (const auto& field :
-                     static_cast<const StructureDeclaration*>(owner)->Fields())
-                    if (field->Name() == method->Name())
-                        Error(method->Range(),
-                              "generic method conflicts with field '" +
-                                  method->Name() + "'");
-            if (Template(*method) &&
                 owner->Kind() == AstNodeKind::EnumDeclaration)
                 for (const auto& variant :
                      static_cast<const EnumDeclaration*>(owner)->Variants())

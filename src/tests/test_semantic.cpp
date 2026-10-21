@@ -4213,6 +4213,28 @@ TEST(SemanticStructureTests,
     EXPECT_EQ(result.model.GeneratedFunctions().size(), 2);
 }
 
+TEST(SemanticStructureTests, ResolvesFieldsAndMethodsWithTheSameNameByUse) {
+    Analysis result = Analyze(R"(
+        structure Cursor { private usize position; };
+        Cursor Cursor::init(usize position) override {
+            return build Cursor { self.position = position; };
+        }
+        usize Cursor::position(&const self) { return self->position; }
+        usize Cursor::throughReference(&const self) {
+            return self->position();
+        }
+        usize main() {
+            cursor := Cursor::init(42);
+            direct := cursor.position();
+            reference := &cursor;
+            return direct + reference->position() +
+                reference->throughReference();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
 TEST(SemanticStructureTests, ValidatesZeroLifecycleAndContextualNone) {
     const std::string valid =
         "structure Position { i32 line; i32 column; }; "
@@ -5764,6 +5786,20 @@ TEST(SemanticGenericTests, StructuresMethodsNestedTypesAndFieldComparisons) {
         ADD_FAILURE() << d.message;
 }
 
+TEST(SemanticGenericTests, FieldsAndGenericMethodsMayShareNames) {
+    auto result = Analyze(R"(
+        structure Box<T> { T value; };
+        T Box<T>::value(&const self) { return self->value; }
+        i32 main() {
+            box := Box<i32>::init();
+            box.value = 42;
+            return box.value();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
 TEST(SemanticGenericTests,
      GenericMethodsOnlyInstantiateForTheirActualReceiver) {
     auto result = Analyze(R"(
@@ -6101,16 +6137,20 @@ TEST(SemanticGenericTests, GenericMethodsResolveMixedTuplesAndBuildSelfFields) {
 }
 
 TEST(SemanticGenericTests,
-     SupportsRecursivePointerTypesAndRejectsMemberCollisions) {
+     SupportsRecursivePointerTypesAndFieldMethodNames) {
     EXPECT_FALSE(Analyze(R"(
         structure Node<T> { T value; *Node<T> next; };
         void main() { node := Node<i32>::init(); }
     )")
                      .diagnostics.HasErrors());
-    EXPECT_TRUE(Analyze(R"(
+    EXPECT_FALSE(Analyze(R"(
         structure Box { i32 value; };
         T Box::value<T>(&const self) { return none; }
-        void main() {}
+        i32 main() {
+            box := Box::init();
+            box.value = 42;
+            return box.value<i32>();
+        }
     )")
                     .diagnostics.HasErrors());
 }

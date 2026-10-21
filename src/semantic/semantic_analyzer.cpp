@@ -1642,11 +1642,6 @@ void SemanticAnalyzer::RegisterFunction(
             owner->zeroIsGenerated = generated;
         }
         if (function.Name() == "tear") owner->tear = symbol;
-        for (const auto& field : owner->fields)
-            if (field.name == function.Name())
-                Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
-                       function.NameRange(),
-                       "method conflicts with field '" + field.name + "'");
     }
     if (enumOwner && symbol) {
         if (!enumOwner->methods.emplace(function.Name(), symbol).second)
