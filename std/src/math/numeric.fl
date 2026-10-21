@@ -33,7 +33,7 @@ export T abs<T: numeric>(T value) {
     T zero = none;
 
     if value < zero {
-        return -value; 
+        return -value;
     }
 
     return value;
