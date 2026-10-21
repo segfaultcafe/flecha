@@ -71,6 +71,7 @@ enum class TokenType {
     Module,
     Test,
     Enum,
+    TypeSet,
     Structure,
     Private,
     Override,

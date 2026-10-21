@@ -48,6 +48,14 @@ TEST(TokenizerTests, RecognizesTestKeyword) {
     EXPECT_EQ(tokens[1].type, TokenType::Identifier);
 }
 
+TEST(TokenizerTests, RecognizesTypeSetKeyword) {
+    const std::vector<Token> tokens = Tokenize("typeset numbers");
+
+    ASSERT_EQ(tokens.size(), 3u);
+    EXPECT_EQ(tokens[0].type, TokenType::TypeSet);
+    EXPECT_EQ(tokens[1].type, TokenType::Identifier);
+}
+
 TEST(TokenizerTests, RecognizesFunctionModifiersAndReservedWords) {
     std::vector<Token> tokens = Tokenize(
         "export quiver extern inline comptime yield if else while proceed "

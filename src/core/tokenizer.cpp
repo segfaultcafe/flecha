@@ -30,6 +30,7 @@ const KeywordMap KEYWORDS = {
     {"module", TokenType::Module},
     {"test", TokenType::Test},
     {"enum", TokenType::Enum},
+    {"typeset", TokenType::TypeSet},
     {"structure", TokenType::Structure},
     {"private", TokenType::Private},
     {"override", TokenType::Override},

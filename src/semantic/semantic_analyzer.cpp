@@ -534,8 +534,8 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                 }
                 if (!name.empty()) {
                     auto& found = candidates[import.alias + "::" + name];
-                    if (std::find(found.begin(), found.end(), declaration.get()) ==
-                        found.end())
+                    if (std::find(found.begin(), found.end(),
+                                  declaration.get()) == found.end())
                         found.push_back(declaration.get());
                 }
             }
@@ -718,8 +718,7 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
             declarationScope = module->second;
     }
     const bool declared = declarationScope->DeclareAs(localName, *result);
-    if (localName != result->Name())
-        (void)declarationScope->Declare(*result);
+    if (localName != result->Name()) (void)declarationScope->Declare(*result);
     if (!declared) {
         Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
                result->DeclarationRange(),
@@ -2445,6 +2444,10 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
             type = AnalyzeCast(
                 static_cast<const core::CastExpression&>(expression));
             break;
+        case core::AstNodeKind::IsOfExpression:
+            type = AnalyzeIsOf(
+                static_cast<const core::IsOfExpression&>(expression));
+            break;
         default:
             break;
     }
@@ -2455,6 +2458,25 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
          expression.Kind() == core::AstNodeKind::BuildExpression))
         RecordCleanupEffects(type);
     return type;
+}
+
+SemanticType SemanticAnalyzer::AnalyzeIsOf(
+    const core::IsOfExpression& expression) {
+    SemanticType value = AnalyzeExpression(expression.Value());
+    bool result = false;
+    for (const auto& candidateSyntax : expression.Candidates()) {
+        SemanticType candidate = ResolveType(*candidateSyntax);
+        if (expression.IsTypeSetQuery()) {
+            value = value.WithoutConst();
+            candidate = candidate.WithoutConst();
+        }
+        if (value == candidate) {
+            result = true;
+            break;
+        }
+    }
+    const_cast<core::IsOfExpression&>(expression).SetResult(result);
+    return SemanticType(SemanticTypeKind::Bool);
 }
 
 std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(

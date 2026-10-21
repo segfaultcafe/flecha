@@ -1004,6 +1004,12 @@ References remain valid function parameters and cannot be stored in structure
 fields. Existing ownership, const, visibility, and lifecycle rules apply.
 See [generics](docs/generics.md) for the implemented rules and limits.
 
+Generic parameters may use closed compile-time type-set constraints, as in
+`T identity<T: numeric>(T value)`. Built-in numeric sets and custom
+`typeset name { members, };` declarations are supported. `T.isof<name>` folds
+to a boolean during specialization. Type sets have ordinary module visibility
+and no runtime representation. See [type sets](docs/type_sets.md).
+
 ## 19. Open design questions
 
 The following decisions are intentionally not finalized:

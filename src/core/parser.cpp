@@ -218,7 +218,8 @@ std::vector<std::unique_ptr<TypeNode>> Parser::ParseTypeArguments() {
     return arguments;
 }
 
-std::vector<std::string> Parser::ParseGenericParameters() {
+std::vector<std::string> Parser::ParseGenericParameters(
+    std::map<std::string, std::string>* constraints) {
     std::vector<std::string> parameters;
     if (!Match(TokenType::Less)) return parameters;
     do {
@@ -232,6 +233,20 @@ std::vector<std::string> Parser::ParseGenericParameters() {
                 parameter->range,
                 "duplicate generic type parameter '" + parameter->value + "'");
         parameters.push_back(parameter->value);
+        if (Match(TokenType::Colon)) {
+            const Token* set =
+                Consume(TokenType::Identifier, "type-set name after ':'");
+            if (!set) break;
+            std::string name = set->value;
+            if (_importAliases.contains(name) && Match(TokenType::Scope)) {
+                const Token* member =
+                    Consume(TokenType::Identifier,
+                            "type-set declaration after module qualifier");
+                if (!member) break;
+                name += "::" + member->value;
+            }
+            if (constraints) (*constraints)[parameter->value] = std::move(name);
+        }
     } while (Match(TokenType::Comma));
     Consume(TokenType::Greater, "'>' after type parameters");
     return parameters;
@@ -478,7 +493,8 @@ Parser::ParseCallableTypeDeclaration() {
     const Token* name = Consume(TokenType::Identifier, "callable type name");
     if (name == nullptr) return nullptr;
     const auto parameterStart = _position;
-    auto genericParameters = ParseGenericParameters();
+    std::map<std::string, std::string> genericConstraints;
+    auto genericParameters = ParseGenericParameters(&genericConstraints);
     const auto parameterEnd = _position;
     if (Consume(TokenType::LParen, "'(' after callable type name") == nullptr)
         return nullptr;
@@ -525,6 +541,7 @@ Parser::ParseCallableTypeDeclaration() {
         name->range, std::move(parameters), std::move(results), isUnsafe,
         isOnce, std::move(borrowSource), borrowSourceRange);
     declaration->genericParameters = std::move(genericParameters);
+    declaration->genericConstraints = std::move(genericConstraints);
     if (parameterStart != parameterEnd)
         declaration->parameterTokenRanges.emplace_back(
             parameterStart - tokenStart, parameterEnd - tokenStart);
@@ -538,13 +555,14 @@ Parser::ParseCallableTypeDeclaration() {
 std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     const auto tokenStart = _position;
     std::vector<std::pair<std::size_t, std::size_t>> erased;
-    auto parametersAtName = [&](Parser& parser) {
-        const auto begin = _position;
-        auto parameters = parser.ParseGenericParameters();
-        if (_position != begin)
-            erased.emplace_back(begin - tokenStart, _position - tokenStart);
-        return parameters;
-    };
+    auto parametersAtName =
+        [&](Parser& parser, std::map<std::string, std::string>& constraints) {
+            const auto begin = _position;
+            auto parameters = parser.ParseGenericParameters(&constraints);
+            if (_position != begin)
+                erased.emplace_back(begin - tokenStart, _position - tokenStart);
+            return parameters;
+        };
     const source::SourceLocation start = Current().range.start;
     std::vector<FunctionModifier> modifiers;
     while (Check(TokenType::Unsafe) || Check(TokenType::Private) ||
@@ -570,15 +588,22 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     }
     const auto ownerToken =
         static_cast<std::size_t>(name - _tokens.data()) - tokenStart;
-    auto genericParameters = parametersAtName(*this);
+    std::map<std::string, std::string> genericConstraints;
+    auto genericParameters = parametersAtName(*this, genericConstraints);
     std::vector<std::string> ownerParameters;
     std::string owner;
     if (Match(TokenType::Scope)) {
         ownerParameters = std::move(genericParameters);
+        if (!genericConstraints.empty())
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::InvalidGeneric, name->range,
+                "method owner parameters inherit constraints from their "
+                "owning type");
+        genericConstraints.clear();
         owner = name->value;
         name = Consume(TokenType::Identifier, "method name after '::'");
         if (name == nullptr) return nullptr;
-        genericParameters = parametersAtName(*this);
+        genericParameters = parametersAtName(*this, genericConstraints);
     }
     if (Consume(TokenType::LParen, "'(' after function name") == nullptr) {
         return nullptr;
@@ -662,6 +687,7 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         borrowSourceRange);
     declaration->genericParameters = std::move(genericParameters);
     declaration->ownerParameters = std::move(ownerParameters);
+    declaration->genericConstraints = std::move(genericConstraints);
     declaration->parameterTokenRanges = std::move(erased);
     declaration->nameTokenIndex =
         static_cast<std::size_t>(name - _tokens.data()) - tokenStart;
@@ -747,7 +773,8 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
     const auto start = Advance().range.start;
     const Token* name = Consume(TokenType::Identifier, "structure name");
     const auto parameterStart = _position;
-    auto genericParameters = ParseGenericParameters();
+    std::map<std::string, std::string> genericConstraints;
+    auto genericParameters = ParseGenericParameters(&genericConstraints);
     const auto parameterEnd = _position;
     if (!name || !Consume(TokenType::LCurly, "'{' after structure name"))
         return nullptr;
@@ -766,6 +793,7 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
                 source::SourceRange{start, end->range.end}, name->value,
                 name->range, std::move(fields));
             declaration->genericParameters = std::move(genericParameters);
+            declaration->genericConstraints = std::move(genericConstraints);
             if (parameterStart != parameterEnd)
                 declaration->parameterTokenRanges.emplace_back(
                     parameterStart - tokenStart, parameterEnd - tokenStart);
@@ -808,6 +836,30 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
     return nullptr;
 }
 
+std::unique_ptr<TypeSetDeclaration> Parser::ParseTypeSetDeclaration() {
+    const auto start = Advance().range.start;
+    const Token* name = Consume(TokenType::Identifier, "type-set name");
+    if (!name || !Consume(TokenType::LCurly, "'{' after type-set name"))
+        return nullptr;
+
+    std::vector<std::unique_ptr<TypeNode>> members;
+    while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+        auto member = ParseType();
+        if (!member) return nullptr;
+        members.push_back(std::move(member));
+        if (!Match(TokenType::Comma)) break;
+    }
+    const Token* close =
+        Consume(TokenType::RCurly, "'}' after type-set members");
+    const Token* end =
+        close ? Consume(TokenType::SemiColon, "';' after type-set declaration")
+              : nullptr;
+    if (!close || !end) return nullptr;
+    return std::make_unique<TypeSetDeclaration>(
+        source::SourceRange{start, end->range.end}, name->value, name->range,
+        std::move(members));
+}
+
 std::unique_ptr<Declaration> Parser::ParseDeclaration() {
     if (Check(TokenType::Export) || Check(TokenType::Quiver)) {
         const Token modifier = Advance();
@@ -830,6 +882,7 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
         return declaration;
     }
     if (Check(TokenType::Test)) return ParseTestDeclaration();
+    if (Check(TokenType::TypeSet)) return ParseTypeSetDeclaration();
     if (Check(TokenType::Structure)) return ParseStructureDeclaration();
     if (Check(TokenType::Enum)) return ParseEnumDeclaration();
     if (Check(TokenType::Error) && Peek(1).type == TokenType::Identifier &&
@@ -1590,6 +1643,18 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
                     Consume(TokenType::Identifier, "member name after '.'");
             }
             if (member == nullptr) return expression;
+            if (member->value == "isof" && Match(TokenType::Less)) {
+                std::unique_ptr<TypeNode> target = ParseType();
+                if (target == nullptr) return expression;
+                const Token* close =
+                    Consume(TokenType::Greater, "'>' after isof target");
+                const source::SourceLocation end =
+                    close == nullptr ? target->Range().end : close->range.end;
+                expression = std::make_unique<IsOfExpression>(
+                    source::SourceRange{expression->Range().start, end},
+                    std::move(expression), std::move(target));
+                continue;
+            }
             if (member->value == "cast" && Match(TokenType::Less)) {
                 std::unique_ptr<TypeNode> targetType = ParseType();
                 if (targetType == nullptr) return expression;
@@ -2118,7 +2183,7 @@ void Parser::SynchronizeTopLevel() {
     while (!IsAtEnd() && !StartsType() && !Check(TokenType::Func) &&
            !Check(TokenType::Once) && !Check(TokenType::Unsafe) &&
            !Check(TokenType::Structure) && !Check(TokenType::Private) &&
-           !Check(TokenType::Test)) {
+           !Check(TokenType::TypeSet) && !Check(TokenType::Test)) {
         Advance();
     }
 }

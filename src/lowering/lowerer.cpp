@@ -481,6 +481,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             return std::make_unique<BoundCastExpression>(
                 expression.Range(), type, LowerExpression(cast.Value()));
         }
+        case core::AstNodeKind::IsOfExpression: {
+            const auto& isOf =
+                static_cast<const core::IsOfExpression&>(expression);
+            return std::make_unique<BoundLiteralExpression>(
+                expression.Range(), type, isOf.Result() ? "true" : "false");
+        }
         case core::AstNodeKind::UnaryExpression: {
             const core::UnaryExpression& unary =
                 static_cast<const core::UnaryExpression&>(expression);

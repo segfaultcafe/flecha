@@ -5755,6 +5755,83 @@ TEST(SemanticGenericTests,
             .diagnostics.HasErrors());
 }
 
+TEST(SemanticGenericTests, EnforcesBuiltinTypeSetConstraints) {
+    auto valid = Analyze(R"(
+        T integer_identity<T: integer>(T value) { return value; }
+        T numeric_identity<T: numeric>(T value) { return value; }
+        void main() {
+            integer_identity<i32>(1);
+            integer_identity<usize>(1);
+            numeric_identity<f64>(1.5);
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    auto invalid = Analyze(R"(
+        T integer_identity<T: integer>(T value) { return value; }
+        void main() { integer_identity<f64>(1.5); }
+    )");
+    EXPECT_TRUE(invalid.diagnostics.HasErrors());
+    bool constraint = false;
+    for (const auto& diagnostic : invalid.diagnostics.Diagnostics())
+        constraint |=
+            diagnostic.message.find("does not satisfy type set 'integer'") !=
+            std::string::npos;
+    EXPECT_TRUE(constraint);
+}
+
+TEST(SemanticGenericTests, SupportsNestedAndNominalCustomTypeSets) {
+    auto result = Analyze(R"(
+        structure UserId { i32 value; };
+        structure Box<T> { T value; };
+        typeset identifiers { integer, UserId, };
+        typeset application_values { identifiers, f64, Box<u32>, };
+        T identity<T: application_values>(T value) { return value; }
+        void main() {
+            identity<i32>(1);
+            identity<f64>(1.5);
+            identity<UserId>(UserId::init());
+            identity<Box<u32>>(Box<u32>::init());
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_EQ(result.unit->typeSets.size(), 2u);
+}
+
+TEST(SemanticGenericTests, FoldsTypeSetMembershipExpressions) {
+    auto result = Analyze(R"(
+        typeset exact { i32, };
+        bool is_number<T>() { return T.isof<numeric>; }
+        bool is_exact<T>() { return T.isof<exact>; }
+        void main() {
+            bool a = is_number<i32>();
+            bool b = is_number<bool>();
+            bool c = is_exact<i32>();
+            bool d = is_exact<i64>();
+            bool e = 3.isof<i32>;
+            bool f = 3.isof<numeric>;
+            bool g = 3.isof<f64>;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticGenericTests, RejectsInvalidTypeSetDefinitionsAndConstraints) {
+    for (const auto& source : {
+             "typeset first { second, }; typeset second { first, };",
+             "T identity<T: missing>(T value) { return value; }",
+             "i32 value() { return 0; } T identity<T: value>(T input) { "
+             "return input; }",
+             "typeset integer { bool, };",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
 TEST(SemanticGenericTests, BoundsExpandingRecursion) {
     auto result =
         Analyze("void grow<T>() { grow<*T>(); } void main() { grow<i32>(); }");

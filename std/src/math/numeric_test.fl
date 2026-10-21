@@ -48,6 +48,9 @@ test clamp_handles_bounds_and_interior_values(&testing::UnitTest t) {
     asserts::is_true(t, math::clamp<i32>(15, 0, 10) == 10, "clamp applies the upper bound");
     asserts::is_true(t, math::clamp<i32>(0, 0, 10) == 0, "clamp includes the lower bound");
     asserts::is_true(t, math::clamp<i32>(10, 0, 10) == 10, "clamp includes the upper bound");
+    asserts::is_true(t, math::clamp<i32>(5, 10, 0) == 5, "clamp normalizes reversed bounds");
+    asserts::is_true(t, math::clamp<i32>(-5, 10, 0) == 0, "clamp outside of range");
+    asserts::is_true(t, math::clamp<i32>(15, 10, 0) == 10, "clamp outside of range 2");
 }
 
 test abs_handles_signed_unsigned_and_floating_values(&testing::UnitTest t) {
@@ -56,4 +59,15 @@ test abs_handles_signed_unsigned_and_floating_values(&testing::UnitTest t) {
     asserts::is_true(t, math::abs<i32>(8) == 8, "abs preserves a positive integer");
     asserts::is_true(t, math::abs<usize>(8) == 8, "abs accepts an unsigned integer");
     asserts::is_true(t, math::abs<f64>(-1.5) == 1.5, "abs negates a negative float");
+}
+
+test sign_classifies_signed_unsigned_and_floating_values(&testing::UnitTest t) {
+    asserts::is_true(t, math::sign<i32>(-8) == -1, "sign classifies a negative integer");
+    asserts::is_true(t, math::sign<i32>(0) == 0, "sign classifies integer zero");
+    asserts::is_true(t, math::sign<i32>(8) == 1, "sign classifies a positive integer");
+    asserts::is_true(t, math::sign<usize>(0) == 0, "sign accepts unsigned zero");
+    asserts::is_true(t, math::sign<usize>(8) == 1, "sign accepts a positive unsigned integer");
+    asserts::is_true(t, math::sign<f64>(-1.5) == -1.0, "sign classifies a negative float");
+    asserts::is_true(t, math::sign<f64>(0.0) == 0.0, "sign classifies floating-point zero");
+    asserts::is_true(t, math::sign<f64>(1.5) == 1.0, "sign classifies a positive float");
 }

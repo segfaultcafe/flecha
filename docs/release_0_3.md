@@ -112,6 +112,10 @@ For example, hash maps accept hash and equality callables, and heaps accept a
 comparison callable. The standard library must not add a language feature only
 to make these initial APIs resemble another language's collection APIs.
 
+Closed compile-time type sets are available for identity restrictions such as
+`T: integer`. They deliberately do not replace callable policies or introduce
+behavioral traits; see [type sets](type_sets.md).
+
 Growth failure must leave a collection valid and preserve its previous
 contents. Moving, removing, replacing, and destroying elements must execute
 each element's cleanup exactly once.

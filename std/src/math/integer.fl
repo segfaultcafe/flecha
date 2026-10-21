@@ -1,0 +1,74 @@
+module integer;
+
+export bool is_even<T: integer>(T value) {
+    return value % 2 == 0;
+}
+
+export bool is_odd<T: integer>(T value) {
+    return !is_even<T>(value);
+}
+
+export bool is_multiple_of<T: integer>(T value, T divisor) {
+    T zero = none;
+
+    if divisor == zero {
+        return false;
+    }
+
+    return value % divisor == zero;
+}
+
+export T pow<T: integer>(T base, usize exponent) {
+    T result = 1;
+
+    while exponent > 0 {
+        if is_odd<usize>(exponent) {
+            result = result * base;
+        }
+
+        exponent = exponent / 2;
+
+        if exponent > 0 {
+            base = base * base;
+        }
+    }
+
+    return result;
+}
+
+export T gcd<T: integer>(T left, T right) {
+    T zero = none;
+    T one = 1;
+
+    while right != zero {
+        if T.isof<signed_integer> and right == (-1).cast<T> {
+            return one;
+        }
+
+        remainder := left % right;
+        left = right;
+        right = remainder;
+    }
+
+    if left < zero {
+        return -left;
+    }
+
+    return left;
+}
+
+export T lcm<T: integer>(T left, T right) {
+    T zero = none;
+
+    if left == zero or right == zero {
+        return zero;
+    }
+
+    result := (left / gcd<T>(left, right)) * right;
+
+    if result < zero {
+        return -result;
+    }
+
+    return result;
+}

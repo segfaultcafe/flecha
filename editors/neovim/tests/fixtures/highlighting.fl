@@ -71,7 +71,13 @@ unsafe void inspect(lend *const i32 pointer) {}
 // @imports comment
 stringv directive = "@imports string";
 
-module highlighting;
+module integer;
+typeset scalar_numbers {
+    signed_integer, unsigned_integer, integer, floating_point, numeric,
+};
+T constrained<T: numeric>(T value) { return value; }
+bool integer_value<T>() { return T.isof<integer>; }
+i32 namespaced_answer = integer::answer();
 func Mapper<T>(T) => (T);
 once func Action() => ();
 Mapper<i32> integerMapper = (value) => { return value; };

@@ -55,6 +55,12 @@
             "settings": {
               "foreground": "#569CD6"
             }
+          },
+          {
+            "scope": "support.type.typeset.builtin.flecha",
+            "settings": {
+              "foreground": "#87CEFA"
+            }
           }
         ]
       }

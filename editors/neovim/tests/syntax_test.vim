@@ -112,6 +112,18 @@ call assert_equal('#5f87af', tolower(synIDattr(hlID('flechaSelf'), 'fg#', 'gui')
 call assert_equal('67', synIDattr(hlID('flechaSelf'), 'fg', 'cterm'))
 call assert_equal('flechaType', s:HighlightAt('AllocationError', 0))
 
+call assert_equal('flechaTypeSetKeyword', s:HighlightAt('typeset scalar_numbers', 0))
+call assert_equal('flechaTypeSetName', s:HighlightAt('scalar_numbers', 0))
+call assert_equal('flechaBuiltinTypeSet', s:HighlightAt('signed_integer', 0))
+call assert_equal('flechaBuiltinTypeSet', s:HighlightAt('unsigned_integer', 0))
+call assert_equal('flechaBuiltinTypeSet', s:HighlightAt('floating_point', 0))
+call assert_equal('flechaBuiltinTypeSet', s:HighlightAt('T: numeric', 3))
+call assert_equal('flechaIsOfMethod', s:HighlightAt('.isof<integer>', 0))
+call assert_equal('flechaBuiltinTypeSet', s:HighlightAt('.isof<integer>', 6))
+call assert_equal('#87cefa', tolower(synIDattr(hlID('flechaBuiltinTypeSet'), 'fg#', 'gui')))
+call assert_equal('117', synIDattr(hlID('flechaBuiltinTypeSet'), 'fg', 'cterm'))
+call assert_equal('flechaNamespace', s:HighlightAt('integer::answer', 0))
+
 call assert_equal('flechaModifier', s:HighlightAt('own *i32', 0))
 call assert_equal('flechaModifier', s:HighlightAt('lend *const i32', 0))
 
@@ -123,7 +135,8 @@ call assert_equal('flechaString', s:HighlightAt('@imports string', 0))
 call assert_equal('#87cefa', tolower(synIDattr(hlID('flechaImports'), 'fg#', 'gui')))
 call assert_equal('117', synIDattr(hlID('flechaImports'), 'fg', 'cterm'))
 
-call assert_equal('flechaStatement', s:HighlightAt('module highlighting', 0))
+call assert_equal('flechaStatement', s:HighlightAt('module integer', 0))
+call assert_equal('flechaModuleName', s:HighlightAt('module integer', 7))
 call assert_equal('flechaModifier', s:HighlightAt('export i32', 0))
 call assert_equal('flechaModifier', s:HighlightAt('quiver i32', 0))
 

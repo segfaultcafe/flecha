@@ -1,34 +1,54 @@
 # Math
 
-Import the foundational math module with:
+The foundational numeric and integer modules are imported separately:
 
 ```flecha
-@imports :: lib::std::math::ordering;
+@imports
+    :: lib::std::math::math
+    :: lib::std::math::integer;
 ```
 
-The module initially provides generic ordered-value operations:
+## Numeric operations
+
+The `math` module accepts the built-in `numeric` type set:
 
 ```flecha
-smaller := ordering::min<i32>(left, right);
-larger := ordering::max<i32>(left, right);
-limited := ordering::clamp<i32>(value, lower, upper);
+smaller := math::min<i32>(left, right);
+larger := math::max<i32>(left, right);
+low, high := math::min_max<i32>(left, right);
+limited := math::clamp<i32>(value, lower, upper);
+magnitude := math::abs<i32>(value);
+direction := math::sign<i32>(value);
 ```
 
-`min` returns the right value only when it compares less than the left value.
-`max` returns the right value only when the left value compares less than it.
-Both therefore preserve the left value when the values compare equal.
+`min_max` returns its values in ascending order. `clamp` uses the same ordering
+internally, so reversed bounds are accepted and normalized. `abs` and `sign`
+also accept unsigned integers and floating-point values.
 
-`clamp` limits a value to an inclusive lower and upper bound. The caller must
-provide an ordered range where `lower <= upper`. It returns the lower bound when
-the value is below the range, the upper bound when the value is above the range,
-and the original value otherwise.
+Floating-point calls inherit Flecha's comparison behavior. Code requiring
+consensus-stable behavior should reject NaN before using ordering operations
+until NaN ordering is fully specified.
 
-The functions are checked when instantiated and support types for which the
-required `<` operation is valid. Numeric type arguments remain explicit under
-Flecha's current generic rules. Floating-point calls inherit the language's
-comparison behavior; code requiring consensus-stable behavior should reject
-NaN before calling these functions until NaN ordering is fully specified.
+## Integer operations
 
-Checked, wrapping, and saturating arithmetic and bit operations belong to
-separate sibling modules in `std::math`, as planned by the
-[Flecha 0.3.0 milestone](release_0_3.md).
+The `integer` module accepts the built-in `integer` type set:
+
+```flecha
+even := integer::is_even<i32>(value);
+odd := integer::is_odd<i32>(value);
+multiple := integer::is_multiple_of<i32>(value, divisor);
+power := integer::pow<i32>(base, exponent);
+divisor := integer::gcd<i32>(left, right);
+multiple := integer::lcm<i32>(left, right);
+```
+
+`is_multiple_of` returns `false` for a zero divisor. `pow` accepts a `usize`
+exponent and uses exponentiation by squaring. `gcd` and `lcm` ignore input signs
+and return a nonnegative result when that result is representable. `gcd(0, 0)`
+and any `lcm` call containing zero return zero.
+
+These functions do not yet add overflow detection beyond primitive Flecha
+arithmetic. In particular, `pow` and `lcm` may exceed their result type, and the
+positive magnitude of a signed type's minimum value is not representable in
+that same type. Callers must keep results within range until checked, wrapping,
+and saturating arithmetic APIs define those cases explicitly.

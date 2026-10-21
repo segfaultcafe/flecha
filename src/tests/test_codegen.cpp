@@ -891,6 +891,50 @@ TEST(NativeCompilerTests, RunsGenericCallablesWithCapturingClosures) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, FoldsTypeSetMembershipAtSpecialization) {
+    GeneratedSource result = Generate(R"(
+        structure UserId { i32 value; };
+        typeset identifier { integer, UserId, };
+        bool is_numeric<T>() { return T.isof<numeric>; }
+        bool is_identifier<T>() { return T.isof<identifier>; }
+        bool is_i32<T>() { return T.isof<i32>; }
+        bool same<T, U>() { return T.isof<U>; }
+        i32 main() {
+            if !is_numeric<i32>() { return 1; }
+            if is_numeric<bool>() { return 2; }
+            if !is_identifier<UserId>() { return 3; }
+            if is_identifier<f64>() { return 4; }
+            if !3.isof<i32> { return 5; }
+            if !3.isof<numeric> { return 6; }
+            if 3.isof<f64> { return 7; }
+            if !is_i32<i32>() { return 8; }
+            if is_i32<f64>() { return 9; }
+            if !UserId::init().isof<UserId> { return 10; }
+            if !UserId::init().isof<identifier> { return 11; }
+            if !same<i32, i32>() { return 12; }
+            if same<i32, i64>() { return 13; }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() / "flecha_native_type_set_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "native_type_set_test", executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsCapturelessAnonymousFunctions) {
     GeneratedSource result = Generate(R"(
         func Mapper(i32) => (i32);

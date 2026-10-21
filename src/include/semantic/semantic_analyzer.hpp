@@ -36,8 +36,7 @@ class SemanticAnalyzer final {
         _inaccessibleImports;
     std::unordered_map<
         std::string,
-        std::unordered_map<std::string,
-                           std::vector<const core::Declaration*>>>
+        std::unordered_map<std::string, std::vector<const core::Declaration*>>>
         _ambiguousImports;
     std::unordered_map<std::string, std::string> _quiverNames;
     std::unordered_set<std::string> _entryModules;
@@ -124,6 +123,7 @@ class SemanticAnalyzer final {
                               SemanticType expected);
     SemanticType AnalyzeIndex(const core::IndexExpression& expression);
     SemanticType AnalyzeCast(const core::CastExpression& expression);
+    SemanticType AnalyzeIsOf(const core::IsOfExpression& expression);
     [[nodiscard]] bool BorrowsLocalString(
         const core::Expression& expression) const;
     const Symbol* AddSymbol(std::unique_ptr<Symbol> symbol,

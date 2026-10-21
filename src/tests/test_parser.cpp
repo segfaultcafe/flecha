@@ -242,6 +242,39 @@ TEST(ParserTests, ParsesGenericCallableSignatures) {
     EXPECT_EQ(transform.Results()[0]->Name(), "U");
 }
 
+TEST(ParserTests, ParsesTypeSetsAndGenericConstraints) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        typeset indices { u8, u16, usize, };
+        structure Box<T: indices> { T value; };
+        bool accepts<T: numeric, U: indices>(T value, U index) {
+            return T.isof<floating_point>;
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 3u);
+    const auto& set =
+        static_cast<const TypeSetDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(set.Name(), "indices");
+    ASSERT_EQ(set.Members().size(), 3u);
+    EXPECT_EQ(set.Members()[2]->Type(), PrimitiveType::USize);
+
+    const auto& box =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[1]);
+    EXPECT_EQ(box.genericConstraints.at("T"), "indices");
+    const auto& accepts =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[2]);
+    EXPECT_EQ(accepts.genericConstraints.at("T"), "numeric");
+    EXPECT_EQ(accepts.genericConstraints.at("U"), "indices");
+    const auto& returned = static_cast<const ReturnStatement&>(
+        *accepts.Body().Statements().front());
+    EXPECT_EQ(returned.Value()->Kind(), AstNodeKind::IsOfExpression);
+}
+
 TEST(ParserTests, ParsesCapturelessAnonymousFunctionForms) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(R"(
