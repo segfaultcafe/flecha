@@ -55,3 +55,28 @@ and `readBig<T>` decode the same fixed-width unsigned types supported by the
 Every failed read returns `ByteError.UnexpectedEnd` and leaves the cursor
 position unchanged. Failed scalar reads return zero. A failed slice read returns
 a valid empty view at the current position rather than a null or owning value.
+
+## Writer
+
+The same `cursor` module provides `Writer`, a mutable borrowed cursor over a
+caller-provided destination:
+
+```flecha
+[6]u8 encoded = none;
+writer := cursor::Writer::init(encoded[:]);
+
+littleError := writer.writeLittle<u16>(4660);
+bigError := writer.writeBig<u32>(305419896);
+```
+
+`Writer` does not allocate or own its destination. Its borrow-result contract
+keeps the mutable destination loan active for the writer's lifetime.
+`position()`, `len()`, and `remaining()` have the same meanings as on `Reader`;
+`full()` reports whether no writable bytes remain.
+
+`writeByte(value)` writes one byte. `write(source)` copies the complete source
+or writes nothing, and a zero-length source succeeds. `writeLittle<T>` and
+`writeBig<T>` encode the fixed-width unsigned types supported by `endian`.
+
+Every failed write returns `ByteError.InsufficientSpace` and changes neither the
+cursor position nor any destination byte.

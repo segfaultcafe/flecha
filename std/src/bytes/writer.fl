@@ -1,0 +1,91 @@
+module cursor;
+
+@imports
+    :: root::bytes::endian
+    :: root::bytes::errors
+    :: root::math::bits;
+
+export structure Writer {
+    private []u8 destination;
+    private usize position;
+};
+
+Writer Writer::init([]u8 destination) <-destination override {
+    return build Writer {
+        self.destination = destination;
+        self.position = 0;
+    };
+}
+
+usize Writer::position(&const self) {
+    return self->position;
+}
+
+usize Writer::len(&const self) {
+    return self->destination.len();
+}
+
+usize Writer::remaining(&const self) {
+    return self->destination.len() - self->position;
+}
+
+bool Writer::full(&const self) {
+    return self->remaining() == 0;
+}
+
+errors::ByteError Writer::writeByte(&self, u8 value) {
+    if self->full() {
+        return errors::ByteError.InsufficientSpace;
+    }
+
+    self->destination[self->position] = value;
+    self->position++;
+    return none;
+}
+
+errors::ByteError Writer::write(&self, []const u8 source) {
+    if source.len() > self->remaining() {
+        return errors::ByteError.InsufficientSpace;
+    }
+
+    loop usize index = 0; index < source.len(); index++ {
+        self->destination[self->position + index] = source[index];
+    }
+
+    self->position = self->position + source.len();
+    return none;
+}
+
+errors::ByteError Writer::writeLittle<
+    T: endian::fixed_unsigned_integer
+>(&self, T value) {
+    usize byteCount = bits::width<T>() / 8;
+    if byteCount > self->remaining() {
+        return errors::ByteError.InsufficientSpace;
+    }
+
+    err := endian::write_little<T>(self->destination[self->position:], value);
+    if err != none {
+        return err;
+    }
+
+    self->position = self->position + byteCount;
+    return none;
+}
+
+errors::ByteError Writer::writeBig<
+    T: endian::fixed_unsigned_integer
+>(&self, T value) {
+    usize byteCount = bits::width<T>() / 8;
+    if byteCount > self->remaining() {
+        return errors::ByteError.InsufficientSpace;
+    }
+
+    err := endian::write_big<T>(self->destination[self->position:], value);
+    if err != none {
+        return err;
+    }
+
+    self->position = self->position + byteCount;
+    return none;
+}
