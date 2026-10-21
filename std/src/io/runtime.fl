@@ -1,12 +1,12 @@
 private module runtime;
 
-export extern unsafe i32 flecha_runtime_v1_read_file(
+quiver extern unsafe i32 flecha_runtime_v1_read_file(
     *string output,
     *const char path,
     usize path_length
 );
 
-export extern unsafe i32 flecha_runtime_v1_file_stream_open(
+quiver extern unsafe i32 flecha_runtime_v1_file_stream_open(
     **void output,
     *const char path,
     usize path_length,
@@ -18,66 +18,66 @@ export extern unsafe i32 flecha_runtime_v1_file_stream_open(
     u8 create_new
 );
 
-export extern unsafe i32 flecha_runtime_v1_file_stream_close(
+quiver extern unsafe i32 flecha_runtime_v1_file_stream_close(
     *void handle
 );
 
-export extern unsafe i32 flecha_runtime_v1_file_stream_read(
+quiver extern unsafe i32 flecha_runtime_v1_file_stream_read(
     *void handle,
     *u8 destination,
     usize capacity,
     *usize bytes_read
 );
 
-export extern unsafe i32 flecha_runtime_v1_file_stream_write(
+quiver extern unsafe i32 flecha_runtime_v1_file_stream_write(
     *void handle,
     *const u8 source,
     usize length,
     *usize bytes_written
 );
 
-export extern unsafe i32 flecha_runtime_v1_file_stream_seek(
+quiver extern unsafe i32 flecha_runtime_v1_file_stream_seek(
     *void handle,
     i64 offset,
     u8 origin,
     *u64 position
 );
 
-export extern unsafe i32 flecha_runtime_v1_file_stream_flush(
+quiver extern unsafe i32 flecha_runtime_v1_file_stream_flush(
     *void handle
 );
 
-export extern unsafe i32 flecha_runtime_v1_path_exists(
+quiver extern unsafe i32 flecha_runtime_v1_path_exists(
     *u8 output,
     *const char path,
     usize path_length
 );
 
-export extern unsafe i32 flecha_runtime_v1_remove_file(
+quiver extern unsafe i32 flecha_runtime_v1_remove_file(
     *const char path,
     usize path_length
 );
 
-export extern unsafe i32 flecha_runtime_v1_rename(
+quiver extern unsafe i32 flecha_runtime_v1_rename(
     *const char source,
     usize source_length,
     *const char destination,
     usize destination_length
 );
 
-export extern unsafe i32 flecha_runtime_v1_create_directory(
+quiver extern unsafe i32 flecha_runtime_v1_create_directory(
     *const char path,
     usize path_length
 );
 
-export extern unsafe i32 flecha_runtime_v1_remove_directory(
+quiver extern unsafe i32 flecha_runtime_v1_remove_directory(
     *const char path,
     usize path_length,
     u8 force,
     u8 recursive
 );
 
-export extern unsafe i32 flecha_runtime_v1_metadata(
+quiver extern unsafe i32 flecha_runtime_v1_metadata(
     *u8 output_type,
     *u64 output_size,
     *const char path,
