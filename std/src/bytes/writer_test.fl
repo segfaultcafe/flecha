@@ -134,6 +134,41 @@ test write_string_copies_bytes_and_requires_complete_space(
     );
 }
 
+test writer_accepts_runtime_sized_slices(&testing::UnitTest t) {
+    destination, allocationError := new<own []u8>(6);
+    asserts::is_true(
+        t,
+        allocationError == none,
+        "runtime-sized destination allocation succeeds"
+    );
+    if allocationError != none {
+        return;
+    }
+
+    {
+        []u8 view = destination[:];
+        writer := cursor::Writer::init(view);
+
+        textError := writer.writeString("FL");
+        numberError := writer.writeBig<u32>(305419896);
+
+        asserts::is_true(t, textError == none, "writer accepts a []u8 view");
+        asserts::is_true(
+            t,
+            numberError == none and writer.full(),
+            "writer fills a runtime-sized slice"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 70 and destination[1] == 76 and
+            destination[2] == 18 and destination[3] == 52 and
+            destination[4] == 86 and destination[5] == 120,
+        "runtime-sized destination retains written bytes"
+    );
+}
+
 test typed_writes_follow_endian_order_and_fail_transactionally(
     &testing::UnitTest t
 ) {
