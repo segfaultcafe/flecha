@@ -1,3 +1,118 @@
 module hex;
 
+@imports :: root::bytes::errors;
 
+export (usize, errors::ByteError) encoded_length(usize byteCount) {
+    length, overflowed := byteCount.overflow_mul(2);
+    if overflowed {
+        return (none, errors::ByteError.Overflow);
+    }
+
+    return (length, none);
+}
+
+export (usize, errors::ByteError) decoded_length(usize characterCount) {
+    if characterCount % 2 != 0 {
+        return (none, errors::ByteError.InvalidEncoding);
+    }
+
+    return (characterCount / 2, none);
+}
+
+export (usize, errors::ByteError) encode([]u8 destination, []const u8 source) {
+    return encode_with_case(destination, source, false);
+}
+
+export (usize, errors::ByteError) encode_upper(
+    []u8 destination,
+    []const u8 source
+) {
+    return encode_with_case(destination, source, true);
+}
+
+export (usize, errors::ByteError) decode(
+    []u8 destination,
+    []const u8 source
+) {
+    const usize LENGTH, errors::ByteError lengthError = decoded_length(
+        source.len()
+    );
+    if lengthError != none {
+        return (none, lengthError);
+    }
+
+    if destination.len() < LENGTH {
+        return (none, errors::ByteError.InsufficientSpace);
+    }
+
+    loop usize index = 0; index < source.len(); index++ {
+        if !is_digit(source[index]) {
+            return (none, errors::ByteError.InvalidEncoding);
+        }
+    }
+
+    loop usize index = 0; index < LENGTH; index++ {
+        const usize SOURCE_INDEX = index * 2;
+        const u8 HIGH = digit_value(source[SOURCE_INDEX]);
+        const u8 LOW = digit_value(source[SOURCE_INDEX + 1]);
+        destination[index] = (HIGH << 4) | LOW;
+    }
+
+    return (LENGTH, none);
+}
+
+(usize, errors::ByteError) encode_with_case(
+    []u8 destination,
+    []const u8 source,
+    bool uppercase
+) {
+    const usize LENGTH, errors::ByteError lengthError = encoded_length(
+        source.len()
+    );
+    if lengthError != none {
+        return (none, lengthError);
+    }
+
+    if destination.len() < LENGTH {
+        return (none, errors::ByteError.InsufficientSpace);
+    }
+
+    loop usize index = 0; index < source.len(); index++ {
+        const usize DESTINATION_INDEX = index * 2;
+        const u8 BYTE = source[index];
+        destination[DESTINATION_INDEX] = digit(BYTE >> 4, uppercase);
+        destination[DESTINATION_INDEX + 1] = digit(BYTE & 15, uppercase);
+    }
+
+    return (LENGTH, none);
+}
+
+u8 digit(u8 value, bool uppercase) {
+    if value < 10 {
+        return value + 48;
+    }
+
+    if uppercase {
+        return value + 55;
+    }
+
+    return value + 87;
+}
+
+bool is_digit(u8 value) {
+    return (value >= 48 and value <= 57) or
+        (value >= 65 and value <= 70) or
+        (value >= 97 and value <= 102);
+}
+
+u8 digit_value(u8 value) {
+    if value <= 57 {
+        return value - 48;
+    }
+
+    if value <= 70 {
+        return value - 55;
+    }
+
+    return value - 87;
+}

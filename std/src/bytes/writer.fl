@@ -3,6 +3,7 @@ module cursor;
 @imports
     :: root::bytes::endian
     :: root::bytes::errors
+    :: root::bytes::hex
     :: root::bytes::varint
     :: root::math::bits;
 
@@ -128,6 +129,29 @@ errors::ByteError Writer::writeVarint<
     byteCount, err := varint::write<T>(
         self->destination[self->position:],
         value
+    );
+    if err != none {
+        return err;
+    }
+
+    self->position = self->position + byteCount;
+    return none;
+}
+
+errors::ByteError Writer::writeHex(&self, []const u8 source) {
+    byteCount, err := hex::encode(self->destination[self->position:], source);
+    if err != none {
+        return err;
+    }
+
+    self->position = self->position + byteCount;
+    return none;
+}
+
+errors::ByteError Writer::writeHexUpper(&self, []const u8 source) {
+    byteCount, err := hex::encode_upper(
+        self->destination[self->position:],
+        source
     );
     if err != none {
         return err;
