@@ -211,3 +211,90 @@ test typed_writes_follow_endian_order_and_fail_transactionally(
         "a failed typed write leaves destination bytes unchanged"
     );
 }
+
+test written_bytes_exposes_only_the_cursor_prefix(&testing::UnitTest t) {
+    [4]u8 destination = [170; 4];
+
+    {
+        writer := cursor::Writer::init(destination[:]);
+        firstError := writer.writeByte(10);
+        secondError := writer.writeByte(20);
+        asserts::is_true(
+            t,
+            firstError == none and secondError == none,
+            "setup writes succeed"
+        );
+
+        written := writer.writtenBytes();
+        asserts::is_true(t, written.len() == 2, "writtenBytes hides unused space");
+        asserts::is_true(
+            t,
+            written[0] == 10 and written[1] == 20,
+            "writtenBytes exposes the destination prefix"
+        );
+    }
+}
+
+test writer_skip_advances_and_fails_transactionally(&testing::UnitTest t) {
+    [4]u8 destination = [170; 4];
+
+    {
+        writer := cursor::Writer::init(destination[:]);
+        emptyError := writer.skip(0);
+        skipError := writer.skip(3);
+        oversizedError := writer.skip(2);
+
+        asserts::is_true(t, emptyError == none, "a zero-length skip succeeds");
+        asserts::is_true(t, skipError == none, "skip accepts available space");
+        asserts::is_true(
+            t,
+            oversizedError == errors::ByteError.InsufficientSpace,
+            "an oversized skip reports insufficient space"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 3 and writer.remaining() == 1,
+            "an oversized skip does not advance"
+        );
+        asserts::is_true(
+            t,
+            writer.writtenBytes().len() == 3,
+            "skipped bytes belong to the cursor prefix"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 170 and destination[1] == 170 and
+            destination[2] == 170 and destination[3] == 170,
+        "skip does not modify destination bytes"
+    );
+}
+
+test writer_reset_returns_to_the_start(&testing::UnitTest t) {
+    [2]u8 destination = [170; 2];
+
+    {
+        writer := cursor::Writer::init(destination[:]);
+        firstError := writer.writeByte(10);
+        writer.reset();
+        secondError := writer.writeByte(20);
+
+        asserts::is_true(
+            t,
+            firstError == none and secondError == none,
+            "writes before and after reset succeed"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 1 and writer.writtenBytes().len() == 1,
+            "reset restores the initial cursor position"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 20 and destination[1] == 170,
+        "a write after reset replaces bytes from the beginning"
+    );
+}

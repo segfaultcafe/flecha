@@ -2,6 +2,7 @@ module buffer_test;
 
 @imports
     :: root::bytes::buffer
+    :: root::bytes::errors
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
@@ -160,5 +161,105 @@ test buffer_appends_wide_unsigned_integers(&testing::UnitTest t) {
             bytes[3] == 5 and bytes[4] == 4 and bytes[5] == 3 and
             bytes[6] == 2 and bytes[7] == 1,
         "typed u64 writes append every byte"
+    );
+}
+
+test truncate_only_shortens_the_logical_contents(&testing::UnitTest t) {
+    value, allocationError := buffer::Buffer::withCapacity(4);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup Buffer is constructed");
+        return;
+    }
+
+    [4]u8 source = [1, 2, 3, 4];
+    writeError := value.write(source[:]);
+    value.truncate(2);
+    value.truncate(3);
+
+    asserts::is_true(t, writeError == none, "the setup write succeeds");
+    asserts::is_true(t, value.len() == 2, "truncate cannot grow the Buffer");
+    asserts::is_true(t, value.capacity() == 4, "truncate retains capacity");
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes.len() == 2 and bytes[0] == 1 and bytes[1] == 2,
+        "truncate preserves the retained prefix"
+    );
+}
+
+test resize_shrinks_grows_and_fills_new_bytes(&testing::UnitTest t) {
+    value, allocationError := buffer::Buffer::withCapacity(2);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup Buffer is constructed");
+        return;
+    }
+
+    [2]u8 source = [10, 20];
+    writeError := value.write(source[:]);
+    growError := value.resize(5, 170);
+
+    asserts::is_true(
+        t,
+        writeError == none and growError == none,
+        "resize grows an initialized Buffer"
+    );
+    asserts::is_true(t, value.len() == 5, "growing resize updates length");
+    asserts::is_true(t, value.capacity() == 8, "growing resize expands capacity");
+    {
+        bytes := value.bytes();
+        asserts::is_true(
+            t,
+            bytes[0] == 10 and bytes[1] == 20 and bytes[2] == 170 and
+                bytes[3] == 170 and bytes[4] == 170,
+            "growing resize fills only the new bytes"
+        );
+    }
+
+    shrinkError := value.resize(1, 99);
+    sameError := value.resize(1, 77);
+    asserts::is_true(
+        t,
+        shrinkError == none and sameError == none,
+        "shrinking and same-length resizes succeed"
+    );
+    asserts::is_true(
+        t,
+        value.len() == 1 and value.bytes()[0] == 10,
+        "shrinking resize preserves the retained prefix"
+    );
+    asserts::is_true(t, value.capacity() == 8, "shrinking resize retains capacity");
+}
+
+test pop_byte_removes_from_the_end_and_preserves_empty_state(
+    &testing::UnitTest t
+) {
+    value, allocationError := buffer::Buffer::withCapacity(2);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup Buffer is constructed");
+        return;
+    }
+
+    [2]u8 source = [10, 20];
+    writeError := value.write(source[:]);
+    second, secondError := value.popByte();
+    first, firstError := value.popByte();
+    missing, emptyError := value.popByte();
+
+    asserts::is_true(t, writeError == none, "the setup write succeeds");
+    asserts::is_true(
+        t,
+        second == 20 and secondError == none and
+            first == 10 and firstError == none,
+        "popByte removes bytes in reverse order"
+    );
+    asserts::is_true(
+        t,
+        missing == 0 and emptyError == errors::ByteError.UnexpectedEnd,
+        "popByte reports an empty Buffer"
+    );
+    asserts::is_true(
+        t,
+        value.empty() and value.len() == 0 and value.capacity() == 2,
+        "failed popByte preserves the empty Buffer and its allocation"
     );
 }

@@ -2,6 +2,7 @@ module buffer;
 
 @imports
     :: root::bytes::endian
+    :: root::bytes::errors
     :: root::math::bits;
 
 const usize FL_BUFFER_INIT_CAPACITY = 8;
@@ -59,6 +60,40 @@ bool Buffer::empty(&const self) {
 
 void Buffer::clear(&self) {
     self->length = 0;
+}
+
+void Buffer::truncate(&self, usize length) {
+    if length < self->length {
+        self->length = length;
+    }
+}
+
+error Buffer::resize(&self, usize length, u8 fill) {
+    if length <= self->length {
+        self->length = length;
+        return none;
+    }
+
+    err := self->ensureAdditional(length - self->length);
+    if err != none {
+        return err;
+    }
+
+    loop usize index = self->length; index < length; index++ {
+        self->storage[index] = fill;
+    }
+
+    self->length = length;
+    return none;
+}
+
+(u8, errors::ByteError) Buffer::popByte(&self) {
+    if self->empty() {
+        return (none, errors::ByteError.UnexpectedEnd);
+    }
+
+    self->length = self->length - 1;
+    return (self->storage[self->length], none);
 }
 
 error Buffer::write(&self, []const u8 source) {

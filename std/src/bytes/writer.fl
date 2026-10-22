@@ -33,6 +33,23 @@ bool Writer::full(&const self) {
     return self->remaining() == 0;
 }
 
+[]const u8 Writer::writtenBytes(&const self) <-self {
+    return self->destination[:self->position];
+}
+
+errors::ByteError Writer::skip(&self, usize count) {
+    if count > self->remaining() {
+        return errors::ByteError.InsufficientSpace;
+    }
+
+    self->position = self->position + count;
+    return none;
+}
+
+void Writer::reset(&self) {
+    self->position = 0;
+}
+
 errors::ByteError Writer::writeByte(&self, u8 value) {
     if self->full() {
         return errors::ByteError.InsufficientSpace;
