@@ -483,6 +483,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const core::NameExpression& name =
                 static_cast<const core::NameExpression&>(expression);
             const semantic::Symbol* symbol = _semanticModel->SymbolFor(name);
+            if (symbol->Kind() == semantic::SymbolKind::ModuleConstant) {
+                const core::ModuleConstantDeclaration* constant =
+                    _semanticModel->ModuleConstantFor(*symbol);
+                return LowerExpression(constant->Initializer(),
+                                       symbol->Type().WithoutConst());
+            }
             if (symbol->Kind() == semantic::SymbolKind::Function) {
                 return std::make_unique<BoundFunctionExpression>(
                     expression.Range(),

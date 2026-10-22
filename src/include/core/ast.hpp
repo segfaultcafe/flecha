@@ -23,6 +23,7 @@ enum class AstNodeKind {
     ErrorDeclaration,
     EnumDeclaration,
     TypeSetDeclaration,
+    ModuleConstantDeclaration,
     StructureDeclaration,
     StructureField,
     BuildExpression,
@@ -284,6 +285,37 @@ class TypeNode final : public AstNode {
     std::vector<std::unique_ptr<TypeNode>> _elements;
     bool _isConst;
     source::SourceRange _qualifierRange;
+};
+
+class ModuleConstantDeclaration final : public Declaration {
+   public:
+    ModuleConstantDeclaration(source::SourceRange range,
+                              std::unique_ptr<TypeNode> type, std::string name,
+                              source::SourceRange nameRange,
+                              std::unique_ptr<Expression> initializer)
+        : Declaration(range),
+          _type(std::move(type)),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _initializer(std::move(initializer)) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::ModuleConstantDeclaration;
+    }
+    [[nodiscard]] const TypeNode& Type() const { return *_type; }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] const source::SourceRange& NameRange() const {
+        return _nameRange;
+    }
+    [[nodiscard]] const Expression& Initializer() const {
+        return *_initializer;
+    }
+
+   private:
+    std::unique_ptr<TypeNode> _type;
+    std::string _name;
+    source::SourceRange _nameRange;
+    std::unique_ptr<Expression> _initializer;
 };
 
 struct EnumVariant final {

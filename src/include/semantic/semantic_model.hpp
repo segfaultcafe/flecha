@@ -39,6 +39,8 @@ class SemanticModel final {
     [[nodiscard]] SemanticType TypeOf(const core::Expression& expression) const;
     [[nodiscard]] TransferKind TransferOf(
         const core::Expression& expression) const;
+    [[nodiscard]] const core::ModuleConstantDeclaration* ModuleConstantFor(
+        const Symbol& symbol) const;
     const StructureField* FieldFor(
         const core::MemberAccessExpression& expression) const {
         const auto found = _fields.find(&expression);
@@ -93,6 +95,8 @@ class SemanticModel final {
     std::unordered_map<const core::AstNode*, const Symbol*> _declarations;
     std::unordered_map<const core::Expression*, SemanticType> _types;
     std::unordered_map<const core::Expression*, TransferKind> _transfers;
+    std::unordered_map<const Symbol*, const core::ModuleConstantDeclaration*>
+        _moduleConstants;
     std::unordered_map<const core::DestructureBinding*, const Symbol*>
         _destructureTargets;
     std::unordered_map<const core::DeferStatement*, std::vector<const Symbol*>>

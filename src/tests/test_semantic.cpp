@@ -94,6 +94,41 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::U8)));
 }
 
+TEST(SemanticConstTests, ResolvesAndValidatesModuleConstants) {
+    auto valid = Analyze(R"(
+        const usize BASE = 4;
+        const usize LIMIT = BASE * 2;
+        usize value() { return LIMIT; }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(valid.diagnostics.HasErrors());
+    const auto& base = static_cast<const ModuleConstantDeclaration&>(
+        *valid.unit->Declarations()[0]);
+    const Symbol* symbol = valid.model.DeclaredSymbol(base);
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->Kind(), SymbolKind::ModuleConstant);
+    EXPECT_FALSE(symbol->Writable());
+
+    auto runtime = Analyze(
+        "i32 make() { return 42; } const i32 VALUE = make(); "
+        "i32 read() { return VALUE; }");
+    const Diagnostic* runtimeError =
+        FindDiagnostic(runtime, DiagnosticCode::InvalidOperand);
+    ASSERT_NE(runtimeError, nullptr);
+    EXPECT_NE(runtimeError->message.find("compile-time expression"),
+              std::string::npos);
+
+    auto cycle = Analyze(
+        "const i32 LEFT = RIGHT; const i32 RIGHT = LEFT; "
+        "i32 read() { return LEFT; }");
+    const Diagnostic* cycleError =
+        FindDiagnostic(cycle, DiagnosticCode::InvalidOperand);
+    ASSERT_NE(cycleError, nullptr);
+    EXPECT_NE(cycleError->message.find("cyclic module constant"),
+              std::string::npos);
+}
+
 TEST(SemanticCallableTests, ResolvesStructuralSignaturesAndFunctionValues) {
     Analysis result = Analyze(R"(
         func Mapper(i32) => (i32);
@@ -6173,8 +6208,7 @@ TEST(SemanticGenericTests, GenericMethodsResolveMixedTuplesAndBuildSelfFields) {
         ADD_FAILURE() << d.message;
 }
 
-TEST(SemanticGenericTests,
-     SupportsRecursivePointerTypesAndFieldMethodNames) {
+TEST(SemanticGenericTests, SupportsRecursivePointerTypesAndFieldMethodNames) {
     EXPECT_FALSE(Analyze(R"(
         structure Node<T> { T value; *Node<T> next; };
         void main() { node := Node<i32>::init(); }
@@ -6189,7 +6223,7 @@ TEST(SemanticGenericTests,
             return box.value<i32>();
         }
     )")
-                    .diagnostics.HasErrors());
+                     .diagnostics.HasErrors());
 }
 
 TEST(SemanticGenericTests, TypeArgumentsRespectLocalShadowing) {

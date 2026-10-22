@@ -101,6 +101,26 @@ TEST(ParserTests, ParsesCompleteFunctionWithReturnStatement) {
     EXPECT_EQ(unit->Range().end.offset, 24);
 }
 
+TEST(ParserTests, ParsesModuleConstantsWithoutConfusingConstFunctions) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "export const usize LIMIT = 4 * 2; const i32 answer() { return 42; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    ASSERT_EQ(unit->Declarations()[0]->Kind(),
+              AstNodeKind::ModuleConstantDeclaration);
+    const auto& constant =
+        static_cast<const ModuleConstantDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(constant.Name(), "LIMIT");
+    EXPECT_TRUE(constant.Type().IsConst());
+    EXPECT_TRUE(constant.exported);
+    EXPECT_EQ(constant.Initializer().Kind(), AstNodeKind::BinaryExpression);
+    EXPECT_EQ(unit->Declarations()[1]->Kind(),
+              AstNodeKind::FunctionDeclaration);
+}
+
 TEST(ParserTests, ParsesTypedParametersAndBareReturn) {
     DiagnosticBag diagnostics;
     std::vector<Token> tokens =

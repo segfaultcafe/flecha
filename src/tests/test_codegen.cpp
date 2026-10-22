@@ -112,6 +112,32 @@ TEST(LlvmCodeGeneratorTests, EmitsVerifiedFunctionsLocalsCallsAndReturns) {
     EXPECT_NE(ir.find("call i32 @add"), std::string::npos);
 }
 
+TEST(NativeCompilerTests, InlinesModuleConstantExpressions) {
+    GeneratedSource result = Generate(R"(
+        const i32 BASE = 20;
+        const i32 ANSWER = BASE * 2 + 2;
+        i32 main() { return ANSWER; }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_module_constant_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "module_constant_test", executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsUniformCallableValuesAndIndirectCalls) {
     GeneratedSource result = Generate(R"(
         func Mapper(i32) => (i32);

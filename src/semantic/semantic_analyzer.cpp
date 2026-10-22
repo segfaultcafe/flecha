@@ -581,6 +581,11 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                     name = static_cast<const core::CallableTypeDeclaration&>(
                                *declaration)
                                .Name();
+                else if (declaration->Kind() ==
+                         core::AstNodeKind::ModuleConstantDeclaration)
+                    name = static_cast<const core::ModuleConstantDeclaration&>(
+                               *declaration)
+                               .Name();
                 if (!accessible) {
                     if (declaration->quiverVisible && !name.empty())
                         _inaccessibleImports[module.sourceId].insert_or_assign(
@@ -733,6 +738,13 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
         for (const auto& parameter : signature.parameters)
             check(parameter, declaration->Range(), *declaration);
     }
+    for (const auto& declaration : unit.Declarations()) {
+        if ((!declaration->exported && !declaration->quiverVisible) ||
+            declaration->Kind() != core::AstNodeKind::ModuleConstantDeclaration)
+            continue;
+        const auto* symbol = _model.DeclaredSymbol(*declaration);
+        if (symbol) check(symbol->Type(), declaration->Range(), *declaration);
+    }
 }
 
 const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
@@ -754,6 +766,10 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
         localName =
             static_cast<const core::CallableTypeDeclaration&>(declaration)
                 .Name();
+    else if (declaration.Kind() == core::AstNodeKind::ModuleConstantDeclaration)
+        localName =
+            static_cast<const core::ModuleConstantDeclaration&>(declaration)
+                .Name();
     else if (declaration.Kind() == core::AstNodeKind::FunctionDeclaration) {
         const auto& function =
             static_cast<const core::FunctionDeclaration&>(declaration);
@@ -765,7 +781,8 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
         declaration.Kind() == core::AstNodeKind::StructureDeclaration ||
         declaration.Kind() == core::AstNodeKind::EnumDeclaration ||
         declaration.Kind() == core::AstNodeKind::ErrorDeclaration ||
-        declaration.Kind() == core::AstNodeKind::CallableTypeDeclaration;
+        declaration.Kind() == core::AstNodeKind::CallableTypeDeclaration ||
+        declaration.Kind() == core::AstNodeKind::ModuleConstantDeclaration;
     if (topLevel) {
         const auto& syntax = static_cast<const core::Declaration&>(declaration);
         if (const auto module = _moduleScopes.find(syntax.moduleId);
@@ -927,6 +944,149 @@ void SemanticAnalyzer::ResolveCallableTypes(const core::CompilationUnit& unit) {
             }
         }
         *_callableSignatures.at(&syntax) = std::move(signature);
+    }
+}
+
+void SemanticAnalyzer::RegisterModuleConstants(
+    const core::CompilationUnit& unit) {
+    for (const auto& declaration : unit.Declarations()) {
+        if (declaration->Kind() != core::AstNodeKind::ModuleConstantDeclaration)
+            continue;
+        const auto& constant =
+            static_cast<const core::ModuleConstantDeclaration&>(*declaration);
+        SetSource(constant.sourceId);
+        const SemanticType type = ResolveType(constant.Type());
+        const SemanticType valueType = type.WithoutConst();
+        if (!(valueType.IsNumeric() ||
+              valueType.Kind() == SemanticTypeKind::Bool ||
+              valueType.Kind() == SemanticTypeKind::Char ||
+              valueType.Kind() == SemanticTypeKind::StringView ||
+              valueType.Kind() == SemanticTypeKind::Enum ||
+              valueType.IsErrorValue()))
+            Report(diagnostics::DiagnosticCode::InvalidVariableType,
+                   constant.Type().Range(),
+                   "module constants require a numeric, bool, char, stringv, "
+                   "enum, or error-value type");
+        const Symbol* symbol = AddSymbol(
+            std::make_unique<VariableSymbol>(SymbolKind::ModuleConstant,
+                                             TopName(constant, constant.Name()),
+                                             type, constant.NameRange(), false),
+            constant);
+        if (symbol) _model._moduleConstants.emplace(symbol, &constant);
+    }
+}
+
+bool SemanticAnalyzer::ValidateModuleConstantExpression(
+    const core::Expression& expression,
+    std::vector<const Symbol*>& dependencies) const {
+    using core::AstNodeKind;
+    switch (expression.Kind()) {
+        case AstNodeKind::LiteralExpression:
+            return true;
+        case AstNodeKind::NameExpression: {
+            const Symbol* symbol = _model.SymbolFor(
+                static_cast<const core::NameExpression&>(expression));
+            if (!symbol || symbol->Kind() != SymbolKind::ModuleConstant)
+                return false;
+            dependencies.push_back(symbol);
+            return true;
+        }
+        case AstNodeKind::ParenthesizedExpression:
+            return ValidateModuleConstantExpression(
+                static_cast<const core::ParenthesizedExpression&>(expression)
+                    .Inner(),
+                dependencies);
+        case AstNodeKind::UnaryExpression: {
+            const auto& unary =
+                static_cast<const core::UnaryExpression&>(expression);
+            if (unary.OperatorType() != TokenType::Add &&
+                unary.OperatorType() != TokenType::Sub &&
+                unary.OperatorType() != TokenType::Bang &&
+                unary.OperatorType() != TokenType::BitNot)
+                return false;
+            return ValidateModuleConstantExpression(unary.Operand(),
+                                                    dependencies);
+        }
+        case AstNodeKind::BinaryExpression: {
+            const auto& binary =
+                static_cast<const core::BinaryExpression&>(expression);
+            return ValidateModuleConstantExpression(binary.Left(),
+                                                    dependencies) &&
+                   ValidateModuleConstantExpression(binary.Right(),
+                                                    dependencies);
+        }
+        case AstNodeKind::CastExpression:
+            return ValidateModuleConstantExpression(
+                static_cast<const core::CastExpression&>(expression).Value(),
+                dependencies);
+        case AstNodeKind::IsOfExpression:
+            return ValidateModuleConstantExpression(
+                static_cast<const core::IsOfExpression&>(expression).Value(),
+                dependencies);
+        case AstNodeKind::MemberAccessExpression: {
+            const SemanticType type = _model.TypeOf(expression).WithoutConst();
+            return _model.FieldFor(
+                       static_cast<const core::MemberAccessExpression&>(
+                           expression)) == nullptr &&
+                   (type.IsNumeric() || type.Kind() == SemanticTypeKind::Enum ||
+                    type.IsErrorValue());
+        }
+        default:
+            return false;
+    }
+}
+
+void SemanticAnalyzer::AnalyzeModuleConstants(
+    const core::CompilationUnit& unit) {
+    std::unordered_map<const Symbol*, std::vector<const Symbol*>> dependencies;
+    for (const auto& declaration : unit.Declarations()) {
+        if (declaration->Kind() != core::AstNodeKind::ModuleConstantDeclaration)
+            continue;
+        const auto& constant =
+            static_cast<const core::ModuleConstantDeclaration&>(*declaration);
+        const Symbol* symbol = _model.DeclaredSymbol(constant);
+        if (!symbol) continue;
+        SetSource(constant.sourceId);
+        const SemanticType initializer =
+            AnalyzeExpression(constant.Initializer(), symbol->Type());
+        if (!initializer.IsError() &&
+            !IsAssignable(symbol->Type(), initializer))
+            Report(diagnostics::DiagnosticCode::IncompatibleType,
+                   constant.Initializer().Range(),
+                   TypeMismatch(symbol->Type(), initializer));
+        std::vector<const Symbol*> found;
+        if (!ValidateModuleConstantExpression(constant.Initializer(), found))
+            Report(diagnostics::DiagnosticCode::InvalidOperand,
+                   constant.Initializer().Range(),
+                   "module constant initializer must be a compile-time "
+                   "expression");
+        dependencies.emplace(symbol, std::move(found));
+    }
+
+    std::unordered_map<const Symbol*, int> state;
+    std::unordered_set<const Symbol*> reported;
+    std::function<void(const Symbol*)> visit = [&](const Symbol* symbol) {
+        state[symbol] = 1;
+        for (const Symbol* dependency : dependencies[symbol]) {
+            if (!dependencies.contains(dependency)) continue;
+            if (state[dependency] == 0) {
+                visit(dependency);
+                continue;
+            }
+            if (state[dependency] != 1 || !reported.insert(symbol).second)
+                continue;
+            const auto* constant = _model.ModuleConstantFor(*symbol);
+            Report(diagnostics::DiagnosticCode::InvalidOperand,
+                   constant ? constant->Initializer().Range()
+                            : symbol->DeclarationRange(),
+                   "cyclic module constant definition involving '" +
+                       symbol->Name() + "'");
+        }
+        state[symbol] = 2;
+    };
+    for (const auto& [symbol, ignored] : dependencies) {
+        (void)ignored;
+        if (state[symbol] == 0) visit(symbol);
     }
 }
 
@@ -1736,6 +1896,11 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                     name = static_cast<const core::CallableTypeDeclaration&>(
                                *declaration)
                                .Name();
+                if (declaration->Kind() ==
+                    core::AstNodeKind::ModuleConstantDeclaration)
+                    name = static_cast<const core::ModuleConstantDeclaration&>(
+                               *declaration)
+                               .Name();
                 if (name == import.alias)
                     Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
                            import.range,
@@ -1752,12 +1917,15 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     RegisterEnums(unit);
     RegisterStructures(unit);
     DeclareCallableTypes(unit);
+    RegisterModuleConstants(unit);
     bindGenericAliases();
     BindImports(unit);
     ResolveStructureFields();
     ResolveCallableTypes(unit);
     RegisterFunctions(unit);
     bindGenericAliases();
+    BindImports(unit);
+    AnalyzeModuleConstants(unit);
     GenerateInitializers();
     BindImports(unit);
     ValidateExports(unit);
@@ -3742,7 +3910,9 @@ SemanticType SemanticAnalyzer::PlaceType(
     if (expression.Kind() == core::AstNodeKind::NameExpression) {
         const Symbol* symbol = _model.SymbolFor(
             static_cast<const core::NameExpression&>(expression));
-        return symbol == nullptr ? SemanticType::Error() : symbol->Type();
+        return symbol == nullptr || symbol->Kind() == SymbolKind::ModuleConstant
+                   ? SemanticType::Error()
+                   : symbol->Type();
     }
     if (expression.Kind() == core::AstNodeKind::IndexExpression) {
         const auto& index =
