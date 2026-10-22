@@ -89,3 +89,32 @@ bool Reader::empty(&const self) {
     self->position = self->position + byteCount;
     return (value, none);
 }
+
+(u8, errors::ByteError) Reader::peekByte(&const self) {
+    if self->empty() {
+        return (none, errors::ByteError.UnexpectedEnd);
+    }
+
+    return (self->source[self->position], none);
+}
+
+errors::ByteError Reader::skip(&self, usize count) {
+    if self->remaining() < count {
+        return errors::ByteError.UnexpectedEnd;
+    }
+    
+    self->position = self->position + count;
+    return none;
+}
+
+[]const u8 Reader::remainingBytes(&const self) <-self {
+    return self->source[self->position:];
+}
+
+([]const u8, errors::ByteError) Reader::readRemaining(&self) <-self {
+    return self->read(self->remaining()); 
+}
+
+void Reader::reset(&self) {
+    self->position = 0;
+}
