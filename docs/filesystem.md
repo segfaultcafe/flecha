@@ -82,3 +82,12 @@ loop. `readExact` similarly fills its complete destination and reports
 `UnexpectedEof` if the file ends first. A successful ordinary read of zero
 bytes means end of file. `seek`, `flush`, `close`, and operations on a closed
 handle report through the `IoError` family.
+
+`File::reader` and `File::writer` adapt a file to `io::stream::Reader` and
+`io::stream::Writer`. The adapters forward partial byte counts and errors to
+the stream operations, allowing files to participate in generic operations
+such as `stream::copy`. Each adapter mutably borrows its file and remains
+move-only with the underlying stream callable. The file cannot be accessed,
+moved, or closed while that borrow remains live. An adapter neither owns nor
+closes the file, and a writer does not flush automatically; callers retain
+responsibility for flushing and closing after the adapter's final use.

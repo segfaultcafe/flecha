@@ -3,6 +3,8 @@ module file_test;
 @imports
     :: root::io::file
     :: root::io::errors
+    :: root::io::filesystem
+    :: root::io::stream
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
@@ -168,4 +170,179 @@ test seek_origins_have_stable_native_values(&testing::UnitTest t) {
     asserts::is_true(t, start.number() == 0, "Start maps to zero");
     asserts::is_true(t, current.number() == 1, "Current maps to one");
     asserts::is_true(t, end.number() == 2, "End maps to two");
+}
+
+test stream_adapters_round_trip_bytes_after_moves(&testing::UnitTest t) {
+    stringv path = ".flecha-file-stream-round-trip.tmp";
+    [5]u8 source = [10, 20, 30, 40, 50];
+
+    output, openWriteError := file::File::open(
+        path,
+        file::OpenOptions::writeOnly()
+    );
+    asserts::is_true(t, openWriteError == none, "the output file opens");
+
+    if output.isOpen() {
+        writer := output.writer();
+        movedWriter := writer;
+        writeError := movedWriter.writeAll(source[:]);
+        asserts::is_true(
+            t,
+            writeError == none,
+            "the moved writer writes all bytes"
+        );
+
+        asserts::is_true(
+            t,
+            output.flush() == none,
+            "the file is usable after the writer"
+        );
+        asserts::is_true(t, output.close() == none, "the output file closes");
+    }
+
+    input, openReadError := file::File::open(
+        path,
+        file::OpenOptions::readOnly()
+    );
+    asserts::is_true(t, openReadError == none, "the input file opens");
+
+    if input.isOpen() {
+        reader := input.reader();
+        movedReader := reader;
+
+        [5]u8 destination = none;
+        readError := movedReader.readExact(destination[:]);
+        asserts::is_true(
+            t,
+            readError == none,
+            "the moved reader reads every byte"
+        );
+        asserts::is_true(t, destination[0] == 10, "the first byte round trips");
+        asserts::is_true(t, destination[4] == 50, "the last byte round trips");
+
+        [1]u8 extra = none;
+        bytesRead, eofError := movedReader.read(extra[:]);
+        asserts::is_true(
+            t,
+            bytesRead == 0 and eofError == none,
+            "the reader reports file EOF"
+        );
+
+        asserts::is_true(
+            t,
+            input.close() == none,
+            "the file is usable after the reader"
+        );
+    }
+
+    cleanupError := filesystem::remove_file(path);
+    asserts::is_true(t, cleanupError == none, "the round-trip file is removed");
+}
+
+test stream_adapters_forward_closed_file_errors(&testing::UnitTest t) {
+    closed, openError := file::File::open("", file::OpenOptions::readOnly());
+    asserts::is_true(
+        t,
+        openError == errors::IoError.InvalidPath,
+        "the setup File is closed"
+    );
+
+    [1]u8 bytes = none;
+    reader := closed.reader();
+    bytesRead, readError := reader.read(bytes[:]);
+    asserts::is_true(
+        t,
+        bytesRead == 0 and readError == errors::IoError.Closed,
+        "the reader forwards Closed"
+    );
+
+    writer := closed.writer();
+    bytesWritten, writeError := writer.write(bytes[:]);
+    asserts::is_true(
+        t,
+        bytesWritten == 0 and writeError == errors::IoError.Closed,
+        "the writer forwards Closed"
+    );
+}
+
+test copy_transfers_bytes_between_file_adapters(&testing::UnitTest t) {
+    stringv sourcePath = ".flecha-file-stream-copy-source.tmp";
+    stringv destinationPath = ".flecha-file-stream-copy-destination.tmp";
+    [6]u8 expected = [1, 3, 5, 7, 9, 11];
+
+    setupError := filesystem::write_bytes(sourcePath, expected[:]);
+    asserts::is_true(t, setupError == none, "the copy source is created");
+
+    input, inputError := file::File::open(
+        sourcePath,
+        file::OpenOptions::readOnly()
+    );
+    output, outputError := file::File::open(
+        destinationPath,
+        file::OpenOptions::writeOnly()
+    );
+    asserts::is_true(t, inputError == none, "the copy source opens");
+    asserts::is_true(t, outputError == none, "the copy destination opens");
+
+    if input.isOpen() and output.isOpen() {
+        reader := input.reader();
+        writer := output.writer();
+        [2]u8 buffer = none;
+
+        copied, copyError := stream::copy(&reader, &writer, buffer[:]);
+        asserts::is_true(t, copyError == none, "copy succeeds");
+        asserts::is_true(t, copied == 6, "copy reports every transferred byte");
+    }
+
+    if input.isOpen() {
+        asserts::is_true(t, input.close() == none, "the copy source closes");
+    }
+    if output.isOpen() {
+        asserts::is_true(
+            t,
+            output.flush() == none,
+            "the copy destination flushes"
+        );
+        asserts::is_true(
+            t,
+            output.close() == none,
+            "the copy destination closes"
+        );
+    }
+
+    verification, verificationError := file::File::open(
+        destinationPath,
+        file::OpenOptions::readOnly()
+    );
+    asserts::is_true(t, verificationError == none, "the copied file opens");
+
+    if verification.isOpen() {
+        [6]u8 actual = none;
+        readError := verification.readExact(actual[:]);
+        asserts::is_true(
+            t,
+            readError == none,
+            "File readExact reads the copied bytes"
+        );
+        asserts::is_true(t, actual[0] == 1, "copy preserves the first byte");
+        asserts::is_true(t, actual[5] == 11, "copy preserves the last byte");
+        asserts::is_true(
+            t,
+            verification.close() == none,
+            "the copied file closes"
+        );
+    }
+
+    sourceCleanupError := filesystem::remove_file(sourcePath);
+    destinationCleanupError := filesystem::remove_file(destinationPath);
+    asserts::is_true(
+        t,
+        sourceCleanupError == none,
+        "the copy source is removed"
+    );
+    asserts::is_true(
+        t,
+        destinationCleanupError == none,
+        "the copy destination is removed"
+    );
 }
