@@ -666,6 +666,14 @@ class BorrowChecker final {
                                "access conflicts with a borrow in the current "
                                "expression");
             }
+            if (write) {
+                for (const Value& reservation : _reservations)
+                    for (const Origin& other : reservation.origins)
+                        if (Overlaps(other, origin))
+                            Report(Code::BorrowConflict, range,
+                                   "access conflicts with a reserved mutable "
+                                   "receiver borrow");
+            }
         }
     }
 
@@ -1225,6 +1233,8 @@ class BorrowChecker final {
                 if (const auto* method = _model.MethodFor(call)) {
                     const std::vector<Loan> previousLoans = _temporaries;
                     Value borrowSource;
+                    Value mutableReceiver;
+                    bool hasMutableReceiver = false;
                     if (method->HasReceiver()) {
                         Value value = call.Access() == TokenType::Arrow
                                           ? Evaluate(call.Receiver())
@@ -1234,12 +1244,22 @@ class BorrowChecker final {
                         if (method->ParameterTypes()[0].Kind() ==
                                 SemanticTypeKind::Reference &&
                             _model.TypeOf(call.Receiver()).Kind() !=
-                                SemanticTypeKind::Pointer)
-                            (void)Borrow(std::move(value),
-                                         !method->ParameterTypes()[0]
-                                              .Target()
-                                              ->IsConst(),
-                                         call.Receiver().Range());
+                                SemanticTypeKind::Pointer) {
+                            const bool exclusive =
+                                !method->ParameterTypes()[0]
+                                     .Target()
+                                     ->IsConst();
+                            if (exclusive) {
+                                CheckAccess(value, true,
+                                            call.Receiver().Range());
+                                mutableReceiver = std::move(value);
+                                _reservations.push_back(mutableReceiver);
+                                hasMutableReceiver = true;
+                            } else {
+                                (void)Borrow(std::move(value), false,
+                                             call.Receiver().Range());
+                            }
+                        }
                     }
                     const std::size_t offset = method->HasReceiver() ? 1 : 0;
                     for (std::size_t i = 0; i < call.Arguments().size(); ++i) {
@@ -1256,6 +1276,11 @@ class BorrowChecker final {
                             (void)Borrow(std::move(value),
                                          IsExclusiveBorrow(type),
                                          call.Arguments()[i]->Range());
+                    }
+                    if (hasMutableReceiver) {
+                        _reservations.pop_back();
+                        (void)Borrow(std::move(mutableReceiver), true,
+                                     call.Receiver().Range());
                     }
                     _temporaries = previousLoans;
                     if (CanCarryBorrow(method->ReturnType()) &&
@@ -1327,6 +1352,7 @@ class BorrowChecker final {
     State* _state = nullptr;
     Symbols _active, _pinned;
     std::vector<Loan> _temporaries;
+    std::vector<Value> _reservations;
     std::size_t _nextTemporary = 1;
     const FunctionSymbol* _function = nullptr;
     const Symbol* _borrowSource = nullptr;

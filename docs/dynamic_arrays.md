@@ -72,6 +72,11 @@ element address is formed. Slicing produces an ordinary borrowed `[]T` descripto
 Moves, consuming arguments and returns, and `take` invalidate the source owner;
 `free(buffer)` consumes the live allocation obligation.
 
+The null owning-buffer value is trivially zeroable. A structure with an
+equivalent explicit `zero()` override can therefore use `none` directly,
+including when nested in a tuple result. The structure remains move-only:
+zero construction creates no live owner and never duplicates one.
+
 Legacy raw `*T` indexing still requires unsafe permission and a base pointer from
 Flecha's allocator. The index has type `usize` and is checked against allocator
 metadata before forming an element address. Out-of-bounds access traps. Known stack and

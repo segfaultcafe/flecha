@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(Flecha VERSION 0.2.1 LANGUAGES C CXX)
+project(Flecha VERSION 0.2.3 LANGUAGES C CXX)
 
 include(cmake/check_compiler_version.cmake)
 include(CTest)

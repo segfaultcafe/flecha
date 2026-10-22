@@ -3595,6 +3595,26 @@ TEST(SemanticMemoryTests, RuntimeArrayOwnersPreserveLengthAndMoveOwnership) {
                     .diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests,
+     StructuresWithOwningBuffersCanBeTriviallyZeroable) {
+    auto result = Analyze(R"(
+        structure Buffer { *[]u8 storage; usize length; };
+        Buffer Buffer::zero() override {
+            return build Buffer {};
+        }
+        (Buffer, error) fail(error failure) { return (none, failure); }
+        void use() {
+            Buffer first = none;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.Structures().size(), 1u);
+    EXPECT_TRUE(SemanticType(result.model.Structures()[0].get())
+                    .IsTriviallyZeroable());
+}
+
 TEST(SemanticSliceTests, EnforcesReadOnlyElementsAndFixedHandles) {
     for (const std::string& source :
          {"void f() { const [1]i32 a = [1]; []i32 s = a[:]; }",
@@ -4829,6 +4849,40 @@ TEST(SemanticStructureTests,
         FindDiagnostic(Analyze(prefix + "void f() { &i32 r = none; { Box box = "
                                         "Box::init(); r = &box.x; } }"),
                        DiagnosticCode::IncompatibleType),
+        nullptr);
+}
+
+TEST(SemanticStructureTests,
+     MutableReceiverBorrowsActivateAfterArgumentEvaluation) {
+    const std::string source =
+        "structure Box { i32 value; }; "
+        "i32 Box::get(&const self) { return self->value; } "
+        "void Box::set(&self, i32 value) { self->value = value; } ";
+
+    Analysis sharedArgument = Analyze(
+        source + "void Box::forward(&self) { self->set(self->get()); } "
+                 "void f() { Box box = none; box.set(box.get()); }");
+    for (const auto& diagnostic : sharedArgument.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(sharedArgument.diagnostics.HasErrors());
+
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(source +
+                    "i32 Box::bump(&self) { self->value++; return "
+                    "self->value; } void f() { Box box = none; "
+                    "box.set(box.bump()); }"),
+            DiagnosticCode::BorrowConflict),
+        nullptr);
+
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(source +
+                    "&const i32 Box::view(&const self) <- self { return "
+                    "&self->value; } void Box::setFrom(&self, &const i32 "
+                    "value) { self->value = *value; } void f() { Box box = "
+                    "none; box.setFrom(box.view()); }"),
+            DiagnosticCode::BorrowConflict),
         nullptr);
 }
 
