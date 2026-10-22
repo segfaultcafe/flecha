@@ -1,0 +1,122 @@
+module sequence_test;
+
+@imports
+    :: root::bytes::sequence
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test equal_requires_identical_lengths_and_bytes(&testing::UnitTest t) {
+    [3]u8 value = [1, 2, 3];
+    [3]u8 same = [1, 2, 3];
+    [3]u8 different = [1, 2, 4];
+    [2]u8 shorter = [1, 2];
+    [0]u8 empty = none;
+
+    asserts::is_true(t, sequence::equal(value[:], same[:]), "equal bytes match");
+    asserts::is_false(
+        t,
+        sequence::equal(value[:], different[:]),
+        "different bytes do not match"
+    );
+    asserts::is_false(
+        t,
+        sequence::equal(value[:], shorter[:]),
+        "different lengths do not match"
+    );
+    asserts::is_true(
+        t,
+        sequence::equal(empty[:], empty[:]),
+        "empty sequences are equal"
+    );
+}
+
+test comparison_uses_unsigned_lexicographic_order(&testing::UnitTest t) {
+    [2]u8 lower = [1, 2];
+    [2]u8 higher = [1, 3];
+    [3]u8 extended = [1, 2, 0];
+    [1]u8 highByte = [255];
+    [1]u8 middleByte = [128];
+    [0]u8 empty = none;
+
+    asserts::is_true(
+        t,
+        sequence::compare_lexicographic(lower[:], higher[:]) == -1,
+        "the first differing byte determines ascending order"
+    );
+    asserts::is_true(
+        t,
+        sequence::compare_lexicographic(higher[:], lower[:]) == 1,
+        "the first differing byte determines descending order"
+    );
+    asserts::is_true(
+        t,
+        sequence::compare_lexicographic(lower[:], extended[:]) == -1,
+        "a proper prefix sorts first"
+    );
+    asserts::is_true(
+        t,
+        sequence::compare_lexicographic(highByte[:], middleByte[:]) == 1,
+        "bytes compare as unsigned values"
+    );
+    asserts::is_true(
+        t,
+        sequence::compare_lexicographic(empty[:], empty[:]) == 0,
+        "identical empty sequences compare equal"
+    );
+}
+
+test prefix_and_suffix_matching_cover_boundaries(&testing::UnitTest t) {
+    [4]u8 value = [10, 20, 30, 40];
+    [2]u8 prefix = [10, 20];
+    [2]u8 suffix = [30, 40];
+    [2]u8 absent = [20, 30];
+    [5]u8 longer = [10, 20, 30, 40, 50];
+    [0]u8 empty = none;
+
+    asserts::is_true(t, sequence::starts_with(value[:], prefix[:]), "prefix matches");
+    asserts::is_true(t, sequence::ends_with(value[:], suffix[:]), "suffix matches");
+    asserts::is_false(t, sequence::starts_with(value[:], absent[:]), "middle is not prefix");
+    asserts::is_false(t, sequence::ends_with(value[:], absent[:]), "middle is not suffix");
+    asserts::is_false(t, sequence::starts_with(value[:], longer[:]), "long prefix fails");
+    asserts::is_false(t, sequence::ends_with(value[:], longer[:]), "long suffix fails");
+    asserts::is_true(t, sequence::starts_with(value[:], empty[:]), "empty prefix matches");
+    asserts::is_true(t, sequence::ends_with(value[:], empty[:]), "empty suffix matches");
+}
+
+test byte_search_returns_the_first_match(&testing::UnitTest t) {
+    [4]u8 value = [7, 9, 7, 11];
+    [0]u8 empty = none;
+
+    index, found := sequence::index_of_byte(value[:], 7);
+    asserts::is_true(t, found and index == 0, "byte search returns the first match");
+
+    missingIndex, missing := sequence::index_of_byte(value[:], 8);
+    asserts::is_true(t, !missing and missingIndex == 0, "missing byte reports false");
+
+    emptyIndex, emptyFound := sequence::index_of_byte(empty[:], 7);
+    asserts::is_true(t, !emptyFound and emptyIndex == 0, "empty byte search fails safely");
+}
+
+test subsequence_search_obeys_boundary_and_empty_rules(&testing::UnitTest t) {
+    [6]u8 value = [1, 2, 1, 2, 3, 4];
+    [2]u8 repeated = [1, 2];
+    [2]u8 atEnd = [3, 4];
+    [2]u8 missing = [4, 5];
+    [7]u8 longer = [1, 2, 1, 2, 3, 4, 5];
+    [0]u8 empty = none;
+
+    first, foundFirst := sequence::index_of(value[:], repeated[:]);
+    asserts::is_true(t, foundFirst and first == 0, "search returns the first match");
+
+    last, foundLast := sequence::index_of(value[:], atEnd[:]);
+    asserts::is_true(t, foundLast and last == 4, "search includes the last position");
+
+    emptyIndex, foundEmpty := sequence::index_of(value[:], empty[:]);
+    asserts::is_true(t, foundEmpty and emptyIndex == 0, "empty needle matches at zero");
+
+    missingIndex, foundMissing := sequence::index_of(value[:], missing[:]);
+    asserts::is_true(t, !foundMissing and missingIndex == 0, "missing needle reports false");
+
+    longIndex, foundLong := sequence::index_of(value[:], longer[:]);
+    asserts::is_true(t, !foundLong and longIndex == 0, "long needle fails without underflow");
+}

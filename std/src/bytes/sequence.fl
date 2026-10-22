@@ -1,0 +1,108 @@
+module sequence;
+
+export bool equal([]const u8 left, []const u8 right) {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    loop usize index = 0; index < left.len(); index++ {
+        if left[index] != right[index] {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export i32 compare_lexicographic([]const u8 left, []const u8 right) {
+    usize sharedLength = left.len();
+    if right.len() < sharedLength {
+        sharedLength = right.len();
+    }
+
+    loop usize index = 0; index < sharedLength; index++ {
+        if left[index] < right[index] {
+            return -1;
+        }
+
+        if left[index] > right[index] {
+            return 1;
+        }
+    }
+
+    if left.len() < right.len() {
+        return -1;
+    }
+
+    if left.len() > right.len() {
+        return 1;
+    }
+
+    return 0;
+}
+
+export bool starts_with([]const u8 value, []const u8 prefix) {
+    if prefix.len() > value.len() {
+        return false;
+    }
+
+    loop usize index = 0; index < prefix.len(); index++ {
+        if value[index] != prefix[index] {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export bool ends_with([]const u8 value, []const u8 suffix) {
+    if suffix.len() > value.len() {
+        return false;
+    }
+
+    const usize OFFSET = value.len() - suffix.len();
+    loop usize index = 0; index < suffix.len(); index++ {
+        if value[OFFSET + index] != suffix[index] {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export (usize, bool) index_of_byte([]const u8 value, u8 target) {
+    loop usize index = 0; index < value.len(); index++ {
+        if value[index] == target {
+            return (index, true);
+        }
+    }
+
+    return (none, false);
+}
+
+export (usize, bool) index_of([]const u8 haystack, []const u8 needle) {
+    if needle.len() == 0 {
+        return (0, true);
+    }
+
+    if needle.len() > haystack.len() {
+        return (none, false);
+    }
+
+    const usize START_COUNT = haystack.len() - needle.len() + 1;
+    loop usize start = 0; start < START_COUNT; start++ {
+        bool matches = true;
+        loop usize offset = 0; offset < needle.len(); offset++ {
+            if haystack[start + offset] != needle[offset] {
+                matches = false;
+                break;
+            }
+        }
+
+        if matches {
+            return (start, true);
+        }
+    }
+
+    return (none, false);
+}
