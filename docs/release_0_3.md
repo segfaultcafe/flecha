@@ -209,6 +209,47 @@ and cleanup tests. Algorithms and codecs need portable reference vectors.
 Containers and resource-owning types need allocation-failure and sanitizer
 coverage.
 
+## Milestone discoveries
+
+Implementation work may reveal useful behavior that follows from existing
+language rules even when no individual feature was designed for that exact
+use. Flecha 0.3.0 treats the discoveries recorded here as supported behavior,
+not accidental compiler permissiveness.
+
+### Owning captured checked references
+
+A mutable checked reference is itself a move-only value. An `own` closure
+capture may therefore move the reference handle into the closure environment
+without moving or taking ownership of its referent:
+
+```flecha
+stream::Writer File::writer(&self) <-self {
+    return stream::Writer::init(
+        [own self](source) => {
+            return self->write(source);
+        }
+    );
+}
+```
+
+Here `self` has type `&File`. The closure owns that reference value, while the
+caller continues to own the `File` and its native handle. Moving the resulting
+writer moves the captured reference. Destroying it releases the borrow but
+does not flush, close, move, or destroy the file.
+
+The checked-reference origin must propagate through the `own` capture, the
+callable value, enclosing structures, moves, and the `<-self` returned-borrow
+contract. Safe code cannot access, move, close, or create an overlapping
+mutable adapter for the file while the captured reference may still be used.
+The file becomes available again after the adapter's final possible use.
+
+This behavior requires regression coverage for successful adapter moves and
+post-borrow access, plus compile-time rejection of conflicting file access,
+adapters escaping a local file, invalid returned origins, overlapping mutable
+adapters, and relocation of an owner while an adapter remains live. `own` in a
+capture describes transfer of the captured value; when that value is a
+reference, it never implies ownership of the referent.
+
 ## Minimal compiler and runtime enablement
 
 The milestone should otherwise avoid new surface syntax. The anticipated

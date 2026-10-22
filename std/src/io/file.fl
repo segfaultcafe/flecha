@@ -3,6 +3,7 @@ module file;
 @imports
     :: root::io::errors
     :: root::io::runtime
+    :: root::io::stream
     :: root::io::utils;
 
 export enum SeekFrom: u8 {
@@ -131,27 +132,22 @@ bool File::isOpen(&const self) {
     return (bytesRead, none);
 }
 
+stream::Reader File::reader(&self) <-self {
+    return stream::Reader::init(
+        [own self](destination) => {
+            return self->read(destination);
+        }
+    );
+}
+
 error File::readExact(&self, []u8 destination) {
     if self->handle == null {
         return errors::IoError.Closed;
     }
 
-    usize offset = 0;
-    while offset < destination.len() {
-        bytesRead, err := self->read(destination[offset:]);
-        if err != none {
-            return err;
-        }
-        if bytesRead == 0 {
-            return errors::IoError.UnexpectedEof;
-        }
-
-        offset = offset + bytesRead;
-    }
-
-    return none;
+    reader := self->reader();
+    return reader.readExact(destination);
 }
-
 
 (usize, error) File::write(&self, []const u8 source) {
     if self->handle == null {
@@ -176,25 +172,21 @@ error File::readExact(&self, []u8 destination) {
     return (bytesWritten, none);
 }
 
+stream::Writer File::writer(&self) <-self {
+    return stream::Writer::init(
+        [own self](source) => {
+            return self->write(source);
+        }
+    );
+}
+
 error File::writeAll(&self, []const u8 source) {
     if self->handle == null {
         return errors::IoError.Closed;
     }
 
-    usize offset = 0;
-    while offset < source.len() {
-        written, err := self->write(source[offset:]);
-        if err != none {
-            return err;
-        }
-        if written == 0 {
-            return errors::IoError.WriteFailed;
-        }
-
-        offset = offset + written;
-    }
-
-    return none;
+    writer := self->writer();
+    return writer.writeAll(source);
 }
 
 (usize, error) File::writeString(&self, stringv source) {
