@@ -3,4 +3,6 @@ module errors;
 export error ByteError {
     UnexpectedEnd,
     InsufficientSpace,
+    Overflow,
+    InvalidEncoding,
 }

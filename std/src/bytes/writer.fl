@@ -3,6 +3,7 @@ module cursor;
 @imports
     :: root::bytes::endian
     :: root::bytes::errors
+    :: root::bytes::varint
     :: root::math::bits;
 
 export structure Writer {
@@ -113,6 +114,21 @@ errors::ByteError Writer::writeBig<
     }
 
     err := endian::write_big<T>(self->destination[self->position:], value);
+    if err != none {
+        return err;
+    }
+
+    self->position = self->position + byteCount;
+    return none;
+}
+
+errors::ByteError Writer::writeVarint<
+    T: endian::fixed_unsigned_integer
+>(&self, T value) {
+    byteCount, err := varint::write<T>(
+        self->destination[self->position:],
+        value
+    );
     if err != none {
         return err;
     }

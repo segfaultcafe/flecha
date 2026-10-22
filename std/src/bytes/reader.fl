@@ -3,6 +3,7 @@ module cursor;
 @imports
     :: root::bytes::endian
     :: root::bytes::errors
+    :: root::bytes::varint
     :: root::math::bits;
 
 export structure Reader {
@@ -82,6 +83,20 @@ bool Reader::empty(&const self) {
     }
 
     value, err := endian::read_big<T>(self->source[self->position:]);
+    if err != none {
+        return (none, err);
+    }
+
+    self->position = self->position + byteCount;
+    return (value, none);
+}
+
+(T, errors::ByteError) Reader::readVarint<
+    T: endian::fixed_unsigned_integer
+>(&self) {
+    value, byteCount, err := varint::read<T>(
+        self->source[self->position:]
+    );
     if err != none {
         return (none, err);
     }

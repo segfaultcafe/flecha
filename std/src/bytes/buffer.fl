@@ -3,6 +3,7 @@ module buffer;
 @imports
     :: root::bytes::endian
     :: root::bytes::errors
+    :: root::bytes::varint
     :: root::math::bits;
 
 const usize FL_BUFFER_INIT_CAPACITY = 8;
@@ -170,6 +171,27 @@ error Buffer::writeBig<
     }
 
     self->length = self->length + BYTE_COUNT;
+    return none;
+}
+
+error Buffer::writeVarint<
+    T: endian::fixed_unsigned_integer
+>(&self, T value) {
+    const usize BYTE_COUNT = varint::encoded_length<T>(value);
+    err := self->ensureAdditional(BYTE_COUNT);
+    if err != none {
+        return err;
+    }
+
+    written, writeError := varint::write<T>(
+        self->storage[self->length:],
+        value
+    );
+    if writeError != none {
+        return writeError;
+    }
+
+    self->length = self->length + written;
     return none;
 }
 

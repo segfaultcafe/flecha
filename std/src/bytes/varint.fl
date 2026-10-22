@@ -1,0 +1,70 @@
+module varint;
+
+@imports
+    :: root::bytes::endian
+    :: root::bytes::errors
+    :: root::math::bits;
+
+export usize encoded_length<T: endian::fixed_unsigned_integer>(T value) {
+    usize length = 1;
+    while value >= 128 {
+        value = value >> 7;
+        length++;
+    }
+
+    return length;
+}
+
+export (usize, errors::ByteError) write<
+    T: endian::fixed_unsigned_integer
+>([]u8 destination, T value) {
+    const usize LENGTH = encoded_length<T>(value);
+    if destination.len() < LENGTH {
+        return (none, errors::ByteError.InsufficientSpace);
+    }
+
+    usize index = 0;
+    while value >= 128 {
+        destination[index] = ((value & 127) | 128).cast<u8>;
+        value = value >> 7;
+        index++;
+    }
+
+    destination[index] = value.cast<u8>;
+    return (LENGTH, none);
+}
+
+export (T, usize, errors::ByteError) read<
+    T: endian::fixed_unsigned_integer
+>([]const u8 source) {
+    const usize MAX_BYTES = (bits::width<T>() + 6) / 7;
+    T value = none;
+    usize index = 0;
+
+    while index < source.len() {
+        if index >= MAX_BYTES {
+            return (none, none, errors::ByteError.Overflow);
+        }
+
+        const u8 BYTE = source[index];
+        const T PAYLOAD = (BYTE & 127).cast<T>;
+        const usize SHIFT = index * 7;
+
+        if PAYLOAD > (T.max_value >> SHIFT) {
+            return (none, none, errors::ByteError.Overflow);
+        }
+
+        value = value | (PAYLOAD << SHIFT);
+        index++;
+
+        if (BYTE & 128) == 0 {
+            if index > 1 and PAYLOAD == 0 {
+                return (none, none, errors::ByteError.InvalidEncoding);
+            }
+
+            return (value, index, none);
+        }
+    }
+
+    return (none, none, errors::ByteError.UnexpectedEnd);
+}
