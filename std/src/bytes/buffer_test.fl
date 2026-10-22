@@ -40,3 +40,64 @@ test buffer_with_capacity_constructs_a_usable_owner(&testing::UnitTest t) {
     asserts::is_true(t, value.capacity() == 2, "Buffer preserves its capacity");
     asserts::is_true(t, value.empty(), "new Buffer reports empty");
 }
+
+test buffer_writes_grows_and_exposes_only_initialized_bytes(
+    &testing::UnitTest t
+) {
+    value, allocationError := buffer::Buffer::withCapacity(2);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup Buffer is constructed");
+        return;
+    }
+
+    [3]u8 source = [10, 20, 30];
+    writeError := value.write(source[:]);
+    asserts::is_true(t, writeError == none, "write grows the Buffer");
+    asserts::is_true(t, value.len() == 3, "write advances the length");
+    asserts::is_true(t, value.capacity() == 4, "growth doubles capacity");
+
+    {
+        bytes := value.bytes();
+        asserts::is_true(t, bytes.len() == 3, "bytes hides spare capacity");
+        asserts::is_true(
+            t,
+            bytes[0] == 10 and bytes[1] == 20 and bytes[2] == 30,
+            "write preserves byte order"
+        );
+    }
+
+    value.clear();
+    asserts::is_true(t, value.empty(), "clear resets the logical length");
+    asserts::is_true(t, value.capacity() == 4, "clear retains capacity");
+    asserts::is_true(t, value.bytes().len() == 0, "clear hides old bytes");
+}
+
+test zero_buffer_uses_module_capacity_constant_and_writes_strings(
+    &testing::UnitTest t
+) {
+    value, failure := zero_buffer_result(none);
+    if failure != none {
+        asserts::is_true(t, false, "the zero Buffer setup succeeds");
+        return;
+    }
+
+    byteError := value.writeByte(65);
+    stringError := value.writeString("BC");
+    asserts::is_true(
+        t,
+        byteError == none and stringError == none,
+        "byte and string writes succeed"
+    );
+    asserts::is_true(
+        t,
+        value.capacity() == 8,
+        "the module-level initial-capacity constant drives growth"
+    );
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes.len() == 3 and bytes[0] == 65 and bytes[1] == 66 and
+            bytes[2] == 67,
+        "writeString appends UTF-8 bytes"
+    );
+}
