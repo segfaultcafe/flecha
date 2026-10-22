@@ -1,0 +1,214 @@
+module hex_test;
+
+@imports
+    :: root::encoding::binary
+    :: root::encoding::hex
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test length_helpers_validate_overflow_and_pairing(&testing::UnitTest t) {
+    emptyEncoded, emptyEncodedError := hex::encoded_length(0);
+    encoded, encodedError := hex::encoded_length(3);
+    _, overflowError := hex::encoded_length(usize.max_value);
+
+    asserts::is_true(
+        t,
+        emptyEncoded == 0 and emptyEncodedError == none,
+        "an empty source has an empty encoding"
+    );
+    asserts::is_true(
+        t,
+        encoded == 6 and encodedError == none,
+        "each byte requires two hexadecimal characters"
+    );
+    asserts::is_true(
+        t,
+        overflowError == hex::HexError.Overflow,
+        "encoded_length reports multiplication overflow"
+    );
+
+    decoded, decodedError := hex::decoded_length(6);
+    _, oddError := hex::decoded_length(3);
+    asserts::is_true(
+        t,
+        decoded == 3 and decodedError == none,
+        "each character pair decodes to one byte"
+    );
+    asserts::is_true(
+        t,
+        oddError == hex::HexError.InvalidEncoding,
+        "an odd character count is not a complete encoding"
+    );
+}
+
+test encode_produces_lowercase_and_uppercase_ascii(&testing::UnitTest t) {
+    [4]u8 source = [0, 10, 171, 255];
+    [9]u8 lower = [170; 9];
+    [9]u8 upper = [170; 9];
+
+    lowerCount, lowerError := hex::encode(lower[:], source[:]);
+    upperCount, upperError := hex::encode_upper(upper[:], source[:]);
+
+    asserts::is_true(
+        t,
+        lowerCount == 8 and lowerError == none and
+            upperCount == 8 and upperError == none,
+        "both encoders report their complete output"
+    );
+    asserts::is_true(
+        t,
+        lower[0] == 48 and lower[1] == 48 and
+            lower[2] == 48 and lower[3] == 97 and
+            lower[4] == 97 and lower[5] == 98 and
+            lower[6] == 102 and lower[7] == 102,
+        "encode emits zero-padded lowercase hexadecimal"
+    );
+    asserts::is_true(
+        t,
+        upper[0] == 48 and upper[1] == 48 and
+            upper[2] == 48 and upper[3] == 65 and
+            upper[4] == 65 and upper[5] == 66 and
+            upper[6] == 70 and upper[7] == 70,
+        "encode_upper emits zero-padded uppercase hexadecimal"
+    );
+    asserts::is_true(
+        t,
+        lower[8] == 170 and upper[8] == 170,
+        "encoders preserve unused destination space"
+    );
+}
+
+test encode_requires_complete_destination_space(&testing::UnitTest t) {
+    [2]u8 source = [10, 11];
+    [3]u8 destination = [170; 3];
+
+    written, encodeError := hex::encode(destination[:], source[:]);
+    asserts::is_true(
+        t,
+        written == 0 and encodeError == hex::HexError.InsufficientSpace,
+        "a short destination reports insufficient space"
+    );
+    asserts::is_true(
+        t,
+        destination[0] == 170 and destination[1] == 170 and
+            destination[2] == 170,
+        "a failed encode leaves its destination unchanged"
+    );
+}
+
+test decode_accepts_mixed_case_and_writes_complete_bytes(
+    &testing::UnitTest t
+) {
+    [8]u8 source = [48, 48, 48, 65, 97, 66, 70, 102];
+    [5]u8 destination = [170; 5];
+
+    written, decodeError := hex::decode(destination[:], source[:]);
+    asserts::is_true(
+        t,
+        written == 4 and decodeError == none,
+        "decode accepts lowercase and uppercase digits"
+    );
+    asserts::is_true(
+        t,
+        destination[0] == 0 and destination[1] == 10 and
+            destination[2] == 171 and destination[3] == 255,
+        "decode combines each hexadecimal pair"
+    );
+    asserts::is_true(
+        t,
+        destination[4] == 170,
+        "decode preserves unused destination space"
+    );
+}
+
+test decode_failures_are_transactional(&testing::UnitTest t) {
+    [2]u8 destination = [170; 2];
+    [2]u8 invalid = [48, 103];
+    invalidCount, invalidError := hex::decode(destination[:], invalid[:]);
+
+    asserts::is_true(
+        t,
+        invalidCount == 0 and invalidError == hex::HexError.InvalidEncoding,
+        "decode rejects non-hexadecimal characters"
+    );
+    asserts::is_true(
+        t,
+        destination[0] == 170 and destination[1] == 170,
+        "invalid input leaves the destination unchanged"
+    );
+
+    [1]u8 odd = [48];
+    _, oddError := hex::decode(destination[:], odd[:]);
+    asserts::is_true(
+        t,
+        oddError == hex::HexError.InvalidEncoding,
+        "decode rejects an odd input length"
+    );
+
+    [4]u8 valid = [48, 48, 102, 102];
+    [1]u8 shortDestination = [170];
+    _, shortError := hex::decode(shortDestination[:], valid[:]);
+    asserts::is_true(
+        t,
+        shortError == hex::HexError.InsufficientSpace and
+            shortDestination[0] == 170,
+        "a short decode destination is left unchanged"
+    );
+}
+
+test empty_inputs_succeed_without_writing(&testing::UnitTest t) {
+    [1]u8 source = none;
+    [1]u8 destination = [170];
+
+    encoded, encodeError := hex::encode(destination[:], source[0:0]);
+    decoded, decodeError := hex::decode(destination[:], source[0:0]);
+    asserts::is_true(
+        t,
+        encoded == 0 and encodeError == none and
+            decoded == 0 and decodeError == none,
+        "empty encodes and decodes succeed"
+    );
+    asserts::is_true(t, destination[0] == 170, "empty operations write nothing");
+}
+
+test writer_appends_hex_and_preserves_state_on_failure(&testing::UnitTest t) {
+    [2]u8 first = [10, 255];
+    [1]u8 second = [188];
+    [7]u8 destination = [170; 7];
+
+    {
+        writer := binary::Writer::init(destination[:]);
+        lowerError := hex::write(&writer, first[:]);
+        upperError := hex::write_upper(&writer, second[:]);
+        missingError := hex::write(&writer, second[:]);
+
+        asserts::is_true(
+            t,
+            lowerError == none and upperError == none,
+            "Writer appends lower- and uppercase hex"
+        );
+        asserts::is_true(
+            t,
+            missingError == hex::HexError.InsufficientSpace,
+            "Writer reports insufficient remaining space"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 6,
+            "a failed Writer hex operation does not advance"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 48 and destination[1] == 97 and
+            destination[2] == 102 and destination[3] == 102 and
+            destination[4] == 66 and destination[5] == 67,
+        "Writer emits both requested letter cases"
+    );
+    asserts::is_true(
+        t,
+        destination[6] == 170,
+        "a failed Writer hex operation leaves bytes unchanged"
+    );
+}

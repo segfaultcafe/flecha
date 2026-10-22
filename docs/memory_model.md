@@ -18,10 +18,10 @@ preferred fixed-binding spellings are `constptr T` for `const *T` and
 `constref T` for `const &T`. Existing string copy semantics remain unchanged.
 
 Pointers, fixed arrays, checked references and slices, borrowed-result
-contracts, raw allocation, ownership contracts, aggregate moves, and deferred
-direct calls are implemented. Their focused feature guides are normative for
-the current compiler. Safe heap-owner primitives, custom allocators, partial
-moves, and moving elements within dynamic containers remain proposals. Current
+contracts, raw allocation, ownership contracts, `own []T` safe heap owners,
+aggregate moves, and deferred direct calls are implemented. Their focused
+feature guides are normative for the current compiler. Custom allocators,
+partial moves, and moving elements within dynamic containers remain proposals. Current
 behavior is recorded in [definite assignment](definite_assignment.md),
 [strings](string.md), [const declarations and types](const_types.md),
 [checked references](checked_references.md), [checked slices](checked_slices.md),
@@ -41,13 +41,15 @@ any of it.
 | Shared reference `&const T`, shared slice `[]const T`, or `stringv` | Borrow existing storage | Copy the view, preserving its lifetime restrictions |
 | Mutable reference `&T` or mutable slice `[]T` | Borrow storage for exclusive access | Transfer the borrow; do not duplicate exclusive access |
 | Standalone owning string | Release its allocation exactly once | Copy with independent storage; existing string semantics are unchanged |
+| Owning slice `own []T` | Release its runtime-sized buffer automatically | Move the owner; borrow it with slicing |
 | Noncopyable aggregate with safe tear | Run typed teardown exactly once | Move the complete value and transfer cleanup responsibility |
 | Aggregate with unsafe tear | Run address-sensitive teardown exactly once | Immovable after construction; borrow it instead |
 | Fixed-size array | Store elements inline; own their element values | Copy if every element is implicitly copyable; otherwise transfer the array |
 
-A slice is never an owning growable array. A raw pointer is never implicitly
-freed. Shared ownership, reference counting, and garbage collection are not
-part of the initial model.
+An ordinary `[]T` slice is only a borrow; `own []T` is its explicit owning
+counterpart. Neither form is inherently growable. A raw pointer is never
+implicitly freed. Shared ownership, reference counting, and garbage collection
+are not part of the initial model.
 
 ## 2. Initialization and validity
 
@@ -470,6 +472,12 @@ evaluating the initializer. Fixed arrays use `new<[N]T>(value)`; runtime-sized
 scalar buffers use `new<[]T>(count)` and return a move-only `*[]T` owner carrying
 `{data, length}`. Their count is evaluated before allocation and their elements
 start zeroed. See [dynamic arrays](dynamic_arrays.md). `free(null)` is a no-op.
+
+Safe code uses `new<own []T>(count)` for the same supported element set. Its
+`own []T` result is bounds checked, move-only, and automatically released at
+scope exit, including when nested in a structure. Slicing it produces a
+borrowed `[]T` whose lifetime prevents moving or destroying the owner while the
+view is live. The raw `new<[]T>` / `free` form remains available in unsafe code.
 
 Raw allocation and free require an unsafe function or block. Allocations are
 not implicitly freed at the end of an unsafe block: allocation lifetime is

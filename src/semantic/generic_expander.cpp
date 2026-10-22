@@ -19,10 +19,9 @@ using Arguments = std::vector<Tokens>;
 using Callback = std::function<void(AstNode&, bool)>;
 
 bool IsPrimitiveNumericTypeName(const std::string& name) {
-    return name == "i8" || name == "i16" || name == "i32" ||
-           name == "i64" || name == "isize" || name == "u8" ||
-           name == "u16" || name == "u32" || name == "u64" ||
-           name == "usize" || name == "f32" || name == "f64";
+    return name == "i8" || name == "i16" || name == "i32" || name == "i64" ||
+           name == "isize" || name == "u8" || name == "u16" || name == "u32" ||
+           name == "u64" || name == "usize" || name == "f32" || name == "f64";
 }
 
 // One structural walk is shared by rewriting, substitution-site discovery, and
@@ -77,6 +76,12 @@ void Walk(const AstNode& input, const Callback& callback) {
         case AstNodeKind::TypeSetDeclaration: {
             NODE(TypeSetDeclaration);
             list(n.Members());
+            break;
+        }
+        case AstNodeKind::ModuleConstantDeclaration: {
+            NODE(ModuleConstantDeclaration);
+            visit(n.Type());
+            visit(n.Initializer());
             break;
         }
         case AstNodeKind::StructureField: {
@@ -282,6 +287,9 @@ std::string Name(const Declaration& declaration) {
         return static_cast<const CallableTypeDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::TypeSetDeclaration)
         return static_cast<const TypeSetDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::ModuleConstantDeclaration)
+        return static_cast<const ModuleConstantDeclaration&>(declaration)
+            .Name();
     return static_cast<const ErrorDeclaration&>(declaration).Name();
 }
 bool Template(const Declaration& d) {
@@ -371,14 +379,6 @@ class Expander {
             if (!inserted && (Template(*method) || Template(*previous->second)))
                 Error(method->Range(),
                       "duplicate method declaration '" + method->Name() + "'");
-            if (Template(*method) &&
-                owner->Kind() == AstNodeKind::StructureDeclaration)
-                for (const auto& field :
-                     static_cast<const StructureDeclaration*>(owner)->Fields())
-                    if (field->Name() == method->Name())
-                        Error(method->Range(),
-                              "generic method conflicts with field '" +
-                                  method->Name() + "'");
             if (Template(*method) &&
                 owner->Kind() == AstNodeKind::EnumDeclaration)
                 for (const auto& variant :

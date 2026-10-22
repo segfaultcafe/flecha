@@ -94,6 +94,41 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::U8)));
 }
 
+TEST(SemanticConstTests, ResolvesAndValidatesModuleConstants) {
+    auto valid = Analyze(R"(
+        const usize BASE = 4;
+        const usize LIMIT = BASE * 2;
+        usize value() { return LIMIT; }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(valid.diagnostics.HasErrors());
+    const auto& base = static_cast<const ModuleConstantDeclaration&>(
+        *valid.unit->Declarations()[0]);
+    const Symbol* symbol = valid.model.DeclaredSymbol(base);
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->Kind(), SymbolKind::ModuleConstant);
+    EXPECT_FALSE(symbol->Writable());
+
+    auto runtime = Analyze(
+        "i32 make() { return 42; } const i32 VALUE = make(); "
+        "i32 read() { return VALUE; }");
+    const Diagnostic* runtimeError =
+        FindDiagnostic(runtime, DiagnosticCode::InvalidOperand);
+    ASSERT_NE(runtimeError, nullptr);
+    EXPECT_NE(runtimeError->message.find("compile-time expression"),
+              std::string::npos);
+
+    auto cycle = Analyze(
+        "const i32 LEFT = RIGHT; const i32 RIGHT = LEFT; "
+        "i32 read() { return LEFT; }");
+    const Diagnostic* cycleError =
+        FindDiagnostic(cycle, DiagnosticCode::InvalidOperand);
+    ASSERT_NE(cycleError, nullptr);
+    EXPECT_NE(cycleError->message.find("cyclic module constant"),
+              std::string::npos);
+}
+
 TEST(SemanticCallableTests, ResolvesStructuralSignaturesAndFunctionValues) {
     Analysis result = Analyze(R"(
         func Mapper(i32) => (i32);
@@ -4233,6 +4268,28 @@ TEST(SemanticStructureTests,
     EXPECT_EQ(result.model.GeneratedFunctions().size(), 2);
 }
 
+TEST(SemanticStructureTests, ResolvesFieldsAndMethodsWithTheSameNameByUse) {
+    Analysis result = Analyze(R"(
+        structure Cursor { private usize position; };
+        Cursor Cursor::init(usize position) override {
+            return build Cursor { self.position = position; };
+        }
+        usize Cursor::position(&const self) { return self->position; }
+        usize Cursor::throughReference(&const self) {
+            return self->position();
+        }
+        usize main() {
+            cursor := Cursor::init(42);
+            direct := cursor.position();
+            reference := &cursor;
+            return direct + reference->position() +
+                reference->throughReference();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
 TEST(SemanticStructureTests, ValidatesZeroLifecycleAndContextualNone) {
     const std::string valid =
         "structure Position { i32 line; i32 column; }; "
@@ -5508,6 +5565,7 @@ TEST(SemanticMemoryTests, ContractsNeverQualifyReferencesOrOrdinaryStorage) {
     for (const std::string& source : {
              "void f(own &i32 x) {}",
              "void f(lend &i32 x) {}",
+             "void f(lend []i32 x) {}",
              "void f(own i32 x) {}",
              "unsafe lend *i32 f() { return null; }",
              "structure Box { lend *i32 p; };",
@@ -5552,6 +5610,93 @@ TEST(SemanticMemoryTests, RuntimeArraysUseCountsAndExistingOwnershipContracts) {
         "return; } "
         "defer free(p); p[0] = 42; read(p); }");
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, OwningSlicesAreSafeManagedMoveOnlyBuffers) {
+    auto valid = Analyze(
+        "void consume(own []const i32 values) { values.len(); } "
+        "void f() { values, failure := new<own []i32>(2); "
+        "if failure != none { return; } values[0] = 42; "
+        "view := values[:]; view[1] = view[0]; consume(values); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    EXPECT_NE(
+        FindDiagnostic(Analyze("void consume(own []i32 values) {} void f() { "
+                               "values, failure := new<own []i32>(2); "
+                               "consume(values); values.len(); }"),
+                       DiagnosticCode::MovedValue),
+        nullptr);
+    EXPECT_TRUE(Analyze("void f() { values, failure := new<own []const "
+                        "i32>(2); values[0] = 1; }")
+                    .diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, StructuresWithOwningSlicesAreTriviallyZeroable) {
+    auto generated = Analyze(R"(
+        structure Buffer { own []u8 storage; usize length; };
+        Buffer make() { return none; }
+        (Buffer, error) fail(error failure) { return (none, failure); }
+        void use() {
+            Buffer first = none;
+            second, failure := fail(none);
+            Buffer moved = first;
+        }
+    )");
+    for (const auto& diagnostic : generated.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(generated.diagnostics.HasErrors());
+    ASSERT_EQ(generated.model.Structures().size(), 1u);
+    EXPECT_NE(generated.model.Structures()[0]->zero, nullptr);
+    EXPECT_TRUE(SemanticType(generated.model.Structures()[0].get())
+                    .IsTriviallyZeroable());
+
+    auto overridden = Analyze(R"(
+        structure Buffer { own []u8 storage; usize length; };
+        Buffer Buffer::zero() override {
+            return build Buffer {
+                self.storage = none;
+                self.length = 0;
+            };
+        }
+        (Buffer, error) fail(error failure) { return (none, failure); }
+    )");
+    for (const auto& diagnostic : overridden.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(overridden.diagnostics.HasErrors());
+    ASSERT_EQ(overridden.model.Structures().size(), 1u);
+    EXPECT_TRUE(SemanticType(overridden.model.Structures()[0].get())
+                    .IsTriviallyZeroable());
+}
+
+TEST(SemanticReferenceTests, StructuresCanStoreSliceBorrows) {
+    const std::string writer =
+        "structure Writer { []u8 destination; usize position; }; "
+        "Writer Writer::init([]u8 destination) <- destination override { "
+        "return build Writer { self.destination = destination; "
+        "self.position = 0; }; } ";
+    auto valid = Analyze(
+        writer +
+        "usize use([]u8 destination) { writer := Writer::init(destination); "
+        "writer.destination[0] = 7; return writer.destination.len(); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(writer +
+                    "u8 conflict([]u8 destination) { writer := "
+                    "Writer::init(destination); destination[0] = 1; return "
+                    "writer.destination[0]; }"),
+            DiagnosticCode::BorrowConflict),
+        nullptr);
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(writer +
+                    "Writer escape([]u8 destination) <- destination { "
+                    "[1]u8 local = none; return Writer::init(local[:]); }"),
+            DiagnosticCode::InvalidBorrowContract),
+        nullptr);
 }
 
 TEST(SemanticMemoryTests,
@@ -5765,6 +5910,20 @@ TEST(SemanticGenericTests, StructuresMethodsNestedTypesAndFieldComparisons) {
     )");
     for (const auto& d : result.diagnostics.Diagnostics())
         ADD_FAILURE() << d.message;
+}
+
+TEST(SemanticGenericTests, FieldsAndGenericMethodsMayShareNames) {
+    auto result = Analyze(R"(
+        structure Box<T> { T value; };
+        T Box<T>::value(&const self) { return self->value; }
+        i32 main() {
+            box := Box<i32>::init();
+            box.value = 42;
+            return box.value();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
 }
 
 TEST(SemanticGenericTests,
@@ -6103,19 +6262,22 @@ TEST(SemanticGenericTests, GenericMethodsResolveMixedTuplesAndBuildSelfFields) {
         ADD_FAILURE() << d.message;
 }
 
-TEST(SemanticGenericTests,
-     SupportsRecursivePointerTypesAndRejectsMemberCollisions) {
+TEST(SemanticGenericTests, SupportsRecursivePointerTypesAndFieldMethodNames) {
     EXPECT_FALSE(Analyze(R"(
         structure Node<T> { T value; *Node<T> next; };
         void main() { node := Node<i32>::init(); }
     )")
                      .diagnostics.HasErrors());
-    EXPECT_TRUE(Analyze(R"(
+    EXPECT_FALSE(Analyze(R"(
         structure Box { i32 value; };
         T Box::value<T>(&const self) { return none; }
-        void main() {}
+        i32 main() {
+            box := Box::init();
+            box.value = 42;
+            return box.value<i32>();
+        }
     )")
-                    .diagnostics.HasErrors());
+                     .diagnostics.HasErrors());
 }
 
 TEST(SemanticGenericTests, TypeArgumentsRespectLocalShadowing) {

@@ -5,8 +5,18 @@ module std;
     :: root::containers::array
     :: root::containers::errors as containers_errors
     :: root::containers::algorithms
+    :: root::bytes::buffer
+    :: root::bytes::sequence
+    :: root::encoding::binary
+    :: root::encoding::hex
+    :: root::io::stream
     :: root::io::filesystem
     :: root::io::file
     :: root::io::errors as io_errors
+    :: root::math::math
+    :: root::math::integer
+    :: root::math::float
+    :: root::math::bits
+    :: root::math::errors as math_errors
     :: root::tests::testing
     :: root::tests::asserts;

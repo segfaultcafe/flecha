@@ -503,10 +503,11 @@ an initializer. See [definite assignment](docs/definite_assignment.md).
 
 ### 8.2 Const declarations
 
-`const T name = value;` initializes a fixed binding. Its initializer may be a
-runtime expression; `const` does not imply compile-time evaluation. Assignment
-to the binding is an error, even if the assigned value is unchanged. A const
-local must have an initializer; delayed const initialization is not supported.
+Inside a function, `const T name = value;` initializes a fixed local binding.
+Its initializer may be a runtime expression; local `const` does not imply
+compile-time evaluation. Assignment to the binding is an error, even if the
+assigned value is unchanged. A const local must have an initializer; delayed
+const initialization is not supported.
 
 ```flecha
 i32 add(const i32 input) {
@@ -524,6 +525,27 @@ string copies and borrowed-view lifetime checks remain in force.
 The implemented declaration form uses an explicit type; `name := value` still
 creates a mutable binding. `constval` is an ordinary identifier, not a keyword.
 See [const declarations and compound types](docs/const_types.md).
+
+### 8.3 Module constants
+
+At module scope, the same spelling declares a named compile-time constant:
+
+```flecha
+const usize INITIAL_CAPACITY = 8;
+export const usize DEFAULT_CAPACITY = INITIAL_CAPACITY * 2;
+```
+
+Module constants may use literals, other module constants, unary and binary
+operators, casts, `isof`, numeric limits, floating-point constants, enum
+variants, and error values. Runtime calls, allocation, mutable storage, and
+cyclic constant definitions are rejected. Supported result types are numeric
+types, `bool`, `char`, `stringv`, enums, and error values. References to a
+module constant are expanded as immutable constant expressions and do not
+create global mutable storage.
+
+Constants are shared by every source file contributing to the same logical
+module. Like other top-level declarations, they are module-private by default
+and may use `quiver` or `export` visibility.
 
 ## 9. Equality
 
@@ -895,6 +917,10 @@ Runtime-sized scalar and supported trivially copyable structure storage uses
 representation supports checked unsafe indexing without allocator queries. See
 [dynamic arrays](docs/dynamic_arrays.md) for the implemented limits and the
 Flecha `RawArray<T>` library and its safe `Array<T>` wrapper.
+The preferred compiler-managed form is `new<own []T>(count)`, returning a
+move-only `own []T` value with safe checked access and automatic destruction.
+Owning slices may be stored in structures; `own []T` may be weakened by move to
+`own []const T`.
 On failure, new returns null and `AllocationError.OutOfMemory` without evaluating
 the initializer. Free runs typed teardown and accepts null. See
 [raw allocation](docs/raw_allocation.md) for the unsafe contract and current limits.
@@ -905,9 +931,11 @@ external pointer validity still requires a caller contract.
 
 Raw-pointer contracts use `lend *T` parameters, consuming `own *T` parameters,
 `own *T` returns (including tuple elements), and `own *T` structure fields.
-References never take either qualifier. Ownership remains separate from const
-and nullability. See [ownership contracts](docs/ownership_contracts.md) for
-transfer, teardown, and initial implementation restrictions.
+`own []T` is instead a first-class managed owner, not a raw-pointer contract.
+References and borrowed slices never take `own` or `lend`. Ownership remains
+separate from const and nullability. See
+[ownership contracts](docs/ownership_contracts.md) for raw-pointer transfer,
+teardown, and initial implementation restrictions.
 
 The language should avoid hidden allocation in:
 
@@ -990,6 +1018,7 @@ import gate still controls whether an outside importer can reach it.
 Top-level declarations use `export` for access from every importing module,
 `quiver` for access from modules in the same immediate directory and the same
 source-root or library identity, and no modifier for module-only access.
+This includes module constants declared as `const T name = expression;`.
 Wildcard imports do not bypass these boundaries. Exported and quiver
 structures and enums bundle non-private member functions; member functions do
 not take declaration-visibility modifiers, and private members remain limited

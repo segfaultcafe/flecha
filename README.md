@@ -283,6 +283,8 @@ Makefile                Convenient build, test, and example targets
 - [`docs/ref_and_slice_returns.md`](docs/ref_and_slice_returns.md) — returned reference and slice contracts
 - [`docs/dynamic_arrays.md`](docs/dynamic_arrays.md) and [`docs/fixed_arrays.md`](docs/fixed_arrays.md) — array features
 - [`docs/math.md`](docs/math.md) — standard-library ordered math operations
+- [`docs/bytes.md`](docs/bytes.md) — raw byte storage and sequence operations
+- [`docs/encoding.md`](docs/encoding.md) — binary and hexadecimal encoding
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation
 - [`docs/enums.md`](docs/enums.md) — nominal enums, defaults, discriminants, and member functions
 - [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting setup

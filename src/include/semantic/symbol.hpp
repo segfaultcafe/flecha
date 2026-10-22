@@ -16,6 +16,7 @@ enum class SymbolKind {
     Function,
     Parameter,
     LocalVariable,
+    ModuleConstant,
     ErrorType,
     EnumType,
     StructureType,

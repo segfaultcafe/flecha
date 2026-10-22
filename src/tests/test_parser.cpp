@@ -101,6 +101,26 @@ TEST(ParserTests, ParsesCompleteFunctionWithReturnStatement) {
     EXPECT_EQ(unit->Range().end.offset, 24);
 }
 
+TEST(ParserTests, ParsesModuleConstantsWithoutConfusingConstFunctions) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "export const usize LIMIT = 4 * 2; const i32 answer() { return 42; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    ASSERT_EQ(unit->Declarations()[0]->Kind(),
+              AstNodeKind::ModuleConstantDeclaration);
+    const auto& constant =
+        static_cast<const ModuleConstantDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(constant.Name(), "LIMIT");
+    EXPECT_TRUE(constant.Type().IsConst());
+    EXPECT_TRUE(constant.exported);
+    EXPECT_EQ(constant.Initializer().Kind(), AstNodeKind::BinaryExpression);
+    EXPECT_EQ(unit->Declarations()[1]->Kind(),
+              AstNodeKind::FunctionDeclaration);
+}
+
 TEST(ParserTests, ParsesTypedParametersAndBareReturn) {
     DiagnosticBag diagnostics;
     std::vector<Token> tokens =
@@ -454,6 +474,37 @@ TEST(ParserTests, RequiresBorrowSourceAfterLeftArrow) {
     ASSERT_FALSE(diagnostics.Diagnostics().empty());
     EXPECT_EQ(diagnostics.Diagnostics().front().code,
               DiagnosticCode::ExpectedToken);
+}
+
+TEST(ParserTests, ParsesOwningSliceTypesInDeclarationsAndAllocations) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "structure Buffer { own []const u8 bytes; }; "
+        "own []i32 allocate(usize count) { values, failure := "
+        "new<own []i32>(count); return values; }",
+        diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& structure =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(structure.Fields().size(), 1);
+    EXPECT_EQ(structure.Fields()[0]->Type().TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(structure.Fields()[0]->Type().Contract(), OwnershipContract::Own);
+    EXPECT_TRUE(structure.Fields()[0]->Type().Target()->IsConst());
+
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    EXPECT_EQ(function.ReturnType().TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(function.ReturnType().Contract(), OwnershipContract::Own);
+    const auto& declaration = static_cast<const DestructureStatement&>(
+        *function.Body().Statements()[0]);
+    const auto& call = static_cast<const CallExpression&>(declaration.Value());
+    ASSERT_NE(call.TypeArgument(), nullptr);
+    EXPECT_EQ(call.TypeArgument()->TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(call.TypeArgument()->Contract(), OwnershipContract::Own);
 }
 
 TEST(ParserTests, ParsesExternDeclarationWithSemicolonAndModifiers) {

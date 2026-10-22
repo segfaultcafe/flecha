@@ -48,11 +48,11 @@ The initial public module layout is:
 ```text
 std::math::*              numeric, integer, bits, floating_point, constants
 std::mem::*               slices
-std::bytes::*             endian, reader, writer
+std::bytes::*             buffer, sequence
 std::containers::*        algorithms, array, deque, stack, queue, heap,
                           hash_map, hash_set
 std::text::*              ascii, utf8, builder, parse, format
-std::encoding::*          hex, base64, binary, json
+std::encoding::*          binary, hex, base64, json
 std::io::*                errors, file, buffered, stdio, filesystem, path,
                           directory, temp
 std::process::*           args, environment, command

@@ -112,6 +112,32 @@ TEST(LlvmCodeGeneratorTests, EmitsVerifiedFunctionsLocalsCallsAndReturns) {
     EXPECT_NE(ir.find("call i32 @add"), std::string::npos);
 }
 
+TEST(NativeCompilerTests, InlinesModuleConstantExpressions) {
+    GeneratedSource result = Generate(R"(
+        const i32 BASE = 20;
+        const i32 ANSWER = BASE * 2 + 2;
+        i32 main() { return ANSWER; }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_module_constant_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "module_constant_test", executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsUniformCallableValuesAndIndirectCalls) {
     GeneratedSource result = Generate(R"(
         func Mapper(i32) => (i32);
@@ -319,6 +345,108 @@ TEST(LlvmCodeGeneratorTests, CarriesRuntimeArrayLengthInTheOwningValue) {
     EXPECT_NE(ir.find("moved.value"), std::string::npos);
     EXPECT_NE(ir.find("free.data"), std::string::npos);
     EXPECT_EQ(ir.find("flecha_runtime_v1_allocation_count"), std::string::npos);
+}
+
+TEST(LlvmCodeGeneratorTests, AutomaticallyDestroysSafeOwningSlices) {
+    GeneratedSource result = Generate(R"(
+        own []i32 make() {
+            values, failure := new<own []i32>(2);
+            return values;
+        }
+        i32 main() {
+            values := make();
+            values[0] = 20;
+            values[1] = 22;
+            return values[0] + values[1];
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("allocation.owner"), std::string::npos);
+    EXPECT_NE(ir.find("call void @flecha_runtime_v1_free"), std::string::npos);
+    EXPECT_EQ(ir.find("flecha_runtime_v1_allocation_count"), std::string::npos);
+}
+
+TEST(NativeCompilerTests, RunsManagedSlicesStoredAsStructureBorrows) {
+    GeneratedSource result = Generate(R"(
+        structure Buffer { own []i32 values; };
+        Buffer Buffer::init(own []i32 values) override {
+            return build Buffer { self.values = values; };
+        }
+        structure Reader { []const i32 values; };
+        Reader Reader::init([]const i32 values) <- values override {
+            return build Reader { self.values = values; };
+        }
+        i32 main() {
+            values, failure := new<own []i32>(2);
+            if failure != none { return 1; }
+            values[1] = 42;
+            buffer := Buffer::init(values);
+            reader := Reader::init(buffer.values[:]);
+            return reader.values[1];
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_managed_slice_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_managed_slice_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsFieldsAndMethodsWithTheSameName) {
+    GeneratedSource result = Generate(R"(
+        structure Cursor { usize position; };
+        usize Cursor::position(&const self) { return self->position; }
+        usize Cursor::throughReference(&const self) {
+            return self->position();
+        }
+        i32 main() {
+            cursor := Cursor::init();
+            cursor.position = 14;
+            direct := cursor.position();
+            reference := &cursor;
+            return (direct + reference->position() +
+                reference->throughReference()).cast<i32>;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_field_method_name_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_field_method_name_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
 }
 
 TEST(LlvmCodeGeneratorTests, ExtractsCheckedSliceDataPointers) {

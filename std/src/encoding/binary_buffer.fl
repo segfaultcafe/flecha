@@ -1,0 +1,46 @@
+module binary;
+
+@imports
+    :: root::bytes::buffer
+    :: root::math::bits;
+
+export error append_little<T: fixed_unsigned_integer>(
+    &buffer::Buffer destination,
+    T value
+) {
+    [8]u8 encoded = none;
+    const usize BYTE_COUNT = bits::width<T>() / 8;
+    writeError := write_little<T>(encoded[:BYTE_COUNT], value);
+    if writeError != none {
+        return writeError;
+    }
+
+    return destination->write(encoded[:BYTE_COUNT]);
+}
+
+export error append_big<T: fixed_unsigned_integer>(
+    &buffer::Buffer destination,
+    T value
+) {
+    [8]u8 encoded = none;
+    const usize BYTE_COUNT = bits::width<T>() / 8;
+    writeError := write_big<T>(encoded[:BYTE_COUNT], value);
+    if writeError != none {
+        return writeError;
+    }
+
+    return destination->write(encoded[:BYTE_COUNT]);
+}
+
+export error append_varint<T: fixed_unsigned_integer>(
+    &buffer::Buffer destination,
+    T value
+) {
+    [10]u8 encoded = none;
+    written, writeError := write_varint<T>(encoded[:], value);
+    if writeError != none {
+        return writeError;
+    }
+
+    return destination->write(encoded[:written]);
+}

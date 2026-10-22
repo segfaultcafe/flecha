@@ -1,0 +1,85 @@
+module binary;
+
+@imports :: root::math::bits;
+
+export error BinaryError {
+    UnexpectedEnd,
+    InsufficientSpace,
+    Overflow,
+    InvalidEncoding,
+}
+
+export typeset fixed_unsigned_integer {
+    u8,
+    u16,
+    u32,
+    u64,
+};
+
+export (T, BinaryError) read_little<T: fixed_unsigned_integer>(
+    []const u8 source
+) {
+    usize byteCount = bits::width<T>() / 8;
+    if source.len() < byteCount {
+        return (none, BinaryError.UnexpectedEnd);
+    }
+
+    T value = none;
+    loop usize index = 0; index < byteCount; index++ {
+        value = value | (source[index].cast<T> << (index * 8));
+    }
+
+    return (value, none);
+}
+
+export (T, BinaryError) read_big<T: fixed_unsigned_integer>(
+    []const u8 source
+) {
+    usize byteCount = bits::width<T>() / 8;
+    if source.len() < byteCount {
+        return (none, BinaryError.UnexpectedEnd);
+    }
+
+    T value = none;
+    loop usize index = 0; index < byteCount; index++ {
+        value = (value << 8) | source[index].cast<T>;
+    }
+
+    return (value, none);
+}
+
+export BinaryError write_little<T: fixed_unsigned_integer>(
+    []u8 destination,
+    T value
+) {
+    usize byteCount = bits::width<T>() / 8;
+    if destination.len() < byteCount {
+        return BinaryError.InsufficientSpace;
+    }
+
+    loop usize index = 0; index < byteCount; index++ {
+        destination[index] = (value & 255).cast<u8>;
+        value = value >> 8;
+    }
+
+    return none;
+}
+
+export BinaryError write_big<T: fixed_unsigned_integer>(
+    []u8 destination,
+    T value
+) {
+    usize byteCount = bits::width<T>() / 8;
+    if destination.len() < byteCount {
+        return BinaryError.InsufficientSpace;
+    }
+
+    usize remaining = byteCount;
+    while remaining > 0 {
+        remaining = remaining - 1;
+        destination[remaining] = (value & 255).cast<u8>;
+        value = value >> 8;
+    }
+
+    return none;
+}

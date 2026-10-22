@@ -467,8 +467,9 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             if ((literal.LiteralType() == TokenType::None ||
                  (literal.LiteralType() == TokenType::Null &&
                   (expected.Kind() == semantic::SemanticTypeKind::Pointer ||
+                   expected.Kind() == semantic::SemanticTypeKind::OwnedBuffer ||
                    expected.Kind() ==
-                       semantic::SemanticTypeKind::OwnedBuffer))) &&
+                       semantic::SemanticTypeKind::OwnedSlice))) &&
                 !expected.IsError() &&
                 expected.Kind() != semantic::SemanticTypeKind::None) {
                 return std::make_unique<BoundLiteralExpression>(
@@ -482,6 +483,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const core::NameExpression& name =
                 static_cast<const core::NameExpression&>(expression);
             const semantic::Symbol* symbol = _semanticModel->SymbolFor(name);
+            if (symbol->Kind() == semantic::SymbolKind::ModuleConstant) {
+                const core::ModuleConstantDeclaration* constant =
+                    _semanticModel->ModuleConstantFor(*symbol);
+                return LowerExpression(constant->Initializer(),
+                                       symbol->Type().WithoutConst());
+            }
             if (symbol->Kind() == semantic::SymbolKind::Function) {
                 return std::make_unique<BoundFunctionExpression>(
                     expression.Range(),
@@ -547,6 +554,7 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                       kind == semantic::SemanticTypeKind::Char)) ||
                     kind == semantic::SemanticTypeKind::Pointer ||
                     kind == semantic::SemanticTypeKind::OwnedBuffer ||
+                    kind == semantic::SemanticTypeKind::OwnedSlice ||
                     kind == semantic::SemanticTypeKind::Null)
                     return other;
                 return semantic::SemanticType::Error();

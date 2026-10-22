@@ -78,6 +78,36 @@ TEST_F(ModuleTests, ComposesLogicalModulesAcrossArbitraryFilenames) {
     EXPECT_NE(Check().find("cannot open module 'first_piece'"),
               std::string::npos);
 }
+TEST_F(ModuleTests, SharesModuleConstantsAcrossFilesAndImportsExports) {
+    Write("constant_values.fl", R"(module constants;
+        const i32 BASE = 40;
+        export const i32 PUBLIC = BASE + 2;
+    )");
+    Write("constant_api.fl", R"(module constants;
+        export i32 answer() { return BASE + 2; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::constants;
+        i32 main() { return constants::answer() + constants::PUBLIC - 42; }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main; @imports :: root::constants;
+        i32 main() { return constants::BASE; }
+    )");
+    EXPECT_NE(Check().find("unknown name 'constants::BASE'"),
+              std::string::npos);
+}
+TEST_F(ModuleTests, ModuleConstantVisibilityCannotLeakPrivateTypes) {
+    Write("constants.fl", R"(module constants;
+        enum State { Ready }
+        export const State DEFAULT_STATE = State.Ready;
+    )");
+    Write("main.fl", R"(module main; @imports :: root::constants;
+        void main() {}
+    )");
+    EXPECT_NE(Check().find("exported APIs cannot expose non-exported types"),
+              std::string::npos);
+}
 TEST_F(ModuleTests, KeepsImportsLocalToTheirSourceUnit) {
     Write("dependency.fl",
           "module dependency; export i32 value() { return 42; }");

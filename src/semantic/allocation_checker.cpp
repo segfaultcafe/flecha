@@ -244,7 +244,9 @@ class AllocationChecker final {
     }
 
     bool HasContract(const core::TypeNode& type) const {
-        if (type.Contract() != OwnershipContract::None) return true;
+        if (type.TypeForm() == core::TypeKind::Pointer &&
+            type.Contract() != OwnershipContract::None)
+            return true;
         for (const auto& element : type.Elements())
             if (HasContract(*element)) return true;
         return false;
@@ -274,7 +276,8 @@ class AllocationChecker final {
         const auto* symbol = Function(function);
         if (!symbol || !symbol->Owner()) return false;
         for (const auto& field : symbol->Owner()->fields)
-            if (field.syntax->Type().Contract() == OwnershipContract::Own)
+            if (field.syntax->Type().TypeForm() == core::TypeKind::Pointer &&
+                field.syntax->Type().Contract() == OwnershipContract::Own)
                 return true;
         return false;
     }
@@ -282,7 +285,8 @@ class AllocationChecker final {
         if (!HasOwningFields(function) || !Function(function)->HasReceiver())
             return;
         for (const auto& field : Function(function)->Owner()->fields) {
-            if (field.syntax->Type().Contract() != OwnershipContract::Own)
+            if (field.syntax->Type().TypeForm() != core::TypeKind::Pointer ||
+                field.syntax->Type().Contract() != OwnershipContract::Own)
                 continue;
             const bool tear = function.Name() == "tear";
             state.resources[field.syntax] = {true, tear, !tear, true};
@@ -519,6 +523,15 @@ class AllocationChecker final {
         for (Value& child : value.elements) Retire(child, identity);
     }
     bool Allocate(State& state, const core::CallExpression& call) {
+        const SemanticType resultType = _model.TypeOf(call);
+        if (resultType.Kind() == SemanticTypeKind::Tuple &&
+            !resultType.Elements().empty() &&
+            resultType.Elements()[0].Kind() == SemanticTypeKind::OwnedSlice) {
+            Value value{ValueKind::Aggregate};
+            value.elements = {{}, {ValueKind::Null}};
+            Put(state, call, std::move(value));
+            return true;
+        }
         const auto previous = state.resources.find(&call);
         if (previous != state.resources.end() && previous->second.live) {
             Report(DiagnosticCode::UnverifiedOwnership, call,
@@ -632,6 +645,7 @@ class AllocationChecker final {
                 static_cast<const core::MemberAccessExpression&>(unwrapped);
             const auto* field = _model.FieldFor(member);
             if (field &&
+                field->syntax->Type().TypeForm() == core::TypeKind::Pointer &&
                 field->syntax->Type().Contract() == OwnershipContract::Own) {
                 const Symbol* receiver = DirectTarget(member.Receiver());
                 const bool building =
@@ -895,6 +909,8 @@ class AllocationChecker final {
                            "a contract cannot yet summarize mutation through "
                            "an address of a tracked pointer slot");
                 if (contract == OwnershipContract::Own &&
+                    syntax.Parameters()[i]->Type().TypeForm() ==
+                        core::TypeKind::Pointer &&
                     arguments[i].kind != ValueKind::Null) {
                     if (!consumed.insert(arguments[i].identity).second)
                         Report(DiagnosticCode::UnverifiedOwnership, expression,
@@ -961,7 +977,8 @@ class AllocationChecker final {
     Value ContractResult(State& state, const core::Expression& call,
                          const core::TypeNode& type,
                          const Value* shape = nullptr) {
-        if (type.Contract() == OwnershipContract::Own) {
+        if (type.Contract() == OwnershipContract::Own &&
+            type.TypeForm() == core::TypeKind::Pointer) {
             if (shape && shape->kind == ValueKind::Null)
                 return {ValueKind::Null};
             const auto key = std::make_pair(&call, &type);
@@ -1047,7 +1064,8 @@ class AllocationChecker final {
                    "a lent pointer or its derived aliases cannot escape in a "
                    "return",
                    result.identity);
-        if (type.Contract() == OwnershipContract::Own) {
+        if (type.Contract() == OwnershipContract::Own &&
+            type.TypeForm() == core::TypeKind::Pointer) {
             if (result.kind == ValueKind::Pointer &&
                 !returnedOwners.insert(result.identity).second)
                 Report(DiagnosticCode::UnverifiedOwnership, at,
@@ -1274,8 +1292,11 @@ class AllocationChecker final {
                         const auto* field = _model.FieldFor(
                             static_cast<const core::MemberAccessExpression&>(
                                 target));
-                        if (field && field->syntax->Type().Contract() ==
-                                         OwnershipContract::Own)
+                        if (field &&
+                            field->syntax->Type().TypeForm() ==
+                                core::TypeKind::Pointer &&
+                            field->syntax->Type().Contract() ==
+                                OwnershipContract::Own)
                             Report(DiagnosticCode::UnverifiedOwnership,
                                    expression,
                                    "taking an address of an owning field would "
@@ -1388,8 +1409,10 @@ class AllocationChecker final {
                 CheckUse(state, Get(state, member.Receiver()), expression,
                          member.Access() == TokenType::Arrow);
                 const auto* field = _model.FieldFor(member);
-                if (field->syntax->Type().Contract() ==
-                    OwnershipContract::Own) {
+                if (field->syntax->Type().TypeForm() ==
+                        core::TypeKind::Pointer &&
+                    field->syntax->Type().Contract() ==
+                        OwnershipContract::Own) {
                     const Symbol* receiver = DirectTarget(member.Receiver());
                     if (!receiver || receiver->Name() != "self") {
                         Report(DiagnosticCode::UnverifiedOwnership, expression,
@@ -1438,9 +1461,11 @@ class AllocationChecker final {
                                       const core::MemberAccessExpression&>(
                                       base))
                             : nullptr;
-                    const bool owningField =
-                        field && field->syntax->Type().Contract() ==
-                                     OwnershipContract::Own;
+                    const bool owningField = field &&
+                                             field->syntax->Type().TypeForm() ==
+                                                 core::TypeKind::Pointer &&
+                                             field->syntax->Type().Contract() ==
+                                                 OwnershipContract::Own;
                     if (receiver.kind != ValueKind::Pointer ||
                         resource == state.resources.end() ||
                         !resource->second.live ||
@@ -1867,7 +1892,9 @@ class AllocationChecker final {
                                         ? finished.fieldValues.at(field.syntax)
                                               .identity
                                         : field.syntax);
-                                if (field.syntax->Type().Contract() ==
+                                if (field.syntax->Type().TypeForm() ==
+                                        core::TypeKind::Pointer &&
+                                    field.syntax->Type().Contract() ==
                                         OwnershipContract::Own &&
                                     resource != finished.resources.end() &&
                                     resource->second.live)

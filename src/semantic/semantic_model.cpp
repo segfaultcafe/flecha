@@ -63,4 +63,10 @@ TransferKind SemanticModel::TransferOf(
     return found == _transfers.end() ? TransferKind::Copy : found->second;
 }
 
+const core::ModuleConstantDeclaration* SemanticModel::ModuleConstantFor(
+    const Symbol& symbol) const {
+    const auto found = _moduleConstants.find(&symbol);
+    return found == _moduleConstants.end() ? nullptr : found->second;
+}
+
 }  // namespace flecha::semantic

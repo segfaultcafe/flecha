@@ -1,0 +1,299 @@
+module binary_test;
+
+@imports
+    :: root::encoding::binary
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test writer_reports_its_initial_state(&testing::UnitTest t) {
+    [4]u8 destination = none;
+    writer := binary::Writer::init(destination[:]);
+
+    asserts::is_true(t, writer.position() == 0, "writer starts at position zero");
+    asserts::is_true(t, writer.len() == 4, "writer reports destination length");
+    asserts::is_true(t, writer.remaining() == 4, "all space initially remains");
+    asserts::is_true(t, !writer.full(), "a nonempty destination is not full");
+}
+
+test write_byte_advances_and_preserves_full_destination(
+    &testing::UnitTest t
+) {
+    [2]u8 destination = [9, 8];
+
+    {
+        writer := binary::Writer::init(destination[:]);
+        firstError := writer.writeByte(17);
+        secondError := writer.writeByte(42);
+        fullError := writer.writeByte(99);
+
+        asserts::is_true(t, firstError == none, "first byte write succeeds");
+        asserts::is_true(t, secondError == none, "second byte write succeeds");
+        asserts::is_true(
+            t,
+            fullError == binary::BinaryError.InsufficientSpace,
+            "writeByte reports a full destination"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 2 and writer.remaining() == 0,
+            "failed writeByte does not advance"
+        );
+        asserts::is_true(t, writer.full(), "writer is full at the end");
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 17 and destination[1] == 42,
+        "writeByte stores bytes in order and preserves them after failure"
+    );
+}
+
+test write_copies_exactly_and_failed_writes_are_transactional(
+    &testing::UnitTest t
+) {
+    [5]u8 destination = [170; 5];
+    [3]u8 source = [10, 20, 30];
+
+    {
+        writer := binary::Writer::init(destination[:]);
+        writeError := writer.write(source[:]);
+        emptyError := writer.write(source[0:0]);
+        oversizedError := writer.write(source[:]);
+
+        asserts::is_true(t, writeError == none, "write accepts available space");
+        asserts::is_true(t, emptyError == none, "a zero-length write succeeds");
+        asserts::is_true(
+            t,
+            oversizedError == binary::BinaryError.InsufficientSpace,
+            "an oversized write reports insufficient space"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 3 and writer.remaining() == 2,
+            "zero-length and oversized writes do not advance"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 10 and destination[1] == 20 and
+            destination[2] == 30,
+        "write copies its complete source"
+    );
+    asserts::is_true(
+        t,
+        destination[3] == 170 and destination[4] == 170,
+        "an oversized write modifies no remaining bytes"
+    );
+}
+
+test write_string_copies_bytes_and_requires_complete_space(
+    &testing::UnitTest t
+) {
+    [8]u8 destination = [170; 8];
+
+    {
+        writer := binary::Writer::init(destination[:]);
+        emptyError := writer.writeString("");
+        escapedError := writer.writeString("A\nB");
+        exactError := writer.writeString("bytes");
+        fullError := writer.writeString("!");
+
+        asserts::is_true(t, emptyError == none, "an empty string write succeeds");
+        asserts::is_true(
+            t,
+            escapedError == none,
+            "writeString copies escaped string bytes"
+        );
+        asserts::is_true(t, exactError == none, "an exact-fit string succeeds");
+        asserts::is_true(
+            t,
+            fullError == binary::BinaryError.InsufficientSpace,
+            "a string write requires complete space"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 8 and writer.full(),
+            "empty and failed string writes do not advance"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 65 and destination[1] == 10 and
+            destination[2] == 66,
+        "writeString preserves each source byte"
+    );
+    asserts::is_true(
+        t,
+        destination[3] == 98 and destination[4] == 121 and
+            destination[5] == 116 and destination[6] == 101 and
+            destination[7] == 115,
+        "writeString fills the remaining destination exactly"
+    );
+}
+
+test writer_accepts_runtime_sized_slices(&testing::UnitTest t) {
+    destination, allocationError := new<own []u8>(6);
+    asserts::is_true(
+        t,
+        allocationError == none,
+        "runtime-sized destination allocation succeeds"
+    );
+    if allocationError != none {
+        return;
+    }
+
+    {
+        []u8 view = destination[:];
+        writer := binary::Writer::init(view);
+
+        textError := writer.writeString("FL");
+        numberError := writer.writeBig<u32>(305419896);
+
+        asserts::is_true(t, textError == none, "writer accepts a []u8 view");
+        asserts::is_true(
+            t,
+            numberError == none and writer.full(),
+            "writer fills a runtime-sized slice"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 70 and destination[1] == 76 and
+            destination[2] == 18 and destination[3] == 52 and
+            destination[4] == 86 and destination[5] == 120,
+        "runtime-sized destination retains written bytes"
+    );
+}
+
+test typed_writes_follow_endian_order_and_fail_transactionally(
+    &testing::UnitTest t
+) {
+    [7]u8 destination = [170; 7];
+
+    {
+        writer := binary::Writer::init(destination[:]);
+        littleError := writer.writeLittle<u16>(4660);
+        bigError := writer.writeBig<u32>(305419896);
+        missingError := writer.writeLittle<u16>(65535);
+
+        asserts::is_true(t, littleError == none, "writeLittle writes and advances");
+        asserts::is_true(t, bigError == none, "writeBig writes and advances");
+        asserts::is_true(
+            t,
+            missingError == binary::BinaryError.InsufficientSpace,
+            "a short typed write reports insufficient space"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 6 and writer.remaining() == 1,
+            "a short typed write does not advance"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 52 and destination[1] == 18,
+        "writeLittle uses least-significant byte first"
+    );
+    asserts::is_true(
+        t,
+        destination[2] == 18 and destination[3] == 52 and
+            destination[4] == 86 and destination[5] == 120,
+        "writeBig uses most-significant byte first"
+    );
+    asserts::is_true(
+        t,
+        destination[6] == 170,
+        "a failed typed write leaves destination bytes unchanged"
+    );
+}
+
+test written_bytes_exposes_only_the_cursor_prefix(&testing::UnitTest t) {
+    [4]u8 destination = [170; 4];
+
+    {
+        writer := binary::Writer::init(destination[:]);
+        firstError := writer.writeByte(10);
+        secondError := writer.writeByte(20);
+        asserts::is_true(
+            t,
+            firstError == none and secondError == none,
+            "setup writes succeed"
+        );
+
+        written := writer.writtenBytes();
+        asserts::is_true(t, written.len() == 2, "writtenBytes hides unused space");
+        asserts::is_true(
+            t,
+            written[0] == 10 and written[1] == 20,
+            "writtenBytes exposes the destination prefix"
+        );
+    }
+}
+
+test writer_skip_advances_and_fails_transactionally(&testing::UnitTest t) {
+    [4]u8 destination = [170; 4];
+
+    {
+        writer := binary::Writer::init(destination[:]);
+        emptyError := writer.skip(0);
+        skipError := writer.skip(3);
+        oversizedError := writer.skip(2);
+
+        asserts::is_true(t, emptyError == none, "a zero-length skip succeeds");
+        asserts::is_true(t, skipError == none, "skip accepts available space");
+        asserts::is_true(
+            t,
+            oversizedError == binary::BinaryError.InsufficientSpace,
+            "an oversized skip reports insufficient space"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 3 and writer.remaining() == 1,
+            "an oversized skip does not advance"
+        );
+        asserts::is_true(
+            t,
+            writer.writtenBytes().len() == 3,
+            "skipped bytes belong to the cursor prefix"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 170 and destination[1] == 170 and
+            destination[2] == 170 and destination[3] == 170,
+        "skip does not modify destination bytes"
+    );
+}
+
+test writer_reset_returns_to_the_start(&testing::UnitTest t) {
+    [2]u8 destination = [170; 2];
+
+    {
+        writer := binary::Writer::init(destination[:]);
+        firstError := writer.writeByte(10);
+        writer.reset();
+        secondError := writer.writeByte(20);
+
+        asserts::is_true(
+            t,
+            firstError == none and secondError == none,
+            "writes before and after reset succeed"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 1 and writer.writtenBytes().len() == 1,
+            "reset restores the initial cursor position"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        destination[0] == 20 and destination[1] == 170,
+        "a write after reset replaces bytes from the beginning"
+    );
+}

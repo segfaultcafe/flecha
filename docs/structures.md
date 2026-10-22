@@ -34,8 +34,12 @@ The declaration ends with `;`. Fields and methods are public by default.
 `private T field;` and a `private { ... }` field group are equivalent. A private
 member is accessible only inside methods belonging to its structure, including
 access through another instance. A build block does not grant private access
-by itself. Fields and methods cannot share names; `init`, `zero`, and `tear` are
-reserved lifecycle names. Types may refer to later structure declarations.
+by itself. Fields and methods may share a name because field access and method
+calls are syntactically distinct: `value.position` accesses a field, while
+`value.position()` calls a method. The same distinction applies through a
+reference or pointer: `self->position` and `self->position()`. The names `init`,
+`zero`, and `tear` remain reserved for lifecycle methods and cannot be used as
+field names. Types may refer to later structure declarations.
 
 Structure values use `.`, while references and pointers use `->`, for both
 fields and methods:
@@ -167,8 +171,31 @@ Structure variables require an initializer. Inline recursive layouts are
 rejected; recursive raw pointer
 fields such as `*Node next` are allowed. Fields support scalars, errors, raw
 pointers, owning strings, structures, fixed arrays of supported array elements,
-and tuples of supported fields. References, slices, and `stringv` fields need
-stored-borrow lifetime contracts and are currently rejected.
+tuples of supported fields, owning slices (`own []T`), and borrowed slices
+(`[]T` or `[]const T`). Owning slices are destroyed automatically with the
+containing structure. A structure containing a mutable slice is noncopyable;
+one containing only shared `[]const T` views may be copied.
+
+A borrowed-slice field is tied to the same source tracked by the ordinary
+borrow-result contract. Constructors and factories returning such a structure
+must declare `<- parameter>`, and the compiler rejects local escapes or access
+that conflicts with a live mutable field borrow:
+
+```flecha
+structure Writer {
+    []u8 destination;
+    usize position;
+};
+
+Writer Writer::init([]u8 destination) <- destination override {
+    return build Writer {
+        self.destination = destination;
+        self.position = 0;
+    };
+}
+```
+
+Reference and `stringv` fields remain unsupported.
 
 ## Destruction, copying, and stable storage
 

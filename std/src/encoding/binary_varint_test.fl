@@ -1,0 +1,192 @@
+module binary_test;
+
+@imports
+    :: root::bytes::buffer
+    :: root::encoding::binary
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test encoded_lengths_follow_base_128_boundaries(&testing::UnitTest t) {
+    asserts::is_true(t, binary::varint_length<u8>(0) == 1, "zero uses one byte");
+    asserts::is_true(t, binary::varint_length<u8>(127) == 1, "127 uses one byte");
+    asserts::is_true(t, binary::varint_length<u8>(128) == 2, "128 uses two bytes");
+    asserts::is_true(t, binary::varint_length<u16>(16383) == 2, "16383 uses two bytes");
+    asserts::is_true(t, binary::varint_length<u16>(16384) == 3, "16384 uses three bytes");
+    asserts::is_true(t, binary::varint_length<u32>(u32.max_value) == 5, "u32 maximum uses five bytes");
+    asserts::is_true(t, binary::varint_length<u64>(u64.max_value) == 10, "u64 maximum uses ten bytes");
+}
+
+test write_uses_canonical_encoding_and_is_transactional(&testing::UnitTest t) {
+    [3]u8 destination = [170; 3];
+    written, writeError := binary::write_varint<u16>(destination[:], 300);
+
+    asserts::is_true(
+        t,
+        written == 2 and writeError == none,
+        "write reports the canonical byte count"
+    );
+    asserts::is_true(
+        t,
+        destination[0] == 172 and destination[1] == 2 and
+            destination[2] == 170,
+        "write stores base-128 bytes and preserves unused space"
+    );
+
+    [1]u8 shortDestination = [170];
+    missing, shortError := binary::write_varint<u16>(shortDestination[:], 300);
+    asserts::is_true(
+        t,
+        missing == 0 and shortError == binary::BinaryError.InsufficientSpace,
+        "a short destination reports insufficient space"
+    );
+    asserts::is_true(
+        t,
+        shortDestination[0] == 170,
+        "a failed write leaves its destination unchanged"
+    );
+}
+
+test read_decodes_one_value_and_reports_its_consumed_prefix(
+    &testing::UnitTest t
+) {
+    [4]u8 source = [172, 2, 99, 100];
+    value, consumed, readError := binary::read_varint<u16>(source[:]);
+
+    asserts::is_true(
+        t,
+        value == 300 and consumed == 2 and readError == none,
+        "read decodes one value and stops at its final byte"
+    );
+}
+
+test round_trips_unsigned_width_boundaries(&testing::UnitTest t) {
+    [10]u8 storage = none;
+
+    u8Written, u8WriteError := binary::write_varint<u8>(storage[:], u8.max_value);
+    u8Value, u8Read, u8ReadError := binary::read_varint<u8>(storage[:]);
+    asserts::is_true(
+        t,
+        u8Written == 2 and u8Read == 2 and u8Value == u8.max_value and
+            u8WriteError == none and u8ReadError == none,
+        "u8 maximum round trips"
+    );
+
+    u16Written, u16WriteError := binary::write_varint<u16>(storage[:], u16.max_value);
+    u16Value, u16Read, u16ReadError := binary::read_varint<u16>(storage[:]);
+    asserts::is_true(
+        t,
+        u16Written == 3 and u16Read == 3 and u16Value == u16.max_value and
+            u16WriteError == none and u16ReadError == none,
+        "u16 maximum round trips"
+    );
+
+    u32Written, u32WriteError := binary::write_varint<u32>(storage[:], u32.max_value);
+    u32Value, u32Read, u32ReadError := binary::read_varint<u32>(storage[:]);
+    asserts::is_true(
+        t,
+        u32Written == 5 and u32Read == 5 and u32Value == u32.max_value and
+            u32WriteError == none and u32ReadError == none,
+        "u32 maximum round trips"
+    );
+
+    u64Written, u64WriteError := binary::write_varint<u64>(storage[:], u64.max_value);
+    u64Value, u64Read, u64ReadError := binary::read_varint<u64>(storage[:]);
+    asserts::is_true(
+        t,
+        u64Written == 10 and u64Read == 10 and u64Value == u64.max_value and
+            u64WriteError == none and u64ReadError == none,
+        "u64 maximum round trips"
+    );
+}
+
+test read_rejects_truncation_overflow_and_noncanonical_values(
+    &testing::UnitTest t
+) {
+    [1]u8 truncated = [128];
+    _, truncatedCount, truncatedError := binary::read_varint<u8>(truncated[:]);
+    asserts::is_true(
+        t,
+        truncatedCount == 0 and truncatedError == binary::BinaryError.UnexpectedEnd,
+        "a missing final byte reports unexpected end"
+    );
+
+    [2]u8 overflow = [255, 2];
+    _, overflowCount, overflowError := binary::read_varint<u8>(overflow[:]);
+    asserts::is_true(
+        t,
+        overflowCount == 0 and overflowError == binary::BinaryError.Overflow,
+        "payload bits outside the target width report overflow"
+    );
+
+    [2]u8 noncanonical = [129, 0];
+    _, invalidCount, invalidError := binary::read_varint<u8>(noncanonical[:]);
+    asserts::is_true(
+        t,
+        invalidCount == 0 and invalidError == binary::BinaryError.InvalidEncoding,
+        "a redundant final byte reports invalid encoding"
+    );
+}
+
+test cursors_write_and_read_varints_transactionally(&testing::UnitTest t) {
+    [3]u8 destination = [170; 3];
+
+    {
+        writer := binary::Writer::init(destination[:]);
+        writeError := writer.writeVarint<u16>(300);
+        missingError := writer.writeVarint<u16>(300);
+
+        asserts::is_true(t, writeError == none, "Writer writes a varint");
+        asserts::is_true(
+            t,
+            missingError == binary::BinaryError.InsufficientSpace,
+            "Writer reports an incomplete destination"
+        );
+        asserts::is_true(
+            t,
+            writer.position() == 2,
+            "a failed Writer varint does not advance"
+        );
+    }
+
+    {
+        reader := binary::Reader::init(destination[:]);
+        value, readError := reader.readVarint<u16>();
+        missing, invalidError := reader.readVarint<u8>();
+
+        asserts::is_true(
+            t,
+            value == 300 and readError == none and reader.position() == 2,
+            "Reader reads and advances past a varint"
+        );
+        asserts::is_true(
+            t,
+            missing == 0 and invalidError == binary::BinaryError.UnexpectedEnd and
+                reader.position() == 2,
+            "a failed Reader varint does not advance"
+        );
+    }
+}
+
+test buffer_grows_and_appends_varints(&testing::UnitTest t) {
+    value, allocationError := buffer::Buffer::withCapacity(1);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup Buffer is constructed");
+        return;
+    }
+
+    firstError := binary::append_varint<u8>(&value, 127);
+    secondError := binary::append_varint<u16>(&value, 300);
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none,
+        "Buffer appends varints"
+    );
+
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes.len() == 3 and bytes[0] == 127 and
+            bytes[1] == 172 and bytes[2] == 2,
+        "Buffer grows and preserves canonical encodings"
+    );
+}

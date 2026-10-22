@@ -1,0 +1,151 @@
+module hex;
+
+@imports :: root::encoding::binary;
+
+export error HexError {
+    InsufficientSpace,
+    Overflow,
+    InvalidEncoding,
+}
+
+export (usize, HexError) encoded_length(usize byteCount) {
+    length, overflowed := byteCount.overflow_mul(2);
+    if overflowed {
+        return (none, HexError.Overflow);
+    }
+
+    return (length, none);
+}
+
+export (usize, HexError) decoded_length(usize characterCount) {
+    if characterCount % 2 != 0 {
+        return (none, HexError.InvalidEncoding);
+    }
+
+    return (characterCount / 2, none);
+}
+
+export (usize, HexError) encode([]u8 destination, []const u8 source) {
+    return encode_with_case(destination, source, false);
+}
+
+export (usize, HexError) encode_upper(
+    []u8 destination,
+    []const u8 source
+) {
+    return encode_with_case(destination, source, true);
+}
+
+export (usize, HexError) decode(
+    []u8 destination,
+    []const u8 source
+) {
+    const usize LENGTH, HexError lengthError = decoded_length(source.len());
+    if lengthError != none {
+        return (none, lengthError);
+    }
+
+    if destination.len() < LENGTH {
+        return (none, HexError.InsufficientSpace);
+    }
+
+    loop usize index = 0; index < source.len(); index++ {
+        if !is_digit(source[index]) {
+            return (none, HexError.InvalidEncoding);
+        }
+    }
+
+    loop usize index = 0; index < LENGTH; index++ {
+        const usize SOURCE_INDEX = index * 2;
+        const u8 HIGH = digit_value(source[SOURCE_INDEX]);
+        const u8 LOW = digit_value(source[SOURCE_INDEX + 1]);
+        destination[index] = (HIGH << 4) | LOW;
+    }
+
+    return (LENGTH, none);
+}
+
+export HexError write(&binary::Writer destination, []const u8 source) {
+    return write_with_case(destination, source, false);
+}
+
+export HexError write_upper(&binary::Writer destination, []const u8 source) {
+    return write_with_case(destination, source, true);
+}
+
+(usize, HexError) encode_with_case(
+    []u8 destination,
+    []const u8 source,
+    bool uppercase
+) {
+    const usize LENGTH, HexError lengthError = encoded_length(source.len());
+    if lengthError != none {
+        return (none, lengthError);
+    }
+
+    if destination.len() < LENGTH {
+        return (none, HexError.InsufficientSpace);
+    }
+
+    loop usize index = 0; index < source.len(); index++ {
+        const usize DESTINATION_INDEX = index * 2;
+        const u8 BYTE = source[index];
+        destination[DESTINATION_INDEX] = digit(BYTE >> 4, uppercase);
+        destination[DESTINATION_INDEX + 1] = digit(BYTE & 15, uppercase);
+    }
+
+    return (LENGTH, none);
+}
+
+HexError write_with_case(
+    &binary::Writer destination,
+    []const u8 source,
+    bool uppercase
+) {
+    const usize LENGTH, HexError lengthError = encoded_length(source.len());
+    if lengthError != none {
+        return lengthError;
+    }
+
+    if destination->remaining() < LENGTH {
+        return HexError.InsufficientSpace;
+    }
+
+    loop usize index = 0; index < source.len(); index++ {
+        const u8 BYTE = source[index];
+        destination->writeByte(digit(BYTE >> 4, uppercase));
+        destination->writeByte(digit(BYTE & 15, uppercase));
+    }
+
+    return none;
+}
+
+u8 digit(u8 value, bool uppercase) {
+    if value < 10 {
+        return value + 48;
+    }
+
+    if uppercase {
+        return value + 55;
+    }
+
+    return value + 87;
+}
+
+bool is_digit(u8 value) {
+    return (value >= 48 and value <= 57) or
+        (value >= 65 and value <= 70) or
+        (value >= 97 and value <= 102);
+}
+
+u8 digit_value(u8 value) {
+    if value <= 57 {
+        return value - 48;
+    }
+
+    if value <= 70 {
+        return value - 55;
+    }
+
+    return value - 87;
+}

@@ -31,6 +31,7 @@ enum class SemanticTypeKind {
     StringView,
     Pointer,
     OwnedBuffer,
+    OwnedSlice,
     Reference,
     Array,
     Slice,
@@ -103,6 +104,7 @@ class SemanticType final {
     }
     bool ContainsStructure() const;
     bool ContainsOwnedBuffer() const;
+    bool ContainsOwnedSlice() const;
     bool IsZeroable() const;
     bool IsTriviallyZeroable() const;
     bool IsCopyable() const;
@@ -128,12 +130,14 @@ class SemanticType final {
     [[nodiscard]] bool IsSequence() const {
         return _kind == SemanticTypeKind::Array ||
                _kind == SemanticTypeKind::Slice ||
-               _kind == SemanticTypeKind::OwnedBuffer;
+               _kind == SemanticTypeKind::OwnedBuffer ||
+               _kind == SemanticTypeKind::OwnedSlice;
     }
     [[nodiscard]] bool IsConst() const { return _isConst; }
     [[nodiscard]] bool IsCompound() const {
         return _kind == SemanticTypeKind::Pointer ||
                _kind == SemanticTypeKind::OwnedBuffer ||
+               _kind == SemanticTypeKind::OwnedSlice ||
                _kind == SemanticTypeKind::Reference ||
                _kind == SemanticTypeKind::Array ||
                _kind == SemanticTypeKind::Slice ||

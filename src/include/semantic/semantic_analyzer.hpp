@@ -71,6 +71,11 @@ class SemanticAnalyzer final {
     void RegisterEnums(const core::CompilationUnit& unit);
     void DeclareCallableTypes(const core::CompilationUnit& unit);
     void ResolveCallableTypes(const core::CompilationUnit& unit);
+    void RegisterModuleConstants(const core::CompilationUnit& unit);
+    void AnalyzeModuleConstants(const core::CompilationUnit& unit);
+    bool ValidateModuleConstantExpression(
+        const core::Expression& expression,
+        std::vector<const Symbol*>& dependencies) const;
     SemanticType AnalyzeMemberAccess(
         const core::MemberAccessExpression& expression);
     void RegisterStructures(const core::CompilationUnit& unit);

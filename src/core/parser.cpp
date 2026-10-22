@@ -68,6 +68,14 @@ bool Parser::IsInferredVariableDeclaration() const {
            Peek(1).type == TokenType::DeclareAssign;
 }
 
+bool Parser::IsModuleConstantDeclaration() const {
+    if (!Check(TokenType::Const)) return false;
+    std::size_t offset = 0;
+    if (!ScanType(offset) || Peek(offset).type != TokenType::Identifier)
+        return false;
+    return Peek(offset + 1).type == TokenType::Assign;
+}
+
 const Token& Parser::Advance() {
     const Token& current = Current();
     if (!IsAtEnd()) {
@@ -326,12 +334,16 @@ std::unique_ptr<TypeNode> Parser::ParseType(bool allowOwn, bool allowLend,
         const Token contract = Advance();
         auto type = ParseType();
         if (!type) return nullptr;
-        if (type->TypeForm() != TypeKind::Pointer ||
-            (contract.type == TokenType::Own ? !allowOwn : !allowLend)) {
+        const bool ownedSlice = contract.type == TokenType::Own &&
+                                type->TypeForm() == TypeKind::Slice;
+        if ((!ownedSlice && type->TypeForm() != TypeKind::Pointer) ||
+            (!ownedSlice &&
+             (contract.type == TokenType::Own ? !allowOwn : !allowLend))) {
             _diagnostics.Report(
                 diagnostics::DiagnosticCode::UnexpectedToken, contract.range,
-                "ownership contracts require a raw pointer parameter, owning "
-                "return, or owning field; references never own or lend");
+                "ownership contracts require an owning slice or a raw pointer "
+                "parameter, owning return, or owning field; references never "
+                "own or lend");
             return nullptr;
         }
         type->SetContract(contract.type == TokenType::Own
@@ -908,6 +920,24 @@ std::unique_ptr<TypeSetDeclaration> Parser::ParseTypeSetDeclaration() {
         std::move(members));
 }
 
+std::unique_ptr<ModuleConstantDeclaration>
+Parser::ParseModuleConstantDeclaration() {
+    const source::SourceLocation start = Current().range.start;
+    auto type = ParseType();
+    if (!type) return nullptr;
+    const Token* name = Consume(TokenType::Identifier, "constant name");
+    if (!name || !Consume(TokenType::Assign, "'=' after module constant name"))
+        return nullptr;
+    auto initializer = ParseExpression();
+    if (!initializer) return nullptr;
+    const Token* end =
+        Consume(TokenType::SemiColon, "';' after module constant declaration");
+    if (!end) return nullptr;
+    return std::make_unique<ModuleConstantDeclaration>(
+        source::SourceRange{start, end->range.end}, std::move(type),
+        name->value, name->range, std::move(initializer));
+}
+
 std::unique_ptr<Declaration> Parser::ParseDeclaration() {
     if (Check(TokenType::Export) || Check(TokenType::Quiver)) {
         const Token modifier = Advance();
@@ -930,6 +960,7 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
         return declaration;
     }
     if (Check(TokenType::Test)) return ParseTestDeclaration();
+    if (IsModuleConstantDeclaration()) return ParseModuleConstantDeclaration();
     if (Check(TokenType::TypeSet)) return ParseTypeSetDeclaration();
     if (Check(TokenType::Structure)) return ParseStructureDeclaration();
     if (Check(TokenType::Enum)) return ParseEnumDeclaration();
@@ -1647,7 +1678,7 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
         if (expression->Kind() == AstNodeKind::NameExpression &&
             static_cast<const NameExpression&>(*expression).Name() == "new" &&
             Match(TokenType::Less)) {
-            auto type = ParseType();
+            auto type = ParseType(true);
             if (!type ||
                 !ConsumeTypeArgumentClose("'>' after allocation type") ||
                 !Consume(TokenType::LParen, "'(' after new<T>"))
@@ -2260,7 +2291,8 @@ void Parser::SynchronizeTopLevel() {
     while (!IsAtEnd() && !StartsType() && !Check(TokenType::Func) &&
            !Check(TokenType::Once) && !Check(TokenType::Unsafe) &&
            !Check(TokenType::Structure) && !Check(TokenType::Private) &&
-           !Check(TokenType::TypeSet) && !Check(TokenType::Test)) {
+           !Check(TokenType::TypeSet) && !Check(TokenType::Test) &&
+           !Check(TokenType::Const)) {
         Advance();
     }
 }

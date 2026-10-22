@@ -1,0 +1,129 @@
+module binary;
+
+@imports :: root::math::bits;
+
+export structure Reader {
+    private []const u8 source;
+    private usize position;
+};
+
+Reader Reader::init([]const u8 source) <-source override {
+    return build Reader {
+        self.source = source;
+        self.position = 0;
+    };
+}
+
+usize Reader::position(&const self) {
+    return self->position;
+}
+
+usize Reader::len(&const self) {
+    return self->source.len();
+}
+
+usize Reader::remaining(&const self) {
+    return self->source.len() - self->position;
+}
+
+bool Reader::empty(&const self) {
+    return self->remaining() == 0;
+}
+
+(u8, BinaryError) Reader::readByte(&self) {
+    if self->empty() {
+        return (none, BinaryError.UnexpectedEnd);
+    }
+
+    u8 value = self->source[self->position];
+    self->position++;
+    return (value, none);
+}
+
+([]const u8, BinaryError) Reader::read(&self, usize count) <-self {
+    if count > self->remaining() {
+        return (
+            self->source[self->position:self->position],
+            BinaryError.UnexpectedEnd
+        );
+    }
+
+    usize start = self->position;
+    self->position = self->position + count;
+    return (self->source[start:self->position], none);
+}
+
+(T, BinaryError) Reader::readLittle<
+    T: fixed_unsigned_integer
+>(&self) {
+    usize byteCount = bits::width<T>() / 8;
+    if byteCount > self->remaining() {
+        return (none, BinaryError.UnexpectedEnd);
+    }
+
+    value, err := read_little<T>(self->source[self->position:]);
+    if err != none {
+        return (none, err);
+    }
+
+    self->position = self->position + byteCount;
+    return (value, none);
+}
+
+(T, BinaryError) Reader::readBig<
+    T: fixed_unsigned_integer
+>(&self) {
+    usize byteCount = bits::width<T>() / 8;
+    if byteCount > self->remaining() {
+        return (none, BinaryError.UnexpectedEnd);
+    }
+
+    value, err := read_big<T>(self->source[self->position:]);
+    if err != none {
+        return (none, err);
+    }
+
+    self->position = self->position + byteCount;
+    return (value, none);
+}
+
+(T, BinaryError) Reader::readVarint<
+    T: fixed_unsigned_integer
+>(&self) {
+    value, byteCount, err := read_varint<T>(self->source[self->position:]);
+    if err != none {
+        return (none, err);
+    }
+
+    self->position = self->position + byteCount;
+    return (value, none);
+}
+
+(u8, BinaryError) Reader::peekByte(&const self) {
+    if self->empty() {
+        return (none, BinaryError.UnexpectedEnd);
+    }
+
+    return (self->source[self->position], none);
+}
+
+BinaryError Reader::skip(&self, usize count) {
+    if self->remaining() < count {
+        return BinaryError.UnexpectedEnd;
+    }
+    
+    self->position = self->position + count;
+    return none;
+}
+
+[]const u8 Reader::remainingBytes(&const self) <-self {
+    return self->source[self->position:];
+}
+
+([]const u8, BinaryError) Reader::readRemaining(&self) <-self {
+    return self->read(self->remaining()); 
+}
+
+void Reader::reset(&self) {
+    self->position = 0;
+}

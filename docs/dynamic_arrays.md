@@ -1,5 +1,43 @@
 # Runtime arrays and the first standard-library container
 
+The safe owning form is `own []T`. Allocate it with
+`new<own []T>(count)`, which returns `(own []T, error)`. The owner carries its
+data pointer and `usize` length, is move-only, and releases the allocation
+automatically when its live value leaves scope. It can be stored directly in a
+structure and does not require `unsafe`, `defer`, or `free`:
+
+```flecha
+structure Buffer {
+    own []u8 bytes;
+};
+
+Buffer Buffer::init(own []u8 bytes) override {
+    return build Buffer { self.bytes = bytes; };
+}
+
+void example() {
+    bytes, err := new<own []u8>(100);
+    if err != none { return; }
+    bytes[42] = 42;
+    view := bytes[:];
+}
+```
+
+Indexing, slicing, `front`, `back`, and `len` are checked safe operations on an
+owning slice. `data()` remains unsafe because it exposes a raw pointer. Adding
+`const` to the element type is a one-way permission weakening:
+`own []T` can move into `own []const T`, but not the reverse.
+
+An empty owning slice is trivially zeroable. Structures containing owning
+slices therefore receive a generated trivial `zero()` when their other fields
+are also trivially zeroable. An equivalent explicit `zero()` override remains
+trivial, so `none` can directly construct those structures, including within
+tuple results. The structure remains move-only because zero construction does
+not duplicate a live owner.
+
+The original manual form remains available for raw-memory work and backwards
+compatibility:
+
 Runtime-sized storage uses `new<[]T>(count)` in an unsafe context. `count` has type
 `usize` and is evaluated exactly once, before attempting allocation. The result is
 `(*[]T, error)`: `*[]T` is a move-only owning buffer containing the allocation

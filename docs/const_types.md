@@ -37,7 +37,30 @@ i32 main() {
 - `string` retains its owning copy behavior; `stringv` still requires an
   initializer and must not outlive its owner. Const does not extend lifetimes.
 - Only typed const declarations are implemented; `const name := value` is not
-  part of this milestone. Const does not imply compile-time evaluation.
+  part of this milestone.
+
+## Module constants
+
+At module scope, a typed const declaration is a compile-time constant rather
+than a runtime local:
+
+```flecha
+module buffer;
+
+const usize INITIAL_CAPACITY = 8;
+export const usize LARGE_CAPACITY = INITIAL_CAPACITY * 4;
+```
+
+Its initializer may contain literals, other module constants, unary and binary
+operators, casts, `isof`, numeric limits, floating-point constants, enum
+variants, and error values. It cannot call functions, allocate storage, refer
+to runtime values, or participate in a dependency cycle. Module constants
+support numeric, `bool`, `char`, `stringv`, enum, and error-value types.
+
+All files contributing to one logical module share its constants. Unmodified
+constants remain module-private; `quiver` and `export` apply the ordinary
+top-level visibility rules. A use is lowered as the immutable constant
+expression, so this feature introduces no mutable global initialization.
 
 ## Recursive types and aliases
 
