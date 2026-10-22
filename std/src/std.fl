@@ -9,6 +9,7 @@ module std;
     :: root::bytes::sequence
     :: root::encoding::binary
     :: root::encoding::hex
+    :: root::io::stream
     :: root::io::filesystem
     :: root::io::file
     :: root::io::errors as io_errors

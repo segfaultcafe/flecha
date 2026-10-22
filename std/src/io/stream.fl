@@ -1,0 +1,45 @@
+module stream;
+
+@imports :: root::io::errors;
+
+export (usize, error) copy(
+    &Reader reader,
+    &Writer writer,
+    []u8 buffer
+) {
+    if buffer.len() == 0 {
+        return (none, errors::IoError.InvalidOptions);
+    }
+
+    usize total = 0;
+    while true {
+        bytesRead, readError := reader->read(buffer);
+        if bytesRead > buffer.len() {
+            return (total, errors::IoError.ReadFailed);
+        }
+
+        usize offset = 0;
+        while offset < bytesRead {
+            bytesWritten, writeError := writer->write(buffer[offset:bytesRead]);
+            if bytesWritten > bytesRead - offset {
+                return (total, errors::IoError.WriteFailed);
+            }
+
+            offset = offset + bytesWritten;
+            total = total + bytesWritten;
+            if writeError != none {
+                return (total, writeError);
+            }
+            if bytesWritten == 0 {
+                return (total, errors::IoError.WriteFailed);
+            }
+        }
+
+        if readError != none {
+            return (total, readError);
+        }
+        if bytesRead == 0 {
+            return (total, none);
+        }
+    }
+}

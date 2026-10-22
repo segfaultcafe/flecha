@@ -1,0 +1,311 @@
+module stream_test;
+
+@imports
+    :: root::io::stream
+    :: root::io::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test read_forwards_the_operation_result(&testing::UnitTest t) {
+    reader := stream::Reader::init(
+        [](destination) => {
+            if destination.len() > 0 {
+                destination[0] = 42;
+                return (1, errors::IoError.ReadFailed);
+            }
+
+            return (none, errors::IoError.ReadFailed);
+        }
+    );
+
+    [1]u8 destination = none;
+    bytesRead, err := reader.read(destination[:]);
+    asserts::is_true(t, bytesRead == 1, "read preserves the byte count");
+    asserts::is_true(t, destination[0] == 42, "read invokes the operation");
+    asserts::is_true(
+        t,
+        err == errors::IoError.ReadFailed,
+        "read preserves errors"
+    );
+}
+
+test read_exact_collects_partial_reads(&testing::UnitTest t) {
+    [5]u8 source = [1, 2, 3, 4, 5];
+    usize position = 0;
+    reader := stream::Reader::init(
+        [&const source, &position](destination) => {
+            usize count = destination.len();
+            if count > 2 {
+                count = 2;
+            }
+
+            usize remaining = source.len() - position;
+            if count > remaining {
+                count = remaining;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[index] = source[position + index];
+            }
+
+            position = position + count;
+            return (count, none);
+        }
+    );
+
+    [5]u8 destination = none;
+    err := reader.readExact(destination[:]);
+    asserts::is_true(t, err == none, "readExact accepts partial reads");
+    asserts::is_true(t, destination[0] == 1, "readExact copies the first byte");
+    asserts::is_true(t, destination[4] == 5, "readExact copies the last byte");
+}
+
+test read_exact_reports_an_early_end(&testing::UnitTest t) {
+    [2]u8 source = [7, 9];
+    usize position = 0;
+    reader := stream::Reader::init(
+        [&const source, &position](destination) => {
+            usize remaining = source.len() - position;
+            usize count = destination.len();
+            if count > remaining {
+                count = remaining;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[index] = source[position + index];
+            }
+
+            position = position + count;
+            return (count, none);
+        }
+    );
+
+    [3]u8 destination = none;
+    err := reader.readExact(destination[:]);
+    asserts::is_true(
+        t,
+        err == errors::IoError.UnexpectedEof,
+        "readExact reports EOF before filling the destination"
+    );
+    asserts::is_true(t, destination[0] == 7, "readExact keeps partial data");
+    asserts::is_true(
+        t,
+        destination[1] == 9,
+        "readExact keeps all partial data"
+    );
+}
+
+test read_exact_handles_empty_and_invalid_operations(&testing::UnitTest t) {
+    emptyReader := stream::Reader::init(
+        [](destination) => {
+            return (destination.len() + 1, none);
+        }
+    );
+
+    [0]u8 empty = none;
+    emptyError := emptyReader.readExact(empty[:]);
+    asserts::is_true(t, emptyError == none, "an empty read is already exact");
+
+    invalidReader := stream::Reader::init(
+        [](destination) => {
+            return (destination.len() + 1, none);
+        }
+    );
+    [1]u8 destination = none;
+    invalidError := invalidReader.readExact(destination[:]);
+    asserts::is_true(
+        t,
+        invalidError == errors::IoError.ReadFailed,
+        "readExact rejects an impossible byte count"
+    );
+}
+
+test write_forwards_the_operation_result(&testing::UnitTest t) {
+    writer := stream::Writer::init(
+        [](source) => {
+            return (source.len(), errors::IoError.WriteFailed);
+        }
+    );
+
+    [2]u8 source = [1, 2];
+    bytesWritten, err := writer.write(source[:]);
+    asserts::is_true(t, bytesWritten == 2, "write preserves the byte count");
+    asserts::is_true(
+        t,
+        err == errors::IoError.WriteFailed,
+        "write preserves errors"
+    );
+}
+
+test write_all_completes_partial_writes(&testing::UnitTest t) {
+    [5]u8 destination = none;
+    usize position = 0;
+    writer := stream::Writer::init(
+        [&destination, &position](source) => {
+            usize count = source.len();
+            if count > 2 {
+                count = 2;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[position + index] = source[index];
+            }
+
+            position = position + count;
+            return (count, none);
+        }
+    );
+
+    [5]u8 source = [1, 2, 3, 4, 5];
+    err := writer.writeAll(source[:]);
+    asserts::is_true(t, err == none, "writeAll accepts partial writes");
+    asserts::is_true(t, destination[0] == 1, "writeAll copies the first byte");
+    asserts::is_true(t, destination[4] == 5, "writeAll copies the last byte");
+}
+
+test write_all_rejects_zero_progress(&testing::UnitTest t) {
+    writer := stream::Writer::init(
+        [](source) => {
+            return (none, none);
+        }
+    );
+
+    [1]u8 source = [42];
+    err := writer.writeAll(source[:]);
+    asserts::is_true(
+        t,
+        err == errors::IoError.WriteFailed,
+        "writeAll rejects a writer that makes no progress"
+    );
+}
+
+test write_all_handles_empty_and_invalid_operations(&testing::UnitTest t) {
+    emptyWriter := stream::Writer::init(
+        [](source) => {
+            return (source.len() + 1, none);
+        }
+    );
+
+    [0]u8 empty = none;
+    emptyError := emptyWriter.writeAll(empty[:]);
+    asserts::is_true(
+        t,
+        emptyError == none,
+        "an empty write is already complete"
+    );
+
+    invalidWriter := stream::Writer::init(
+        [](source) => {
+            return (source.len() + 1, none);
+        }
+    );
+    [1]u8 source = [42];
+    invalidError := invalidWriter.writeAll(source[:]);
+    asserts::is_true(
+        t,
+        invalidError == errors::IoError.WriteFailed,
+        "writeAll rejects an impossible byte count"
+    );
+}
+
+test copy_moves_bytes_across_partial_streams(&testing::UnitTest t) {
+    [5]u8 source = [10, 20, 30, 40, 50];
+    usize readPosition = 0;
+    reader := stream::Reader::init(
+        [&const source, &readPosition](destination) => {
+            usize count = destination.len();
+            if count > 2 {
+                count = 2;
+            }
+
+            usize remaining = source.len() - readPosition;
+            if count > remaining {
+                count = remaining;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[index] = source[readPosition + index];
+            }
+
+            readPosition = readPosition + count;
+            return (count, none);
+        }
+    );
+
+    [5]u8 destination = none;
+    usize writePosition = 0;
+    writer := stream::Writer::init(
+        [&destination, &writePosition](bytes) => {
+            usize count = bytes.len();
+            if count > 1 {
+                count = 1;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[writePosition + index] = bytes[index];
+            }
+
+            writePosition = writePosition + count;
+            return (count, none);
+        }
+    );
+
+    [3]u8 buffer = none;
+    copied, err := stream::copy(&reader, &writer, buffer[:]);
+    asserts::is_true(t, err == none, "copy succeeds across partial streams");
+    asserts::is_true(t, copied == 5, "copy reports the transferred byte count");
+    asserts::is_true(t, destination[0] == 10, "copy writes the first byte");
+    asserts::is_true(t, destination[4] == 50, "copy writes the last byte");
+}
+
+test copy_rejects_an_empty_buffer(&testing::UnitTest t) {
+    reader := stream::Reader::init(
+        [](destination) => {
+            return (none, none);
+        }
+    );
+    writer := stream::Writer::init(
+        [](source) => {
+            return (source.len(), none);
+        }
+    );
+
+    [0]u8 buffer = none;
+    copied, err := stream::copy(&reader, &writer, buffer[:]);
+    asserts::is_true(t, copied == 0, "an empty-buffer copy transfers nothing");
+    asserts::is_true(
+        t,
+        err == errors::IoError.InvalidOptions,
+        "copy requires nonempty scratch storage"
+    );
+}
+
+test copy_preserves_partial_progress_before_an_error(&testing::UnitTest t) {
+    bool first = true;
+    reader := stream::Reader::init(
+        [&first](destination) => {
+            if !first {
+                return (none, errors::IoError.ReadFailed);
+            }
+
+            first = false;
+            destination[0] = 42;
+            return (1, none);
+        }
+    );
+
+    writer := stream::Writer::init(
+        [](source) => {
+            return (source.len(), none);
+        }
+    );
+
+    [1]u8 buffer = none;
+    copied, err := stream::copy(&reader, &writer, buffer[:]);
+    asserts::is_true(t, copied == 1, "copy preserves completed progress");
+    asserts::is_true(
+        t,
+        err == errors::IoError.ReadFailed,
+        "copy returns read errors"
+    );
+}

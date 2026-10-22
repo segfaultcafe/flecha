@@ -1,0 +1,39 @@
+module stream;
+
+@imports :: root::io::errors;
+
+export func Read([]u8 destination) => (usize, error);
+
+export structure Reader {
+    private Read operation;
+};
+
+Reader Reader::init(Read operation) <- operation override {
+    return build Reader {
+        self.operation = operation;
+    };
+}
+
+(usize, error) Reader::read(&self, []u8 destination) {
+    return (self->operation)(destination);
+}
+
+error Reader::readExact(&self, []u8 destination) {
+    usize offset = 0;
+    while offset < destination.len() {
+        bytesRead, err := self->read(destination[offset:]);
+        if bytesRead > destination.len() - offset {
+            return errors::IoError.ReadFailed;
+        }
+
+        offset = offset + bytesRead;
+        if err != none {
+            return err;
+        }
+        if bytesRead == 0 {
+            return errors::IoError.UnexpectedEof;
+        }
+    }
+
+    return none;
+}

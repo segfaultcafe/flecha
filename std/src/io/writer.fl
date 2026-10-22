@@ -1,0 +1,39 @@
+module stream;
+
+@imports :: root::io::errors;
+
+export func Write([]const u8 source) => (usize, error);
+
+export structure Writer {
+    private Write operation;
+};
+
+Writer Writer::init(Write operation) <- operation override {
+    return build Writer {
+        self.operation = operation;
+    };
+}
+
+(usize, error) Writer::write(&self, []const u8 source) {
+    return (self->operation)(source);
+}
+
+error Writer::writeAll(&self, []const u8 source) {
+    usize offset = 0;
+    while offset < source.len() {
+        bytesWritten, err := self->write(source[offset:]);
+        if bytesWritten > source.len() - offset {
+            return errors::IoError.WriteFailed;
+        }
+
+        offset = offset + bytesWritten;
+        if err != none {
+            return err;
+        }
+        if bytesWritten == 0 {
+            return errors::IoError.WriteFailed;
+        }
+    }
+
+    return none;
+}
