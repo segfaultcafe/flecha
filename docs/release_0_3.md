@@ -7,6 +7,12 @@ library from its initial arrays, algorithms, files, and testing support into a
 coherent foundation for command-line programs, structured data, persistent
 services, networking, and deterministic ledger applications.
 
+This is one concrete step in Flecha's broader
+[direction toward 1.0 and beyond](vision.md). That direction is intentionally
+adaptable: it explains what the project is trying to make possible without
+freezing every future feature or assigning it to a release in advance. The
+requirements in this document apply specifically to the 0.3.0 milestone.
+
 The north-star programs for this release are:
 
 - a nontrivial command-line application;
