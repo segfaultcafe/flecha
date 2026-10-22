@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.2.3 - 2026-10-22
+
+Flecha 0.2.3 fixes nested receiver reborrowing in method-call arguments.
+
+### Fixed
+
+- Mutable method receiver borrows now activate after argument evaluation,
+  allowing temporary shared reborrows that produce ordinary values, such as
+  `self->read(self->remaining())`.
+- Receiver reservation still rejects overlapping mutation, moves, and
+  arguments that retain a borrow into the mutable call.
+
 ## 0.2.2 - 2026-10-21
 
 Flecha 0.2.2 fixes zero-state classification for structures containing
