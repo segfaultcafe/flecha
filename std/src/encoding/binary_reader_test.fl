@@ -1,14 +1,13 @@
-module cursor_test;
+module binary_test;
 
 @imports
-    :: root::bytes::cursor
-    :: root::bytes::errors
+    :: root::encoding::binary
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
 test reader_reports_its_initial_state(&testing::UnitTest t) {
     [4]u8 source = [1, 2, 3, 4];
-    reader := cursor::Reader::init(source[:]);
+    reader := binary::Reader::init(source[:]);
 
     asserts::is_true(t, reader.position() == 0, "reader starts at position zero");
     asserts::is_true(t, reader.len() == 4, "reader reports the source length");
@@ -18,7 +17,7 @@ test reader_reports_its_initial_state(&testing::UnitTest t) {
 
 test read_byte_advances_and_preserves_eof_position(&testing::UnitTest t) {
     [2]u8 source = [17, 42];
-    reader := cursor::Reader::init(source[:]);
+    reader := binary::Reader::init(source[:]);
 
     first, firstError := reader.readByte();
     second, secondError := reader.readByte();
@@ -36,7 +35,7 @@ test read_byte_advances_and_preserves_eof_position(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
-        pastEnd == 0 and endError == errors::ByteError.UnexpectedEnd,
+        pastEnd == 0 and endError == binary::BinaryError.UnexpectedEnd,
         "readByte reports end of input"
     );
     asserts::is_true(t, reader.position() == 2, "failed readByte does not advance");
@@ -48,7 +47,7 @@ test read_returns_views_and_failed_reads_are_transactional(
     &testing::UnitTest t
 ) {
     [4]u8 source = [10, 20, 30, 40];
-    reader := cursor::Reader::init(source[:]);
+    reader := binary::Reader::init(source[:]);
 
     {
         prefix, err := reader.read(3);
@@ -75,7 +74,7 @@ test read_returns_views_and_failed_reads_are_transactional(
         missing, err := reader.read(2);
         asserts::is_true(
             t,
-            missing.len() == 0 and err == errors::ByteError.UnexpectedEnd,
+            missing.len() == 0 and err == binary::BinaryError.UnexpectedEnd,
             "an oversized read returns an empty view and an error"
         );
     }
@@ -91,7 +90,7 @@ test typed_reads_follow_endian_order_and_fail_transactionally(
     &testing::UnitTest t
 ) {
     [7]u8 source = [52, 18, 18, 52, 86, 120, 255];
-    reader := cursor::Reader::init(source[:]);
+    reader := binary::Reader::init(source[:]);
 
     little, littleError := reader.readLittle<u16>();
     big, bigError := reader.readBig<u32>();
@@ -111,7 +110,7 @@ test typed_reads_follow_endian_order_and_fail_transactionally(
     missing, missingError := reader.readLittle<u16>();
     asserts::is_true(
         t,
-        missing == 0 and missingError == errors::ByteError.UnexpectedEnd,
+        missing == 0 and missingError == binary::BinaryError.UnexpectedEnd,
         "a short typed read reports unexpected end"
     );
     asserts::is_true(
@@ -123,7 +122,7 @@ test typed_reads_follow_endian_order_and_fail_transactionally(
 
 test peek_byte_observes_without_advancing(&testing::UnitTest t) {
     [1]u8 source = [42];
-    reader := cursor::Reader::init(source[:]);
+    reader := binary::Reader::init(source[:]);
 
     value, peekError := reader.peekByte();
     asserts::is_true(
@@ -142,7 +141,7 @@ test peek_byte_observes_without_advancing(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
-        missing == 0 and endError == errors::ByteError.UnexpectedEnd,
+        missing == 0 and endError == binary::BinaryError.UnexpectedEnd,
         "peekByte reports end of input"
     );
     asserts::is_true(
@@ -154,7 +153,7 @@ test peek_byte_observes_without_advancing(&testing::UnitTest t) {
 
 test skip_advances_and_fails_transactionally(&testing::UnitTest t) {
     [4]u8 source = [1, 2, 3, 4];
-    reader := cursor::Reader::init(source[:]);
+    reader := binary::Reader::init(source[:]);
 
     emptyError := reader.skip(0);
     skipError := reader.skip(3);
@@ -164,7 +163,7 @@ test skip_advances_and_fails_transactionally(&testing::UnitTest t) {
     asserts::is_true(t, skipError == none, "skip accepts an available count");
     asserts::is_true(
         t,
-        oversizedError == errors::ByteError.UnexpectedEnd,
+        oversizedError == binary::BinaryError.UnexpectedEnd,
         "an oversized skip reports end of input"
     );
     asserts::is_true(
@@ -176,7 +175,7 @@ test skip_advances_and_fails_transactionally(&testing::UnitTest t) {
 
 test remaining_views_follow_the_reader_position(&testing::UnitTest t) {
     [4]u8 source = [10, 20, 30, 40];
-    reader := cursor::Reader::init(source[:]);
+    reader := binary::Reader::init(source[:]);
     skipError := reader.skip(2);
     asserts::is_true(t, skipError == none, "reader advances for the setup");
 
@@ -209,7 +208,7 @@ test remaining_views_follow_the_reader_position(&testing::UnitTest t) {
 
 test reset_returns_reader_to_the_start(&testing::UnitTest t) {
     [2]u8 source = [7, 9];
-    reader := cursor::Reader::init(source[:]);
+    reader := binary::Reader::init(source[:]);
     skipError := reader.skip(2);
     asserts::is_true(t, skipError == none and reader.empty(), "setup consumes input");
 

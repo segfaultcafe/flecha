@@ -1,84 +1,50 @@
 # Bytes
 
-The `endian` module reads and writes fixed-width unsigned integers in an
-explicit byte order:
+The `bytes` namespace owns raw byte storage and sequence operations. It does
+not own serialization formats, textual codecs, or structured data formats.
+
+## Buffer
+
+The `buffer` module provides a dynamically growing owning byte sequence:
 
 ```flecha
-@imports
-    :: lib::std::bytes::endian
-    :: lib::std::bytes::errors as byte_errors;
+@imports :: lib::std::bytes::buffer;
 
-value, readError := endian::read_little<u32>(source);
-writeError := endian::write_big<u64>(destination, value64);
+value, allocationError := buffer::Buffer::withCapacity(16);
+if allocationError != none {
+    return allocationError;
+}
+
+value.writeByte(42);
+value.write(source);
+bytes := value.bytes();
 ```
 
-`read_little` and `read_big` consume the first `bits::width<T>() / 8` bytes of
-their source. They return `ByteError.UnexpectedEnd` and a zero value when the
-source is too short.
+`Buffer` tracks initialized length separately from allocation capacity.
+`bytes()` exposes only the initialized prefix. `reserve`, `write`, `writeByte`,
+and growing `resize` may allocate and report an allocation error without
+discarding existing contents. `clear`, shrinking `resize`, and `truncate`
+retain the allocation.
 
-`write_little` and `write_big` modify the first `bits::width<T>() / 8` bytes of
-their destination. They return `ByteError.InsufficientSpace` without modifying
-the destination when it is too short. All four operations ignore extra bytes.
+`popByte` removes the final byte and reports `BufferError.Empty` without
+changing an empty Buffer. `writeString` appends the existing bytes of a
+`stringv`; it does not validate, normalize, or otherwise interpret text.
 
-The operations accept the exported `fixed_unsigned_integer` type set: `u8`,
-`u16`, `u32`, and `u64`. `usize` is intentionally excluded because its width
-depends on the compilation target and is unsuitable for canonical serialized
-data.
+## Sequence
 
-## Reader
-
-The `cursor` module provides `Reader`, a borrowed cursor over an immutable byte
-slice:
+The `sequence` module operates on borrowed byte slices:
 
 ```flecha
-@imports
-    :: lib::std::bytes::cursor;
+@imports :: lib::std::bytes::sequence;
 
-[6]u8 encoded = [52, 18, 18, 52, 86, 120];
-reader := cursor::Reader::init(encoded[:]);
-
-little, littleError := reader.readLittle<u16>();
-big, bigError := reader.readBig<u32>();
+same := sequence::equal(left, right);
+order := sequence::compare_lexicographic(left, right);
+foundAt, found := sequence::index_of(haystack, needle);
 ```
 
-`Reader` stores no allocation and does not own or copy its source. Its
-constructor's borrow-result contract requires the source to outlive the reader.
-`position()` reports the consumed byte count, `len()` reports the original
-source length, and `remaining()` reports the unread byte count.
+It provides equality, unsigned lexicographic comparison, prefix and suffix
+checks, and byte or subsequence search. These functions neither allocate nor
+interpret the bytes as text.
 
-`readByte()` consumes one byte. `read(count)` consumes and returns a read-only
-view of the next `count` bytes; the returned view borrows the reader and must be
-released before advancing it again. A zero-length read succeeds. `readLittle<T>`
-and `readBig<T>` decode the same fixed-width unsigned types supported by the
-`endian` module.
-
-Every failed read returns `ByteError.UnexpectedEnd` and leaves the cursor
-position unchanged. Failed scalar reads return zero. A failed slice read returns
-a valid empty view at the current position rather than a null or owning value.
-
-## Writer
-
-The same `cursor` module provides `Writer`, a mutable borrowed cursor over a
-caller-provided destination:
-
-```flecha
-[6]u8 encoded = none;
-writer := cursor::Writer::init(encoded[:]);
-
-littleError := writer.writeLittle<u16>(4660);
-bigError := writer.writeBig<u32>(305419896);
-```
-
-`Writer` does not allocate or own its destination. Its borrow-result contract
-keeps the mutable destination loan active for the writer's lifetime.
-`position()`, `len()`, and `remaining()` have the same meanings as on `Reader`;
-`full()` reports whether no writable bytes remain.
-
-`writeByte(value)` writes one byte. `write(source)` copies the complete byte
-slice or writes nothing, and a zero-length source succeeds.
-`writeString(value)` applies the same exact-write behavior to the bytes of a
-`stringv`; it performs no text encoding or allocation. `writeLittle<T>` and
-`writeBig<T>` encode the fixed-width unsigned types supported by `endian`.
-
-Every failed write returns `ByteError.InsufficientSpace` and changes neither the
-cursor position nor any destination byte.
+Binary serialization and textual binary codecs live under `encoding`; see
+[Encoding](encoding.md).

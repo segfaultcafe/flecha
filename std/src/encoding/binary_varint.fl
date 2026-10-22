@@ -1,11 +1,8 @@
-module varint;
+module binary;
 
-@imports
-    :: root::bytes::endian
-    :: root::bytes::errors
-    :: root::math::bits;
+@imports :: root::math::bits;
 
-export usize encoded_length<T: endian::fixed_unsigned_integer>(T value) {
+export usize varint_length<T: fixed_unsigned_integer>(T value) {
     usize length = 1;
     while value >= 128 {
         value = value >> 7;
@@ -15,12 +12,12 @@ export usize encoded_length<T: endian::fixed_unsigned_integer>(T value) {
     return length;
 }
 
-export (usize, errors::ByteError) write<
-    T: endian::fixed_unsigned_integer
+export (usize, BinaryError) write_varint<
+    T: fixed_unsigned_integer
 >([]u8 destination, T value) {
-    const usize LENGTH = encoded_length<T>(value);
+    const usize LENGTH = varint_length<T>(value);
     if destination.len() < LENGTH {
-        return (none, errors::ByteError.InsufficientSpace);
+        return (none, BinaryError.InsufficientSpace);
     }
 
     usize index = 0;
@@ -34,8 +31,8 @@ export (usize, errors::ByteError) write<
     return (LENGTH, none);
 }
 
-export (T, usize, errors::ByteError) read<
-    T: endian::fixed_unsigned_integer
+export (T, usize, BinaryError) read_varint<
+    T: fixed_unsigned_integer
 >([]const u8 source) {
     const usize MAX_BYTES = (bits::width<T>() + 6) / 7;
     T value = none;
@@ -43,7 +40,7 @@ export (T, usize, errors::ByteError) read<
 
     while index < source.len() {
         if index >= MAX_BYTES {
-            return (none, none, errors::ByteError.Overflow);
+            return (none, none, BinaryError.Overflow);
         }
 
         const u8 BYTE = source[index];
@@ -51,7 +48,7 @@ export (T, usize, errors::ByteError) read<
         const usize SHIFT = index * 7;
 
         if PAYLOAD > (T.max_value >> SHIFT) {
-            return (none, none, errors::ByteError.Overflow);
+            return (none, none, BinaryError.Overflow);
         }
 
         value = value | (PAYLOAD << SHIFT);
@@ -59,12 +56,12 @@ export (T, usize, errors::ByteError) read<
 
         if (BYTE & 128) == 0 {
             if index > 1 and PAYLOAD == 0 {
-                return (none, none, errors::ByteError.InvalidEncoding);
+                return (none, none, BinaryError.InvalidEncoding);
             }
 
             return (value, index, none);
         }
     }
 
-    return (none, none, errors::ByteError.UnexpectedEnd);
+    return (none, none, BinaryError.UnexpectedEnd);
 }

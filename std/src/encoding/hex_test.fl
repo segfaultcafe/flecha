@@ -1,9 +1,8 @@
 module hex_test;
 
 @imports
-    :: root::bytes::cursor
-    :: root::bytes::errors
-    :: root::bytes::hex
+    :: root::encoding::binary
+    :: root::encoding::hex
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
@@ -24,7 +23,7 @@ test length_helpers_validate_overflow_and_pairing(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
-        overflowError == errors::ByteError.Overflow,
+        overflowError == hex::HexError.Overflow,
         "encoded_length reports multiplication overflow"
     );
 
@@ -37,7 +36,7 @@ test length_helpers_validate_overflow_and_pairing(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
-        oddError == errors::ByteError.InvalidEncoding,
+        oddError == hex::HexError.InvalidEncoding,
         "an odd character count is not a complete encoding"
     );
 }
@@ -86,7 +85,7 @@ test encode_requires_complete_destination_space(&testing::UnitTest t) {
     written, encodeError := hex::encode(destination[:], source[:]);
     asserts::is_true(
         t,
-        written == 0 and encodeError == errors::ByteError.InsufficientSpace,
+        written == 0 and encodeError == hex::HexError.InsufficientSpace,
         "a short destination reports insufficient space"
     );
     asserts::is_true(
@@ -129,7 +128,7 @@ test decode_failures_are_transactional(&testing::UnitTest t) {
 
     asserts::is_true(
         t,
-        invalidCount == 0 and invalidError == errors::ByteError.InvalidEncoding,
+        invalidCount == 0 and invalidError == hex::HexError.InvalidEncoding,
         "decode rejects non-hexadecimal characters"
     );
     asserts::is_true(
@@ -142,7 +141,7 @@ test decode_failures_are_transactional(&testing::UnitTest t) {
     _, oddError := hex::decode(destination[:], odd[:]);
     asserts::is_true(
         t,
-        oddError == errors::ByteError.InvalidEncoding,
+        oddError == hex::HexError.InvalidEncoding,
         "decode rejects an odd input length"
     );
 
@@ -151,7 +150,7 @@ test decode_failures_are_transactional(&testing::UnitTest t) {
     _, shortError := hex::decode(shortDestination[:], valid[:]);
     asserts::is_true(
         t,
-        shortError == errors::ByteError.InsufficientSpace and
+        shortError == hex::HexError.InsufficientSpace and
             shortDestination[0] == 170,
         "a short decode destination is left unchanged"
     );
@@ -178,10 +177,10 @@ test writer_appends_hex_and_preserves_state_on_failure(&testing::UnitTest t) {
     [7]u8 destination = [170; 7];
 
     {
-        writer := cursor::Writer::init(destination[:]);
-        lowerError := writer.writeHex(first[:]);
-        upperError := writer.writeHexUpper(second[:]);
-        missingError := writer.writeHex(second[:]);
+        writer := binary::Writer::init(destination[:]);
+        lowerError := hex::write(&writer, first[:]);
+        upperError := hex::write_upper(&writer, second[:]);
+        missingError := hex::write(&writer, second[:]);
 
         asserts::is_true(
             t,
@@ -190,7 +189,7 @@ test writer_appends_hex_and_preserves_state_on_failure(&testing::UnitTest t) {
         );
         asserts::is_true(
             t,
-            missingError == errors::ByteError.InsufficientSpace,
+            missingError == hex::HexError.InsufficientSpace,
             "Writer reports insufficient remaining space"
         );
         asserts::is_true(

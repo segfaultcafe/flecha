@@ -1,8 +1,13 @@
-module endian;
+module binary;
 
-@imports
-    :: root::bytes::errors
-    :: root::math::bits;
+@imports :: root::math::bits;
+
+export error BinaryError {
+    UnexpectedEnd,
+    InsufficientSpace,
+    Overflow,
+    InvalidEncoding,
+}
 
 export typeset fixed_unsigned_integer {
     u8,
@@ -11,12 +16,12 @@ export typeset fixed_unsigned_integer {
     u64,
 };
 
-export (T, errors::ByteError) read_little<T: fixed_unsigned_integer>(
+export (T, BinaryError) read_little<T: fixed_unsigned_integer>(
     []const u8 source
 ) {
     usize byteCount = bits::width<T>() / 8;
     if source.len() < byteCount {
-        return (none, errors::ByteError.UnexpectedEnd);
+        return (none, BinaryError.UnexpectedEnd);
     }
 
     T value = none;
@@ -27,12 +32,12 @@ export (T, errors::ByteError) read_little<T: fixed_unsigned_integer>(
     return (value, none);
 }
 
-export (T, errors::ByteError) read_big<T: fixed_unsigned_integer>(
+export (T, BinaryError) read_big<T: fixed_unsigned_integer>(
     []const u8 source
 ) {
     usize byteCount = bits::width<T>() / 8;
     if source.len() < byteCount {
-        return (none, errors::ByteError.UnexpectedEnd);
+        return (none, BinaryError.UnexpectedEnd);
     }
 
     T value = none;
@@ -43,13 +48,13 @@ export (T, errors::ByteError) read_big<T: fixed_unsigned_integer>(
     return (value, none);
 }
 
-export errors::ByteError write_little<T: fixed_unsigned_integer>(
+export BinaryError write_little<T: fixed_unsigned_integer>(
     []u8 destination,
     T value
 ) {
     usize byteCount = bits::width<T>() / 8;
     if destination.len() < byteCount {
-        return errors::ByteError.InsufficientSpace;
+        return BinaryError.InsufficientSpace;
     }
 
     loop usize index = 0; index < byteCount; index++ {
@@ -60,13 +65,13 @@ export errors::ByteError write_little<T: fixed_unsigned_integer>(
     return none;
 }
 
-export errors::ByteError write_big<T: fixed_unsigned_integer>(
+export BinaryError write_big<T: fixed_unsigned_integer>(
     []u8 destination,
     T value
 ) {
     usize byteCount = bits::width<T>() / 8;
     if destination.len() < byteCount {
-        return errors::ByteError.InsufficientSpace;
+        return BinaryError.InsufficientSpace;
     }
 
     usize remaining = byteCount;

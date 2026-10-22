@@ -1,12 +1,10 @@
 module buffer;
 
-@imports
-    :: root::bytes::endian
-    :: root::bytes::errors
-    :: root::bytes::varint
-    :: root::math::bits;
-
 const usize FL_BUFFER_INIT_CAPACITY = 8;
+
+export error BufferError {
+    Empty,
+}
 
 export structure Buffer {
     private own []u8 storage;
@@ -88,9 +86,9 @@ error Buffer::resize(&self, usize length, u8 fill) {
     return none;
 }
 
-(u8, errors::ByteError) Buffer::popByte(&self) {
+(u8, BufferError) Buffer::popByte(&self) {
     if self->empty() {
-        return (none, errors::ByteError.UnexpectedEnd);
+        return (none, BufferError.Empty);
     }
 
     self->length = self->length - 1;
@@ -135,63 +133,6 @@ error Buffer::writeString(&self, stringv value) {
     }
 
     self->length = self->length + VAL_LEN;
-    return none;
-}
-
-error Buffer::writeLittle<
-    T: endian::fixed_unsigned_integer
->(&self, T value) {
-    const usize BYTE_COUNT = bits::width<T>() / 8;
-    err := self->ensureAdditional(BYTE_COUNT);
-    if err != none {
-        return err;
-    }
-
-    writeError := endian::write_little<T>(self->storage[self->length:], value);
-    if writeError != none {
-        return writeError;
-    }
-
-    self->length = self->length + BYTE_COUNT;
-    return none;
-}
-
-error Buffer::writeBig<
-    T: endian::fixed_unsigned_integer
->(&self, T value) {
-    const usize BYTE_COUNT = bits::width<T>() / 8;
-    err := self->ensureAdditional(BYTE_COUNT);
-    if err != none {
-        return err;
-    }
-
-    writeError := endian::write_big<T>(self->storage[self->length:], value);
-    if writeError != none {
-        return writeError;
-    }
-
-    self->length = self->length + BYTE_COUNT;
-    return none;
-}
-
-error Buffer::writeVarint<
-    T: endian::fixed_unsigned_integer
->(&self, T value) {
-    const usize BYTE_COUNT = varint::encoded_length<T>(value);
-    err := self->ensureAdditional(BYTE_COUNT);
-    if err != none {
-        return err;
-    }
-
-    written, writeError := varint::write<T>(
-        self->storage[self->length:],
-        value
-    );
-    if writeError != none {
-        return writeError;
-    }
-
-    self->length = self->length + written;
     return none;
 }
 

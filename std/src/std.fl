@@ -5,9 +5,10 @@ module std;
     :: root::containers::array
     :: root::containers::errors as containers_errors
     :: root::containers::algorithms
-    :: root::bytes::endian
-    :: root::bytes::cursor
-    :: root::bytes::errors as bytes_errors
+    :: root::bytes::buffer
+    :: root::bytes::sequence
+    :: root::encoding::binary
+    :: root::encoding::hex
     :: root::io::filesystem
     :: root::io::file
     :: root::io::errors as io_errors

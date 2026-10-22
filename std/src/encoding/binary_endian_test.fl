@@ -1,26 +1,25 @@
-module endian_test;
+module binary_test;
 
 @imports
-    :: root::bytes::endian
-    :: root::bytes::errors
+    :: root::encoding::binary
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
 test little_endian_reads_fixed_width_unsigned_integers(&testing::UnitTest t) {
     [1]u8 oneByte = [171];
-    byte, byteError := endian::read_little<u8>(oneByte[:]);
+    byte, byteError := binary::read_little<u8>(oneByte[:]);
     asserts::is_true(t, byte == 171 and byteError == none, "read_little reads u8");
 
     [2]u8 twoBytes = [52, 18];
-    short, shortError := endian::read_little<u16>(twoBytes[:]);
+    short, shortError := binary::read_little<u16>(twoBytes[:]);
     asserts::is_true(t, short == 4660 and shortError == none, "read_little reads u16");
 
     [4]u8 fourBytes = [120, 86, 52, 18];
-    word, wordError := endian::read_little<u32>(fourBytes[:]);
+    word, wordError := binary::read_little<u32>(fourBytes[:]);
     asserts::is_true(t, word == 305419896 and wordError == none, "read_little reads u32");
 
     [8]u8 eightBytes = [8, 7, 6, 5, 4, 3, 2, 1];
-    wide, wideError := endian::read_little<u64>(eightBytes[:]);
+    wide, wideError := binary::read_little<u64>(eightBytes[:]);
     asserts::is_true(
         t,
         wide == 72623859790382856 and wideError == none,
@@ -30,19 +29,19 @@ test little_endian_reads_fixed_width_unsigned_integers(&testing::UnitTest t) {
 
 test big_endian_reads_fixed_width_unsigned_integers(&testing::UnitTest t) {
     [1]u8 oneByte = [171];
-    byte, byteError := endian::read_big<u8>(oneByte[:]);
+    byte, byteError := binary::read_big<u8>(oneByte[:]);
     asserts::is_true(t, byte == 171 and byteError == none, "read_big reads u8");
 
     [2]u8 twoBytes = [18, 52];
-    short, shortError := endian::read_big<u16>(twoBytes[:]);
+    short, shortError := binary::read_big<u16>(twoBytes[:]);
     asserts::is_true(t, short == 4660 and shortError == none, "read_big reads u16");
 
     [4]u8 fourBytes = [18, 52, 86, 120];
-    word, wordError := endian::read_big<u32>(fourBytes[:]);
+    word, wordError := binary::read_big<u32>(fourBytes[:]);
     asserts::is_true(t, word == 305419896 and wordError == none, "read_big reads u32");
 
     [8]u8 eightBytes = [1, 2, 3, 4, 5, 6, 7, 8];
-    wide, wideError := endian::read_big<u64>(eightBytes[:]);
+    wide, wideError := binary::read_big<u64>(eightBytes[:]);
     asserts::is_true(
         t,
         wide == 72623859790382856 and wideError == none,
@@ -52,7 +51,7 @@ test big_endian_reads_fixed_width_unsigned_integers(&testing::UnitTest t) {
 
 test little_endian_writes_canonical_byte_order(&testing::UnitTest t) {
     [10]u8 destination = [170; 10];
-    err := endian::write_little<u64>(destination[:], 72623859790382856);
+    err := binary::write_little<u64>(destination[:], 72623859790382856);
 
     asserts::is_true(t, err == none, "write_little accepts sufficient space");
     asserts::is_true(
@@ -72,7 +71,7 @@ test little_endian_writes_canonical_byte_order(&testing::UnitTest t) {
 
 test big_endian_writes_canonical_byte_order(&testing::UnitTest t) {
     [10]u8 destination = [170; 10];
-    err := endian::write_big<u64>(destination[:], 72623859790382856);
+    err := binary::write_big<u64>(destination[:], 72623859790382856);
 
     asserts::is_true(t, err == none, "write_big accepts sufficient space");
     asserts::is_true(
@@ -93,27 +92,27 @@ test big_endian_writes_canonical_byte_order(&testing::UnitTest t) {
 test short_sources_report_unexpected_end(&testing::UnitTest t) {
     [3]u8 source = [1, 2, 3];
 
-    little, littleError := endian::read_little<u32>(source[:]);
+    little, littleError := binary::read_little<u32>(source[:]);
     asserts::is_true(
         t,
-        little == 0 and littleError == errors::ByteError.UnexpectedEnd,
+        little == 0 and littleError == binary::BinaryError.UnexpectedEnd,
         "read_little rejects a short source"
     );
 
-    big, bigError := endian::read_big<u64>(source[:]);
+    big, bigError := binary::read_big<u64>(source[:]);
     asserts::is_true(
         t,
-        big == 0 and bigError == errors::ByteError.UnexpectedEnd,
+        big == 0 and bigError == binary::BinaryError.UnexpectedEnd,
         "read_big rejects a short source"
     );
 }
 
 test short_writes_are_transactional(&testing::UnitTest t) {
     [3]u8 littleDestination = [9, 8, 7];
-    littleError := endian::write_little<u32>(littleDestination[:], 305419896);
+    littleError := binary::write_little<u32>(littleDestination[:], 305419896);
     asserts::is_true(
         t,
-        littleError == errors::ByteError.InsufficientSpace,
+        littleError == binary::BinaryError.InsufficientSpace,
         "write_little rejects insufficient space"
     );
     asserts::is_true(
@@ -124,10 +123,10 @@ test short_writes_are_transactional(&testing::UnitTest t) {
     );
 
     [3]u8 bigDestination = [6, 5, 4];
-    bigError := endian::write_big<u64>(bigDestination[:], 72623859790382856);
+    bigError := binary::write_big<u64>(bigDestination[:], 72623859790382856);
     asserts::is_true(
         t,
-        bigError == errors::ByteError.InsufficientSpace,
+        bigError == binary::BinaryError.InsufficientSpace,
         "write_big rejects insufficient space"
     );
     asserts::is_true(
@@ -140,8 +139,8 @@ test short_writes_are_transactional(&testing::UnitTest t) {
 
 test endian_round_trips_zero_and_maximum_values(&testing::UnitTest t) {
     [8]u8 little = none;
-    littleWriteError := endian::write_little<u64>(little[:], u64.max_value);
-    littleValue, littleReadError := endian::read_little<u64>(little[:]);
+    littleWriteError := binary::write_little<u64>(little[:], u64.max_value);
+    littleValue, littleReadError := binary::read_little<u64>(little[:]);
     asserts::is_true(
         t,
         littleValue == u64.max_value and littleWriteError == none and
@@ -150,8 +149,8 @@ test endian_round_trips_zero_and_maximum_values(&testing::UnitTest t) {
     );
 
     [4]u8 big = [255; 4];
-    bigWriteError := endian::write_big<u32>(big[:], 0);
-    bigValue, bigReadError := endian::read_big<u32>(big[:]);
+    bigWriteError := binary::write_big<u32>(big[:], 0);
+    bigValue, bigReadError := binary::read_big<u32>(big[:]);
     asserts::is_true(
         t,
         bigValue == 0 and bigWriteError == none and bigReadError == none,

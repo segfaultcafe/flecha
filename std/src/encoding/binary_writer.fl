@@ -1,11 +1,6 @@
-module cursor;
+module binary;
 
-@imports
-    :: root::bytes::endian
-    :: root::bytes::errors
-    :: root::bytes::hex
-    :: root::bytes::varint
-    :: root::math::bits;
+@imports :: root::math::bits;
 
 export structure Writer {
     private []u8 destination;
@@ -39,9 +34,9 @@ bool Writer::full(&const self) {
     return self->destination[:self->position];
 }
 
-errors::ByteError Writer::skip(&self, usize count) {
+BinaryError Writer::skip(&self, usize count) {
     if count > self->remaining() {
-        return errors::ByteError.InsufficientSpace;
+        return BinaryError.InsufficientSpace;
     }
 
     self->position = self->position + count;
@@ -52,9 +47,9 @@ void Writer::reset(&self) {
     self->position = 0;
 }
 
-errors::ByteError Writer::writeByte(&self, u8 value) {
+BinaryError Writer::writeByte(&self, u8 value) {
     if self->full() {
-        return errors::ByteError.InsufficientSpace;
+        return BinaryError.InsufficientSpace;
     }
 
     self->destination[self->position] = value;
@@ -62,10 +57,10 @@ errors::ByteError Writer::writeByte(&self, u8 value) {
     return none;
 }
 
-errors::ByteError Writer::writeString(&self, stringv value) {
+BinaryError Writer::writeString(&self, stringv value) {
     const usize LEN = value.len().cast<usize>;
     if LEN > self->remaining() {
-        return errors::ByteError.InsufficientSpace;
+        return BinaryError.InsufficientSpace;
     }
 
     loop u32 index = 0; index < value.len(); index++ {
@@ -76,9 +71,9 @@ errors::ByteError Writer::writeString(&self, stringv value) {
     return none;
 }
 
-errors::ByteError Writer::write(&self, []const u8 source) {
+BinaryError Writer::write(&self, []const u8 source) {
     if source.len() > self->remaining() {
-        return errors::ByteError.InsufficientSpace;
+        return BinaryError.InsufficientSpace;
     }
 
     loop usize index = 0; index < source.len(); index++ {
@@ -89,15 +84,15 @@ errors::ByteError Writer::write(&self, []const u8 source) {
     return none;
 }
 
-errors::ByteError Writer::writeLittle<
-    T: endian::fixed_unsigned_integer
+BinaryError Writer::writeLittle<
+    T: fixed_unsigned_integer
 >(&self, T value) {
     usize byteCount = bits::width<T>() / 8;
     if byteCount > self->remaining() {
-        return errors::ByteError.InsufficientSpace;
+        return BinaryError.InsufficientSpace;
     }
 
-    err := endian::write_little<T>(self->destination[self->position:], value);
+    err := write_little<T>(self->destination[self->position:], value);
     if err != none {
         return err;
     }
@@ -106,15 +101,15 @@ errors::ByteError Writer::writeLittle<
     return none;
 }
 
-errors::ByteError Writer::writeBig<
-    T: endian::fixed_unsigned_integer
+BinaryError Writer::writeBig<
+    T: fixed_unsigned_integer
 >(&self, T value) {
     usize byteCount = bits::width<T>() / 8;
     if byteCount > self->remaining() {
-        return errors::ByteError.InsufficientSpace;
+        return BinaryError.InsufficientSpace;
     }
 
-    err := endian::write_big<T>(self->destination[self->position:], value);
+    err := write_big<T>(self->destination[self->position:], value);
     if err != none {
         return err;
     }
@@ -123,35 +118,12 @@ errors::ByteError Writer::writeBig<
     return none;
 }
 
-errors::ByteError Writer::writeVarint<
-    T: endian::fixed_unsigned_integer
+BinaryError Writer::writeVarint<
+    T: fixed_unsigned_integer
 >(&self, T value) {
-    byteCount, err := varint::write<T>(
+    byteCount, err := write_varint<T>(
         self->destination[self->position:],
         value
-    );
-    if err != none {
-        return err;
-    }
-
-    self->position = self->position + byteCount;
-    return none;
-}
-
-errors::ByteError Writer::writeHex(&self, []const u8 source) {
-    byteCount, err := hex::encode(self->destination[self->position:], source);
-    if err != none {
-        return err;
-    }
-
-    self->position = self->position + byteCount;
-    return none;
-}
-
-errors::ByteError Writer::writeHexUpper(&self, []const u8 source) {
-    byteCount, err := hex::encode_upper(
-        self->destination[self->position:],
-        source
     );
     if err != none {
         return err;
