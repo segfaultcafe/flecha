@@ -1,0 +1,208 @@
+# Collection ownership contracts
+
+This document defines the Stage 2 ownership contract for Flecha's growable
+collections. It is both a design and acceptance contract. Implementation lands
+incrementally; an operation is supported only after its required storage path
+and acceptance tests are present.
+
+The first Stage 2 deliverable is an ownership-capable `Array<T>`. Deques,
+stacks, queues, heaps, hash maps, and hash sets build on the same storage and
+lifecycle rules and are intentionally deferred until this foundation is
+complete.
+
+## Supported element categories
+
+`Array<T>` supports:
+
+- ordinary copyable values, including values with nontrivial semantic copies;
+- whole-value movable structures with safe teardown;
+- owning strings, owning slices, and other movable owning values; and
+- nested owning collections such as `Array<Array<T>>`.
+
+A structure with an unsafe `tear` is immovable and cannot be an array element.
+Borrowed references and slices are not stored in this first pass; collection
+storage needs a separate lifetime contract before borrowed elements can be
+accepted.
+
+Copyability is not required merely to store, grow, remove, or destroy an
+element. Operations whose meaning inherently creates a second value remain
+copy-only and are rejected when specialized for a move-only `T`.
+
+## Copy and move behavior
+
+Flecha keeps one by-value API rather than separate copy and move overloads.
+Passing a copyable value makes the language's normal semantic copy. Passing a
+noncopyable but movable value transfers it and invalidates the caller's source.
+The callee owns that parameter even when the operation later returns an error.
+
+The first pass retains the existing public shapes:
+
+```flecha
+error Array<T>::push(&self, T value);
+error Array<T>::set(&self, usize index, T value);
+(T, error) Array<T>::pop(&self);
+(T, error) Array<T>::remove(&self, usize index);
+(T, error) Array<T>::swapRemove(&self, usize index);
+void Array<T>::clear(&self);
+error Array<T>::reserve(&self, usize capacity);
+```
+
+The value component of a failed extraction is the contextual `none` value,
+following the existing Flecha `(value, error)` convention. Element types with
+custom initialization or teardown already require an explicit `zero()` and
+therefore retain a valid `none` representation.
+
+The Stage 2 `Array<T>` operations have these contracts:
+
+| Operation | Contract |
+| --- | --- |
+| `push(T value)` | Appends `value`. A copyable argument is copied; a movable argument is consumed. Growth failure leaves the array unchanged, but the already-passed argument remains consumed and is destroyed exactly once by the failed call. |
+| `set(usize index, T value)` | Replaces one live element. The replacement is evaluated and transferred before the old element is destroyed. An invalid index leaves the array unchanged; the passed value is still owned and destroyed by the call. |
+| `pop()` | Removes and returns the final element by transferring it out of storage without creating a semantic duplicate. Empty arrays return `ArrayError.Empty` and the contextual `none` result. |
+| `remove(usize index)` | Removes and returns the indexed element, then relocates later elements left while preserving order. An invalid index returns `ArrayError.IndexOutOfBounds` without mutation. |
+| `swapRemove(usize index)` | Removes and returns the indexed element. Unless it was last, the final element is relocated into the gap. An invalid index returns `ArrayError.IndexOutOfBounds` without mutation. |
+| `clear()` | Destroys every live element in reverse index order, sets the length to zero, and retains the allocation. |
+| `reserve(usize capacity)` | Ensures at least `capacity` slots without changing length or logical values. Allocation failure or capacity overflow leaves storage, length, capacity, and every element unchanged. |
+
+`pop`, `remove`, and `swapRemove` are ownership-transferring extractions even
+when `T` is copyable. They do not allocate after validation and do not leave a
+second live value in the vacated slot.
+
+The following existing operations remain copy-only because they deliberately
+produce independent values: `fromSlice`, `append` from a borrowed slice,
+`clone`, `get`, `first`, `last`, and `fill`. Their specialization must reject a
+move-only element type with the ordinary prohibited-copy diagnostic. Move-only
+elements are inspected through `view()` or `viewRef()` and are extracted only
+through the ownership-transferring removal operations.
+
+## Initialized-prefix storage
+
+An ownership-capable collection cannot use a fully initialized
+`new<[]T>(capacity)` buffer. Capacity is storage, not a number of live `T`
+values. The internal representation obeys these invariants:
+
+1. `0 <= length <= capacity` always holds.
+2. Slots in `[0, length)` each contain exactly one live `T`.
+3. Slots in `[length, capacity)` are uninitialized storage. They are never
+   read, borrowed, or destroyed.
+4. Public views expose exactly `[0, length)`, never spare capacity.
+5. Each live slot has one cleanup responsibility. Relocation transfers that
+   responsibility and immediately makes the source slot non-live.
+6. Destroying an array destroys its live elements in reverse index order and
+   then releases the backing allocation.
+
+The compiler/runtime must provide a narrowly scoped internal facility capable
+of:
+
+- allocating aligned storage for `capacity` values without constructing them;
+- initializing an uninitialized slot from a complete value;
+- relocating a live slot into an uninitialized slot without copying it;
+- extracting a live slot as a complete value and marking the slot uninitialized;
+- destroying a live slot exactly once; and
+- releasing storage without implicitly destroying uninitialized capacity.
+
+The initial implementation exposes these operations to the standard library as
+reserved `__storage_*` compiler intrinsics. Every intrinsic requires an
+`unsafe` function or block at its call site; safe application code cannot
+allocate, initialize, relocate, destroy, or release raw collection storage.
+
+The syntax and compiler boundary for this facility are an implementation
+decision. It must not expose general uninitialized memory to safe application
+code as an accidental side effect of adding collections.
+
+Growth is a two-phase operation. It first allocates replacement storage. If
+allocation fails, nothing has moved and the original array is untouched. After
+allocation succeeds, relocation of the initialized prefix is infallible: each
+element moves once into the replacement, the old slots become non-live, and
+the array commits the replacement storage and capacity. It then releases the
+old allocation without destroying those moved values.
+
+## Nested owning collections
+
+`Array<Array<T>>` is the acceptance case for recursive ownership. Pushing an
+inner array transfers the complete inner owner into one outer slot. Growing or
+compacting the outer array relocates that owner; it does not clone the inner
+buffer or its elements. Removing an inner array returns the same logical owner,
+and destroying the outer array destroys every remaining inner array exactly
+once.
+
+The same rules apply recursively to deeper nesting and to owning element types
+such as `own []T`. An active borrow from an inner collection protects both the
+inner owner and every enclosing owner whose movement would relocate it.
+
+## Borrowed views
+
+`view()` returns a shared `[]const T` borrowed from the complete array owner.
+While that view is live:
+
+- additional shared reads and shared views are allowed;
+- element mutation and every mutable array method are rejected; and
+- the array cannot be moved, replaced, destroyed, cleared, or reallocated.
+
+`viewRef()` returns an exclusive `[]T` borrowed from the complete array owner.
+While that view is live, access through the array binding is suspended. The
+view may mutate existing elements according to ordinary slice rules, but it
+cannot change the array's length or capacity. No other shared or mutable view
+may overlap it.
+
+The initial policy deliberately treats the whole array as one borrow region.
+It does not prove disjoint element or range borrows. A borrow ends at its last
+possible use under the existing control-flow-aware borrow checker. Even a
+`reserve` call that would be a runtime no-op is rejected while a conflicting
+view is live because method validity cannot depend on the current capacity.
+
+## Failure and cleanup guarantees
+
+- Bounds errors never mutate the array.
+- Allocation failure and capacity overflow preserve the array's prior length,
+  capacity, elements, and element order.
+- A by-value argument belongs to the called operation before its body runs;
+  failure does not restore a moved caller variable.
+- Replacement evaluates and acquires the new value before destroying the old
+  value.
+- Removal transfers the removed value and destroys no duplicate of it.
+- Compaction and growth relocate elements; they do not semantically copy them.
+- All normal exits, including early returns and loop exits inside the
+  implementation, leave every slot either live with one cleanup obligation or
+  uninitialized with none.
+- Process-terminating runtime safety failures need not unwind, consistently
+  with the language memory model.
+
+## Definition of done
+
+The ownership-capable array foundation is complete when all of the following
+are true:
+
+- the initialized-prefix storage facility is implemented and unavailable to
+  ordinary safe application code;
+- every operation above follows its copy, move, error, and cleanup contract;
+- copy-only APIs diagnose move-only specializations at compile time;
+- immovable element types are rejected before object emission;
+- `Array<Array<T>>` survives outer and inner growth, removal, movement, and
+  destruction without cloning an inner allocation;
+- allocation-failure injection proves the strong array guarantee at initial
+  growth and later reallocation;
+- lifecycle tests cover copyable scalars, nontrivially copyable values,
+  movable destructible values, owning slices, and nested arrays;
+- cleanup instrumentation and sanitizer runs prove no leak, double cleanup,
+  use after move, read from an uninitialized slot, or destruction of spare
+  capacity;
+- compile-fail tests cover use after move, partial indexed moves, immovable
+  elements, copy-only APIs on move-only elements, and every conflicting-view
+  case; and
+- existing array, slice, byte-buffer, ownership, and compiler diagnostic tests
+  remain green.
+
+## Required test matrix
+
+| Area | Required cases |
+| --- | --- |
+| Push and replacement | Copyable lvalue, movable lvalue, temporary value, spare-capacity append, growing append, valid replacement, invalid replacement, and argument cleanup on error. |
+| Extraction | Singleton and multi-element `pop`; first, middle, and last `remove`; first, middle, and last `swapRemove`; empty and invalid cases; returned owner remains usable. |
+| Relocation | Growth from zero, multiple growth steps, exact-capacity reserve, reserve below current capacity, ordered compaction, unordered compaction, and preservation of element resource identity. |
+| Failure | Initial allocation failure, reallocation failure, capacity overflow, unchanged length/capacity/order, and exactly-once cleanup of a consumed push argument. |
+| Cleanup | Clear empty and populated arrays, capacity reuse after clear, destruction without clear, replacement cleanup, reverse destruction order, early exits, and no cleanup of spare capacity. |
+| Element categories | Every scalar family, owning string, copyable structure with owned fields, movable safe-tear structure, owning slice, nested array, and compile-time rejection of unsafe-tear immovable structures. |
+| Nested ownership | Empty inner arrays, populated inner arrays, outer growth, inner growth before and after insertion, removal from the outer array, three-level nesting, and destruction at each level. |
+| Borrowing | Multiple shared views; shared-versus-mutable conflicts; exclusive-view conflicts; move, replacement, clear, reserve, push, and destruction while borrowed; access allowed after last use. |
+| Copy-only surface | Rejection of `fromSlice`, borrowed-slice `append`, `clone`, `get`, `first`, `last`, and `fill` for a move-only `T`, without masking positive move-aware tests. |

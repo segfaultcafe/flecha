@@ -117,6 +117,12 @@ class LlvmCodeGenerator final {
     llvm::Value* EmitAllocation(
         const lowering::BoundAllocationExpression& expression);
     llvm::Value* EmitFree(llvm::Value* owner, semantic::SemanticType ownerType);
+    llvm::Value* EmitStorageCall(
+        const lowering::BoundCallExpression& expression,
+        const std::vector<llvm::Value*>& arguments);
+    llvm::Value* EmitStorageAddress(llvm::Value* owner,
+                                    semantic::SemanticType ownerType,
+                                    llvm::Value* index);
     llvm::Value* EmitIndirectCall(
         const lowering::BoundIndirectCallExpression& expression,
         llvm::Value* destination = nullptr);

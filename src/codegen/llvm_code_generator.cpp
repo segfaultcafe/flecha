@@ -3131,6 +3131,15 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
             if (call.Function().BuiltIn() == semantic::BuiltInFunction::Free)
                 return EmitFree(arguments.front(),
                                 call.Function().ParameterTypes()[0]);
+            if (call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StorageInitialize ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StorageRelocate ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StorageDestroy ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StorageFree)
+                return EmitStorageCall(call, arguments);
             llvm::Function* function = _functions.at(&call.Function());
             llvm::AllocaInst* ownedResult = nullptr;
             if (call.Type().OwnsStorage()) {
@@ -3543,11 +3552,12 @@ llvm::Value* LlvmCodeGenerator::EmitAllocation(
         if (!EmitInto(expression.Initializer(), pointer,
                       expression.ElementType()))
             return nullptr;
-    } else if (expression.ElementType().Kind() ==
-                   semantic::SemanticTypeKind::Structure ||
+    } else if (!expression.IsUninitialized() &&
                (expression.ElementType().Kind() ==
-                    semantic::SemanticTypeKind::Enum &&
-                !expression.ElementType().IsTriviallyZeroable())) {
+                    semantic::SemanticTypeKind::Structure ||
+                (expression.ElementType().Kind() ==
+                     semantic::SemanticTypeKind::Enum &&
+                 !expression.ElementType().IsTriviallyZeroable()))) {
         auto* indexStorage =
             CreateTemporaryAlloca(sizeType, "allocation.zero.index");
         _builder.CreateStore(llvm::ConstantInt::get(sizeType, 0), indexStorage);
@@ -3629,6 +3639,67 @@ llvm::Value* LlvmCodeGenerator::EmitFree(llvm::Value* owner,
     _builder.CreateBr(done);
     _builder.SetInsertPoint(done);
     // Expression statements need a non-null IR result even for void built-ins.
+    return llvm::UndefValue::get(llvm::Type::getInt1Ty(_context));
+}
+
+llvm::Value* LlvmCodeGenerator::EmitStorageAddress(
+    llvm::Value* owner, semantic::SemanticType ownerType, llvm::Value* index) {
+    llvm::Value* data =
+        ownerType.Kind() == semantic::SemanticTypeKind::OwnedBuffer
+            ? _builder.CreateExtractValue(owner, 0, "storage.data")
+            : owner;
+    llvm::Type* sizeType =
+        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
+    const auto getCount = _module->getOrInsertFunction(
+        "flecha_runtime_v1_allocation_count",
+        llvm::FunctionType::get(sizeType, {data->getType()}, false));
+    llvm::Value* count =
+        _builder.CreateCall(getCount, {data}, "storage.capacity");
+    EmitBoundsCheck(_builder.CreateICmpULT(index, count));
+    return _builder.CreateInBoundsGEP(MapType(*ownerType.Target()), data, index,
+                                      "storage.slot");
+}
+
+llvm::Value* LlvmCodeGenerator::EmitStorageCall(
+    const lowering::BoundCallExpression& expression,
+    const std::vector<llvm::Value*>& arguments) {
+    const auto intrinsic = expression.Function().BuiltIn();
+    const auto& parameters = expression.Function().ParameterTypes();
+    if (intrinsic == semantic::BuiltInFunction::StorageFree) {
+        llvm::Value* data =
+            parameters[0].Kind() == semantic::SemanticTypeKind::OwnedBuffer
+                ? _builder.CreateExtractValue(arguments[0], 0,
+                                              "storage.free.data")
+                : arguments[0];
+        llvm::FunctionCallee deallocate = _module->getOrInsertFunction(
+            "flecha_runtime_v1_free",
+            llvm::FunctionType::get(llvm::Type::getVoidTy(_context),
+                                    {data->getType()}, false));
+        _builder.CreateCall(deallocate, {data});
+        return llvm::UndefValue::get(llvm::Type::getInt1Ty(_context));
+    }
+
+    const semantic::SemanticType element = *parameters[0].Target();
+    llvm::Value* destination =
+        EmitStorageAddress(arguments[0], parameters[0], arguments[1]);
+    if (intrinsic == semantic::BuiltInFunction::StorageInitialize) {
+        llvm::Value* value = arguments[2];
+        if (element.IsCopyable()) value = EmitValueCopy(value, element, false);
+        if (value == nullptr) return nullptr;
+        _builder.CreateStore(value, destination);
+    } else if (intrinsic == semantic::BuiltInFunction::StorageRelocate) {
+        llvm::Value* source =
+            EmitStorageAddress(arguments[2], parameters[2], arguments[3]);
+        llvm::Value* value =
+            _builder.CreateLoad(MapType(element), source, "storage.moved");
+        _builder.CreateStore(value, destination);
+        _builder.CreateStore(llvm::Constant::getNullValue(MapType(element)),
+                             source);
+    } else if (intrinsic == semantic::BuiltInFunction::StorageDestroy) {
+        EmitDestroyAt(destination, element);
+        _builder.CreateStore(llvm::Constant::getNullValue(MapType(element)),
+                             destination);
+    }
     return llvm::UndefValue::get(llvm::Type::getInt1Ty(_context));
 }
 

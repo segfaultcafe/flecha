@@ -1336,7 +1336,12 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     registerOutput("stdoutf", BuiltInFunction::StdoutFormat);
     for (const auto& [name, intrinsic] :
          {std::pair{"new", BuiltInFunction::New},
-          std::pair{"free", BuiltInFunction::Free}}) {
+          std::pair{"free", BuiltInFunction::Free},
+          std::pair{"__storage_new", BuiltInFunction::StorageNew},
+          std::pair{"__storage_initialize", BuiltInFunction::StorageInitialize},
+          std::pair{"__storage_relocate", BuiltInFunction::StorageRelocate},
+          std::pair{"__storage_destroy", BuiltInFunction::StorageDestroy},
+          std::pair{"__storage_free", BuiltInFunction::StorageFree}}) {
         auto function = std::make_unique<FunctionSymbol>(
             name, SemanticType(SemanticTypeKind::Void),
             std::vector<SemanticType>{}, source::SourceRange{}, intrinsic,
@@ -2364,12 +2369,16 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
 
             if (function != nullptr &&
                 (function->BuiltIn() == BuiltInFunction::New ||
-                 function->BuiltIn() == BuiltInFunction::Take)) {
+                 function->BuiltIn() == BuiltInFunction::Take ||
+                 function->BuiltIn() == BuiltInFunction::StorageNew ||
+                 function->BuiltIn() == BuiltInFunction::StorageInitialize ||
+                 function->BuiltIn() == BuiltInFunction::StorageRelocate ||
+                 function->BuiltIn() == BuiltInFunction::StorageDestroy ||
+                 function->BuiltIn() == BuiltInFunction::StorageFree)) {
                 Report(diagnostics::DiagnosticCode::InvalidDefer,
                        expression->Range(),
-                       "defer new or take would discard ownership; defer "
-                       "free(ptr) "
-                       "instead");
+                       "allocation, take, and collection storage intrinsics "
+                       "cannot be deferred");
                 break;
             }
             std::vector<const Symbol*>& captures =
@@ -4359,39 +4368,53 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
         Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                expression.Range(), "zero cannot allocate or free storage");
     if (_currentFunction) _forbiddenZeroEffects.insert(_currentFunction);
-    const bool allocate = intrinsic == BuiltInFunction::New;
+    const bool allocate = intrinsic == BuiltInFunction::New ||
+                          intrinsic == BuiltInFunction::StorageNew;
+    const bool uninitialized = intrinsic == BuiltInFunction::StorageNew;
     SemanticType element = SemanticType::Error();
     const bool dynamic =
         allocate && expression.TypeArgument() &&
         expression.TypeArgument()->TypeForm() == core::TypeKind::Slice;
-    const bool safeOwner = dynamic && expression.TypeArgument()->Contract() ==
-                                          core::OwnershipContract::Own;
+    const bool safeOwner =
+        !uninitialized && dynamic &&
+        expression.TypeArgument()->Contract() == core::OwnershipContract::Own;
     if (!safeOwner) RequireUnsafe(expression.Range());
     if (allocate) {
         if (!expression.TypeArgument())
             Report(diagnostics::DiagnosticCode::InvalidAllocation,
                    expression.Range(), "allocation requires new<T>(value)");
         else {
+            if (uninitialized && !dynamic)
+                Report(diagnostics::DiagnosticCode::InvalidAllocation,
+                       expression.TypeArgument()->Range(),
+                       "__storage_new requires an uninitialized []T buffer");
             element = ResolveType(dynamic ? *expression.TypeArgument()->Target()
                                           : *expression.TypeArgument());
             if (dynamic && expression.TypeArgument()->IsConst())
                 element = element.WithConst();
-            if (dynamic && !(element.IsNumeric() ||
-                             element.Kind() == SemanticTypeKind::Bool ||
-                             element.Kind() == SemanticTypeKind::Char ||
-                             (element.Kind() == SemanticTypeKind::Enum &&
-                              element.IsZeroable()) ||
-                             (element.Kind() == SemanticTypeKind::Structure &&
-                              IsRuntimeArrayStructureField(element))))
+            if (dynamic && !uninitialized &&
+                !(element.IsNumeric() ||
+                  element.Kind() == SemanticTypeKind::Bool ||
+                  element.Kind() == SemanticTypeKind::Char ||
+                  (element.Kind() == SemanticTypeKind::Enum &&
+                   element.IsZeroable()) ||
+                  (element.Kind() == SemanticTypeKind::Structure &&
+                   IsRuntimeArrayStructureField(element))))
                 Report(diagnostics::DiagnosticCode::InvalidAllocation,
                        expression.TypeArgument()->Range(),
                        "runtime arrays require numeric, bool, char, enum, or "
                        "trivially copyable default-constructible structure "
                        "elements with supported fields");
-            if (dynamic && element.Kind() == SemanticTypeKind::Structure &&
+            if (dynamic && !uninitialized &&
+                element.Kind() == SemanticTypeKind::Structure &&
                 IsRuntimeArrayStructureField(element))
                 WarnForNontrivialDefault(element,
                                          expression.TypeArgument()->Range());
+            if (uninitialized && element.IsImmovable())
+                Report(diagnostics::DiagnosticCode::InvalidAllocation,
+                       expression.TypeArgument()->Range(),
+                       "uninitialized collection storage requires movable "
+                       "elements");
             if (!element.IsError() && !StorageSize(element))
                 Report(
                     diagnostics::DiagnosticCode::InvalidAllocation,
@@ -4401,11 +4424,15 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
         }
     }
     if (expression.Arguments().size() != 1)
-        Report(diagnostics::DiagnosticCode::WrongArgumentCount,
-               expression.Range(),
-               allocate ? (dynamic ? "new<[]T> requires exactly one usize count"
-                                   : "new<T> requires exactly one initializer")
-                        : "free requires exactly one raw pointer");
+        Report(
+            diagnostics::DiagnosticCode::WrongArgumentCount, expression.Range(),
+            allocate ? (dynamic ? (uninitialized
+                                       ? "__storage_new<[]T> requires exactly "
+                                         "one usize count"
+                                       : "new<[]T> requires exactly one usize "
+                                         "count")
+                                : "new<T> requires exactly one initializer")
+                     : "free requires exactly one raw pointer");
     const SemanticType input =
         dynamic ? SemanticType(SemanticTypeKind::USize) : element;
     SemanticType argument = SemanticType::Error();
@@ -4473,6 +4500,95 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
     _model._types.insert_or_assign(&callee, specialized->Type());
     _model._symbols.push_back(std::move(specialized));
     return result;
+}
+
+SemanticType SemanticAnalyzer::AnalyzeStorageCall(
+    const core::CallExpression& expression, BuiltInFunction intrinsic) {
+    if (_inZero)
+        Report(diagnostics::DiagnosticCode::InvalidLifecycle,
+               expression.Range(),
+               "zero cannot manipulate uninitialized collection storage");
+    if (_currentFunction) _forbiddenZeroEffects.insert(_currentFunction);
+    RequireUnsafe(expression.Range());
+
+    const std::size_t required =
+        intrinsic == BuiltInFunction::StorageRelocate     ? 4
+        : intrinsic == BuiltInFunction::StorageInitialize ? 3
+                                                          : 2;
+    if (expression.Arguments().size() != required)
+        Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+               expression.Range(),
+               "collection storage intrinsic requires exactly " +
+                   std::to_string(required) + " arguments");
+
+    std::vector<SemanticType> parameters;
+    parameters.reserve(expression.Arguments().size());
+    SemanticType element = SemanticType::Error();
+    const auto analyzeStorage = [&](std::size_t index) {
+        if (index >= expression.Arguments().size())
+            return SemanticType::Error();
+        const SemanticType storage =
+            AnalyzeExpression(*expression.Arguments()[index]);
+        parameters.push_back(storage);
+        if (storage.Kind() != SemanticTypeKind::Pointer &&
+            storage.Kind() != SemanticTypeKind::OwnedBuffer) {
+            Report(diagnostics::DiagnosticCode::InvalidAllocation,
+                   expression.Arguments()[index]->Range(),
+                   "collection storage requires an allocated buffer");
+            return SemanticType::Error();
+        }
+        const SemanticType target = *storage.Target();
+        if (target.IsConst())
+            Report(diagnostics::DiagnosticCode::InvalidAllocation,
+                   expression.Arguments()[index]->Range(),
+                   "collection storage requires mutable elements");
+        return target.WithoutConst();
+    };
+    const auto analyzeIndex = [&](std::size_t index) {
+        if (index >= expression.Arguments().size()) return;
+        const SemanticType expected(SemanticTypeKind::USize);
+        const SemanticType actual =
+            AnalyzeExpression(*expression.Arguments()[index], expected);
+        parameters.push_back(expected);
+        if (!IsAssignable(expected, actual))
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Arguments()[index]->Range(),
+                   TypeMismatch(expected, actual));
+    };
+
+    element = analyzeStorage(0);
+    analyzeIndex(1);
+    if (intrinsic == BuiltInFunction::StorageInitialize) {
+        if (expression.Arguments().size() > 2) {
+            const SemanticType value =
+                AnalyzeExpression(*expression.Arguments()[2], element);
+            parameters.push_back(element);
+            if (!element.IsError() && !IsAssignable(element, value))
+                Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                       expression.Arguments()[2]->Range(),
+                       TypeMismatch(element, value));
+            else if (!element.IsError())
+                CheckTransfer(*expression.Arguments()[2], element);
+        }
+    } else if (intrinsic == BuiltInFunction::StorageRelocate) {
+        const SemanticType source = analyzeStorage(2);
+        analyzeIndex(3);
+        if (!element.IsError() && !source.IsError() && element != source)
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Arguments()[2]->Range(),
+                   "relocation requires matching source and destination "
+                   "element types");
+    }
+
+    const auto& callee =
+        static_cast<const core::NameExpression&>(expression.Callee());
+    auto specialized = std::make_unique<FunctionSymbol>(
+        callee.Name(), SemanticType(SemanticTypeKind::Void),
+        std::move(parameters), callee.Range(), intrinsic, true);
+    _model._bindings[&callee] = specialized.get();
+    _model._types.insert_or_assign(&callee, specialized->Type());
+    _model._symbols.push_back(std::move(specialized));
+    return SemanticType(SemanticTypeKind::Void);
 }
 
 SemanticType SemanticAnalyzer::AnalyzeCall(
@@ -4555,8 +4671,15 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         }
     }
     if (function && (function->BuiltIn() == BuiltInFunction::New ||
-                     function->BuiltIn() == BuiltInFunction::Free))
+                     function->BuiltIn() == BuiltInFunction::Free ||
+                     function->BuiltIn() == BuiltInFunction::StorageNew ||
+                     function->BuiltIn() == BuiltInFunction::StorageFree))
         return AnalyzeAllocationCall(expression, function->BuiltIn());
+    if (function &&
+        (function->BuiltIn() == BuiltInFunction::StorageInitialize ||
+         function->BuiltIn() == BuiltInFunction::StorageRelocate ||
+         function->BuiltIn() == BuiltInFunction::StorageDestroy))
+        return AnalyzeStorageCall(expression, function->BuiltIn());
     if (expression.TypeArgument())
         Report(diagnostics::DiagnosticCode::InvalidAllocation,
                expression.Range(),

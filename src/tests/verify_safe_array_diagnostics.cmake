@@ -35,16 +35,13 @@ void main() {
     borrowed->get(0);
 }
 ]=])
-reject_array(destructible_element FLECHA-S0054 [=[
-structure Owned {
+reject_array(immovable_element FLECHA-S0047 [=[
+structure Immovable {
     i32 value;
 };
-void Owned::tear(&self) override {}
-Owned Owned::zero() override {
-    return build Owned {};
-}
+unsafe void Immovable::tear(&self) override {}
 void main() {
-    values := array::Array<Owned>::init();
+    values := array::Array<Immovable>::init();
     values.reserve(1);
 }
 ]=])

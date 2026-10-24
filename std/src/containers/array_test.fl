@@ -7,6 +7,74 @@ module array_test;
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
+structure PushOwner {
+    *i32 cleanupCount;
+    i32 value;
+};
+
+PushOwner PushOwner::zero() override {
+    return build PushOwner {
+        self.cleanupCount = null;
+        self.value = 0;
+    };
+}
+
+PushOwner PushOwner::init(*i32 cleanupCount, i32 value) override {
+    return build PushOwner {
+        self.cleanupCount = cleanupCount;
+        self.value = value;
+    };
+}
+
+void PushOwner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount = *self->cleanupCount + 1;
+        }
+    }
+}
+
+i32 PushOwner::get(&const self) {
+    return self->value;
+}
+
+test push_moves_grows_and_destroys_noncopyable_values_once(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+    {
+        values := array::Array<PushOwner>::init();
+        loop i32 value = 10; value <= 50; value = value + 10 {
+            PushOwner owner = none;
+            unsafe {
+                owner = PushOwner::init(&raw cleanupCount, value);
+            }
+
+            err := values.push(owner);
+            asserts::is_true(t, err == none, "push accepts a movable value");
+            if err != none {
+                return;
+            }
+        }
+
+        view := values.view();
+        asserts::is_true(
+            t,
+            view.len() == 5 and view[0].get() == 10 and view[4].get() == 50,
+            "growth relocates movable elements in order"
+        );
+        asserts::is_true(
+            t,
+            cleanupCount == 0,
+            "moving into the array does not destroy the element"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 5,
+        "array destruction cleans every moved element exactly once"
+    );
+}
+
 test starts_empty_and_pushes_values(&testing::UnitTest t) {
     values := array::Array<i32>::init();
     asserts::is_true(t, values.empty(), "a new Array is empty");

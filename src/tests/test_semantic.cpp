@@ -3595,8 +3595,7 @@ TEST(SemanticMemoryTests, RuntimeArrayOwnersPreserveLengthAndMoveOwnership) {
                     .diagnostics.HasErrors());
 }
 
-TEST(SemanticMemoryTests,
-     StructuresWithOwningBuffersCanBeTriviallyZeroable) {
+TEST(SemanticMemoryTests, StructuresWithOwningBuffersCanBeTriviallyZeroable) {
     auto result = Analyze(R"(
         structure Buffer { *[]u8 storage; usize length; };
         Buffer Buffer::zero() override {
@@ -3611,8 +3610,8 @@ TEST(SemanticMemoryTests,
         ADD_FAILURE() << diagnostic.message;
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_EQ(result.model.Structures().size(), 1u);
-    EXPECT_TRUE(SemanticType(result.model.Structures()[0].get())
-                    .IsTriviallyZeroable());
+    EXPECT_TRUE(
+        SemanticType(result.model.Structures()[0].get()).IsTriviallyZeroable());
 }
 
 TEST(SemanticSliceTests, EnforcesReadOnlyElementsAndFixedHandles) {
@@ -4859,19 +4858,19 @@ TEST(SemanticStructureTests,
         "i32 Box::get(&const self) { return self->value; } "
         "void Box::set(&self, i32 value) { self->value = value; } ";
 
-    Analysis sharedArgument = Analyze(
-        source + "void Box::forward(&self) { self->set(self->get()); } "
-                 "void f() { Box box = none; box.set(box.get()); }");
+    Analysis sharedArgument =
+        Analyze(source +
+                "void Box::forward(&self) { self->set(self->get()); } "
+                "void f() { Box box = none; box.set(box.get()); }");
     for (const auto& diagnostic : sharedArgument.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
     EXPECT_FALSE(sharedArgument.diagnostics.HasErrors());
 
     EXPECT_NE(
         FindDiagnostic(
-            Analyze(source +
-                    "i32 Box::bump(&self) { self->value++; return "
-                    "self->value; } void f() { Box box = none; "
-                    "box.set(box.bump()); }"),
+            Analyze(source + "i32 Box::bump(&self) { self->value++; return "
+                             "self->value; } void f() { Box box = none; "
+                             "box.set(box.bump()); }"),
             DiagnosticCode::BorrowConflict),
         nullptr);
 
@@ -5081,6 +5080,50 @@ TEST(SemanticAllocationTests, RejectsUnsupportedStorageAndInvalidCalls) {
     ASSERT_NE(diagnostic, nullptr);
     EXPECT_EQ(diagnostic->range.start.offset, source.find("stringv"));
     EXPECT_EQ(diagnostic->range.Length(), 7);
+}
+
+TEST(SemanticAllocationTests,
+     TypesUnsafeInitializedStorageAndRejectsImmovableElements) {
+    Analysis valid = Analyze(R"(
+        unsafe void f() {
+            first, firstError := __storage_new<[]i32>(1);
+            if firstError != none { return; }
+            second, secondError := __storage_new<[]i32>(1);
+            if secondError != none {
+                __storage_free(first);
+                return;
+            }
+            __storage_initialize(first, 0, 42);
+            __storage_relocate(second, 0, first, 0);
+            __storage_destroy(second, 0);
+            __storage_free(first);
+            __storage_free(second);
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    for (const std::string& source : {
+             "void f() { __storage_new<[]i32>(1); }",
+             "void f(*i32 storage) { "
+             "__storage_initialize(storage, 0, 42); }",
+             "void f(*i32 destination, *i32 source) { "
+             "__storage_relocate(destination, 0, source, 0); }",
+             "void f(*i32 storage) { __storage_destroy(storage, 0); }",
+             "void f(*i32 storage) { __storage_free(storage); }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(
+            FindDiagnostic(Analyze(source), DiagnosticCode::UnsafeOperation),
+            nullptr);
+    }
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+                      structure Fixed {};
+                      unsafe void Fixed::tear(&self) override {}
+                      unsafe void f() { __storage_new<[]Fixed>(1); }
+                  )"),
+                             DiagnosticCode::InvalidAllocation),
+              nullptr);
 }
 
 TEST(SemanticAllocationTests,
@@ -6239,6 +6282,28 @@ TEST(SemanticGenericTests, GenericSafeTearValuesMoveByValue) {
     )");
     for (const auto& diagnostic : result.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticGenericTests, OrdinaryMethodsInstantiateOnlyWhenCalled) {
+    const std::string declarations = R"(
+        structure Owner { i32 value; };
+        void Owner::tear(&self) override {}
+        Owner Owner::zero() override { return build Owner {}; }
+        structure Box<T> { T value; };
+        T Box<T>::get(&const self) { return self->value; }
+    )";
+
+    EXPECT_FALSE(Analyze(declarations + R"(
+        void main() { value := Box<Owner>::init(); }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze(declarations + R"(
+        void main() {
+            value := Box<Owner>::init();
+            copy := value.get();
+        }
+    )")
+                    .diagnostics.HasErrors());
 }
 
 TEST(SemanticGenericTests, GenericMethodsResolveMixedTuplesAndBuildSelfFields) {

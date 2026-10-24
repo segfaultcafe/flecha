@@ -178,10 +178,10 @@ Both containers use the shared `errors::ArrayError` from
     :: lib::std::containers::errors;
 ```
 
-Construct with `array::Array<i32>::init()`. `Array<T>` has the same element
-restrictions as `RawArray<T>` and returns elements by value, without exposing
-backing pointers or element references. Bounds errors check the used length.
-Growth failure preserves length, capacity, and existing contents.
+Construct with `array::Array<i32>::init()`. The collection returns elements by
+value without exposing backing pointers or uninitialized capacity. Bounds
+errors check the used length. Growth failure preserves length, capacity, and
+existing contents.
 
 `RawArray` now has a safe initializer and a safe `tear` containing internal
 unsafe cleanup. The wrapper's generated lifecycle initializes and destroys its
@@ -193,12 +193,20 @@ live borrow from `view()` or `viewRef()` prevents moving, replacing, or
 destroying its container. The language's unsafe-tear immovability rule is
 unchanged.
 
-Element relocation is still limited to the documented copyable element set.
-`push`, `pop`, `get`, `set`, growth, and compaction do not yet support
-move-only elements, and indexing cannot partially move an element out of a
-container. Container-level moves do not relax those element restrictions.
+Stage 2's first vertical slice gives `push`, growth, `reserve`, `clear`, and
+array destruction initialized-prefix storage semantics. `push` copies a
+copyable argument or consumes a move-only argument; growth relocates live
+elements rather than copying them. `pop`, `get`, `set`, `remove`,
+`swapRemove`, and the remaining copy-only surface have not yet completed the
+move-only contract. Indexing still cannot partially move an element out of a
+container.
 
 `StandardLibraryTests.SafeArray.*` runs growth/failure, scalar, structure, and
 scope-cleanup checks through safe callers with allocation tracking.
 `CompilerDiagnostics.SafeArray` checks privacy, use after a container move,
 conflicting borrows, and unsupported element operations.
+
+The complete Stage 2 extension for movable and destructible elements,
+including nested owning arrays, is specified in
+[`collections.md`](collections.md). Its definition of done remains the gate
+for claiming full move-only `Array<T>` support.

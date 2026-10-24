@@ -152,7 +152,8 @@ class AllocationChecker final {
                     if (node.allocation || heapIndex || heapSlice ||
                         resourceClosure ||
                         (callee &&
-                         callee->BuiltIn() == BuiltInFunction::Free) ||
+                         (callee->BuiltIn() == BuiltInFunction::Free ||
+                          callee->BuiltIn() == BuiltInFunction::StorageFree)) ||
                         (found != _functions.end() &&
                          _resourceFunctions.contains(found->second)))
                         changed |= _resourceFunctions.insert(function).second;
@@ -741,7 +742,9 @@ class AllocationChecker final {
         for (const Value& argument : arguments)
             if (Tracks(argument) || argument.address) return true;
         if (!function) return false;
-        if (function->BuiltIn() == BuiltInFunction::Free) return true;
+        if (function->BuiltIn() == BuiltInFunction::Free ||
+            function->BuiltIn() == BuiltInFunction::StorageFree)
+            return true;
         for (const SemanticType& type : function->ParameterTypes())
             if (IsHeapHandle(type)) return true;
         const auto found = _functions.find(function);
@@ -832,7 +835,8 @@ class AllocationChecker final {
                                             resource.nullable};
             return {{std::move(state), {ValueKind::Pointer, &expression}}};
         }
-        if (function && function->BuiltIn() == BuiltInFunction::Free) {
+        if (function && (function->BuiltIn() == BuiltInFunction::Free ||
+                         function->BuiltIn() == BuiltInFunction::StorageFree)) {
             if (!arguments.empty()) Free(state, arguments[0], expression);
             return {{std::move(state), {}}};
         }

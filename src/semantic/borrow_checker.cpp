@@ -1154,7 +1154,9 @@ class BorrowChecker final {
                         ? &callable.Signature()
                         : nullptr;
                 const bool allocation =
-                    function && function->BuiltIn() == BuiltInFunction::New;
+                    function &&
+                    (function->BuiltIn() == BuiltInFunction::New ||
+                     function->BuiltIn() == BuiltInFunction::StorageNew);
                 const State skipped = allocation ? *_state : State{};
                 const std::vector<Loan> previousLoans = _temporaries;
                 if (function == nullptr) {
@@ -1171,6 +1173,8 @@ class BorrowChecker final {
                         signature != nullptr &&
                         ((index == 0 && function != nullptr &&
                           (function->BuiltIn() == BuiltInFunction::Free ||
+                           function->BuiltIn() ==
+                               BuiltInFunction::StorageFree ||
                            function->BuiltIn() == BuiltInFunction::Take)) ||
                          (index < signature->parameterContracts.size() &&
                           signature->parameterContracts[index] ==
@@ -1245,10 +1249,9 @@ class BorrowChecker final {
                                 SemanticTypeKind::Reference &&
                             _model.TypeOf(call.Receiver()).Kind() !=
                                 SemanticTypeKind::Pointer) {
-                            const bool exclusive =
-                                !method->ParameterTypes()[0]
-                                     .Target()
-                                     ->IsConst();
+                            const bool exclusive = !method->ParameterTypes()[0]
+                                                        .Target()
+                                                        ->IsConst();
                             if (exclusive) {
                                 CheckAccess(value, true,
                                             call.Receiver().Range());

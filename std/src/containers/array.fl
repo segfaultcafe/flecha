@@ -46,7 +46,7 @@ error Array<T>::reserve(&self, usize capacity) {
     }
 }
 
-// Appends a semantic copy of value.
+// Appends value, copying a copyable value or consuming a movable value.
 error Array<T>::push(&self, T value) {
     unsafe {
         return self->inner.push(value);

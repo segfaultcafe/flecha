@@ -17,7 +17,13 @@ RawArray<T> RawArray<T>::init() override {
 // Releases the owned storage.
 void RawArray<T>::tear(&self) override {
     unsafe {
-        free(self->storage);
+        usize remaining = self->length;
+        while remaining > 0 {
+            remaining = remaining - 1;
+            __storage_destroy(self->storage, remaining);
+        }
+
+        __storage_free(self->storage);
     }
 }
 
@@ -46,30 +52,29 @@ unsafe error RawArray<T>::reserve(&self, usize capacity) {
         return none;
     }
 
-    replacement, err := new<[]T>(capacity);
+    replacement, err := __storage_new<[]T>(capacity);
     if err != none {
         return err;
     }
 
     usize i = 0;
     while i < self->length {
-        replacement[i] = self->storage[i];
+        __storage_relocate(replacement, i, self->storage, i);
         i++;
     }
 
     previous := take(self->storage);
-    free(previous);
-
     self->storage = replacement;
     self->allocated = capacity;
+    __storage_free(previous);
 
     return none;
 }
 
-// Appends value, growing storage geometrically when full.
+// Appends value into an uninitialized slot, relocating elements during growth.
 unsafe error RawArray<T>::push(&self, T value) {
     if self->length != self->allocated {
-        self->storage[self->length] = value;
+        __storage_initialize(self->storage, self->length, value);
         self->length++;
         return none;
     }
@@ -87,7 +92,7 @@ unsafe error RawArray<T>::push(&self, T value) {
         return err;
     }
 
-    self->storage[self->length] = value;
+    __storage_initialize(self->storage, self->length, value);
     self->length++;
     return none;
 }
@@ -134,5 +139,10 @@ unsafe []T RawArray<T>::viewRef(&self) <-self {
 
 // Removes all logical elements while retaining allocated storage.
 void RawArray<T>::clear(&self) {
-    self->length = 0;
+    unsafe {
+        while self->length > 0 {
+            self->length = self->length - 1;
+            __storage_destroy(self->storage, self->length);
+        }
+    }
 }
