@@ -1,5 +1,7 @@
 module algorithms;
 
+@imports :: root::memory::slices as mem_slices;
+
 // Receives a shared reference to one element for its side effects.
 export func Action<T>(&const T) => ();
 
@@ -106,9 +108,7 @@ export void reverse<T>([]T values) {
 
 // Replaces every element with a semantic copy of value.
 export void fill<T>([]T values, T value) {
-    loop usize index = 0; index < values.len(); index++ {
-        values[index] = value;
-    }
+    mem_slices::fill<T>(values, value);
 }
 
 // Calls action once for each element in index order.
