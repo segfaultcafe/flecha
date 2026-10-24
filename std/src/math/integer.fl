@@ -2,14 +2,17 @@ module integer;
 
 @imports :: root::math::errors;
 
+// Reports whether value is divisible by two.
 export bool is_even<T: integer>(T value) {
     return value % 2 == 0;
 }
 
+// Reports whether value is not divisible by two.
 export bool is_odd<T: integer>(T value) {
     return !is_even<T>(value);
 }
 
+// Reports whether divisor evenly divides value; a zero divisor returns false.
 export bool is_multiple_of<T: integer>(T value, T divisor) {
     T zero = none;
 
@@ -20,6 +23,7 @@ export bool is_multiple_of<T: integer>(T value, T divisor) {
     return value % divisor == zero;
 }
 
+// Raises base to a nonnegative exponent with wrapping multiplication.
 export T pow<T: integer>(T base, usize exponent) {
     T result = 1;
 
@@ -38,6 +42,7 @@ export T pow<T: integer>(T base, usize exponent) {
     return result;
 }
 
+// Returns the greatest common divisor, nonnegative when representable.
 export T gcd<T: integer>(T left, T right) {
     T zero = none;
     T one = 1;
@@ -59,6 +64,8 @@ export T gcd<T: integer>(T left, T right) {
     return left;
 }
 
+// Returns the least common multiple, or zero when either input is zero.
+// Multiplication uses the primitive wrapping policy.
 export T lcm<T: integer>(T left, T right) {
     T zero = none;
 
@@ -75,6 +82,7 @@ export T lcm<T: integer>(T left, T right) {
     return result;
 }
 
+// Returns the exact sum or ArithmeticError.Overflow.
 export (T, errors::ArithmeticError) checked_add<T: integer>(T left, T right) {
     result, overflowed := left.overflow_add(right);
     if overflowed {
@@ -84,6 +92,7 @@ export (T, errors::ArithmeticError) checked_add<T: integer>(T left, T right) {
     return (result, none);
 }
 
+// Returns the exact difference or ArithmeticError.Overflow.
 export (T, errors::ArithmeticError) checked_sub<T: integer>(T left, T right) {
     result, overflowed := left.overflow_sub(right);
     if overflowed {
@@ -93,6 +102,7 @@ export (T, errors::ArithmeticError) checked_sub<T: integer>(T left, T right) {
     return (result, none);
 }
 
+// Returns the exact product or ArithmeticError.Overflow.
 export (T, errors::ArithmeticError) checked_mul<T: integer>(T left, T right) {
     result, overflowed := left.overflow_mul(right);
     if overflowed {
@@ -102,6 +112,7 @@ export (T, errors::ArithmeticError) checked_mul<T: integer>(T left, T right) {
     return (result, none);
 }
 
+// Returns the quotient or reports division by zero or signed overflow.
 export (T, errors::ArithmeticError) checked_div<T: integer>(T left, T right) {
     T zero = none;
     T negativeOne = (-1).cast<T>;
@@ -117,6 +128,7 @@ export (T, errors::ArithmeticError) checked_div<T: integer>(T left, T right) {
     return (left / right, none);
 }
 
+// Returns the sum clamped to the nearest bound of T on overflow.
 export T saturating_add<T: integer>(T left, T right) {
     result, overflowed := left.overflow_add(right);
     if !overflowed {
@@ -131,6 +143,7 @@ export T saturating_add<T: integer>(T left, T right) {
     return T.min_value;
 }
 
+// Returns the difference clamped to the nearest bound of T on overflow.
 export T saturating_sub<T: integer>(T left, T right) {
     result, overflowed := left.overflow_sub(right);
     if !overflowed {
@@ -149,6 +162,7 @@ export T saturating_sub<T: integer>(T left, T right) {
     return T.min_value;
 }
 
+// Returns the product clamped to the nearest bound of T on overflow.
 export T saturating_mul<T: integer>(T left, T right) {
     result, overflowed := left.overflow_mul(right);
     if !overflowed {
@@ -165,4 +179,22 @@ export T saturating_mul<T: integer>(T left, T right) {
     }
 
     return T.max_value;
+}
+
+// Returns the low T-width bits of the mathematical sum.
+export T wrapping_add<T: integer>(T left, T right) {
+    result, _ := left.overflow_add(right);
+    return result;
+}
+
+// Returns the low T-width bits of the mathematical difference.
+export T wrapping_sub<T: integer>(T left, T right) {
+    result, _ := left.overflow_sub(right);
+    return result;
+}
+
+// Returns the low T-width bits of the mathematical product.
+export T wrapping_mul<T: integer>(T left, T right) {
+    result, _ := left.overflow_mul(right);
+    return result;
 }

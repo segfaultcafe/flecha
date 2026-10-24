@@ -86,6 +86,28 @@ type. Division reports `ArithmeticError.DivisionByZero` for a zero divisor and
 `ArithmeticError.Overflow` when a signed minimum value is divided by negative
 one.
 
+## Wrapping arithmetic
+
+Wrapping operations return the low `N` bits of the mathematical result, where
+`N` is the width of `T`:
+
+```flecha
+sum := integer::wrapping_add<i32>(left, right);
+difference := integer::wrapping_sub<i32>(left, right);
+product := integer::wrapping_mul<i32>(left, right);
+```
+
+For unsigned types, this is arithmetic modulo `2^N`. For signed types, the same
+modulo result is interpreted as the corresponding `N`-bit two's-complement
+value: for example, adding one to `i32.max_value` produces `i32.min_value`.
+`usize` and `isize` use the target pointer width. Exact results are unchanged,
+and these operations never report overflow or allocate.
+
+The named operations deliberately have the same result as Flecha's primitive
+integer `+`, `-`, and `*`. Their purpose is to make the caller's overflow policy
+explicit and stable at the call site. There is no `wrapping_div`; integer
+division retains its division-by-zero and signed-minimum behavior.
+
 ## Saturating arithmetic
 
 Saturating operations preserve representable results and clamp overflow to the

@@ -1,6 +1,10 @@
 module errors;
 
+// Reports arithmetic operations that have no representable ordinary result.
 export error ArithmeticError {
+    // The mathematical result lies outside the destination integer type.
     Overflow,
+
+    // Integer division was requested with a zero divisor.
     DivisionByZero,
 }

@@ -2,6 +2,7 @@ module bits;
 
 @imports :: root::math::errors;
 
+// Returns the number of value bits in T.
 export usize width<T: unsigned_integer>() {
     T remaining = T.max_value;
     usize result = 0;
@@ -14,6 +15,7 @@ export usize width<T: unsigned_integer>() {
     return result;
 }
 
+// Counts the one bits in value.
 export usize count_ones<T: unsigned_integer>(T value) {
     usize result = 0;
 
@@ -25,10 +27,12 @@ export usize count_ones<T: unsigned_integer>(T value) {
     return result;
 }
 
+// Counts the zero bits in value across the full width of T.
 export usize count_zeros<T: unsigned_integer>(T value) {
     return width<T>() - count_ones<T>(value);
 }
 
+// Counts zero bits before the highest one, returning width<T>() for zero.
 export usize leading_zeros<T: unsigned_integer>(T value) {
     usize significantBits = 0;
 
@@ -40,6 +44,7 @@ export usize leading_zeros<T: unsigned_integer>(T value) {
     return width<T>() - significantBits;
 }
 
+// Counts zero bits after the lowest one, returning width<T>() for zero.
 export usize trailing_zeros<T: unsigned_integer>(T value) {
     if value == 0 {
         return width<T>();
@@ -54,6 +59,7 @@ export usize trailing_zeros<T: unsigned_integer>(T value) {
     return result;
 }
 
+// Rotates bits left after reducing count modulo the width of T.
 export T rotate_left<T: unsigned_integer>(T value, usize count) {
     usize bits = width<T>();
     count = count % bits;
@@ -65,6 +71,7 @@ export T rotate_left<T: unsigned_integer>(T value, usize count) {
     return (value << count) | (value >> (bits - count));
 }
 
+// Rotates bits right after reducing count modulo the width of T.
 export T rotate_right<T: unsigned_integer>(T value, usize count) {
     usize bits = width<T>();
     count = count % bits;
@@ -76,6 +83,7 @@ export T rotate_right<T: unsigned_integer>(T value, usize count) {
     return (value >> count) | (value << (bits - count));
 }
 
+// Reverses the byte order across the full width of T.
 export T swap_bytes<T: unsigned_integer>(T value) {
     usize bytes = width<T>() / 8;
     T result = none;
@@ -89,6 +97,7 @@ export T swap_bytes<T: unsigned_integer>(T value) {
     return result;
 }
 
+// Reverses the bit order across the full width of T.
 export T reverse<T: unsigned_integer>(T value) {
     usize remaining = width<T>();
     T result = none;
@@ -102,10 +111,12 @@ export T reverse<T: unsigned_integer>(T value) {
     return result;
 }
 
+// Reports whether value contains exactly one set bit.
 export bool is_power_of_two<T: unsigned_integer>(T value) {
     return value != 0 and (value & (value - 1)) == 0;
 }
 
+// Returns only value's highest set bit, or zero when value is zero.
 export T highest_one<T: unsigned_integer>(T value) {
     if value == 0 {
         return none;
@@ -116,14 +127,18 @@ export T highest_one<T: unsigned_integer>(T value) {
     return one << shift;
 }
 
+// Returns only value's lowest set bit, or zero when value is zero.
 export T lowest_one<T: unsigned_integer>(T value) {
     return value & (~value + 1);
 }
 
+// Returns the greatest power of two not larger than value, or zero.
 export T bit_floor<T: unsigned_integer>(T value) {
     return highest_one<T>(value);
 }
 
+// Returns the least power of two not smaller than value, or Overflow.
+// Zero maps to one.
 export (T, errors::ArithmeticError) checked_bit_ceil<T: unsigned_integer>(
     T value
 ) {

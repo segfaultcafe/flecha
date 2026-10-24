@@ -2,15 +2,19 @@ module buffer;
 
 const usize FL_BUFFER_INIT_CAPACITY = 8;
 
+// Reports failures specific to Buffer operations.
 export error BufferError {
+    // The requested operation requires at least one stored byte.
     Empty,
 }
 
+// Owns a growable sequence of initialized bytes.
 export structure Buffer {
     private own []u8 storage;
     private usize length;
 };
 
+// Creates an empty buffer with at least the requested initial capacity.
 (Buffer, error) Buffer::withCapacity(usize capacity) {
     storage, err := new<own []u8>(capacity);
     if err != none {
@@ -23,14 +27,17 @@ export structure Buffer {
     }, none);
 }
 
+// Returns the number of initialized bytes.
 usize Buffer::len(&const self) {
     return self->length;
 }
 
+// Returns the number of bytes that fit without another allocation.
 usize Buffer::capacity(&const self) {
     return self->storage.len();
 }
 
+// Ensures at least capacity bytes fit while preserving initialized contents.
 error Buffer::reserve(&self, usize capacity) {
     if capacity <= self->capacity() {
         return none;
@@ -49,24 +56,30 @@ error Buffer::reserve(&self, usize capacity) {
     return none;
 }
 
+// Reports whether the buffer contains no initialized bytes.
 bool Buffer::empty(&const self) {
     return self->length == 0;
 }
 
+// Borrows the initialized prefix of the buffer.
 []const u8 Buffer::bytes(&const self) <-self {
     return self->storage[:self->length];
 }
 
+// Removes all initialized bytes without releasing the allocation.
 void Buffer::clear(&self) {
     self->length = 0;
 }
 
+// Shortens the buffer to length when length is smaller than its current size.
 void Buffer::truncate(&self, usize length) {
     if length < self->length {
         self->length = length;
     }
 }
 
+// Changes the initialized length, filling newly exposed bytes with fill.
+// Allocation failure leaves the length and contents unchanged.
 error Buffer::resize(&self, usize length, u8 fill) {
     if length <= self->length {
         self->length = length;
@@ -86,6 +99,7 @@ error Buffer::resize(&self, usize length, u8 fill) {
     return none;
 }
 
+// Removes and returns the final byte, or BufferError.Empty when empty.
 (u8, BufferError) Buffer::popByte(&self) {
     if self->empty() {
         return (none, BufferError.Empty);
@@ -95,6 +109,7 @@ error Buffer::resize(&self, usize length, u8 fill) {
     return (self->storage[self->length], none);
 }
 
+// Appends every source byte, preserving existing contents on allocation error.
 error Buffer::write(&self, []const u8 source) {
     err := self->ensureAdditional(source.len());
     if err != none {
@@ -110,6 +125,7 @@ error Buffer::write(&self, []const u8 source) {
     return none;
 }
 
+// Appends one byte, preserving existing contents on allocation error.
 error Buffer::writeByte(&self, u8 value) {
     err := self->ensureAdditional(1);
     if err != none {
@@ -120,6 +136,7 @@ error Buffer::writeByte(&self, u8 value) {
     return none;
 }
 
+// Appends the existing bytes of value without interpreting or validating text.
 error Buffer::writeString(&self, stringv value) {
     const usize VAL_LEN = value.len().cast<usize>;
     err := self->ensureAdditional(VAL_LEN);

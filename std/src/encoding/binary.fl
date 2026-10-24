@@ -2,13 +2,22 @@ module binary;
 
 @imports :: root::math::bits;
 
+// Reports fixed-width and variable-width binary encoding failures.
 export error BinaryError {
+    // The source ended before a complete value was available.
     UnexpectedEnd,
+
+    // The destination cannot hold the complete encoded value.
     InsufficientSpace,
+
+    // The decoded or calculated value cannot be represented by its type.
     Overflow,
+
+    // The input is structurally valid bytes but not a canonical encoding.
     InvalidEncoding,
 }
 
+// Contains fixed-width unsigned types supported by binary encoders.
 export typeset fixed_unsigned_integer {
     u8,
     u16,
@@ -16,6 +25,7 @@ export typeset fixed_unsigned_integer {
     u64,
 };
 
+// Reads one fixed-width integer from a little-endian byte prefix.
 export (T, BinaryError) read_little<T: fixed_unsigned_integer>(
     []const u8 source
 ) {
@@ -32,6 +42,7 @@ export (T, BinaryError) read_little<T: fixed_unsigned_integer>(
     return (value, none);
 }
 
+// Reads one fixed-width integer from a big-endian byte prefix.
 export (T, BinaryError) read_big<T: fixed_unsigned_integer>(
     []const u8 source
 ) {
@@ -48,6 +59,8 @@ export (T, BinaryError) read_big<T: fixed_unsigned_integer>(
     return (value, none);
 }
 
+// Writes one fixed-width integer in little-endian order.
+// An undersized destination is left unchanged.
 export BinaryError write_little<T: fixed_unsigned_integer>(
     []u8 destination,
     T value
@@ -65,6 +78,8 @@ export BinaryError write_little<T: fixed_unsigned_integer>(
     return none;
 }
 
+// Writes one fixed-width integer in big-endian order.
+// An undersized destination is left unchanged.
 export BinaryError write_big<T: fixed_unsigned_integer>(
     []u8 destination,
     T value

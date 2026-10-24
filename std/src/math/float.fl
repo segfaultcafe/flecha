@@ -1,22 +1,27 @@
 module float;
 
+// Reports whether value is an IEEE not-a-number value.
 export bool is_nan<T: floating_point>(T value) {
     return value != value;
 }
 
+// Reports whether value is positive or negative infinity.
 export bool is_infinite<T: floating_point>(T value) {
     return value == T.infinity or value == T.negative_infinity;
 }
 
+// Reports whether value is neither infinity nor NaN.
 export bool is_finite<T: floating_point>(T value) {
     return !is_nan<T>(value) and !is_infinite<T>(value);
 }
 
+// Reports whether value is finite with normalized nonzero magnitude.
 export bool is_normal<T: floating_point>(T value) {
     return is_finite<T>(value)
         and (value >= T.min_positive or value <= -T.min_positive);
 }
 
+// Reports whether value is finite, nonzero, and below normal magnitude.
 export bool is_subnormal<T: floating_point>(T value) {
     T zero = none;
 

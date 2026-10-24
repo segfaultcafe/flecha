@@ -106,6 +106,13 @@ set_tests_properties(StandardLibraryTests.FlechaModules PROPERTIES
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/std
 )
 
+add_test(NAME CompilerDiagnostics.SliceCopyability
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/slice_copy_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_slice_copy_diagnostics.cmake)
+
 add_test(NAME EditorTests.VSCodeManifest
     COMMAND ${CMAKE_COMMAND}
         -DEDITOR_ROOT=${PROJECT_SOURCE_DIR}/editors/vscode

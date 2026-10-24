@@ -1,5 +1,6 @@
 module sequence;
 
+// Reports whether two byte slices have equal lengths and contents.
 export bool equal([]const u8 left, []const u8 right) {
     if left.len() != right.len() {
         return false;
@@ -14,6 +15,7 @@ export bool equal([]const u8 left, []const u8 right) {
     return true;
 }
 
+// Compares unsigned bytes lexicographically and returns -1, 0, or 1.
 export i32 compare_lexicographic([]const u8 left, []const u8 right) {
     usize sharedLength = left.len();
     if right.len() < sharedLength {
@@ -41,6 +43,7 @@ export i32 compare_lexicographic([]const u8 left, []const u8 right) {
     return 0;
 }
 
+// Reports whether value begins with every byte in prefix.
 export bool starts_with([]const u8 value, []const u8 prefix) {
     if prefix.len() > value.len() {
         return false;
@@ -55,6 +58,7 @@ export bool starts_with([]const u8 value, []const u8 prefix) {
     return true;
 }
 
+// Reports whether value ends with every byte in suffix.
 export bool ends_with([]const u8 value, []const u8 suffix) {
     if suffix.len() > value.len() {
         return false;
@@ -70,6 +74,7 @@ export bool ends_with([]const u8 value, []const u8 suffix) {
     return true;
 }
 
+// Returns the first target index and true, or zero and false when absent.
 export (usize, bool) index_of_byte([]const u8 value, u8 target) {
     loop usize index = 0; index < value.len(); index++ {
         if value[index] == target {
@@ -80,6 +85,8 @@ export (usize, bool) index_of_byte([]const u8 value, u8 target) {
     return (none, false);
 }
 
+// Returns the first needle index and true, or zero and false when absent.
+// An empty needle is found at index zero.
 export (usize, bool) index_of([]const u8 haystack, []const u8 needle) {
     if needle.len() == 0 {
         return (0, true);

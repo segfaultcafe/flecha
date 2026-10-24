@@ -2,12 +2,19 @@ module hex;
 
 @imports :: root::encoding::binary;
 
+// Reports hexadecimal length, capacity, and input failures.
 export error HexError {
+    // The destination cannot hold the complete encoded or decoded value.
     InsufficientSpace,
+
+    // The required output length cannot be represented by usize.
     Overflow,
+
+    // The source has odd length or contains a non-hexadecimal byte.
     InvalidEncoding,
 }
 
+// Returns twice byteCount, or HexError.Overflow.
 export (usize, HexError) encoded_length(usize byteCount) {
     length, overflowed := byteCount.overflow_mul(2);
     if overflowed {
@@ -17,6 +24,7 @@ export (usize, HexError) encoded_length(usize byteCount) {
     return (length, none);
 }
 
+// Returns half an even character count, or HexError.InvalidEncoding.
 export (usize, HexError) decoded_length(usize characterCount) {
     if characterCount % 2 != 0 {
         return (none, HexError.InvalidEncoding);
@@ -25,10 +33,14 @@ export (usize, HexError) decoded_length(usize characterCount) {
     return (characterCount / 2, none);
 }
 
+// Encodes source with lowercase digits and returns the byte count written.
+// Failure leaves destination unchanged.
 export (usize, HexError) encode([]u8 destination, []const u8 source) {
     return encode_with_case(destination, source, false);
 }
 
+// Encodes source with uppercase digits and returns the byte count written.
+// Failure leaves destination unchanged.
 export (usize, HexError) encode_upper(
     []u8 destination,
     []const u8 source
@@ -36,6 +48,7 @@ export (usize, HexError) encode_upper(
     return encode_with_case(destination, source, true);
 }
 
+// Decodes hexadecimal bytes and leaves destination unchanged on failure.
 export (usize, HexError) decode(
     []u8 destination,
     []const u8 source
@@ -65,10 +78,12 @@ export (usize, HexError) decode(
     return (LENGTH, none);
 }
 
+// Writes lowercase hexadecimal digits, leaving the writer unchanged on failure.
 export HexError write(&binary::Writer destination, []const u8 source) {
     return write_with_case(destination, source, false);
 }
 
+// Writes uppercase hexadecimal digits, leaving the writer unchanged on failure.
 export HexError write_upper(&binary::Writer destination, []const u8 source) {
     return write_with_case(destination, source, true);
 }

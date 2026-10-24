@@ -4,6 +4,7 @@ module binary;
     :: root::bytes::buffer
     :: root::math::bits;
 
+// Appends one fixed-width integer in little-endian order without partial output.
 export error append_little<T: fixed_unsigned_integer>(
     &buffer::Buffer destination,
     T value
@@ -18,6 +19,7 @@ export error append_little<T: fixed_unsigned_integer>(
     return destination->write(encoded[:BYTE_COUNT]);
 }
 
+// Appends one fixed-width integer in big-endian order without partial output.
 export error append_big<T: fixed_unsigned_integer>(
     &buffer::Buffer destination,
     T value
@@ -32,6 +34,7 @@ export error append_big<T: fixed_unsigned_integer>(
     return destination->write(encoded[:BYTE_COUNT]);
 }
 
+// Appends one canonical unsigned variable-width integer without partial output.
 export error append_varint<T: fixed_unsigned_integer>(
     &buffer::Buffer destination,
     T value

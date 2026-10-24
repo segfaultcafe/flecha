@@ -2,11 +2,13 @@ module binary;
 
 @imports :: root::math::bits;
 
+// Reads typed values sequentially from a borrowed byte slice.
 export structure Reader {
     private []const u8 source;
     private usize position;
 };
 
+// Creates a reader positioned at the beginning of source.
 Reader Reader::init([]const u8 source) <-source override {
     return build Reader {
         self.source = source;
@@ -14,22 +16,27 @@ Reader Reader::init([]const u8 source) <-source override {
     };
 }
 
+// Returns the current byte offset.
 usize Reader::position(&const self) {
     return self->position;
 }
 
+// Returns the total source length.
 usize Reader::len(&const self) {
     return self->source.len();
 }
 
+// Returns the number of unread bytes.
 usize Reader::remaining(&const self) {
     return self->source.len() - self->position;
 }
 
+// Reports whether no unread bytes remain.
 bool Reader::empty(&const self) {
     return self->remaining() == 0;
 }
 
+// Reads one byte without advancing on UnexpectedEnd.
 (u8, BinaryError) Reader::readByte(&self) {
     if self->empty() {
         return (none, BinaryError.UnexpectedEnd);
@@ -40,6 +47,7 @@ bool Reader::empty(&const self) {
     return (value, none);
 }
 
+// Borrows and advances past exactly count bytes, or does not advance on error.
 ([]const u8, BinaryError) Reader::read(&self, usize count) <-self {
     if count > self->remaining() {
         return (
@@ -53,6 +61,8 @@ bool Reader::empty(&const self) {
     return (self->source[start:self->position], none);
 }
 
+// Reads and advances past one little-endian fixed-width integer.
+// Failure leaves the position unchanged.
 (T, BinaryError) Reader::readLittle<
     T: fixed_unsigned_integer
 >(&self) {
@@ -70,6 +80,8 @@ bool Reader::empty(&const self) {
     return (value, none);
 }
 
+// Reads and advances past one big-endian fixed-width integer.
+// Failure leaves the position unchanged.
 (T, BinaryError) Reader::readBig<
     T: fixed_unsigned_integer
 >(&self) {
@@ -87,6 +99,8 @@ bool Reader::empty(&const self) {
     return (value, none);
 }
 
+// Reads and advances past one canonical unsigned variable-width integer.
+// Failure leaves the position unchanged.
 (T, BinaryError) Reader::readVarint<
     T: fixed_unsigned_integer
 >(&self) {
@@ -99,6 +113,7 @@ bool Reader::empty(&const self) {
     return (value, none);
 }
 
+// Returns the next byte without advancing.
 (u8, BinaryError) Reader::peekByte(&const self) {
     if self->empty() {
         return (none, BinaryError.UnexpectedEnd);
@@ -107,6 +122,7 @@ bool Reader::empty(&const self) {
     return (self->source[self->position], none);
 }
 
+// Advances exactly count bytes, or does not advance on UnexpectedEnd.
 BinaryError Reader::skip(&self, usize count) {
     if self->remaining() < count {
         return BinaryError.UnexpectedEnd;
@@ -116,14 +132,17 @@ BinaryError Reader::skip(&self, usize count) {
     return none;
 }
 
+// Borrows the unread suffix without advancing.
 []const u8 Reader::remainingBytes(&const self) <-self {
     return self->source[self->position:];
 }
 
+// Borrows the unread suffix and advances to the end.
 ([]const u8, BinaryError) Reader::readRemaining(&self) <-self {
     return self->read(self->remaining()); 
 }
 
+// Moves the current position back to the beginning.
 void Reader::reset(&self) {
     self->position = 0;
 }

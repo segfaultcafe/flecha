@@ -1,0 +1,277 @@
+module slices_test;
+
+@imports
+    :: root::memory::slices
+    :: root::memory::errors as mem_errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+structure Record {
+    string label;
+    i32 value;
+};
+
+Record Record::init(stringv label, i32 value) override {
+    return build Record {
+        self.label = label.string();
+        self.value = value;
+    };
+}
+
+test copy_elements_copies_the_shared_prefix(&testing::UnitTest t) {
+    [4]i32 source = [10, 20, 30, 40];
+    [4]i32 equalDestination = [0; 4];
+    [2]i32 shortDestination = [0; 2];
+    [6]i32 longDestination = [9; 6];
+
+    equalCount := slices::copy_elements<i32>(
+        equalDestination[:],
+        source[:]
+    );
+    shortCount := slices::copy_elements<i32>(
+        shortDestination[:],
+        source[:]
+    );
+    longCount := slices::copy_elements<i32>(
+        longDestination[:],
+        source[:]
+    );
+
+    asserts::is_true(
+        t,
+        equalCount == 4 and equalDestination[0] == 10 and
+            equalDestination[3] == 40,
+        "copy_elements copies equal-length slices"
+    );
+    asserts::is_true(
+        t,
+        shortCount == 2 and shortDestination[0] == 10 and
+            shortDestination[1] == 20,
+        "copy_elements truncates to a short destination"
+    );
+    asserts::is_true(
+        t,
+        longCount == 4 and longDestination[0] == 10 and
+            longDestination[3] == 40 and longDestination[4] == 9 and
+            longDestination[5] == 9,
+        "copy_elements preserves a long destination suffix"
+    );
+}
+
+test copy_elements_accepts_empty_slices(&testing::UnitTest t) {
+    [2]i32 source = [10, 20];
+    [2]i32 destination = [7, 9];
+    [0]i32 empty = [];
+
+    emptyDestinationCount := slices::copy_elements<i32>(
+        empty[:],
+        source[:]
+    );
+    emptySourceCount := slices::copy_elements<i32>(
+        destination[:],
+        empty[:]
+    );
+
+    asserts::is_true(
+        t,
+        emptyDestinationCount == 0 and emptySourceCount == 0,
+        "copy_elements returns zero when either slice is empty"
+    );
+    asserts::is_true(
+        t,
+        destination[0] == 7 and destination[1] == 9,
+        "an empty source leaves the destination unchanged"
+    );
+}
+
+test copy_within_handles_nonoverlap_and_empty_ranges(&testing::UnitTest t) {
+    [6]i32 values = [1, 2, 3, 4, 5, 6];
+
+    copyError := slices::copy_within<i32>(values[:], 0, 2, 4);
+    sameError := slices::copy_within<i32>(values[:], 1, 4, 1);
+    emptyError := slices::copy_within<i32>(values[:], 6, 6, 6);
+
+    asserts::is_true(
+        t,
+        copyError == none and values[0] == 1 and values[1] == 2 and
+            values[2] == 3 and values[3] == 4 and values[4] == 1 and
+            values[5] == 2,
+        "copy_within copies a nonoverlapping range"
+    );
+    asserts::is_true(
+        t,
+        sameError == none and emptyError == none,
+        "identical and empty ranges are successful no-ops"
+    );
+
+    [0]i32 empty = [];
+    asserts::is_true(
+        t,
+        slices::copy_within<i32>(empty[:], 0, 0, 0) == none,
+        "copy_within accepts an empty range in an empty slice"
+    );
+}
+
+test copy_within_preserves_both_overlap_directions(&testing::UnitTest t) {
+    [5]i32 right = [1, 2, 3, 4, 5];
+    [5]i32 left = [1, 2, 3, 4, 5];
+
+    rightError := slices::copy_within<i32>(right[:], 0, 4, 1);
+    leftError := slices::copy_within<i32>(left[:], 1, 5, 0);
+
+    asserts::is_true(
+        t,
+        rightError == none and right[0] == 1 and right[1] == 1 and
+            right[2] == 2 and right[3] == 3 and right[4] == 4,
+        "right overlap copies backward from the preserved source"
+    );
+    asserts::is_true(
+        t,
+        leftError == none and left[0] == 2 and left[1] == 3 and
+            left[2] == 4 and left[3] == 5 and left[4] == 5,
+        "left overlap copies forward from the preserved source"
+    );
+}
+
+test copy_within_validates_before_mutation(&testing::UnitTest t) {
+    [5]i32 values = [1, 2, 3, 4, 5];
+
+    invalidRange := slices::copy_within<i32>(values[:], 3, 2, 0);
+    invalidRangeBeforeBounds := slices::copy_within<i32>(values[:], 6, 5, 0);
+    sourceBounds := slices::copy_within<i32>(values[:], 0, 6, 0);
+    sourceStartBounds := slices::copy_within<i32>(values[:], 6, 6, 0);
+    destinationStart := slices::copy_within<i32>(values[:], 0, 0, 6);
+    destinationEnd := slices::copy_within<i32>(values[:], 0, 3, 4);
+
+    asserts::is_true(
+        t,
+        invalidRange == mem_errors::SliceError.InvalidRange and
+            invalidRangeBeforeBounds == mem_errors::SliceError.InvalidRange,
+        "copy_within reports reversed ranges before bounds failures"
+    );
+    asserts::is_true(
+        t,
+        sourceBounds == mem_errors::SliceError.IndexOutOfBounds and
+            sourceStartBounds == mem_errors::SliceError.IndexOutOfBounds and
+            destinationStart == mem_errors::SliceError.IndexOutOfBounds and
+            destinationEnd == mem_errors::SliceError.IndexOutOfBounds,
+        "copy_within reports every bounds failure"
+    );
+    asserts::is_true(
+        t,
+        values[0] == 1 and values[1] == 2 and values[2] == 3 and
+            values[3] == 4 and values[4] == 5,
+        "failed copy_within calls leave the slice unchanged"
+    );
+}
+
+test fill_replaces_values_and_accepts_empty_slices(&testing::UnitTest t) {
+    [4]i32 values = [1, 2, 3, 4];
+    [0]i32 empty = [];
+
+    slices::fill<i32>(values[:], 7);
+    slices::fill<i32>(empty[:], 7);
+
+    asserts::is_true(
+        t,
+        values[0] == 7 and values[1] == 7 and values[2] == 7 and
+            values[3] == 7,
+        "fill replaces every element"
+    );
+    asserts::is_true(t, empty.len() == 0, "fill accepts an empty slice");
+}
+
+test swap_validates_indices_and_handles_equal_indices(&testing::UnitTest t) {
+    [4]i32 values = [10, 20, 30, 40];
+
+    swapError := slices::swap<i32>(values[:], 0, 3);
+    equalError := slices::swap<i32>(values[:], 1, 1);
+    leftError := slices::swap<i32>(values[:], 4, 0);
+    rightError := slices::swap<i32>(values[:], 0, 4);
+
+    asserts::is_true(
+        t,
+        swapError == none and equalError == none and values[0] == 40 and
+            values[1] == 20 and values[2] == 30 and values[3] == 10,
+        "swap exchanges distinct indices and accepts equal indices"
+    );
+    asserts::is_true(
+        t,
+        leftError == mem_errors::SliceError.IndexOutOfBounds and
+            rightError == mem_errors::SliceError.IndexOutOfBounds,
+        "swap reports either invalid index"
+    );
+    asserts::is_true(
+        t,
+        values[0] == 40 and values[1] == 20 and values[2] == 30 and
+            values[3] == 10,
+        "failed swaps leave the slice unchanged"
+    );
+
+    [0]i32 empty = [];
+    asserts::is_true(
+        t,
+        slices::swap<i32>(empty[:], 0, 0) ==
+            mem_errors::SliceError.IndexOutOfBounds,
+        "swap rejects every index into an empty slice"
+    );
+}
+
+test slice_operations_semantically_copy_structures(&testing::UnitTest t) {
+    [3]Record source = [
+        Record::init("one", 1),
+        Record::init("two", 2),
+        Record::init("three", 3),
+    ];
+    [3]Record destination = [
+        Record::init("old-a", 10),
+        Record::init("old-b", 20),
+        Record::init("old-c", 30),
+    ];
+
+    copied := slices::copy_elements<Record>(destination[:], source[:]);
+    source[0].label = "changed";
+
+    asserts::is_true(
+        t,
+        copied == 3 and destination[0].label == "one" and
+            destination[1].label == "two" and destination[2].value == 3,
+        "copy_elements creates independent structure copies"
+    );
+
+    fillValue := Record::init("filled", 42);
+    slices::fill<Record>(destination[:], fillValue);
+    fillValue.label = "changed";
+    destination[0].label = "first-only";
+
+    asserts::is_true(
+        t,
+        destination[0].label == "first-only" and
+            destination[1].label == "filled" and
+            destination[2].label == "filled",
+        "fill creates an independent copy for every destination"
+    );
+
+    [3]Record overlapping = [
+        Record::init("left", 1),
+        Record::init("middle", 2),
+        Record::init("right", 3),
+    ];
+    overlapError := slices::copy_within<Record>(overlapping[:], 0, 2, 1);
+    overlapping[0].label = "changed";
+
+    asserts::is_true(
+        t,
+        overlapError == none and overlapping[1].label == "left" and
+            overlapping[2].label == "middle",
+        "copy_within preserves independent overlapping structure copies"
+    );
+
+    swapError := slices::swap<Record>(overlapping[:], 1, 2);
+    asserts::is_true(
+        t,
+        swapError == none and overlapping[1].label == "middle" and
+            overlapping[2].label == "left",
+        "swap exchanges nontrivially copyable structures"
+    );
+}

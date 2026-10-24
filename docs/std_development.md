@@ -3,6 +3,20 @@
 These guidelines apply to Flecha source in `std/`. Follow the naming conventions
 in [library API style](library_api_style.md) as well.
 
+## Document public contracts at their declarations
+
+Place `//` contract comments immediately above every exported function, type,
+callable alias, error family, and type set, as well as every public method on an
+exported type. Document public fields and error or enum variants when their
+meaning is not completely captured by the declaration.
+
+Comments should state observable behavior: ownership or borrowing, mutation,
+partial-result rules, ordering, error conditions, and whether failure preserves
+the receiver or destination. Do not merely expand the declaration's name, and
+do not promise implementation details that callers cannot rely on. Private
+helpers need comments only when their invariants or purpose are otherwise
+unclear.
+
 ## Expand nonempty brace-delimited bodies
 
 Never put a nonempty body on one line, even when it contains only one statement.

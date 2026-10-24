@@ -53,7 +53,7 @@ The initial public module layout is:
 
 ```text
 std::math::*              numeric, integer, bits, floating_point, constants
-std::mem::*               slices
+std::memory::*            slices
 std::bytes::*             buffer, sequence
 std::containers::*        algorithms, array, deque, stack, queue, heap,
                           hash_map, hash_set
@@ -91,7 +91,8 @@ Add foundational modules for:
 - checked, wrapping, and saturating integer arithmetic;
 - bit rotation, population count, leading and trailing zero counts, and byte
   swapping;
-- safe slice comparison, copying, filling, and swapping;
+- safe slice copying, overlap-aware copying, filling, and swapping;
+- deterministic byte-sequence equality and lexicographic comparison;
 - explicit little-endian and big-endian integer encoding; and
 - bounded byte readers and dynamically growing byte writers.
 
@@ -99,6 +100,28 @@ Every arithmetic operation must document overflow behavior. Byte encoders must
 produce canonical output independent of host endianness and structure layout.
 Readers must report malformed or truncated input without reading outside their
 source slice.
+
+#### Stage 1 contract and test gate
+
+Implementation begins only after the slice contracts in
+[`memory.md`](memory.md) and the arithmetic contracts in
+[`math.md`](math.md) are reflected by this test matrix:
+
+| Area | Required cases |
+| --- | --- |
+| Empty slices | `copy_elements` with either side empty returns zero; `copy_within(values, 0, 0, 0)` succeeds and an empty range at `len` succeeds; `fill` is a no-op; and `swap` returns `IndexOutOfBounds` without mutation. |
+| Truncated copying | Source shorter than destination, destination shorter than source, equal lengths, returned count, copied prefix, and untouched destination suffix. |
+| Overlap | Leftward overlap, rightward overlap, identical source and destination ranges, and nonoverlapping ranges, with results matching a preserved original source. |
+| Ranges | `sourceStart > sourceEnd`, each source endpoint beyond `len`, destination start beyond `len`, destination end beyond `len`, valid empty ranges, and proof that failed validation performs no mutation. |
+| Swap | First/last exchange, equal valid indices as a no-op, either index invalid, both indices invalid, and no mutation on every error path. |
+| Element lifecycle | Scalars, copyable structures, and copyable structures with nontrivial owned-field copies and cleanup; verify independent copies and exactly-once cleanup of replaced values. |
+| Unsupported elements | Compile-time rejection of representative move-only and immovable element types in every copy-based slice operation, using `FLECHA-S0046` for prohibited copies and `FLECHA-S0059` for move reuse. |
+| Wrapping arithmetic | `wrapping_add`, `wrapping_sub`, and `wrapping_mul` for `i8`, `i16`, `i32`, `i64`, `isize`, `u8`, `u16`, `u32`, `u64`, and `usize`; cover exact results, zero/one identities, both overflow directions where applicable, signed minimum/maximum transitions, unsigned zero/maximum transitions, multiplication overflow, and target-width behavior. |
+
+Existing byte-sequence, endian, reader, and buffer tests remain regression
+requirements. Slice tests must distinguish typed semantic copies from raw byte
+operations, and negative tests must compile as independent fixtures so an
+expected type error cannot mask the positive runtime cases.
 
 ### 2. General-purpose collections
 

@@ -18,5 +18,7 @@ module std;
     :: root::math::float
     :: root::math::bits
     :: root::math::errors as math_errors
+    :: root::memory::slices
+    :: root::memory::errors as memory_errors
     :: root::tests::testing
     :: root::tests::asserts;

@@ -5,10 +5,12 @@ module array;
     :: root::containers::errors
     :: root::containers::algorithms;
 
+// Owns a growable sequence and exposes safe checked element operations.
 export structure Array<T> {
     private raw_array::RawArray<T> inner; 
 };
 
+// Copies source into a newly allocated array in index order.
 (Array<T>, error) Array<T>::fromSlice([]const T source) {
     res := Array<T>::init();
 
@@ -27,42 +29,51 @@ export structure Array<T> {
     return (res, none);
 }
 
+// Returns the number of logical elements.
 usize Array<T>::len(&const self) {
     return self->inner.len();
 }
 
+// Returns the number of elements that fit without another allocation.
 usize Array<T>::capacity(&const self) {
     return self->inner.capacity();
 }
 
+// Ensures at least capacity elements fit while preserving existing contents.
 error Array<T>::reserve(&self, usize capacity) {
     unsafe {
         return self->inner.reserve(capacity);
     }
 }
 
+// Appends a semantic copy of value.
 error Array<T>::push(&self, T value) {
     unsafe {
         return self->inner.push(value);
     }
 }
 
+// Returns the first index equal to value and true, or zero and false.
 (usize, bool) Array<T>::indexOf(&const self, T value) {
     return algorithms::index_of<T>(self->view(), value);
 }
 
+// Reports whether an element is equal to value.
 bool Array<T>::contains(&const self, T value) {
     return algorithms::contains<T>(self->view(), value);
 }
 
+// Reverses the logical elements in place.
 void Array<T>::reverse(&self) {
     algorithms::reverse<T>(self->viewRef());
 }
 
+// Replaces every logical element with a semantic copy of value.
 void Array<T>::fill(&self, T value) {
     algorithms::fill<T>(self->viewRef(), value);
 }
 
+// Appends semantic copies of source, preserving contents on allocation error.
 error Array<T>::append(&self, []const T source) {
     const usize CURRENT = self->len();
     const usize ADDED = source.len();
@@ -89,22 +100,26 @@ error Array<T>::append(&self, []const T source) {
     return none;
 }
 
+// Creates an independent semantic copy of the array and its elements.
 (Array<T>, error) Array<T>::clone(&const self) {
     return Array<T>::fromSlice(self->view());
 }
 
+// Copies the element at index or reports ArrayError.IndexOutOfBounds.
 (T, error) Array<T>::get(&const self, usize index) {
     unsafe {
         return self->inner.get(index);
     }
 }
 
+// Replaces the element at index or reports ArrayError.IndexOutOfBounds.
 error Array<T>::set(&self, usize index, T value) {
     unsafe {
         return self->inner.set(index, value);
     }
 }
 
+// Removes and returns the indexed element while preserving element order.
 (T, error) Array<T>::remove(&self, usize index) {
     const usize LEN = self->len();
     if index >= LEN {
@@ -137,6 +152,7 @@ error Array<T>::set(&self, usize index, T value) {
     return (removed, none);
 }
 
+// Removes and returns an element by replacing it with the final element.
 (T, error) Array<T>::swapRemove(&self, usize index) {
     const usize LEN = self->len();
     if index >= LEN {
@@ -169,28 +185,33 @@ error Array<T>::set(&self, usize index, T value) {
     return (removed, none);
 }
 
+// Removes and returns the final element, or reports ArrayError.Empty.
 (T, error) Array<T>::pop(&self) {
     unsafe {
         return self->inner.pop();
     }
 }
 
+// Borrows all logical elements as a read-only slice.
 []const T Array<T>::view(&const self) <-self {
     unsafe {
         return self->inner.view();
     }
 }
 
+// Mutably borrows all logical elements as a slice.
 []T Array<T>::viewRef(&self) <-self {
     unsafe {
         return self->inner.viewRef();
     }
 }
 
+// Reports whether the array contains no logical elements.
 bool Array<T>::empty(&const self) {
     return self->len() == 0;
 }
 
+// Copies the first element or reports ArrayError.Empty.
 (T, error) Array<T>::first(&const self) {
     if self->empty() {
         return (none, errors::ArrayError.Empty);
@@ -199,6 +220,7 @@ bool Array<T>::empty(&const self) {
     return self->get(0);
 }
 
+// Copies the final element or reports ArrayError.Empty.
 (T, error) Array<T>::last(&const self) {
     if self->empty() {
         return (none, errors::ArrayError.Empty);
@@ -208,34 +230,42 @@ bool Array<T>::empty(&const self) {
     return self->get(LAST);
 }
 
+// Removes all logical elements while retaining the allocation.
 void Array<T>::clear(&self) {
     self->inner.clear();
 }
 
+// Sorts elements in place with less as a strict ordering.
 void Array<T>::sortBy(&self, algorithms::Less<T> less) {
     algorithms::sort_by<T>(self->viewRef(), less);
 }
 
+// Calls action once for each element in index order.
 void Array<T>::forEach(&const self, algorithms::Action<T> action) {
     algorithms::for_each<T>(self->view(), action);
 }
 
+// Returns the first accepted index and true, or zero and false.
 (usize, bool) Array<T>::findIf(&const self, algorithms::Predicate<T> predicate) {
     return algorithms::find_if<T>(self->view(), predicate);
 }
 
+// Reports whether predicate accepts at least one element.
 bool Array<T>::anyOf(&const self, algorithms::Predicate<T> predicate) {
     return algorithms::any_of<T>(self->view(), predicate);
 }
 
+// Reports whether predicate accepts every element.
 bool Array<T>::allOf(&const self, algorithms::Predicate<T> predicate) {
     return algorithms::all_of<T>(self->view(), predicate);
 }
 
+// Counts the elements accepted by predicate.
 usize Array<T>::countIf(&const self, algorithms::Predicate<T> predicate) {
     return algorithms::count_if<T>(self->view(), predicate);
 }
 
+// Folds elements from left to right, beginning with initial.
 A Array<T>::fold<A>(&const self, A initial, algorithms::Folder<T, A> folder) {
     return algorithms::fold<T, A>(self->view(), initial, folder);
 }

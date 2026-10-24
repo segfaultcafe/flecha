@@ -1,0 +1,10 @@
+module errors;
+
+// Reports invalid range ordering and slice bounds failures.
+export error SliceError {
+    // An index or resulting range lies outside its slice.
+    IndexOutOfBounds,
+
+    // A half-open range has its start after its end.
+    InvalidRange,
+}
