@@ -107,6 +107,7 @@ export void reverse<T>([]T values) {
 }
 
 // Replaces every element with a semantic copy of value.
+// DEPRECATED: call slices::fill<T>() from memory namespace.
 export void fill<T>([]T values, T value) {
     mem_slices::fill<T>(values, value);
 }
