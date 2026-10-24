@@ -1,0 +1,86 @@
+module slices;
+
+@imports :: root::memory::errors as mem_errors;
+
+// Copies min(destination.len(), source.len()) copyable elements and returns
+// that count. The two slices must satisfy the ordinary nonoverlapping borrow
+// rules.
+export usize copy_elements<T>([]T destination, []const T source) {
+    usize count = destination.len();
+
+    if source.len() < count {
+        count = source.len();
+    }
+
+    loop usize index = 0; index < count; index++ {
+        destination[index] = source[index];
+    }
+
+    return count;
+}
+
+// Copies the half-open source range within values. Overlap is supported and
+// all range validation occurs before mutation.
+export mem_errors::SliceError copy_within<T>(
+    []T values,
+    usize sourceStart,
+    usize sourceEnd,
+    usize destinationStart,
+) {
+    if sourceStart > sourceEnd {
+        return mem_errors::SliceError.InvalidRange;
+    }
+
+    const usize LEN = values.len();
+    if sourceEnd > LEN or destinationStart > LEN {
+        return mem_errors::SliceError.IndexOutOfBounds;
+    }
+
+    const usize COUNT = sourceEnd - sourceStart;
+    if COUNT > LEN - destinationStart {
+        return mem_errors::SliceError.IndexOutOfBounds;
+    }
+
+    if COUNT == 0 or sourceStart == destinationStart {
+        return none;
+    }
+
+    if destinationStart > sourceStart and destinationStart < sourceEnd {
+        usize remaining = COUNT;
+        while remaining > 0 {
+            remaining = remaining - 1;
+            values[destinationStart + remaining] = values[sourceStart + remaining];
+        }
+
+        return none;
+    }
+
+    loop usize index = 0; index < COUNT; index++ {
+        values[destinationStart + index] = values[sourceStart + index];
+    }
+
+    return none;
+}
+
+// Replaces every element with an independent semantic copy of value.
+export void fill<T>([]T values, T value) {
+    loop usize index = 0; index < values.len(); index++ {
+        values[index] = value;
+    }
+}
+
+// Exchanges two valid elements. Equal indices are a successful no-op.
+export mem_errors::SliceError swap<T>([]T values, usize left, usize right) {
+    if left >= values.len() or right >= values.len() {
+        return mem_errors::SliceError.IndexOutOfBounds;
+    }
+
+    if left == right {
+        return none;
+    }
+
+    T temporary = values[left];
+    values[left] = values[right];
+    values[right] = temporary;
+    return none;
+}

@@ -2,6 +2,8 @@ module stream;
 
 @imports :: root::io::errors;
 
+// Copies bytes until end of input, returning the count written and any error.
+// The caller-provided buffer must be nonempty.
 export (usize, error) copy(
     &Reader reader,
     &Writer writer,

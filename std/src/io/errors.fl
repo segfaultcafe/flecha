@@ -1,26 +1,68 @@
 module errors;
 
+// Reports stable I/O failures independently of platform error codes.
 export error IoError {
+    // The requested path does not exist.
     NotFound,
+
+    // The operating system denied the requested access.
     PermissionDenied,
+
+    // Creation required an absent path, but an entry already exists there.
     AlreadyExists,
+
+    // The supplied path cannot be used by the platform.
     InvalidPath,
+
+    // A combination of operation options is inconsistent.
     InvalidOptions,
+
+    // The operation requires an open resource.
     Closed,
+
+    // A file could not be opened for an otherwise unclassified reason.
     OpenFailed,
+
+    // A file could not be closed cleanly.
     CloseFailed,
+
+    // A read operation failed.
     ReadFailed,
+
+    // A write operation failed.
     WriteFailed,
+
+    // A seek operation failed.
     SeekFailed,
+
+    // Buffered data could not be flushed.
     FlushFailed,
+
+    // A size cannot be represented or supported by the operation.
     TooLarge,
+
+    // A complete requested value could not be read before end of input.
     UnexpectedEof,
+
+    // Path existence could not be determined.
     ExistsFailed,
+
+    // A file could not be removed.
     RemoveFailed,
+
+    // A path could not be renamed.
     RenameFailed,
+
+    // A directory could not be created.
     CreateDirectoryFailed,
+
+    // A directory could not be removed.
     RemoveDirectoryFailed,
+
+    // A nonempty directory was passed to a nonrecursive removal.
     DirectoryNotEmpty,
+
+    // Path metadata could not be read.
     MetadataFailed,
 }
 

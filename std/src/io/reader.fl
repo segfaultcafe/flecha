@@ -2,22 +2,27 @@ module stream;
 
 @imports :: root::io::errors;
 
+// Reads up to destination.len() bytes and returns a partial count and error.
 export func Read([]u8 destination) => (usize, error);
 
+// Owns a reusable byte-read operation.
 export structure Reader {
     private Read operation;
 };
 
+// Creates a reader by taking ownership of operation.
 Reader Reader::init(Read operation) <- operation override {
     return build Reader {
         self.operation = operation;
     };
 }
 
+// Performs one read and preserves its partial byte count on error.
 (usize, error) Reader::read(&self, []u8 destination) {
     return (self->operation)(destination);
 }
 
+// Fills destination or returns the first error or IoError.UnexpectedEof.
 error Reader::readExact(&self, []u8 destination) {
     usize offset = 0;
     while offset < destination.len() {

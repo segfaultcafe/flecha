@@ -2,11 +2,13 @@ module binary;
 
 @imports :: root::math::bits;
 
+// Writes typed values sequentially into a borrowed byte slice.
 export structure Writer {
     private []u8 destination;
     private usize position;
 };
 
+// Creates a writer positioned at the beginning of destination.
 Writer Writer::init([]u8 destination) <-destination override {
     return build Writer {
         self.destination = destination;
@@ -14,26 +16,32 @@ Writer Writer::init([]u8 destination) <-destination override {
     };
 }
 
+// Returns the current byte offset.
 usize Writer::position(&const self) {
     return self->position;
 }
 
+// Returns the total destination length.
 usize Writer::len(&const self) {
     return self->destination.len();
 }
 
+// Returns the number of unwritten destination bytes.
 usize Writer::remaining(&const self) {
     return self->destination.len() - self->position;
 }
 
+// Reports whether no destination space remains.
 bool Writer::full(&const self) {
     return self->remaining() == 0;
 }
 
+// Borrows the initialized destination prefix.
 []const u8 Writer::writtenBytes(&const self) <-self {
     return self->destination[:self->position];
 }
 
+// Advances exactly count bytes without writing, or does not advance on error.
 BinaryError Writer::skip(&self, usize count) {
     if count > self->remaining() {
         return BinaryError.InsufficientSpace;
@@ -43,10 +51,12 @@ BinaryError Writer::skip(&self, usize count) {
     return none;
 }
 
+// Moves the current position back to the beginning without clearing bytes.
 void Writer::reset(&self) {
     self->position = 0;
 }
 
+// Writes one byte and advances, or does not advance when full.
 BinaryError Writer::writeByte(&self, u8 value) {
     if self->full() {
         return BinaryError.InsufficientSpace;
@@ -57,6 +67,8 @@ BinaryError Writer::writeByte(&self, u8 value) {
     return none;
 }
 
+// Writes the existing bytes of value without interpreting or validating text.
+// Insufficient space leaves the writer unchanged.
 BinaryError Writer::writeString(&self, stringv value) {
     const usize LEN = value.len().cast<usize>;
     if LEN > self->remaining() {
@@ -71,6 +83,7 @@ BinaryError Writer::writeString(&self, stringv value) {
     return none;
 }
 
+// Writes every source byte and advances, or leaves the writer unchanged.
 BinaryError Writer::write(&self, []const u8 source) {
     if source.len() > self->remaining() {
         return BinaryError.InsufficientSpace;
@@ -84,6 +97,8 @@ BinaryError Writer::write(&self, []const u8 source) {
     return none;
 }
 
+// Writes one little-endian fixed-width integer and advances.
+// Failure leaves the writer unchanged.
 BinaryError Writer::writeLittle<
     T: fixed_unsigned_integer
 >(&self, T value) {
@@ -101,6 +116,8 @@ BinaryError Writer::writeLittle<
     return none;
 }
 
+// Writes one big-endian fixed-width integer and advances.
+// Failure leaves the writer unchanged.
 BinaryError Writer::writeBig<
     T: fixed_unsigned_integer
 >(&self, T value) {
@@ -118,6 +135,8 @@ BinaryError Writer::writeBig<
     return none;
 }
 
+// Writes one canonical unsigned variable-width integer and advances.
+// Failure leaves the writer unchanged.
 BinaryError Writer::writeVarint<
     T: fixed_unsigned_integer
 >(&self, T value) {

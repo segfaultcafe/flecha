@@ -6,12 +6,19 @@ module file;
     :: root::io::stream
     :: root::io::utils;
 
+// Selects the reference point for a file seek offset.
 export enum SeekFrom: u8 {
+    // Measures the offset from the beginning of the file.
     default Start,
+
+    // Measures the offset from the current file position.
     Current,
+
+    // Measures the offset from the end of the file.
     End
 }
 
+// Returns the runtime representation of this seek origin.
 u8 SeekFrom::number(&const self) {
     return match *self {
         SeekFrom.Start => 0,
@@ -20,21 +27,35 @@ u8 SeekFrom::number(&const self) {
     };
 }
 
+// Describes how File::open accesses or creates a file.
 export structure OpenOptions {
+    // Permits read operations.
     bool read;
+
+    // Permits write operations.
     bool write;
+
+    // Directs writes to the end of the file.
     bool append;
+
+    // Truncates an existing file when it is opened.
     bool truncate;
+
+    // Creates the file when it does not exist.
     bool create;
+
+    // Creates a new file and fails if the path already exists.
     bool createNew;
 };
 
+// Returns options for opening an existing file for reading.
 OpenOptions OpenOptions::readOnly() {
     return build OpenOptions {
         self.read = true;
     };
 }
 
+// Returns options for creating or truncating a file for writing.
 OpenOptions OpenOptions::writeOnly() {
     return build OpenOptions {
         self.write = true;
@@ -43,6 +64,7 @@ OpenOptions OpenOptions::writeOnly() {
     };
 }
 
+// Returns options for creating a file or appending to its existing contents.
 OpenOptions OpenOptions::appendOnly() {
     return build OpenOptions {
         self.write = true;
@@ -51,10 +73,12 @@ OpenOptions OpenOptions::appendOnly() {
     };
 }
 
+// Owns an operating-system file handle and closes it on destruction.
 export structure File {
     private *void handle;
 };
 
+// Closes a still-open handle during deterministic destruction.
 void File::tear(&self) override {
     if self->handle == null {
         return;
@@ -68,12 +92,14 @@ void File::tear(&self) override {
     }
 }
 
+// Constructs the closed representation used by none.
 File File::zero() override {
     return build File {
         self.handle = null;
     };
 }
 
+// Opens path with opts and returns an owning file handle.
 (File, error) File::open(stringv path, OpenOptions opts) {
     err := validate_options(opts);
     if err != none {
@@ -105,10 +131,12 @@ File File::zero() override {
     }, none);
 }
 
+// Reports whether this value currently owns an open handle.
 bool File::isOpen(&const self) {
     return self->handle != null;
 }
 
+// Reads up to destination.len() bytes and reports the partial byte count.
 (usize, error) File::read(&self, []u8 destination) {
     if self->handle == null {
         return (none, errors::IoError.Closed);
@@ -132,6 +160,7 @@ bool File::isOpen(&const self) {
     return (bytesRead, none);
 }
 
+// Creates a stream reader that mutably borrows this file.
 stream::Reader File::reader(&self) <-self {
     return stream::Reader::init(
         [own self](destination) => {
@@ -140,6 +169,7 @@ stream::Reader File::reader(&self) <-self {
     );
 }
 
+// Fills destination or returns an error, including IoError.UnexpectedEof.
 error File::readExact(&self, []u8 destination) {
     if self->handle == null {
         return errors::IoError.Closed;
@@ -149,6 +179,7 @@ error File::readExact(&self, []u8 destination) {
     return reader.readExact(destination);
 }
 
+// Writes up to source.len() bytes and reports the partial byte count.
 (usize, error) File::write(&self, []const u8 source) {
     if self->handle == null {
         return (none, errors::IoError.Closed);
@@ -172,6 +203,7 @@ error File::readExact(&self, []u8 destination) {
     return (bytesWritten, none);
 }
 
+// Creates a stream writer that mutably borrows this file.
 stream::Writer File::writer(&self) <-self {
     return stream::Writer::init(
         [own self](source) => {
@@ -180,6 +212,7 @@ stream::Writer File::writer(&self) <-self {
     );
 }
 
+// Writes every source byte or returns the first write failure.
 error File::writeAll(&self, []const u8 source) {
     if self->handle == null {
         return errors::IoError.Closed;
@@ -189,6 +222,7 @@ error File::writeAll(&self, []const u8 source) {
     return writer.writeAll(source);
 }
 
+// Writes bytes from source without interpreting or validating text.
 (usize, error) File::writeString(&self, stringv source) {
     if self->handle == null {
         return (none, errors::IoError.Closed);
@@ -212,6 +246,7 @@ error File::writeAll(&self, []const u8 source) {
     return (bytesWritten, none);
 }
 
+// Writes every existing byte of source or returns the first failure.
 error File::writeAllString(&self, stringv source) {
     if self->handle == null {
         return errors::IoError.Closed;
@@ -235,6 +270,7 @@ error File::writeAllString(&self, stringv source) {
     return none;
 }
 
+// Changes and returns the absolute file position.
 (u64, error) File::seek(&self, i64 offset, SeekFrom origin) {
     if self->handle == null {
         return (none, errors::IoError.Closed);
@@ -258,6 +294,7 @@ error File::writeAllString(&self, stringv source) {
     return (position, none);
 }
 
+// Requests that buffered operating-system data be committed.
 error File::flush(&self) {
     if self->handle == null {
         return errors::IoError.Closed;
@@ -272,6 +309,7 @@ error File::flush(&self) {
     }
 }
 
+// Relinquishes the handle; even a close failure leaves this value closed.
 error File::close(&self) {
     if self->handle == null {
         return errors::IoError.Closed;

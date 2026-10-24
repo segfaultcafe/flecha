@@ -2,22 +2,26 @@ module raw_array;
 
 @imports :: root::containers::errors;
 
+// Owns low-level growable storage whose element access requires unsafe.
 export structure RawArray<T> {
     private own *T storage;
     private usize length;
     private usize allocated;
 };
 
+// Creates an empty raw array with no allocation.
 RawArray<T> RawArray<T>::init() override {
     return build RawArray<T> {};
 }
 
+// Releases the owned storage.
 void RawArray<T>::tear(&self) override {
     unsafe {
         free(self->storage);
     }
 }
 
+// Constructs the null, empty representation used by none.
 RawArray<T> RawArray<T>::zero() override {
     return build RawArray<T> {
         self.storage = null;
@@ -26,14 +30,17 @@ RawArray<T> RawArray<T>::zero() override {
     };
 }
 
+// Returns the number of logical elements.
 usize RawArray<T>::len(&const self) {
     return self->length;
 }
 
+// Returns the number of allocated element slots.
 usize RawArray<T>::capacity(&const self) {
     return self->allocated;
 }
 
+// Grows storage to at least capacity while preserving logical elements.
 unsafe error RawArray<T>::reserve(&self, usize capacity) {
     if capacity <= self->allocated {
         return none;
@@ -59,6 +66,7 @@ unsafe error RawArray<T>::reserve(&self, usize capacity) {
     return none;
 }
 
+// Appends value, growing storage geometrically when full.
 unsafe error RawArray<T>::push(&self, T value) {
     if self->length != self->allocated {
         self->storage[self->length] = value;
@@ -84,6 +92,7 @@ unsafe error RawArray<T>::push(&self, T value) {
     return none;
 }
 
+// Copies the indexed element or reports ArrayError.IndexOutOfBounds.
 unsafe (T, error) RawArray<T>::get(&const self, usize index) {
     if index >= self->length {
         return (none, errors::ArrayError.IndexOutOfBounds);
@@ -92,6 +101,7 @@ unsafe (T, error) RawArray<T>::get(&const self, usize index) {
     return (self->storage[index], none);
 }
 
+// Replaces the indexed element or reports ArrayError.IndexOutOfBounds.
 unsafe error RawArray<T>::set(&self, usize index, T value) {
     if index >= self->length {
         return errors::ArrayError.IndexOutOfBounds;
@@ -101,6 +111,7 @@ unsafe error RawArray<T>::set(&self, usize index, T value) {
     return none;
 }
 
+// Removes and returns the final element, or reports ArrayError.Empty.
 unsafe (T, error) RawArray<T>::pop(&self) {
     if self->length == 0 {
         return (none, errors::ArrayError.Empty);
@@ -111,14 +122,17 @@ unsafe (T, error) RawArray<T>::pop(&self) {
     return (self->storage[*len], none);
 }
 
+// Borrows all logical elements as a read-only slice.
 unsafe []const T RawArray<T>::view(&const self) <-self {
     return self->storage[:self->length];
 }
 
+// Mutably borrows all logical elements as a slice.
 unsafe []T RawArray<T>::viewRef(&self) <-self {
     return self->storage[:self->length];
 }
 
+// Removes all logical elements while retaining allocated storage.
 void RawArray<T>::clear(&self) {
     self->length = 0;
 }

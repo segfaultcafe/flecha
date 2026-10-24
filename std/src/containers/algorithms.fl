@@ -1,10 +1,18 @@
 module algorithms;
 
+// Receives a shared reference to one element for its side effects.
 export func Action<T>(&const T) => ();
+
+// Reports whether left must be ordered before right.
 export func Less<T>(&const T left, &const T right) => (bool);
+
+// Selects elements for searching or aggregation.
 export func Predicate<T>(&const T value) => (bool);
+
+// Combines an accumulator with the next borrowed element.
 export func Folder<T, A>(A accumulator, &const T value) => (A);
 
+// Reports whether predicate accepts an element, stopping at the first match.
 export bool any_of<T>([]const T values, Predicate<T> predicate) {
     loop usize index = 0; index < values.len(); index++ {
         if predicate(&values[index]) {
@@ -15,6 +23,8 @@ export bool any_of<T>([]const T values, Predicate<T> predicate) {
     return false;
 }
 
+// Reports whether predicate accepts every element, stopping at the first
+// rejection and returning true for an empty slice.
 export bool all_of<T>([]const T values, Predicate<T> predicate) {
     loop usize index = 0; index < values.len(); index++ {
         if !predicate(&values[index]) {
@@ -25,6 +35,7 @@ export bool all_of<T>([]const T values, Predicate<T> predicate) {
     return true;
 }
 
+// Counts the elements accepted by predicate.
 export usize count_if<T>([]const T values, Predicate<T> predicate) {
     usize count = 0;
     loop usize index = 0; index < values.len(); index++ {
@@ -36,6 +47,7 @@ export usize count_if<T>([]const T values, Predicate<T> predicate) {
     return count;
 }
 
+// Folds elements from left to right, beginning with initial.
 export A fold<T, A>([]const T values, A initial, Folder<T, A> folder) {
     A accumulator = initial;
     loop usize index = 0; index < values.len(); index++ {
@@ -45,6 +57,7 @@ export A fold<T, A>([]const T values, A initial, Folder<T, A> folder) {
     return accumulator;
 }
 
+// Returns the first accepted index and true, or zero and false when absent.
 export (usize, bool) find_if<T>([]const T values, Predicate<T> predicate) {
     loop usize index = 0; index < values.len(); index++ {
         if predicate(&values[index]) {
@@ -55,6 +68,7 @@ export (usize, bool) find_if<T>([]const T values, Predicate<T> predicate) {
     return (none, false);
 }
 
+// Returns the first index equal to needle and true, or zero and false.
 export (usize, bool) index_of<T>([]const T values, T needle) {
     for (i, val) := range values {
         if val == needle {
@@ -65,11 +79,13 @@ export (usize, bool) index_of<T>([]const T values, T needle) {
     return (none, false);
 }
 
+// Reports whether any element is equal to needle.
 export bool contains<T>([]const T values, T needle) {
     _, found := index_of<T>(values, needle);
     return found;
 }
 
+// Reverses a slice in place using semantic element copies.
 export void reverse<T>([]T values) {
     usize left = 0;
     usize right = values.len();
@@ -88,18 +104,21 @@ export void reverse<T>([]T values) {
     }
 }
 
+// Replaces every element with a semantic copy of value.
 export void fill<T>([]T values, T value) {
     loop usize index = 0; index < values.len(); index++ {
         values[index] = value;
     }
 }
 
+// Calls action once for each element in index order.
 export void for_each<T>([]const T values, Action<T> action) {
     loop usize index = 0; index < values.len(); index++ {
         action(&values[index]);
     }
 }
 
+// Sorts in place with an unstable heap sort using less as a strict ordering.
 export void sort_by<T>([]T values, Less<T> less) {
     const usize LEN = values.len();
 
@@ -158,6 +177,7 @@ export void sort_by<T>([]T values, Less<T> less) {
     }
 }
 
+// Sorts in ascending order with the element type's less-than operation.
 export void sort<T>([]T values) {
     sort_by<T>(
         values,

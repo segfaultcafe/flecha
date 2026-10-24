@@ -2,6 +2,7 @@ module binary;
 
 @imports :: root::math::bits;
 
+// Returns the canonical unsigned variable-width encoding length.
 export usize varint_length<T: fixed_unsigned_integer>(T value) {
     usize length = 1;
     while value >= 128 {
@@ -12,6 +13,8 @@ export usize varint_length<T: fixed_unsigned_integer>(T value) {
     return length;
 }
 
+// Writes a canonical unsigned variable-width integer and its byte count.
+// An undersized destination is left unchanged.
 export (usize, BinaryError) write_varint<
     T: fixed_unsigned_integer
 >([]u8 destination, T value) {
@@ -31,6 +34,7 @@ export (usize, BinaryError) write_varint<
     return (LENGTH, none);
 }
 
+// Reads a canonical unsigned variable-width integer and its consumed length.
 export (T, usize, BinaryError) read_varint<
     T: fixed_unsigned_integer
 >([]const u8 source) {

@@ -1,6 +1,10 @@
 module errors;
 
+// Reports failures from owning and raw array operations.
 export error ArrayError {
+    // The requested operation requires at least one stored element.
     Empty,
+
+    // The requested index is not smaller than the logical length.
     IndexOutOfBounds
 }

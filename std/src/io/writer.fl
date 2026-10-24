@@ -2,22 +2,27 @@ module stream;
 
 @imports :: root::io::errors;
 
+// Writes up to source.len() bytes and returns a partial count and error.
 export func Write([]const u8 source) => (usize, error);
 
+// Owns a reusable byte-write operation.
 export structure Writer {
     private Write operation;
 };
 
+// Creates a writer by taking ownership of operation.
 Writer Writer::init(Write operation) <- operation override {
     return build Writer {
         self.operation = operation;
     };
 }
 
+// Performs one write and preserves its partial byte count on error.
 (usize, error) Writer::write(&self, []const u8 source) {
     return (self->operation)(source);
 }
 
+// Writes every source byte or returns the first write failure.
 error Writer::writeAll(&self, []const u8 source) {
     usize offset = 0;
     while offset < source.len() {
