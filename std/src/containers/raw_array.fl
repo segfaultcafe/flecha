@@ -112,7 +112,8 @@ unsafe error RawArray<T>::set(&self, usize index, T value) {
         return errors::ArrayError.IndexOutOfBounds;
     }
 
-    self->storage[index] = value;
+    __storage_destroy(self->storage, index);
+    __storage_initialize(self->storage, index, value);
     return none;
 }
 

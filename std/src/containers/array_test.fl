@@ -368,3 +368,72 @@ test sort_by_accepts_an_inferred_generic_comparator(&testing::UnitTest t) {
         "sortBy uses the inferred comparator ordering"
     );
 }
+
+test set_moves_and_cleans_values_exactly_once(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+
+    {
+        values := array::Array<PushOwner>::init();
+
+        PushOwner original = none;
+        unsafe {
+            original = PushOwner::init(&raw cleanupCount, 10);
+        }
+
+        pushError := values.push(original);
+        asserts::is_true(t, pushError == none, "setup push succeeds");
+        if pushError != none {
+            return;
+        }
+
+        PushOwner replacement = none;
+        unsafe {
+            replacement = PushOwner::init(&raw cleanupCount, 42);
+        }
+
+        setError := values.set(0, replacement);
+        asserts::is_true(t, setError == none, "set accepts a movable value");
+        asserts::is_true(
+            t,
+            cleanupCount == 1,
+            "set destroys the replaced element exactly once"
+        );
+
+        view := values.view();
+        asserts::is_true(
+            t,
+            view[0].get() == 42,
+            "set stores the replacement value"
+        );
+
+        PushOwner rejected = none;
+        unsafe {
+            rejected = PushOwner::init(&raw cleanupCount, 99);
+        }
+
+        boundsError := values.set(1, rejected);
+        asserts::is_true(
+            t,
+            boundsError == errors::ArrayError.IndexOutOfBounds,
+            "set rejects an invalid index"
+        );
+        asserts::is_true(
+            t,
+            cleanupCount == 2,
+            "an invalid set cleans its consumed argument exactly once"
+        );
+
+        view = values.view();
+        asserts::is_true(
+            t,
+            view[0].get() == 42,
+            "an invalid set leaves the stored element unchanged"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 3,
+        "array destruction cleans the replacement exactly once"
+    );
+}
