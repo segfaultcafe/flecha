@@ -34,6 +34,7 @@ enum class BuiltInFunction {
     StorageNew,
     StorageInitialize,
     StorageRelocate,
+    StorageExtract,
     StorageDestroy,
     StorageFree
 };

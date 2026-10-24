@@ -437,3 +437,89 @@ test set_moves_and_cleans_values_exactly_once(&testing::UnitTest t) {
         "array destruction cleans the replacement exactly once"
     );
 }
+
+test pop_extracts_and_cleans_move_only_values_exactly_once(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+
+    {
+        values := array::Array<PushOwner>::init();
+        loop i32 value = 10; value <= 20; value = value + 10 {
+            PushOwner owner = none;
+            unsafe {
+                owner = PushOwner::init(&raw cleanupCount, value);
+            }
+            if values.push(owner) != none {
+                return;
+            }
+        }
+
+        {
+            extracted, err := values.pop();
+            asserts::is_true(t, err == none, "pop accepts a move-only element");
+            if err != none {
+                return;
+            }
+
+            asserts::is_true(
+                t,
+                values.len() == 1 and extracted.get() == 20,
+                "pop transfers the final element and decreases the length"
+            );
+            asserts::is_true(
+                t,
+                cleanupCount == 0,
+                "extracting an element does not destroy it"
+            );
+        }
+
+        asserts::is_true(
+            t,
+            cleanupCount == 1,
+            "the extracted owner is cleaned exactly once"
+        );
+        view := values.view();
+        asserts::is_true(
+            t,
+            view.len() == 1 and view[0].get() == 10,
+            "pop preserves the remaining initialized prefix"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 2,
+        "array destruction cleans only the remaining owner"
+    );
+}
+
+test pop_transfers_a_nested_array(&testing::UnitTest t) {
+    outer := array::Array<array::Array<i32>>::init();
+    inner := array::Array<i32>::init();
+    pushInner := inner.push(42);
+    pushOuter := outer.push(inner);
+    asserts::is_true(
+        t,
+        pushInner == none and pushOuter == none,
+        "nested array setup succeeds"
+    );
+    if pushInner != none or pushOuter != none {
+        return;
+    }
+
+    extracted, err := outer.pop();
+    asserts::is_true(
+        t,
+        err == none and outer.empty(),
+        "pop transfers the nested owner out of the outer array"
+    );
+    if err != none {
+        return;
+    }
+
+    view := extracted.view();
+    asserts::is_true(
+        t,
+        view.len() == 1 and view[0] == 42,
+        "the extracted nested array retains its allocation and values"
+    );
+}

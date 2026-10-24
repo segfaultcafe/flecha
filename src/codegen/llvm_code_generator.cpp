@@ -3089,6 +3089,18 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                     address);
                 return value;
             }
+            if (call.Function().BuiltIn() ==
+                semantic::BuiltInFunction::StorageExtract) {
+                std::vector<llvm::Value*> arguments;
+                arguments.reserve(call.Arguments().size());
+                for (const std::unique_ptr<lowering::BoundExpression>&
+                         argument : call.Arguments()) {
+                    llvm::Value* value = EmitExpression(*argument);
+                    if (value == nullptr) return nullptr;
+                    arguments.push_back(value);
+                }
+                return EmitStorageCall(call, arguments);
+            }
             if (call.Type().ContainsStructure()) {
                 auto* storage = CreateOwnedValueTemporary(
                     call.Type(), "structure.call.result");
@@ -3425,6 +3437,15 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
         if (!EmitBlock(build.Body())) return false;
         return true;
     }
+    if (expression.Kind() == Node::CallExpression &&
+        static_cast<const lowering::BoundCallExpression&>(expression)
+                .Function()
+                .BuiltIn() == semantic::BuiltInFunction::StorageExtract) {
+        llvm::Value* value = EmitExpression(expression);
+        if (!value) return false;
+        _builder.CreateStore(value, destination);
+        return true;
+    }
     if (expression.Kind() == Node::CallExpression && type.ContainsStructure()) {
         const auto& call =
             static_cast<const lowering::BoundCallExpression&>(expression);
@@ -3682,6 +3703,13 @@ llvm::Value* LlvmCodeGenerator::EmitStorageCall(
     const semantic::SemanticType element = *parameters[0].Target();
     llvm::Value* destination =
         EmitStorageAddress(arguments[0], parameters[0], arguments[1]);
+    if (intrinsic == semantic::BuiltInFunction::StorageExtract) {
+        llvm::Value* value = _builder.CreateLoad(MapType(element), destination,
+                                                 "storage.extracted");
+        _builder.CreateStore(llvm::Constant::getNullValue(MapType(element)),
+                             destination);
+        return value;
+    }
     if (intrinsic == semantic::BuiltInFunction::StorageInitialize) {
         llvm::Value* value = arguments[2];
         if (element.IsCopyable()) value = EmitValueCopy(value, element, false);

@@ -1404,9 +1404,10 @@ class AllocationChecker final {
                     static_cast<const core::MemberAccessExpression&>(
                         expression);
                 if (!_model.FieldFor(member)) {
-                    // Only the built-in allocation error is used to refine an
-                    // allocation result; unrelated error families stay unknown.
-                    if (_model.TypeOf(expression).Name() == "AllocationError")
+                    // Named error variants are non-none values. Preserve that
+                    // fact so a checked `(value, error)` result refines away
+                    // the nullable value branch for every error family.
+                    if (_model.TypeOf(expression).IsErrorValue())
                         return {ValueKind::Error};
                     return {};
                 }

@@ -193,13 +193,13 @@ live borrow from `view()` or `viewRef()` prevents moving, replacing, or
 destroying its container. The language's unsafe-tear immovability rule is
 unchanged.
 
-Stage 2's first vertical slice gives `push`, growth, `reserve`, `clear`, and
-array destruction initialized-prefix storage semantics. `push` copies a
-copyable argument or consumes a move-only argument; growth relocates live
-elements rather than copying them. `pop`, `get`, `set`, `remove`,
-`swapRemove`, and the remaining copy-only surface have not yet completed the
-move-only contract. Indexing still cannot partially move an element out of a
-container.
+Stage 2's first vertical slices give `push`, `set`, `pop`, growth, `reserve`,
+`clear`, and array destruction initialized-prefix storage semantics. `push`
+and `set` copy a copyable argument or consume a move-only argument; growth
+relocates live elements, and `pop` extracts its result without copying it.
+`get`, `remove`, `swapRemove`, and the remaining copy-only surface have not yet
+completed the move-only contract. Indexing still cannot partially move an
+element out of a container.
 
 `StandardLibraryTests.SafeArray.*` runs growth/failure, scalar, structure, and
 scope-cleanup checks through safe callers with allocation tracking.

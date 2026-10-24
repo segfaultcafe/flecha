@@ -123,9 +123,8 @@ unsafe (T, error) RawArray<T>::pop(&self) {
         return (none, errors::ArrayError.Empty);
     }
 
-    len := &self->length;
-    *len = *len - 1;
-    return (self->storage[*len], none);
+    self->length = self->length - 1;
+    return (__storage_extract(self->storage, self->length), none);
 }
 
 // Borrows all logical elements as a read-only slice.

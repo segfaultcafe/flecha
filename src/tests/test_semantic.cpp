@@ -5095,7 +5095,9 @@ TEST(SemanticAllocationTests,
             }
             __storage_initialize(first, 0, 42);
             __storage_relocate(second, 0, first, 0);
-            __storage_destroy(second, 0);
+            extracted := __storage_extract(second, 0);
+            __storage_initialize(first, 0, extracted);
+            __storage_destroy(first, 0);
             __storage_free(first);
             __storage_free(second);
         }
@@ -5109,6 +5111,7 @@ TEST(SemanticAllocationTests,
              "__storage_initialize(storage, 0, 42); }",
              "void f(*i32 destination, *i32 source) { "
              "__storage_relocate(destination, 0, source, 0); }",
+             "void f(*i32 storage) { __storage_extract(storage, 0); }",
              "void f(*i32 storage) { __storage_destroy(storage, 0); }",
              "void f(*i32 storage) { __storage_free(storage); }",
          }) {
@@ -5124,6 +5127,21 @@ TEST(SemanticAllocationTests,
                   )"),
                              DiagnosticCode::InvalidAllocation),
               nullptr);
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+                      structure Fixed {};
+                      unsafe void Fixed::tear(&self) override {}
+                      unsafe void f(*Fixed storage) {
+                          __storage_extract(storage, 0);
+                      }
+                  )"),
+                             DiagnosticCode::InvalidAllocation),
+              nullptr);
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze("unsafe void f(*i32 storage) { "
+                    "__storage_extract(storage); }"),
+            DiagnosticCode::WrongArgumentCount),
+        nullptr);
 }
 
 TEST(SemanticAllocationTests,
@@ -5223,6 +5241,27 @@ TEST(SemanticMemoryTests, CorrelatesFailureAndChecksNullDereferences) {
         Analyze("unsafe void f() { p, e := new<u8>(42); "
                 "ok := e == none and p != null; if ok { *p = 1; } free(p); }")
             .diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, CorrelatesNamedErrorResultsWithNullableStructures) {
+    Analysis result = Analyze(R"(
+        error LookupError { Missing }
+        structure Value { i32 number; };
+        Value Value::zero() override { return build Value {}; }
+        void Value::tear(&self) override {}
+        i32 Value::get(&const self) { return self->number; }
+        (Value, error) find(bool present) {
+            if present { return (Value::init(), none); }
+            return (none, LookupError.Missing);
+        }
+        i32 read(bool present) {
+            value, err := find(present);
+            if err != none { return 0; }
+            return value.get();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
 }
 
 TEST(SemanticMemoryTests, AliasesShareAllocationIdentity) {

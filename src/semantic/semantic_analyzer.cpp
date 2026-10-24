@@ -1340,6 +1340,7 @@ void SemanticAnalyzer::RegisterBuiltIns() {
           std::pair{"__storage_new", BuiltInFunction::StorageNew},
           std::pair{"__storage_initialize", BuiltInFunction::StorageInitialize},
           std::pair{"__storage_relocate", BuiltInFunction::StorageRelocate},
+          std::pair{"__storage_extract", BuiltInFunction::StorageExtract},
           std::pair{"__storage_destroy", BuiltInFunction::StorageDestroy},
           std::pair{"__storage_free", BuiltInFunction::StorageFree}}) {
         auto function = std::make_unique<FunctionSymbol>(
@@ -2373,6 +2374,7 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                  function->BuiltIn() == BuiltInFunction::StorageNew ||
                  function->BuiltIn() == BuiltInFunction::StorageInitialize ||
                  function->BuiltIn() == BuiltInFunction::StorageRelocate ||
+                 function->BuiltIn() == BuiltInFunction::StorageExtract ||
                  function->BuiltIn() == BuiltInFunction::StorageDestroy ||
                  function->BuiltIn() == BuiltInFunction::StorageFree)) {
                 Report(diagnostics::DiagnosticCode::InvalidDefer,
@@ -4558,6 +4560,11 @@ SemanticType SemanticAnalyzer::AnalyzeStorageCall(
 
     element = analyzeStorage(0);
     analyzeIndex(1);
+    if (intrinsic == BuiltInFunction::StorageExtract && !element.IsError() &&
+        element.IsImmovable())
+        Report(diagnostics::DiagnosticCode::InvalidAllocation,
+               expression.Arguments()[0]->Range(),
+               "collection storage cannot extract an immovable element");
     if (intrinsic == BuiltInFunction::StorageInitialize) {
         if (expression.Arguments().size() > 2) {
             const SemanticType value =
@@ -4582,13 +4589,16 @@ SemanticType SemanticAnalyzer::AnalyzeStorageCall(
 
     const auto& callee =
         static_cast<const core::NameExpression&>(expression.Callee());
+    const SemanticType result = intrinsic == BuiltInFunction::StorageExtract
+                                    ? element
+                                    : SemanticType(SemanticTypeKind::Void);
     auto specialized = std::make_unique<FunctionSymbol>(
-        callee.Name(), SemanticType(SemanticTypeKind::Void),
-        std::move(parameters), callee.Range(), intrinsic, true);
+        callee.Name(), result, std::move(parameters), callee.Range(), intrinsic,
+        true);
     _model._bindings[&callee] = specialized.get();
     _model._types.insert_or_assign(&callee, specialized->Type());
     _model._symbols.push_back(std::move(specialized));
-    return SemanticType(SemanticTypeKind::Void);
+    return result;
 }
 
 SemanticType SemanticAnalyzer::AnalyzeCall(
@@ -4678,6 +4688,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
     if (function &&
         (function->BuiltIn() == BuiltInFunction::StorageInitialize ||
          function->BuiltIn() == BuiltInFunction::StorageRelocate ||
+         function->BuiltIn() == BuiltInFunction::StorageExtract ||
          function->BuiltIn() == BuiltInFunction::StorageDestroy))
         return AnalyzeStorageCall(expression, function->BuiltIn());
     if (expression.TypeArgument())
