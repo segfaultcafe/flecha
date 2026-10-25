@@ -523,3 +523,171 @@ test pop_transfers_a_nested_array(&testing::UnitTest t) {
         "the extracted nested array retains its allocation and values"
     );
 }
+
+test remove_relocates_move_only_values_and_cleans_each_once(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+
+    {
+        values := array::Array<PushOwner>::init();
+        loop i32 value = 10; value <= 30; value = value + 10 {
+            PushOwner owner = none;
+            unsafe {
+                owner = PushOwner::init(&raw cleanupCount, value);
+            }
+            if values.push(owner) != none {
+                return;
+            }
+        }
+
+        {
+            removed, err := values.remove(1);
+            asserts::is_true(t, err == none, "remove accepts move-only elements");
+            if err != none {
+                return;
+            }
+
+            view := values.view();
+            asserts::is_true(
+                t,
+                removed.get() == 20 and view.len() == 2 and
+                    view[0].get() == 10 and view[1].get() == 30,
+                "remove transfers its result and relocates later owners in order"
+            );
+            asserts::is_true(
+                t,
+                cleanupCount == 0,
+                "ordered relocation does not destroy an owner"
+            );
+        }
+
+        asserts::is_true(
+            t,
+            cleanupCount == 1,
+            "the owner returned by remove is cleaned exactly once"
+        );
+
+        missing, boundsError := values.remove(2);
+        asserts::is_true(
+            t,
+            boundsError == errors::ArrayError.IndexOutOfBounds,
+            "remove rejects an invalid index"
+        );
+        view := values.view();
+        asserts::is_true(
+            t,
+            missing == none and cleanupCount == 1 and view.len() == 2 and
+                view[0].get() == 10 and view[1].get() == 30,
+            "an invalid remove leaves owners and cleanup unchanged"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 3,
+        "array destruction cleans the owners remaining after remove"
+    );
+}
+
+test swap_remove_relocates_move_only_tail_and_cleans_each_once(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+
+    {
+        values := array::Array<PushOwner>::init();
+        loop i32 value = 10; value <= 30; value = value + 10 {
+            PushOwner owner = none;
+            unsafe {
+                owner = PushOwner::init(&raw cleanupCount, value);
+            }
+            if values.push(owner) != none {
+                return;
+            }
+        }
+
+        {
+            removed, err := values.swapRemove(0);
+            asserts::is_true(
+                t,
+                err == none,
+                "swapRemove accepts move-only elements"
+            );
+            if err != none {
+                return;
+            }
+
+            view := values.view();
+            asserts::is_true(
+                t,
+                removed.get() == 10 and view.len() == 2 and
+                    view[0].get() == 30 and view[1].get() == 20,
+                "swapRemove transfers its result and relocates the final owner"
+            );
+            asserts::is_true(
+                t,
+                cleanupCount == 0,
+                "unordered relocation does not destroy an owner"
+            );
+        }
+
+        asserts::is_true(
+            t,
+            cleanupCount == 1,
+            "the owner returned by swapRemove is cleaned exactly once"
+        );
+
+        missing, boundsError := values.swapRemove(2);
+        asserts::is_true(
+            t,
+            boundsError == errors::ArrayError.IndexOutOfBounds,
+            "swapRemove rejects an invalid index"
+        );
+        view := values.view();
+        asserts::is_true(
+            t,
+            missing == none and cleanupCount == 1 and view.len() == 2 and
+                view[0].get() == 30 and view[1].get() == 20,
+            "an invalid swapRemove leaves owners and cleanup unchanged"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 3,
+        "array destruction cleans the owners remaining after swapRemove"
+    );
+}
+
+test remove_transfers_a_nested_array_and_preserves_outer_order(&testing::UnitTest t) {
+    outer := array::Array<array::Array<i32>>::init();
+    first := array::Array<i32>::init();
+    second := array::Array<i32>::init();
+    firstPush := first.push(42);
+    secondPush := second.push(99);
+    firstOuterPush := outer.push(first);
+    secondOuterPush := outer.push(second);
+    if firstPush != none or secondPush != none or firstOuterPush != none or
+        secondOuterPush != none {
+        asserts::is_true(t, false, "nested remove setup succeeds");
+        return;
+    }
+
+    removed, removeError := outer.remove(0);
+    if removeError != none {
+        asserts::is_true(t, false, "nested remove succeeds");
+        return;
+    }
+
+    remaining, popError := outer.pop();
+    if popError != none {
+        asserts::is_true(t, false, "the relocated nested owner remains usable");
+        return;
+    }
+
+    removedView := removed.view();
+    remainingView := remaining.view();
+    asserts::is_true(
+        t,
+        outer.empty() and removedView.len() == 1 and removedView[0] == 42 and
+            remainingView.len() == 1 and remainingView[0] == 99,
+        "remove transfers one inner allocation and preserves the relocated one"
+    );
+}

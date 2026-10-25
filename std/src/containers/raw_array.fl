@@ -137,6 +137,42 @@ unsafe []T RawArray<T>::viewRef(&self) <-self {
     return self->storage[:self->length];
 }
 
+// Removes and returns the indexed element, preserving order.
+unsafe (T, error) RawArray<T>::remove(&self, usize index) {
+    if index >= self->length {
+        return (none, errors::ArrayError.IndexOutOfBounds);
+    }
+
+    const usize LAST = self->length - 1;
+    T removed = __storage_extract(self->storage, index);
+
+    usize current = index;
+    while current < LAST {
+        __storage_relocate(self->storage, current, self->storage, current + 1);
+        current++;
+    }
+
+    self->length = LAST;
+    return (removed, none);
+}
+
+// Removes and returns an element by replacing it with the final element.
+unsafe (T, error) RawArray<T>::swapRemove(&self, usize index) {
+    if index >= self->length {
+        return (none, errors::ArrayError.IndexOutOfBounds);
+    }
+
+    const usize LAST = self->length - 1;
+    T removed = __storage_extract(self->storage, index);
+
+    if index != LAST {
+        __storage_relocate(self->storage, index, self->storage, LAST);
+    }
+
+    self->length = LAST;
+    return (removed, none);
+}
+
 // Removes all logical elements while retaining allocated storage.
 void RawArray<T>::clear(&self) {
     unsafe {
