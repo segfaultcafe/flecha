@@ -4,19 +4,22 @@ module move_only_push;
 
 structure Owner {
     *i32 cleanupCount;
+    *i32 cleanupLog;
     i32 value;
 };
 
 Owner Owner::zero() override {
     return build Owner {
         self.cleanupCount = null;
+        self.cleanupLog = null;
         self.value = 0;
     };
 }
 
-Owner Owner::init(*i32 cleanupCount, i32 value) override {
+Owner Owner::init(*i32 cleanupCount, *i32 cleanupLog, i32 value) override {
     return build Owner {
         self.cleanupCount = cleanupCount;
+        self.cleanupLog = cleanupLog;
         self.value = value;
     };
 }
@@ -25,6 +28,7 @@ void Owner::tear(&self) override {
     unsafe {
         if self->cleanupCount != null {
             *self->cleanupCount = *self->cleanupCount + 1;
+            *self->cleanupLog = *self->cleanupLog * 10 + self->value;
         }
     }
 }
@@ -35,12 +39,17 @@ i32 Owner::get(&const self) {
 
 i32 main() {
     i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
     {
         values := array::Array<Owner>::init();
-        loop i32 value = 0; value < 4; value++ {
+        loop i32 value = 1; value <= 4; value++ {
             Owner owner = none;
             unsafe {
-                owner = Owner::init(&raw cleanupCount, value);
+                owner = Owner::init(
+                    &raw cleanupCount,
+                    &raw cleanupLog,
+                    value
+                );
             }
             if values.push(owner) != none {
                 return 1;
@@ -49,22 +58,28 @@ i32 main() {
 
         Owner rejected = none;
         unsafe {
-            rejected = Owner::init(&raw cleanupCount, 99);
+            rejected = Owner::init(
+                &raw cleanupCount,
+                &raw cleanupLog,
+                9
+            );
         }
         if values.push(rejected) != AllocationError.OutOfMemory {
             return 2;
         }
-        if cleanupCount != 1 || values.len() != 4 || values.capacity() != 4 {
+        if cleanupCount != 1 || cleanupLog != 9 || values.len() != 4 ||
+            values.capacity() != 4 {
             return 3;
         }
 
         view := values.view();
-        if view[0].get() != 0 || view[3].get() != 3 {
+        if view[0].get() != 1 || view[1].get() != 2 ||
+            view[2].get() != 3 || view[3].get() != 4 {
             return 4;
         }
     }
 
-    if cleanupCount != 5 {
+    if cleanupCount != 5 || cleanupLog != 94321 {
         return 5;
     }
     return 42;

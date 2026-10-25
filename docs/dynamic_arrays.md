@@ -205,7 +205,11 @@ when its consumed value could be reused by another iteration. Indexing still
 cannot partially move an element out of a container.
 
 `StandardLibraryTests.SafeArray.*` runs growth/failure, scalar, structure, and
-scope-cleanup checks through safe callers with allocation tracking.
+scope-cleanup checks through safe callers with allocation tracking. Dedicated
+move-only fixtures inject failure on both initial allocation and later growth,
+then verify the strong array guarantee, consumed-argument cleanup, reverse
+destruction, initialized-prefix-only clearing, capacity reuse, and early-return
+cleanup. The sanitizer target includes the raw and safe array fixture families.
 `CompilerDiagnostics.SafeArray` checks privacy, use after a container move,
 conflicting borrows, and unsupported element operations.
 

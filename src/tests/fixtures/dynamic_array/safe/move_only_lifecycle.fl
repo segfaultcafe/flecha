@@ -1,0 +1,111 @@
+module move_only_lifecycle;
+
+@imports :: lib::std::containers::array;
+
+structure Owner {
+    *i32 cleanupCount;
+    *i32 cleanupLog;
+    i32 id;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.cleanupLog = null;
+        self.id = 0;
+    };
+}
+
+Owner Owner::init(*i32 cleanupCount, *i32 cleanupLog, i32 id) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.cleanupLog = cleanupLog;
+        self.id = id;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount = *self->cleanupCount + 1;
+            *self->cleanupLog = *self->cleanupLog * 10 + self->id;
+        }
+    }
+}
+
+unsafe i32 early_return(*i32 cleanupCount, *i32 cleanupLog) {
+    values := array::Array<Owner>::init();
+    Owner first = Owner::init(cleanupCount, cleanupLog, 6);
+    Owner second = Owner::init(cleanupCount, cleanupLog, 7);
+    if values.push(first) != none || values.push(second) != none {
+        return 1;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
+    {
+        values := array::Array<Owner>::init();
+        loop i32 id = 1; id <= 3; id++ {
+            Owner owner = none;
+            unsafe {
+                owner = Owner::init(
+                    &raw cleanupCount,
+                    &raw cleanupLog,
+                    id
+                );
+            }
+            if values.push(owner) != none {
+                return 1;
+            }
+        }
+
+        if values.reserve(8) != none {
+            return 2;
+        }
+        const usize capacity = values.capacity();
+        if capacity != 8 || values.len() != 3 {
+            return 3;
+        }
+
+        values.clear();
+        if cleanupCount != 3 || cleanupLog != 321 || values.len() != 0 ||
+            values.capacity() != capacity {
+            return 4;
+        }
+
+        loop i32 id = 4; id <= 5; id++ {
+            Owner owner = none;
+            unsafe {
+                owner = Owner::init(
+                    &raw cleanupCount,
+                    &raw cleanupLog,
+                    id
+                );
+            }
+            if values.push(owner) != none {
+                return 5;
+            }
+        }
+        if values.len() != 2 || values.capacity() != capacity {
+            return 6;
+        }
+    }
+
+    if cleanupCount != 5 || cleanupLog != 32154 {
+        return 7;
+    }
+
+    i32 result = 0;
+    unsafe {
+        result = early_return(&raw cleanupCount, &raw cleanupLog);
+    }
+    if result != 42 || cleanupCount != 7 || cleanupLog != 3215476 {
+        return 8;
+    }
+
+    return 42;
+}
