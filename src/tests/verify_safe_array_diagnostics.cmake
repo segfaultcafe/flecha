@@ -45,3 +45,62 @@ void main() {
     values.reserve(1);
 }
 ]=])
+
+set(move_only_owner [=[
+structure Owner {
+    i32 value;
+};
+Owner Owner::zero() override {
+    return build Owner {};
+}
+void Owner::tear(&self) override {}
+]=])
+
+function(reject_copy_only_array name code body)
+    reject_array("${name}" "${code}" "${move_only_owner}\n${body}")
+endfunction()
+
+reject_copy_only_array(copy_only_get FLECHA-S0046 [=[
+void main() {
+    values := array::Array<Owner>::init();
+    values.get(0);
+}
+]=])
+reject_copy_only_array(copy_only_first FLECHA-S0046 [=[
+void main() {
+    values := array::Array<Owner>::init();
+    values.first();
+}
+]=])
+reject_copy_only_array(copy_only_last FLECHA-S0046 [=[
+void main() {
+    values := array::Array<Owner>::init();
+    values.last();
+}
+]=])
+reject_copy_only_array(copy_only_fill FLECHA-S0059 [=[
+void main() {
+    values := array::Array<Owner>::init();
+    value := Owner::init();
+    values.fill(value);
+}
+]=])
+reject_copy_only_array(copy_only_clone FLECHA-S0046 [=[
+void main() {
+    values := array::Array<Owner>::init();
+    values.clone();
+}
+]=])
+reject_copy_only_array(copy_only_from_slice FLECHA-S0046 [=[
+void main() {
+    [1]Owner source = [Owner::init()];
+    array::Array<Owner>::fromSlice(source[:]);
+}
+]=])
+reject_copy_only_array(copy_only_append FLECHA-S0046 [=[
+void main() {
+    values := array::Array<Owner>::init();
+    [1]Owner source = [Owner::init()];
+    values.append(source[:]);
+}
+]=])

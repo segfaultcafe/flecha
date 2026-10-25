@@ -198,8 +198,11 @@ Stage 2's first vertical slices give `push`, `set`, `pop`, `remove`,
 initialized-prefix storage semantics. `push` and `set` copy a copyable
 argument or consume a move-only argument; growth and compaction relocate live
 elements; and every removal operation extracts its result without copying it.
-`get` and the remaining copy-only surface have not yet completed the move-only
-contract. Indexing still cannot partially move an element out of a container.
+`fromSlice`, borrowed-slice `append`, `clone`, `get`, `first`, `last`, and
+`fill` deliberately remain copy-only. Move-only specializations are rejected:
+copying operations report `FLECHA-S0046`, while `fill` reports `FLECHA-S0059`
+when its consumed value could be reused by another iteration. Indexing still
+cannot partially move an element out of a container.
 
 `StandardLibraryTests.SafeArray.*` runs growth/failure, scalar, structure, and
 scope-cleanup checks through safe callers with allocation tracking.

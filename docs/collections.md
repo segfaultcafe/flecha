@@ -70,10 +70,11 @@ second live value in the vacated slot.
 
 The following existing operations remain copy-only because they deliberately
 produce independent values: `fromSlice`, `append` from a borrowed slice,
-`clone`, `get`, `first`, `last`, and `fill`. Their specialization must reject a
-move-only element type with the ordinary prohibited-copy diagnostic. Move-only
-elements are inspected through `view()` or `viewRef()` and are extracted only
-through the ownership-transferring removal operations.
+`clone`, `get`, `first`, `last`, and `fill`. Specializing the first six for a
+move-only element reports `FLECHA-S0046`; `fill` reports `FLECHA-S0059` because
+its first assignment consumes the value and another loop iteration may reuse
+it. Move-only elements are inspected through `view()` or `viewRef()` and are
+extracted only through the ownership-transferring removal operations.
 
 ## Initialized-prefix storage
 
