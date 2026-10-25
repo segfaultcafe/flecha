@@ -74,6 +74,7 @@ TEST(AstTests, RepresentsAssignmentWithOwnedTargetAndValue) {
 
     EXPECT_EQ(assignment.Target().Kind(), AstNodeKind::NameExpression);
     EXPECT_EQ(assignment.Value().Kind(), AstNodeKind::LiteralExpression);
+    EXPECT_EQ(assignment.OperatorType(), TokenType::Assign);
 }
 
 TEST(AstTests, RepresentsMatchExpressionsAndWildcardArms) {

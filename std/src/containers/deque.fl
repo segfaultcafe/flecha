@@ -1,5 +1,200 @@
 module deque;
 
-@imports :: root::containers::errors;
+@imports
+    :: root::containers::errors
+    :: root::memory::raw_storage;
 
-export structure Deque<T> {};
+// Owns a growable double-ended sequence backed by circular raw storage.
+export structure Deque<T> {
+    private raw_storage::RawStorage<T> storage;
+    private usize head;
+    private usize length;
+};
+
+Deque<T> Deque<T>::init() override {
+    return build Deque<T> {};
+}
+
+Deque<T> Deque<T>::zero() override {
+    return build Deque<T> {};
+}
+
+// Destroys live elements in reverse logical order. RawStorage subsequently
+// releases the allocation without touching any slots.
+void Deque<T>::tear(&self) override {
+    unsafe {
+        usize remaining = self->length;
+        while remaining > 0 {
+            remaining = remaining - 1;
+            self->storage.destroy(self->physicalIndex(remaining));
+        }
+    }
+}
+
+// Ensures at least capacity slots while preserving logical element order.
+error Deque<T>::reserve(&self, usize capacity) {
+    if capacity <= self->storage.capacity() {
+        return none;
+    }
+
+    unsafe {
+        replacement, allocationError :=
+            raw_storage::RawStorage<T>::withCapacity(capacity);
+
+        if allocationError != none {
+            return allocationError;
+        }
+
+        usize logicalIndex = 0;
+        while logicalIndex < self->length {
+            const usize SOURCE = self->physicalIndex(logicalIndex);
+            replacement.relocateFrom(logicalIndex, &self->storage, SOURCE);
+            logicalIndex++;
+        }
+
+        // Every old live slot has been relocated, so replacing RawStorage now
+        // releases only the old allocation.
+        self->storage = replacement;
+        self->head = 0;
+    }
+
+    return none;
+}
+
+// Copies the indexed element or reports DequeError.IndexOutOfBounds.
+(T, error) Deque<T>::get(&const self, usize index) {
+    if index >= self->length {
+        return (none, errors::DequeError.IndexOutOfBounds);
+    }
+
+    unsafe {
+        return (
+            self->storage.get(self->physicalIndex(index)),
+            none
+        );
+    }
+}
+
+// Appends value, copying a copyable value or consuming a movable value.
+error Deque<T>::pushBack(&self, T value) {
+    allocationError := self->ensureSpareCapacity();
+    if allocationError != none {
+        return allocationError;
+    }
+
+    unsafe {
+        const usize DESTINATION = self->physicalIndex(self->length);
+        self->storage.initialize(DESTINATION, value);
+    }
+
+    self->length++;
+    return none;
+}
+
+// Prepends value, copying a copyable value or consuming a movable value.
+error Deque<T>::pushFront(&self, T value) {
+    allocationError := self->ensureSpareCapacity();
+    if allocationError != none {
+        return allocationError;
+    }
+
+    unsafe {
+        const usize CAPACITY = self->storage.capacity();
+
+        if self->head == 0 {
+            self->head = CAPACITY;
+        }
+
+        self->head--;
+        self->storage.initialize(self->head, value);
+    }
+
+    self->length++;
+    return none;
+}
+
+// Removes and returns the last element, or reports DequeError.Empty.
+(T, error) Deque<T>::popBack(&self) {
+    if self->length == 0 {
+        return (none, errors::DequeError.Empty);
+    }
+
+    unsafe {
+        const usize SOURCE = self->physicalIndex(self->length - 1);
+        self->length--;
+        if self->length == 0 {
+            self->head = 0;
+        }
+
+        return (self->storage.extract(SOURCE), none);
+    }
+}
+
+// Removes and returns the first element, or reports DequeError.Empty.
+(T, error) Deque<T>::popFront(&self) {
+    if self->length == 0 {
+        return (none, errors::DequeError.Empty);
+    }
+
+    unsafe {
+        const usize SOURCE = self->head;
+        const usize CAPACITY = self->storage.capacity();
+
+        self->length--;
+        self->head++;
+
+        if self->head == CAPACITY {
+            self->head = 0;
+        }
+
+        if self->length == 0 {
+            self->head = 0;
+        }
+
+        return (self->storage.extract(SOURCE), none);
+    }
+}
+
+usize Deque<T>::len(&const self) {
+    return self->length;
+}
+
+usize Deque<T>::capacity(&const self) {
+    return self->storage.capacity();
+}
+
+bool Deque<T>::empty(&const self) {
+    return self->length == 0;
+}
+
+// Maps a valid logical index to its physical storage slot without overflowing.
+// The caller guarantees nonzero capacity and logicalIndex <= length.
+private usize Deque<T>::physicalIndex(
+    &const self,
+    usize logicalIndex,
+) {
+    const usize CAPACITY = self->storage.capacity();
+    const usize UNTIL_END = CAPACITY - self->head;
+
+    if logicalIndex < UNTIL_END {
+        return self->head + logicalIndex;
+    }
+
+    return logicalIndex - UNTIL_END;
+}
+
+private error Deque<T>::ensureSpareCapacity(&self) {
+    if self->length < self->storage.capacity() {
+        return none;
+    }
+
+    const usize CURRENT_CAPACITY = self->storage.capacity();
+    usize nextCapacity = 4;
+    if CURRENT_CAPACITY != 0 {
+        nextCapacity = CURRENT_CAPACITY * 2;
+    } also nextCapacity <= CURRENT_CAPACITY {
+        return AllocationError.OutOfMemory;
+    }
+
+    return self->reserve(nextCapacity);
+}

@@ -546,6 +546,20 @@ TEST(LoweringTests, PreservesLoopUpdateAndSnapshotsRangeSources) {
               std::string::npos);
 }
 
+TEST(LoweringTests, PreservesPostfixDecrementAndCompoundAssignments) {
+    LoweredSource result = Lower(
+        "void f() { i := 8; i--; i += 2; i -= 1; i *= 3; i /= 2; i ^= 4; }");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const std::string dump = DumpBoundProgram(*result.program);
+    EXPECT_NE(dump.find("(post-decrement load i)"), std::string::npos);
+    EXPECT_NE(dump.find("(+=-store i"), std::string::npos);
+    EXPECT_NE(dump.find("(-=-store i"), std::string::npos);
+    EXPECT_NE(dump.find("(*=-store i"), std::string::npos);
+    EXPECT_NE(dump.find("(/=-store i"), std::string::npos);
+    EXPECT_NE(dump.find("(^=-store i"), std::string::npos);
+}
+
 TEST(LoweringTests, RepresentsSlicesBoundsAndEndpointPlaces) {
     LoweredSource result = Lower(
         "unsafe void f() { a := [1, 2, 3]; s := a[1:]; s.front() = 4; "

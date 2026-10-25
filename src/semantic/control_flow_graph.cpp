@@ -425,7 +425,11 @@ class GraphBuilder final {
                 if (target->Kind() == core::AstNodeKind::NameExpression) {
                     _graph.nodes[store].write = _model.SymbolFor(
                         static_cast<const core::NameExpression&>(*target));
-                    return BuildExpression(assignment.Value(), store);
+                    const NodeId value =
+                        BuildExpression(assignment.Value(), store);
+                    if (assignment.OperatorType() != TokenType::Assign)
+                        return BuildExpression(*target, value);
+                    return value;
                 }
                 // Indirect stores read the pointer, but do not initialize its
                 // binding or prove another local initialized through aliasing.

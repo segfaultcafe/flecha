@@ -2,9 +2,11 @@ module errors;
 
 // Reports failures from owning and raw array operations.
 export error ArrayError {
-    // The requested operation requires at least one stored element.
     Empty,
+    IndexOutOfBounds
+}
 
-    // The requested index is not smaller than the logical length.
+export error DequeError {
+    Empty,
     IndexOutOfBounds
 }
