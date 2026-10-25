@@ -5,16 +5,15 @@ collections. It is both a design and acceptance contract. Implementation lands
 incrementally; an operation is supported only after its required storage path
 and acceptance tests are present.
 
-The first Stage 2 deliverable is an ownership-capable `Array<T>`. Deques,
-stacks, queues, heaps, hash maps, and hash sets build on the same storage and
-lifecycle rules and are intentionally deferred until this foundation is
-complete.
+The first Stage 2 deliverable is an ownership-capable `Array<T>`. `Deque<T>`
+is the second and reuses the same storage and lifecycle rules. Stacks, queues,
+heaps, hash maps, and hash sets follow these foundations.
 
 **Acceptance status:** complete. The initialized-prefix implementation and its
 safe API now pass the full matrix below for allocation failure, move-only
 lifecycle, direct owning strings and slices, recursive nested ownership, and
-shared/exclusive view conflicts. Stage 2 can proceed to `Deque<T>` on this
-foundation.
+shared/exclusive view conflicts. The deque gate described below is also
+complete, so Stage 2 can proceed to stack and queue adapters.
 
 ## Supported element categories
 
@@ -212,3 +211,30 @@ The ownership-capable array foundation satisfies all of the following gates:
 | Nested ownership | Empty inner arrays, populated inner arrays, outer growth, inner growth before and after insertion, removal from the outer array, three-level nesting, and destruction at each level. |
 | Borrowing | Multiple shared views; shared-versus-mutable conflicts; exclusive-view conflicts; move, replacement, clear, reserve, push, and destruction while borrowed; access allowed after last use. |
 | Copy-only surface | Rejection of `fromSlice`, borrowed-slice `append`, `clone`, `get`, `first`, `last`, and `fill` for a move-only `T`, without masking positive move-aware tests. |
+
+## Deque acceptance
+
+`Deque<T>` owns circular `RawStorage<T>`. Its live elements are the logical
+range `[0, len)`, beginning at `head`; every other slot is uninitialized spare
+capacity. Growth relocates the live range into logical order in a replacement
+allocation and commits only after allocation succeeds.
+
+The safe API provides checked indexed `get` and `set`, endpoint access through
+`front` and `back`, insertion and ownership-transferring extraction at both
+ends, capacity reservation, clearing, and length/capacity queries. `get`,
+`front`, and `back` remain copy-only. Mutation, growth, extraction, clearing,
+and destruction support movable noncopyable elements.
+
+The deque gate covers:
+
+- initial allocation failure and later growth failure from both ends, with the
+  consumed argument destroyed once and all existing state preserved;
+- circular growth, linearization, reverse logical destruction, `clear`, spare
+  capacity reuse, and early-return cleanup;
+- owning strings and slices plus two- and three-level nested deques;
+- rejection of immovable and borrowed elements, use after movement, private
+  storage access, and copy-only endpoint operations on move-only elements; and
+- allocation auditing plus focused ASan/UBSan execution.
+
+`Deque<T>` is complete for the Stage 2 foundation. `Stack<T>` and `Queue<T>`
+are the next collection layer and can be thin safe adapters over this API.
