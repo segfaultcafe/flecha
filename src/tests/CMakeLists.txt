@@ -526,10 +526,14 @@ foreach(case IN ITEMS
         swap_remove
         structure_mutations
         algorithms
+        move_only_initial_failure
         move_only_push
+        move_only_lifecycle
         own_capture)
     set(array_fail_call 0)
-    if(case STREQUAL "main" OR case STREQUAL "move_only_push")
+    if(case STREQUAL "move_only_initial_failure")
+        set(array_fail_call 1)
+    elseif(case STREQUAL "main" OR case STREQUAL "move_only_push")
         set(array_fail_call 2)
     endif()
     add_test(NAME StandardLibraryTests.SafeArray.${case}

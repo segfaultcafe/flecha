@@ -139,6 +139,10 @@ test-sanitizers:
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \
 		-R '^NativeSemanticTests.(ControlFlowDefiniteAssignment|ConstDeclarations|UnsafePointers|CheckedReferences|FixedArrays|Iteration|CheckedSlices|Defer|Tuples|ErrorValues|Structures|RawAllocation|Modules|CallableIntegration|CallableAllocationFailure)$$'
+	ASAN_OPTIONS=detect_leaks=1 \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \
+		-R '^StandardLibraryTests\.(RawArray|RawArrayScalarTypes|RawArrayStructures|SafeArray\..*)$$'
 
 llvm-poc: build
 	$(BUILD_DIR)/flecha --emit-llvm examples/llvm_poc.fl \
