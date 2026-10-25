@@ -149,6 +149,30 @@ Growth failure must leave a collection valid and preserve its previous
 contents. Moving, removing, replacing, and destroying elements must execute
 each element's cleanup exactly once.
 
+#### Stage 2 array-ownership contract and test gate
+
+The first Stage 2 deliverable is the ownership-capable array foundation defined
+in [`collections.md`](collections.md). Later containers must reuse its storage,
+relocation, failure, cleanup, and borrowing rules rather than introduce parallel
+ownership machinery.
+
+Implementation begins with an internal initialized-prefix storage facility and
+the following acceptance matrix:
+
+| Area | Required cases |
+| --- | --- |
+| Copy versus move | Copyable and move-only arguments for `push` and `set`; ownership-transferring `pop`, `remove`, and `swapRemove`; compile-time rejection of copy-only APIs for move-only elements. |
+| Initialized storage | Only `[0, len)` is live and exposed; spare capacity is never read or destroyed; relocation makes each source slot non-live. |
+| Strong failure guarantee | Initial and later allocation failure plus capacity overflow preserve length, capacity, order, and all preexisting elements. |
+| Cleanup | Replacement, ordered and unordered removal, clear, growth, array destruction, and failed operations execute every applicable cleanup exactly once. |
+| Nested ownership | `Array<Array<T>>`, owning slices, outer and inner growth, extraction, three-level nesting, and recursive destruction without cloning inner allocations. |
+| Borrowed views | Shared and exclusive view conflicts with mutation, structural changes, reallocation, movement, replacement, and destruction; access resumes after the view's last use. |
+| Unsupported elements | Compile-time rejection of unsafe-tear immovable types, borrowed element storage, partial indexed moves, and use after a moved argument or extracted owner. |
+
+The complete Stage 2 array definition of done and test cases live in
+[`collections.md`](collections.md). Deque, stack, queue, heap, map, and set work
+does not begin until this gate passes.
+
 ### 3. Text, parsing, and encoding
 
 Add:

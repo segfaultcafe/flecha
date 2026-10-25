@@ -1108,8 +1108,19 @@ class Expander {
         if (origin.Kind() == AstNodeKind::StructureDeclaration) {
             Instance instance{&origin, concrete, arguments};
             instances.push_back(instance);
+            Declaration* saved = current;
+            current = concrete;
+            for (const auto& field :
+                 static_cast<StructureDeclaration&>(*concrete).Fields())
+                Walk(field->Type(), [&](AstNode& node, bool enter) {
+                    if (enter && node.Kind() == AstNodeKind::Type)
+                        Rewrite(node, true);
+                });
+            current = saved;
             for (const auto* method : genericMethods[instance.origin])
-                if (method->genericParameters.empty())
+                if (method->genericParameters.empty() &&
+                    (method->Name() == "init" || method->Name() == "zero" ||
+                     method->Name() == "tear"))
                     if (auto* clone = Clone(*method, arguments, method->Name(),
                                             at, Name(*concrete)))
                         concreteMethods[{concrete, method->Name()}] =
@@ -1664,22 +1675,30 @@ class Expander {
         }
     }
     void RewriteMethod(MemberCallExpression& call) {
-        if (call.typeArguments.empty()) return;
+        const bool explicitArguments = !call.typeArguments.empty();
         for (const auto& argument : call.typeArguments)
             CheckTypeNames(*argument);
         const auto arguments =
-            ResolveArguments(call.typeArguments, current->moduleId);
+            explicitArguments
+                ? ResolveArguments(call.typeArguments, current->moduleId)
+                : Arguments{};
         const auto key = call.Member() + Key(arguments);
         const auto* owner = Receiver(call);
         if (!owner) {
-            Error(call.Range(),
-                  "cannot resolve receiver type for generic method '" +
-                      call.Member() + "'");
+            if (explicitArguments)
+                Error(call.Range(),
+                      "cannot resolve receiver type for generic method '" +
+                          call.Member() + "'");
             return;
         }
+        if (!explicitArguments &&
+            concreteMethods.contains({owner, call.Member()}))
+            return;
         if (!requestNames.contains(key))
             requestNames[key] =
-                "$generic_method" + std::to_string(requestNames.size());
+                explicitArguments
+                    ? "$generic_method" + std::to_string(requestNames.size())
+                    : call.Member();
         const MethodRequest request{call.Member(), requestNames[key], arguments,
                                     call.Range()};
         bool found = false;
@@ -1689,10 +1708,11 @@ class Expander {
                 found = concreteMethods.contains({owner, request.concreteName});
                 break;
             }
-        if (!found)
+        if (!found && explicitArguments)
             Error(call.Range(),
                   "unknown generic method or wrong type argument count for '" +
                       call.Member() + "'");
+        if (!found) return;
         call.Rename(requestNames[key]);
         call.typeArguments.clear();
     }

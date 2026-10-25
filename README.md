@@ -284,6 +284,8 @@ Makefile                Convenient build, test, and example targets
 - [`docs/checked_references.md`](docs/checked_references.md) — checked reference behavior
 - [`docs/ref_and_slice_returns.md`](docs/ref_and_slice_returns.md) — returned reference and slice contracts
 - [`docs/dynamic_arrays.md`](docs/dynamic_arrays.md) and [`docs/fixed_arrays.md`](docs/fixed_arrays.md) — array features
+- [`docs/collections.md`](docs/collections.md) — Stage 2 collection ownership,
+  relocation, borrowing, and acceptance contracts
 - [`docs/memory.md`](docs/memory.md) — typed slice copying, filling, swapping, and error contracts
 - [`docs/math.md`](docs/math.md) — standard-library ordered math operations
 - [`docs/bytes.md`](docs/bytes.md) — raw byte storage and sequence operations

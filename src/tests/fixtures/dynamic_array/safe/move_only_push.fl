@@ -1,0 +1,71 @@
+module move_only_push;
+
+@imports :: lib::std::containers::array;
+
+structure Owner {
+    *i32 cleanupCount;
+    i32 value;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.value = 0;
+    };
+}
+
+Owner Owner::init(*i32 cleanupCount, i32 value) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.value = value;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount = *self->cleanupCount + 1;
+        }
+    }
+}
+
+i32 Owner::get(&const self) {
+    return self->value;
+}
+
+i32 main() {
+    i32 cleanupCount = 0;
+    {
+        values := array::Array<Owner>::init();
+        loop i32 value = 0; value < 4; value++ {
+            Owner owner = none;
+            unsafe {
+                owner = Owner::init(&raw cleanupCount, value);
+            }
+            if values.push(owner) != none {
+                return 1;
+            }
+        }
+
+        Owner rejected = none;
+        unsafe {
+            rejected = Owner::init(&raw cleanupCount, 99);
+        }
+        if values.push(rejected) != AllocationError.OutOfMemory {
+            return 2;
+        }
+        if cleanupCount != 1 || values.len() != 4 || values.capacity() != 4 {
+            return 3;
+        }
+
+        view := values.view();
+        if view[0].get() != 0 || view[3].get() != 3 {
+            return 4;
+        }
+    }
+
+    if cleanupCount != 5 {
+        return 5;
+    }
+    return 42;
+}

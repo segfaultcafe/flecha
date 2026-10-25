@@ -46,7 +46,7 @@ error Array<T>::reserve(&self, usize capacity) {
     }
 }
 
-// Appends a semantic copy of value.
+// Appends value, copying a copyable value or consuming a movable value.
 error Array<T>::push(&self, T value) {
     unsafe {
         return self->inner.push(value);
@@ -121,68 +121,16 @@ error Array<T>::set(&self, usize index, T value) {
 
 // Removes and returns the indexed element while preserving element order.
 (T, error) Array<T>::remove(&self, usize index) {
-    const usize LEN = self->len();
-    if index >= LEN {
-        return (none, errors::ArrayError.IndexOutOfBounds);
+    unsafe {
+        return self->inner.remove(index);
     }
-
-    removed, err := self->get(index);
-    if err != none {
-        return (none, err);
-    }
-
-    const usize LAST = LEN - 1;
-    loop usize i = index; i < LAST; i++ {
-        next, getErr := self->get(i + 1);
-        if getErr != none {
-            return (none, getErr);
-        }
-
-        setErr := self->set(i, next);
-        if setErr != none {
-            return (none, setErr);
-        }
-    }
-
-    _, err = self->pop();
-    if err != none {
-        return (none, err);
-    }
-
-    return (removed, none);
 }
 
 // Removes and returns an element by replacing it with the final element.
 (T, error) Array<T>::swapRemove(&self, usize index) {
-    const usize LEN = self->len();
-    if index >= LEN {
-        return (none, errors::ArrayError.IndexOutOfBounds);
+    unsafe {
+        return self->inner.swapRemove(index);
     }
-
-    removed, err := self->get(index);
-    if err != none {
-        return (none, err);
-    }
-
-    const usize LAST = LEN - 1;
-    if index != LAST {
-        replacement, getErr := self->get(LAST);
-        if getErr != none {
-            return (none, getErr);
-        }
-
-        setErr := self->set(index, replacement);
-        if setErr != none {
-            return (none, setErr);
-        }
-    }
-
-    _, err = self->pop();
-    if err != none {
-        return (none, err);
-    }
-
-    return (removed, none);
 }
 
 // Removes and returns the final element, or reports ArrayError.Empty.

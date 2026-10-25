@@ -30,7 +30,13 @@ enum class BuiltInFunction {
     StdoutFormat,
     New,
     Free,
-    Take
+    Take,
+    StorageNew,
+    StorageInitialize,
+    StorageRelocate,
+    StorageExtract,
+    StorageDestroy,
+    StorageFree
 };
 
 class Symbol {

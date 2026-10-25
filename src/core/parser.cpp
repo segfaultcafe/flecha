@@ -1676,7 +1676,9 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
 
     while (true) {
         if (expression->Kind() == AstNodeKind::NameExpression &&
-            static_cast<const NameExpression&>(*expression).Name() == "new" &&
+            (static_cast<const NameExpression&>(*expression).Name() == "new" ||
+             static_cast<const NameExpression&>(*expression).Name() ==
+                 "__storage_new") &&
             Match(TokenType::Less)) {
             auto type = ParseType(true);
             if (!type ||

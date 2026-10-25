@@ -17,7 +17,13 @@ RawArray<T> RawArray<T>::init() override {
 // Releases the owned storage.
 void RawArray<T>::tear(&self) override {
     unsafe {
-        free(self->storage);
+        usize remaining = self->length;
+        while remaining > 0 {
+            remaining = remaining - 1;
+            __storage_destroy(self->storage, remaining);
+        }
+
+        __storage_free(self->storage);
     }
 }
 
@@ -46,30 +52,29 @@ unsafe error RawArray<T>::reserve(&self, usize capacity) {
         return none;
     }
 
-    replacement, err := new<[]T>(capacity);
+    replacement, err := __storage_new<[]T>(capacity);
     if err != none {
         return err;
     }
 
     usize i = 0;
     while i < self->length {
-        replacement[i] = self->storage[i];
+        __storage_relocate(replacement, i, self->storage, i);
         i++;
     }
 
     previous := take(self->storage);
-    free(previous);
-
     self->storage = replacement;
     self->allocated = capacity;
+    __storage_free(previous);
 
     return none;
 }
 
-// Appends value, growing storage geometrically when full.
+// Appends value into an uninitialized slot, relocating elements during growth.
 unsafe error RawArray<T>::push(&self, T value) {
     if self->length != self->allocated {
-        self->storage[self->length] = value;
+        __storage_initialize(self->storage, self->length, value);
         self->length++;
         return none;
     }
@@ -87,7 +92,7 @@ unsafe error RawArray<T>::push(&self, T value) {
         return err;
     }
 
-    self->storage[self->length] = value;
+    __storage_initialize(self->storage, self->length, value);
     self->length++;
     return none;
 }
@@ -107,7 +112,8 @@ unsafe error RawArray<T>::set(&self, usize index, T value) {
         return errors::ArrayError.IndexOutOfBounds;
     }
 
-    self->storage[index] = value;
+    __storage_destroy(self->storage, index);
+    __storage_initialize(self->storage, index, value);
     return none;
 }
 
@@ -117,9 +123,8 @@ unsafe (T, error) RawArray<T>::pop(&self) {
         return (none, errors::ArrayError.Empty);
     }
 
-    len := &self->length;
-    *len = *len - 1;
-    return (self->storage[*len], none);
+    self->length = self->length - 1;
+    return (__storage_extract(self->storage, self->length), none);
 }
 
 // Borrows all logical elements as a read-only slice.
@@ -132,7 +137,48 @@ unsafe []T RawArray<T>::viewRef(&self) <-self {
     return self->storage[:self->length];
 }
 
+// Removes and returns the indexed element, preserving order.
+unsafe (T, error) RawArray<T>::remove(&self, usize index) {
+    if index >= self->length {
+        return (none, errors::ArrayError.IndexOutOfBounds);
+    }
+
+    const usize LAST = self->length - 1;
+    T removed = __storage_extract(self->storage, index);
+
+    usize current = index;
+    while current < LAST {
+        __storage_relocate(self->storage, current, self->storage, current + 1);
+        current++;
+    }
+
+    self->length = LAST;
+    return (removed, none);
+}
+
+// Removes and returns an element by replacing it with the final element.
+unsafe (T, error) RawArray<T>::swapRemove(&self, usize index) {
+    if index >= self->length {
+        return (none, errors::ArrayError.IndexOutOfBounds);
+    }
+
+    const usize LAST = self->length - 1;
+    T removed = __storage_extract(self->storage, index);
+
+    if index != LAST {
+        __storage_relocate(self->storage, index, self->storage, LAST);
+    }
+
+    self->length = LAST;
+    return (removed, none);
+}
+
 // Removes all logical elements while retaining allocated storage.
 void RawArray<T>::clear(&self) {
-    self->length = 0;
+    unsafe {
+        while self->length > 0 {
+            self->length = self->length - 1;
+            __storage_destroy(self->storage, self->length);
+        }
+    }
 }

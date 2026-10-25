@@ -590,7 +590,8 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const auto& signature =
                 _semanticModel->TypeOf(call.Callee()).Signature();
             if (function &&
-                function->BuiltIn() == semantic::BuiltInFunction::New)
+                (function->BuiltIn() == semantic::BuiltInFunction::New ||
+                 function->BuiltIn() == semantic::BuiltInFunction::StorageNew))
                 return std::make_unique<BoundAllocationExpression>(
                     expression.Range(), type, *type.Elements()[0].Target(),
                     _semanticModel->GlobalScope()
@@ -598,7 +599,9 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                         ->Type(),
                     LowerExpression(*call.Arguments()[0],
                                     function->ParameterTypes()[0]),
-                    call.TypeArgument()->TypeForm() == core::TypeKind::Slice);
+                    call.TypeArgument()->TypeForm() == core::TypeKind::Slice,
+                    function->BuiltIn() ==
+                        semantic::BuiltInFunction::StorageNew);
             std::vector<std::unique_ptr<BoundExpression>> arguments;
             arguments.reserve(call.Arguments().size());
             for (const std::unique_ptr<core::Expression>& argument :
