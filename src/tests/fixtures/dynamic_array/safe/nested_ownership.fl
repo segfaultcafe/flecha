@@ -1,0 +1,179 @@
+module nested_ownership;
+
+@imports :: lib::std::containers::array;
+
+structure Owner {
+    *i32 cleanupCount;
+    *i32 cleanupLog;
+    i32 id;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.cleanupLog = null;
+        self.id = 0;
+    };
+}
+
+Owner Owner::init(*i32 cleanupCount, *i32 cleanupLog, i32 id) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.cleanupLog = cleanupLog;
+        self.id = id;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount = *self->cleanupCount + 1;
+            *self->cleanupLog = *self->cleanupLog * 10 + self->id;
+        }
+    }
+}
+
+i32 check_outer_and_inner_growth() {
+    outer := array::Array<array::Array<i32>>::init();
+    loop i32 row = 0; row < 5; row++ {
+        inner := array::Array<i32>::init();
+        loop i32 column = 0; column < 5; column++ {
+            if inner.push(row * 10 + column) != none {
+                return 1;
+            }
+        }
+        if inner.capacity() != 8 || outer.push(inner) != none {
+            return 2;
+        }
+    }
+
+    if outer.len() != 5 || outer.capacity() != 8 {
+        return 3;
+    }
+    outerView := outer.view();
+    if outerView[0].view()[4] != 4 || outerView[4].view()[3] != 43 {
+        return 4;
+    }
+
+    removed, removeError := outer.remove(2);
+    if removeError != none || removed.view()[0] != 20 ||
+        removed.view()[4] != 24 {
+        return 5;
+    }
+    outerView = outer.view();
+    if outerView.len() != 4 || outerView[2].view()[0] != 30 ||
+        outerView[3].view()[4] != 44 {
+        return 6;
+    }
+
+    mutableOuter := outer.viewRef();
+    loop i32 value = 5; value <= 8; value++ {
+        if mutableOuter[0].push(value) != none {
+            return 7;
+        }
+    }
+    if mutableOuter[0].len() != 9 || mutableOuter[0].capacity() != 16 ||
+        mutableOuter[0].view()[8] != 8 {
+        return 8;
+    }
+
+    empty := array::Array<i32>::init();
+    if outer.push(empty) != none {
+        return 9;
+    }
+    extractedEmpty, popError := outer.pop();
+    if popError != none || !extractedEmpty.empty() ||
+        extractedEmpty.capacity() != 0 {
+        return 10;
+    }
+
+    return 42;
+}
+
+i32 check_three_level_growth() {
+    outer := array::Array<array::Array<array::Array<i32>>>::init();
+    loop i32 group = 0; group < 5; group++ {
+        middle := array::Array<array::Array<i32>>::init();
+        loop i32 row = 0; row < 5; row++ {
+            inner := array::Array<i32>::init();
+            loop i32 column = 0; column < 5; column++ {
+                if inner.push(group * 100 + row * 10 + column) != none {
+                    return 11;
+                }
+            }
+            if middle.push(inner) != none {
+                return 12;
+            }
+        }
+        if middle.capacity() != 8 || outer.push(middle) != none {
+            return 13;
+        }
+    }
+
+    if outer.len() != 5 || outer.capacity() != 8 {
+        return 14;
+    }
+    outerView := outer.view();
+    if outerView[4].view()[3].view()[2] != 432 {
+        return 15;
+    }
+
+    extracted, popError := outer.pop();
+    if popError != none || extracted.view()[4].view()[4] != 444 ||
+        outer.len() != 4 {
+        return 16;
+    }
+
+    return 42;
+}
+
+unsafe i32 check_recursive_destruction() {
+    i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
+    {
+        outer := array::Array<array::Array<array::Array<Owner>>>::init();
+        loop i32 group = 0; group < 2; group++ {
+            middle := array::Array<array::Array<Owner>>::init();
+            loop i32 row = 0; row < 2; row++ {
+                inner := array::Array<Owner>::init();
+                const i32 FIRST = group * 3 + row * 2 + 1;
+                const i32 LAST = FIRST + (1 - row);
+                loop i32 id = FIRST; id <= LAST; id++ {
+                    owner := Owner::init(
+                        &raw cleanupCount,
+                        &raw cleanupLog,
+                        id
+                    );
+                    if inner.push(owner) != none {
+                        return 20;
+                    }
+                }
+                if middle.push(inner) != none {
+                    return 21;
+                }
+            }
+            if outer.push(middle) != none {
+                return 22;
+            }
+        }
+    }
+
+    if cleanupCount != 6 || cleanupLog != 654321 {
+        return 23;
+    }
+    return 42;
+}
+
+i32 main() {
+    result := check_outer_and_inner_growth();
+    if result != 42 {
+        return result;
+    }
+    result = check_three_level_growth();
+    if result != 42 {
+        return result;
+    }
+    unsafe {
+        return check_recursive_destruction();
+    }
+}

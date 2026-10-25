@@ -193,7 +193,7 @@ live borrow from `view()` or `viewRef()` prevents moving, replacing, or
 destroying its container. The language's unsafe-tear immovability rule is
 unchanged.
 
-Stage 2's first vertical slices give `push`, `set`, `pop`, `remove`,
+Stage 2's completed array foundation gives `push`, `set`, `pop`, `remove`,
 `swapRemove`, growth, `reserve`, `clear`, and array destruction
 initialized-prefix storage semantics. `push` and `set` copy a copyable
 argument or consume a move-only argument; growth and compaction relocate live
@@ -204,16 +204,25 @@ copying operations report `FLECHA-S0046`, while `fill` reports `FLECHA-S0059`
 when its consumed value could be reused by another iteration. Indexing still
 cannot partially move an element out of a container.
 
+Direct `string` and `own []T` elements use the same initialized-prefix storage.
+Generic specialization preserves ownership qualifiers, shared views retain
+deep constness, and raw collection storage distinguishes an owning-slice
+element from the legacy owning-buffer spelling. Nested arrays support growth at
+every level, extraction, three-level ownership, and recursive reverse-order
+destruction.
+
 `StandardLibraryTests.SafeArray.*` runs growth/failure, scalar, structure, and
 scope-cleanup checks through safe callers with allocation tracking. Dedicated
 move-only fixtures inject failure on both initial allocation and later growth,
 then verify the strong array guarantee, consumed-argument cleanup, reverse
 destruction, initialized-prefix-only clearing, capacity reuse, and early-return
 cleanup. The sanitizer target includes the raw and safe array fixture families.
-`CompilerDiagnostics.SafeArray` checks privacy, use after a container move,
-conflicting borrows, and unsupported element operations.
+`CompilerDiagnostics.SafeArray` checks privacy, use after moves and extracted
+owners, partial indexed moves, borrowed and immovable element rejection, and
+the full shared/exclusive view conflict matrix. Positive fixtures prove that
+multiple shared views coexist and owner access resumes after the final view
+use, including for nested inner views.
 
-The complete Stage 2 extension for movable and destructible elements,
-including nested owning arrays, is specified in
-[`collections.md`](collections.md). Its definition of done remains the gate
-for claiming full move-only `Array<T>` support.
+The complete Stage 2 contract and acceptance matrix are specified in
+[`collections.md`](collections.md). The `Array<T>` gate is complete; the next
+collection built on this storage and lifecycle foundation is `Deque<T>`.

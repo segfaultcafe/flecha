@@ -1,0 +1,121 @@
+module owning_elements;
+
+@imports :: lib::std::containers::array;
+
+i32 check_strings() {
+    values := array::Array<string>::init();
+    if values.push("zero".cast<string>) != none ||
+        values.push("one".cast<string>) != none ||
+        values.push("two".cast<string>) != none ||
+        values.push("three".cast<string>) != none ||
+        values.push("four".cast<string>) != none {
+        return 1;
+    }
+
+    if values.len() != 5 || values.capacity() != 8 {
+        return 2;
+    }
+    view := values.view();
+    if view[0] != "zero" || view[2] != "two" || view[4] != "four" {
+        return 3;
+    }
+
+    removed, removeError := values.remove(1);
+    if removeError != none || removed != "one" || values.len() != 4 {
+        return 4;
+    }
+    view = values.view();
+    if view[0] != "zero" || view[1] != "two" || view[3] != "four" {
+        return 5;
+    }
+
+    if values.set(1, "replaced".cast<string>) != none {
+        return 6;
+    }
+    view = values.view();
+    if view[1] != "replaced" {
+        return 7;
+    }
+
+    return 42;
+}
+
+i32 check_owning_slices() {
+    values := array::Array<own []i32>::init();
+    loop i32 id = 1; id <= 5; id++ {
+        owner, allocationError := new<own []i32>(2);
+        if allocationError != none {
+            return 10;
+        }
+        owner[0] = id;
+        owner[1] = id * 10;
+        if values.push(owner) != none {
+            return 11;
+        }
+    }
+
+    if values.len() != 5 || values.capacity() != 8 {
+        return 12;
+    }
+    view := values.view();
+    if view[0][0] != 1 || view[2][1] != 30 || view[4][0] != 5 {
+        return 13;
+    }
+    mutable := values.viewRef();
+    mutable[0][1] = 11;
+    if mutable[0][1] != 11 {
+        return 23;
+    }
+
+    removed, removeError := values.remove(1);
+    if removeError != none || removed.len() != 2 || removed[0] != 2 ||
+        removed[1] != 20 {
+        return 14;
+    }
+    view = values.view();
+    if view.len() != 4 || view[0][0] != 1 || view[1][0] != 3 ||
+        view[3][0] != 5 {
+        return 15;
+    }
+
+    replacement, allocationError := new<own []i32>(1);
+    if allocationError != none {
+        return 16;
+    }
+    replacement[0] = 42;
+    if values.set(2, replacement) != none {
+        return 17;
+    }
+    view = values.view();
+    if view[2].len() != 1 || view[2][0] != 42 {
+        return 18;
+    }
+
+    values.clear();
+    if values.len() != 0 || values.capacity() != 8 {
+        return 19;
+    }
+
+    reused, allocationError := new<own []i32>(1);
+    if allocationError != none {
+        return 20;
+    }
+    reused[0] = 99;
+    if values.push(reused) != none || values.capacity() != 8 {
+        return 21;
+    }
+    view = values.view();
+    if view[0][0] != 99 {
+        return 22;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    result := check_strings();
+    if result != 42 {
+        return result;
+    }
+    return check_owning_slices();
+}

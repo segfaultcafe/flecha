@@ -173,6 +173,12 @@ The complete Stage 2 array definition of done and test cases live in
 [`collections.md`](collections.md). Deque, stack, queue, heap, map, and set work
 does not begin until this gate passes.
 
+The array gate now passes: direct owning strings and slices, outer/inner and
+three-level nested growth, recursive destruction, failure injection, partial
+move diagnostics, and the complete shared/exclusive view matrix are covered by
+native, compile-fail, full-suite, and sanitizer tests. `Deque<T>` is the next
+Stage 2 collection.
+
 ### 3. Text, parsing, and encoding
 
 Add:

@@ -3505,6 +3505,7 @@ TEST(SemanticSliceTests, AcceptsCheckedSlicesCallsConstAndElementReferences) {
     const Analysis result = Analyze(R"(
         void bump([]i32 s) { s.front()++; s.back() = 4; }
         i32 read([]const i32 s) { return s.front(); }
+        void strings([]string values) { values.len(); }
         void f() {
             a := [1, 2, 3];
             s := a[:];
@@ -3561,7 +3562,6 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
           "void f() { []u8 s; }",
           "void f() { []u8 s = none; }",
           "void f() { []u8 s = null; }",
-          "void f([]string s) {}",
           "void f([]&u8 s) {}",
           "void f([][]u8 s) {}",
           "void f([2][]u8 a) {}",
@@ -6268,6 +6268,33 @@ TEST(SemanticGenericTests, PreservesReferenceStorageAndOwnershipRules) {
         }
     )")
                      .diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests, PreservesOwningSliceTypeArguments) {
+    auto valid = Analyze(R"(
+        T identity<T>(T value) { return value; }
+        void main() {
+            values, failure := new<own []i32>(1);
+            if failure != none { return; }
+            values[0] = 42;
+            moved := identity<own []i32>(values);
+            moved[0];
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+            T identity<T>(T value) { return value; }
+            void main() {
+                values, failure := new<own []i32>(1);
+                moved := identity<own []i32>(values);
+                values.len();
+            }
+        )"),
+                             DiagnosticCode::MovedValue),
+              nullptr);
 }
 
 TEST(SemanticGenericTests, MethodsResolveHeapTupleArrayAndSliceReceivers) {

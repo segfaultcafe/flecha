@@ -61,6 +61,13 @@ bool IsArrayElement(SemanticType type) {
            type.Kind() == SemanticTypeKind::Function;
 }
 
+bool IsSliceElement(SemanticType type) {
+    if (type.IsConst()) type = type.WithoutConst();
+    return IsArrayElement(type) || type.Kind() == SemanticTypeKind::String ||
+           type.Kind() == SemanticTypeKind::OwnedBuffer ||
+           type.Kind() == SemanticTypeKind::OwnedSlice;
+}
+
 bool IsRuntimeArrayStructureField(SemanticType type) {
     if (type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool ||
         type.Kind() == SemanticTypeKind::Char ||
@@ -824,9 +831,10 @@ SemanticType SemanticAnalyzer::ResolveTypeSyntax(const core::TypeNode& type) {
             elements.push_back(ResolveTypeSyntax(*element));
         return SemanticType(std::move(elements), type.IsConst());
     }
-    const bool ownedBuffer = type.TypeForm() == core::TypeKind::Pointer &&
-                             type.Target() &&
-                             type.Target()->TypeForm() == core::TypeKind::Slice;
+    const bool ownedBuffer =
+        type.TypeForm() == core::TypeKind::Pointer && type.Target() &&
+        type.Target()->TypeForm() == core::TypeKind::Slice &&
+        type.Target()->Contract() != core::OwnershipContract::Own;
     if (ownedBuffer)
         return SemanticType(SemanticTypeKind::OwnedBuffer,
                             ResolveTypeSyntax(*type.Target()->Target()),
@@ -1102,12 +1110,10 @@ SemanticType SemanticAnalyzer::ResolveType(const core::TypeNode& type,
     if (layer->Kind() == SemanticTypeKind::Slice ||
         layer->Kind() == SemanticTypeKind::OwnedBuffer ||
         layer->Kind() == SemanticTypeKind::OwnedSlice) {
-        if (!IsArrayElement(layer->Target()->WithoutConst()))
+        if (!IsSliceElement(layer->Target()->WithoutConst()))
             Report(diagnostics::DiagnosticCode::UnsupportedCompoundType,
                    type.Range(),
-                   "slice elements must be scalars, error values, raw "
-                   "pointers, or fixed "
-                   "arrays");
+                   "slice elements must have sized non-borrowed storage");
         layer = layer->Target();
     } else if (layer->Kind() == SemanticTypeKind::Reference) {
         layer = layer->Target();
@@ -3905,8 +3911,19 @@ SemanticType SemanticAnalyzer::PlaceType(
         if (value.Kind() == SemanticTypeKind::Slice ||
             value.Kind() == SemanticTypeKind::Pointer ||
             value.Kind() == SemanticTypeKind::OwnedBuffer ||
-            value.Kind() == SemanticTypeKind::OwnedSlice)
-            return *value.Target();
+            value.Kind() == SemanticTypeKind::OwnedSlice) {
+            SemanticType element = *value.Target();
+            const SemanticType receiver = PlaceType(call.Receiver());
+            const core::Expression* source = &call.Receiver();
+            while (source->Kind() == core::AstNodeKind::ParenthesizedExpression)
+                source =
+                    &static_cast<const core::ParenthesizedExpression&>(*source)
+                         .Inner();
+            if (source->Kind() != core::AstNodeKind::NameExpression &&
+                receiver.IsConst())
+                element = element.WithConst();
+            return element;
+        }
         const SemanticType place = PlaceType(call.Receiver());
         if (place.Kind() == SemanticTypeKind::Array)
             return place.IsConst() ? place.Target()->WithConst()
@@ -3932,8 +3949,19 @@ SemanticType SemanticAnalyzer::PlaceType(
         if (value.Kind() == SemanticTypeKind::Slice ||
             value.Kind() == SemanticTypeKind::Pointer ||
             value.Kind() == SemanticTypeKind::OwnedBuffer ||
-            value.Kind() == SemanticTypeKind::OwnedSlice)
-            return *value.Target();
+            value.Kind() == SemanticTypeKind::OwnedSlice) {
+            SemanticType element = *value.Target();
+            const SemanticType receiver = PlaceType(index.Receiver());
+            const core::Expression* source = &index.Receiver();
+            while (source->Kind() == core::AstNodeKind::ParenthesizedExpression)
+                source =
+                    &static_cast<const core::ParenthesizedExpression&>(*source)
+                         .Inner();
+            if (source->Kind() != core::AstNodeKind::NameExpression &&
+                receiver.IsConst())
+                element = element.WithConst();
+            return element;
+        }
         const SemanticType receiver = PlaceType(index.Receiver());
         if (receiver.Kind() == SemanticTypeKind::Array)
             return receiver.IsConst() ? receiver.Target()->WithConst()

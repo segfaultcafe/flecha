@@ -529,6 +529,9 @@ foreach(case IN ITEMS
         move_only_initial_failure
         move_only_push
         move_only_lifecycle
+        owning_elements
+        nested_ownership
+        borrow_views
         own_capture)
     set(array_fail_call 0)
     if(case STREQUAL "move_only_initial_failure")

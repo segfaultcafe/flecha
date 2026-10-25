@@ -10,6 +10,12 @@ stacks, queues, heaps, hash maps, and hash sets build on the same storage and
 lifecycle rules and are intentionally deferred until this foundation is
 complete.
 
+**Acceptance status:** complete. The initialized-prefix implementation and its
+safe API now pass the full matrix below for allocation failure, move-only
+lifecycle, direct owning strings and slices, recursive nested ownership, and
+shared/exclusive view conflicts. Stage 2 can proceed to `Deque<T>` on this
+foundation.
+
 ## Supported element categories
 
 `Array<T>` supports:
@@ -171,8 +177,7 @@ view is live because method validity cannot depend on the current capacity.
 
 ## Definition of done
 
-The ownership-capable array foundation is complete when all of the following
-are true:
+The ownership-capable array foundation satisfies all of the following gates:
 
 - the initialized-prefix storage facility is implemented and unavailable to
   ordinary safe application code;
