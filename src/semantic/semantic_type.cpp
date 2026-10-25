@@ -188,7 +188,8 @@ SemanticType SemanticType::FromSyntax(const core::TypeNode& type) {
                             type.IsConst(), type.Length());
     if (type.TypeForm() != core::TypeKind::Primitive) {
         if (type.TypeForm() == core::TypeKind::Pointer &&
-            type.Target()->TypeForm() == core::TypeKind::Slice)
+            type.Target()->TypeForm() == core::TypeKind::Slice &&
+            type.Target()->Contract() != core::OwnershipContract::Own)
             return SemanticType(SemanticTypeKind::OwnedBuffer,
                                 FromSyntax(*type.Target()->Target()),
                                 type.IsConst());

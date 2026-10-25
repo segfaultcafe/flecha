@@ -1,0 +1,46 @@
+module borrow_views;
+
+@imports :: lib::std::containers::array;
+
+i32 main() {
+    values := array::Array<i32>::init();
+    if values.push(10) != none || values.push(20) != none {
+        return 1;
+    }
+
+    first := values.view();
+    second := values.view();
+    if first[0] != 10 || second[1] != 20 {
+        return 2;
+    }
+
+    if values.push(30) != none {
+        return 3;
+    }
+    mutable := values.viewRef();
+    mutable[1] = 42;
+    if mutable[1] != 42 {
+        return 4;
+    }
+
+    values.clear();
+    if values.len() != 0 || values.capacity() != 4 {
+        return 5;
+    }
+
+    outer := array::Array<array::Array<i32>>::init();
+    inner := array::Array<i32>::init();
+    if inner.push(7) != none || outer.push(inner) != none {
+        return 6;
+    }
+    innerView := outer.viewRef()[0].view();
+    if innerView[0] != 7 {
+        return 7;
+    }
+    replacement := array::Array<i32>::init();
+    if outer.push(replacement) != none || outer.len() != 2 {
+        return 8;
+    }
+
+    return 42;
+}

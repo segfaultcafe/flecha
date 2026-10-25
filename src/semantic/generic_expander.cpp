@@ -723,6 +723,10 @@ class Expander {
         const auto emit = [&](TokenType kind, const std::string& spelling) {
             result.emplace_back(kind, spelling, type.Range());
         };
+        if (type.Contract() == OwnershipContract::Own)
+            emit(TokenType::Own, "own");
+        else if (type.Contract() == OwnershipContract::Lend)
+            emit(TokenType::Lend, "lend");
         if (type.IsConst()) emit(TokenType::Const, "const");
         if (type.TypeForm() == TypeKind::Named) {
             const Declaration* declaration =
@@ -998,7 +1002,23 @@ class Expander {
                 tokens.push_back(token);
             } else if (sites.contains(token.range.start.offset) &&
                        substitutions.contains(token.value)) {
-                for (auto argument : substitutions[token.value]) {
+                Tokens arguments = substitutions[token.value];
+                // A const-qualified template parameter such as `[]const T`
+                // becomes `[]own const []U` when T is an owning slice. Keep
+                // the ownership contract outermost so the specialized tokens
+                // remain valid type syntax and const qualifies the owner.
+                if (!tokens.empty() && tokens.back().type == TokenType::Const &&
+                    !arguments.empty() &&
+                    (arguments.front().type == TokenType::Own ||
+                     arguments.front().type == TokenType::Lend)) {
+                    Token qualifier = std::move(tokens.back());
+                    tokens.pop_back();
+                    Token contract = std::move(arguments.front());
+                    arguments.erase(arguments.begin());
+                    tokens.push_back(std::move(contract));
+                    tokens.push_back(std::move(qualifier));
+                }
+                for (auto argument : arguments) {
                     argument.range = token.range;
                     if (argument.type == TokenType::Const && !tokens.empty() &&
                         tokens.back().type == TokenType::Const)
@@ -1233,6 +1253,7 @@ class Expander {
                 source.IsConst(), source.QualifierRange(), source.Length());
         for (const auto& type : source.typeArguments)
             result->typeArguments.push_back(CopyType(*type));
+        result->SetContract(source.Contract());
         return result;
     }
     void AddBuiltinCandidates(const std::string& set, source::SourceRange range,
