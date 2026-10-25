@@ -1,0 +1,5 @@
+module deque;
+
+@imports :: root::containers::errors;
+
+export structure Deque<T> {};
