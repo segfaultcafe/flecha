@@ -224,5 +224,5 @@ multiple shared views coexist and owner access resumes after the final view
 use, including for nested inner views.
 
 The complete Stage 2 contract and acceptance matrix are specified in
-[`collections.md`](collections.md). The `Array<T>` gate is complete; the next
-collection built on this storage and lifecycle foundation is `Deque<T>`.
+[`collections.md`](collections.md). The `Array<T>` and `Deque<T>` gates are
+complete; stack and queue adapters are the next collection layer.

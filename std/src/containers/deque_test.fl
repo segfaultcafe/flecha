@@ -1,0 +1,653 @@
+module deque_test;
+
+@imports
+    :: root::containers::deque
+    :: root::containers::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+structure TrackedOwner {
+    *i32 cleanupCount;
+    *i32 cleanupLog;
+    i32 id;
+};
+
+TrackedOwner TrackedOwner::zero() override {
+    return build TrackedOwner {
+        self.cleanupCount = null;
+        self.cleanupLog = null;
+        self.id = 0;
+    };
+}
+
+TrackedOwner TrackedOwner::init(
+    *i32 cleanupCount,
+    *i32 cleanupLog,
+    i32 id,
+) override {
+    return build TrackedOwner {
+        self.cleanupCount = cleanupCount;
+        self.cleanupLog = cleanupLog;
+        self.id = id;
+    };
+}
+
+void TrackedOwner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount += 1;
+            *self->cleanupLog = *self->cleanupLog * 10 + self->id;
+        }
+    }
+}
+
+test empty_deque_has_zero_length_and_capacity(&testing::UnitTest t) {
+    values := deque::Deque<i32>::init();
+
+    asserts::is_true(
+        t,
+        values.empty(),
+        "a new deque is empty"
+    );
+    asserts::is_true(
+        t,
+        values.len() == 0,
+        "a new deque has zero length"
+    );
+    asserts::is_true(
+        t,
+        values.capacity() == 0,
+        "a new deque has no allocation"
+    );
+}
+
+test reserve_allocates_without_changing_length(&testing::UnitTest t) {
+    values := deque::Deque<i32>::init();
+
+    allocationError := values.reserve(8);
+
+    asserts::is_true(
+        t,
+        allocationError == none,
+        "reserve allocates requested capacity"
+    );
+    asserts::is_true(
+        t,
+        values.len() == 0 and values.capacity() == 8,
+        "reserve does not create live elements"
+    );
+
+    smallerError := values.reserve(4);
+
+    asserts::is_true(
+        t,
+        smallerError == none and values.capacity() == 8,
+        "reserve never shrinks existing storage"
+    );
+
+    overflowError := values.reserve(usize.max_value);
+
+    asserts::is_true(
+        t,
+        overflowError != none and
+            values.len() == 0 and
+            values.capacity() == 8,
+        "failed reserve preserves the deque"
+    );
+}
+
+test push_back_grows_and_preserves_order(&testing::UnitTest t) {
+    values := deque::Deque<i32>::init();
+
+    error pushError = none;
+    loop i32 value = 0; value < 9; value++ {
+        pushError = values.pushBack(value);
+        if pushError != none {
+            break;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        pushError == none,
+        "pushBack succeeds through repeated growth"
+    );
+    asserts::is_true(
+        t,
+        values.len() == 9 and values.capacity() == 16,
+        "pushBack grows capacity geometrically"
+    );
+
+    bool ordered = true;
+    loop usize index = 0; index < values.len(); index++ {
+        value, getError := values.get(index);
+
+        if getError != none or value != index as i32 {
+            ordered = false;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        ordered,
+        "pushBack preserves logical order"
+    );
+
+    _, getError := values.get(values.len());
+
+    asserts::is_true(
+        t,
+        getError != none,
+        "get rejects an index at the logical end"
+    );
+}
+
+test pop_front_removes_values_in_logical_order(&testing::UnitTest t) {
+    values := deque::Deque<i32>::init();
+    operationError := values.reserve(4);
+    loop i32 value = 0; value < 4; value++ {
+        operationError = values.pushBack(value);
+    }
+
+    first, firstError := values.popFront();
+    second, secondError := values.popFront();
+    asserts::is_true(
+        t,
+        operationError == none and
+            firstError == none and secondError == none and
+            first == 0 and second == 1 and values.len() == 2,
+        "popFront removes values in logical order"
+    );
+}
+
+test reserve_linearizes_wrapped_storage(&testing::UnitTest t) {
+    values := deque::Deque<i32>::init();
+    operationError := values.reserve(4);
+    loop i32 value = 0; value < 4; value++ {
+        operationError = values.pushBack(value);
+    }
+    _, _ = values.popFront();
+    _, _ = values.popFront();
+    operationError = values.pushBack(4);
+    operationError = values.pushBack(5);
+    operationError = values.reserve(8);
+
+    bool ordered = true;
+    loop usize index = 0; index < values.len(); index++ {
+        value, getError := values.get(index);
+        if getError != none or value != index as i32 + 2 {
+            ordered = false;
+        }
+    }
+
+    asserts::is_true(t, operationError == none, "wrapped reserve succeeds");
+    asserts::is_true(t, ordered, "wrapped reserve preserves logical order");
+    asserts::is_true(t, values.capacity() == 8, "wrapped reserve grows capacity");
+}
+
+test push_back_reuses_wrapped_front_slots(
+    &testing::UnitTest t
+) {
+    values := deque::Deque<i32>::init();
+    operationError := values.reserve(4);
+    loop i32 value = 0; value < 4; value++ {
+        operationError = values.pushBack(value);
+    }
+    _, _ = values.popFront();
+    _, _ = values.popFront();
+    loop i32 value = 4; value <= 5; value++ {
+        operationError = values.pushBack(value);
+    }
+
+    bool ordered = true;
+    loop usize index = 0; index < values.len(); index++ {
+        value, getError := values.get(index);
+        if getError != none or value != index as i32 + 2 {
+            ordered = false;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        operationError == none and ordered and
+            values.len() == 4 and values.capacity() == 4,
+        "pushBack reuses wrapped front slots in logical order"
+    );
+}
+
+test pop_front_drains_and_retains_capacity(&testing::UnitTest t) {
+    values := deque::Deque<i32>::init();
+    operationError := values.reserve(4);
+    loop i32 value = 2; value <= 5; value++ {
+        operationError = values.pushBack(value);
+    }
+
+    bool ordered = true;
+    loop i32 expected = 2; expected <= 5; expected++ {
+        value, popError := values.popFront();
+        if popError != none or value != expected {
+            ordered = false;
+        }
+    }
+    _, emptyError := values.popFront();
+
+    asserts::is_true(
+        t,
+        operationError == none and ordered and values.empty() and
+            values.capacity() == 4 and
+            emptyError == errors::DequeError.Empty,
+        "popFront drains in order while retaining capacity"
+    );
+}
+
+test emptied_deque_reuses_retained_capacity(&testing::UnitTest t) {
+    values := deque::Deque<i32>::init();
+    operationError := values.reserve(4);
+    loop i32 value = 0; value < 2; value++ {
+        operationError = values.pushBack(value);
+    }
+    loop usize count = 0; count < 2; count++ {
+        _, _ = values.popFront();
+    }
+
+    reuseError := values.pushBack(42);
+    reused, getError := values.get(0);
+    asserts::is_true(
+        t,
+        operationError == none and reuseError == none and
+            getError == none and reused == 42 and values.capacity() == 4,
+        "an emptied deque reuses its retained allocation"
+    );
+}
+
+test push_front_wraps_and_grows(&testing::UnitTest t) {
+    values := deque::Deque<i32>::init();
+
+    operationError := values.reserve(4);
+
+    loop i32 value = 30; value <= 40; value += 10 {
+        operationError = values.pushBack(value);
+    }
+
+    loop i32 value = 20; value >= 10; value -= 10 {
+        operationError = values.pushFront(value);
+    }
+
+    expectedWrapped := [10, 20, 30, 40];
+    bool wrappedOrder = true;
+
+    loop usize index = 0; index < values.len(); index++ {
+        value, getError := values.get(index);
+
+        if getError != none or value != expectedWrapped[index] {
+            wrappedOrder = false;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        operationError == none and
+            wrappedOrder and
+            values.capacity() == 4,
+        "pushFront wraps within retained capacity"
+    );
+
+    operationError = values.pushFront(0);
+    expectedGrown := [0, 10, 20, 30, 40];
+    bool grownOrder = true;
+
+    loop usize index = 0; index < values.len(); index++ {
+        value, getError := values.get(index);
+
+        if getError != none or value != expectedGrown[index] {
+            grownOrder = false;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        operationError == none and
+            grownOrder and
+            values.len() == 5 and
+            values.capacity() == 8,
+        "pushFront growth preserves logical order"
+    );
+}
+
+test pop_back_drains_wrapped_storage(&testing::UnitTest t) {
+    values := deque::Deque<i32>::init();
+
+    operationError := values.reserve(4);
+
+    loop i32 value = 0; value < 4; value++ {
+        operationError = values.pushBack(value);
+    }
+
+    loop usize count = 0; count < 2; count++ {
+        _, _ = values.popFront();
+    }
+
+    loop i32 value = 4; value <= 5; value++ {
+        operationError = values.pushBack(value);
+    }
+
+    bool ordered = true;
+
+    loop i32 expected = 5; expected >= 2; expected-- {
+        value, popError := values.popBack();
+
+        if popError != none or value != expected {
+            ordered = false;
+        }
+    }
+
+    _, emptyError := values.popBack();
+
+    asserts::is_true(
+        t,
+        operationError == none and
+            ordered and
+            values.empty() and
+            values.capacity() == 4 and
+            emptyError == errors::DequeError.Empty,
+        "popBack drains wrapped storage in reverse logical order"
+    );
+}
+
+test clear_drains_wrapped_storage_and_reuses_capacity(
+    &testing::UnitTest t
+) {
+    values := deque::Deque<i32>::init();
+
+    operationError := values.reserve(4);
+
+    loop i32 value = 0; value < 4; value++ {
+        operationError = values.pushBack(value);
+    }
+
+    loop usize count = 0; count < 2; count++ {
+        _, _ = values.popFront();
+    }
+
+    loop i32 value = 4; value <= 5; value++ {
+        operationError = values.pushBack(value);
+    }
+
+    values.clear();
+
+    bool cleared =
+        values.empty() and
+        values.len() == 0 and
+        values.capacity() == 4;
+
+    frontError := values.pushFront(7);
+    backError := values.pushBack(8);
+
+    first, firstError := values.get(0);
+    last, lastError := values.get(1);
+
+    asserts::is_true(
+        t,
+        operationError == none and
+            cleared and
+            frontError == none and
+            backError == none and
+            firstError == none and
+            lastError == none and
+            first == 7 and
+            last == 8 and
+            values.capacity() == 4,
+        "clear destroys wrapped elements and reuses retained capacity"
+    );
+}
+
+test clear_destroys_move_only_values_once_in_reverse_order(
+    &testing::UnitTest t
+) {
+    i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
+
+    unsafe {
+        values := deque::Deque<TrackedOwner>::init();
+
+        operationError := values.reserve(4);
+
+        loop i32 id = 1; id <= 4; id++ {
+            operationError = values.pushBack(
+                TrackedOwner::init(
+                    &raw cleanupCount,
+                    &raw cleanupLog,
+                    id
+                )
+            );
+        }
+
+        loop usize count = 0; count < 2; count++ {
+            _, _ = values.popFront();
+        }
+
+        cleanupCount = 0;
+        cleanupLog = 0;
+
+        loop i32 id = 5; id <= 6; id++ {
+            operationError = values.pushBack(
+                TrackedOwner::init(
+                    &raw cleanupCount,
+                    &raw cleanupLog,
+                    id
+                )
+            );
+        }
+
+        values.clear();
+
+        asserts::is_true(
+            t,
+            operationError == none and
+                cleanupCount == 4 and
+                cleanupLog == 6543 and
+                values.empty() and
+                values.capacity() == 4,
+            "clear destroys wrapped owners once in reverse logical order"
+        );
+
+        reuseError := values.pushBack(
+            TrackedOwner::init(
+                &raw cleanupCount,
+                &raw cleanupLog,
+                7
+            )
+        );
+
+        asserts::is_true(
+            t,
+            reuseError == none and values.capacity() == 4,
+            "clear retains storage for another move-only owner"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 5 and cleanupLog == 65437,
+        "deque destruction cleans only the owner inserted after clear"
+    );
+}
+
+test front_and_back_read_wrapped_endpoints(
+    &testing::UnitTest t
+) {
+    values := deque::Deque<i32>::init();
+
+    _, emptyFrontError := values.front();
+    _, emptyBackError := values.back();
+
+    operationError := values.reserve(4);
+
+    loop i32 value = 0; value < 4; value++ {
+        operationError = values.pushBack(value);
+    }
+
+    loop usize count = 0; count < 2; count++ {
+        _, _ = values.popFront();
+    }
+
+    loop i32 value = 4; value <= 5; value++ {
+        operationError = values.pushBack(value);
+    }
+
+    front, frontError := values.front();
+    back, backError := values.back();
+
+    asserts::is_true(
+        t,
+        emptyFrontError == errors::DequeError.Empty and
+            emptyBackError == errors::DequeError.Empty and
+            operationError == none and
+            frontError == none and
+            backError == none and
+            front == 2 and
+            back == 5,
+        "front and back read wrapped logical endpoints"
+    );
+}
+
+test set_replaces_wrapped_move_only_values_exactly_once(
+    &testing::UnitTest t
+) {
+    i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
+
+    unsafe {
+        values := deque::Deque<TrackedOwner>::init();
+
+        operationError := values.reserve(4);
+
+        loop i32 id = 1; id <= 4; id++ {
+            operationError = values.pushBack(
+                TrackedOwner::init(
+                    &raw cleanupCount,
+                    &raw cleanupLog,
+                    id
+                )
+            );
+        }
+
+        loop usize count = 0; count < 2; count++ {
+            _, _ = values.popFront();
+        }
+
+        cleanupCount = 0;
+        cleanupLog = 0;
+
+        loop i32 id = 5; id <= 6; id++ {
+            operationError = values.pushBack(
+                TrackedOwner::init(
+                    &raw cleanupCount,
+                    &raw cleanupLog,
+                    id
+                )
+            );
+        }
+
+        setError := values.set(
+            1,
+            TrackedOwner::init(
+                &raw cleanupCount,
+                &raw cleanupLog,
+                9
+            )
+        );
+
+        boundsError := values.set(
+            values.len(),
+            TrackedOwner::init(
+                &raw cleanupCount,
+                &raw cleanupLog,
+                8
+            )
+        );
+
+        asserts::is_true(
+            t,
+            operationError == none and
+                setError == none and
+                boundsError == errors::DequeError.IndexOutOfBounds and
+                cleanupCount == 2 and
+                cleanupLog == 48 and
+                values.len() == 4 and
+                values.capacity() == 4,
+            "set replaces a wrapped owner and cleans rejected arguments"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 6 and cleanupLog == 486593,
+        "deque destruction cleans the replacement and remaining owners once"
+    );
+}
+
+test growth_relocates_wrapped_move_only_values_without_cleanup(
+    &testing::UnitTest t
+) {
+    i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
+
+    unsafe {
+        values := deque::Deque<TrackedOwner>::init();
+
+        operationError := values.reserve(4);
+
+        loop i32 id = 1; id <= 4; id++ {
+            operationError = values.pushBack(
+                TrackedOwner::init(
+                    &raw cleanupCount,
+                    &raw cleanupLog,
+                    id
+                )
+            );
+        }
+
+        loop usize count = 0; count < 2; count++ {
+            _, _ = values.popFront();
+        }
+
+        cleanupCount = 0;
+        cleanupLog = 0;
+
+        loop i32 id = 5; id <= 6; id++ {
+            operationError = values.pushBack(
+                TrackedOwner::init(
+                    &raw cleanupCount,
+                    &raw cleanupLog,
+                    id
+                )
+            );
+        }
+
+        growthError := values.pushBack(
+            TrackedOwner::init(
+                &raw cleanupCount,
+                &raw cleanupLog,
+                7
+            )
+        );
+
+        asserts::is_true(
+            t,
+            operationError == none and
+                growthError == none and
+                cleanupCount == 0 and
+                cleanupLog == 0 and
+                values.len() == 5 and
+                values.capacity() == 8,
+            "growth relocates wrapped owners without destroying them"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 5 and cleanupLog == 76543,
+        "grown deque destroys every relocated owner once in reverse order"
+    );
+}

@@ -1,0 +1,180 @@
+module storage_test;
+
+@imports
+    :: root::memory::storage
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+structure Owner {
+    *i32 cleanupCount;
+    *i32 cleanupLog;
+    i32 id;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.cleanupLog = null;
+        self.id = 0;
+    };
+}
+
+Owner Owner::init(
+    *i32 cleanupCount,
+    *i32 cleanupLog,
+    i32 id,
+) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.cleanupLog = cleanupLog;
+        self.id = id;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount = *self->cleanupCount + 1;
+            *self->cleanupLog = *self->cleanupLog * 10 + self->id;
+        }
+    }
+}
+
+test manages_explicitly_live_slots(&testing::UnitTest t) {
+    unsafe {
+        empty, emptyError :=
+            storage::RawStorage<i32>::withCapacity(0);
+
+        asserts::is_true(
+            t,
+            emptyError == none and empty.capacity() == 0,
+            "zero capacity requires no allocation"
+        );
+
+        storage, allocationError :=
+            storage::RawStorage<i32>::withCapacity(4);
+
+        asserts::is_true(
+            t,
+            allocationError == none,
+            "storage allocation succeeds"
+        );
+
+        if allocationError != none {
+            return;
+        }
+
+        asserts::is_true(
+            t,
+            storage.capacity() == 4,
+            "storage reports its allocated capacity"
+        );
+
+        storage.initialize(0, 10);
+        storage.initialize(1, 20);
+
+        shared := storage.view(0, 2);
+        asserts::is_true(
+            t,
+            shared[0] == 10 and shared[1] == 20,
+            "initialized slots can be borrowed"
+        );
+
+        storage.relocate(2, 1);
+
+        mutable := storage.viewRef(2, 3);
+        mutable[0] = 25;
+
+        extracted := storage.extract(2);
+        asserts::is_true(
+            t,
+            extracted == 25,
+            "extraction transfers the live value"
+        );
+
+        storage.initialize(1, extracted);
+
+        replacement, replacementError :=
+            storage::RawStorage<i32>::withCapacity(8);
+
+        asserts::is_true(
+            t,
+            replacementError == none,
+            "replacement allocation succeeds"
+        );
+
+        if replacementError != none {
+            storage.destroy(0);
+            storage.destroy(1);
+            return;
+        }
+
+        replacement.relocateFrom(3, &storage, 0);
+
+        asserts::is_true(
+            t,
+            storage.get(1) == 25 and replacement.get(3) == 10,
+            "cross-storage relocation preserves values"
+        );
+
+        storage.destroy(1);
+        replacement.destroy(3);
+    }
+}
+
+test relocates_move_only_values_without_copying(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
+
+    unsafe {
+        storage, allocationError :=
+            storage::RawStorage<Owner>::withCapacity(3);
+        replacement, replacementError :=
+            storage::RawStorage<Owner>::withCapacity(2);
+
+        asserts::is_true(
+            t,
+            allocationError == none and replacementError == none,
+            "move-only storage allocations succeed"
+        );
+
+        if allocationError != none or replacementError != none {
+            return;
+        }
+
+        first := Owner::init(
+            &raw cleanupCount,
+            &raw cleanupLog,
+            1
+        );
+        second := Owner::init(
+            &raw cleanupCount,
+            &raw cleanupLog,
+            2
+        );
+
+        storage.initialize(0, first);
+        storage.initialize(1, second);
+
+        storage.relocate(2, 1);
+        replacement.relocateFrom(0, &storage, 0);
+
+        extracted := storage.extract(2);
+        replacement.initialize(1, extracted);
+
+        asserts::is_true(
+            t,
+            cleanupCount == 0 and cleanupLog == 0,
+            "relocation and extraction do not destroy owners"
+        );
+
+        replacement.destroy(1);
+        replacement.destroy(0);
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 2 and cleanupLog == 21,
+        "each move-only owner is destroyed exactly once"
+    );
+}

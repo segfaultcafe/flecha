@@ -133,9 +133,10 @@ The source must be a fixed array; explicit index types must represent every
 possible index and element bindings follow ordinary assignment compatibility.
 Range source snapshots and iteration declarations use the shared scope,
 initialization, and borrow analysis. The CFG routes `proceed` through counted-loop
-updates, and header variables end at the loop boundary. Integer postfix increment
-requires initialized writable storage and participates in borrow checking as a
-write. See [iteration.md](iteration.md) for syntax and exact evaluation rules.
+updates, and header variables end at the loop boundary. Integer postfix updates
+and compound assignments require initialized writable storage and participate in
+borrow checking as writes. See [iteration.md](iteration.md) for syntax and exact
+evaluation rules.
 
 ### Checked slices
 

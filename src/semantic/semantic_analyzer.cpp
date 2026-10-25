@@ -4017,24 +4017,27 @@ SemanticType SemanticAnalyzer::AnalyzeUnary(
                "deref() requires a checked reference receiver");
         return SemanticType::Error();
     }
-    if (operation == TokenType::Increment) {
+    if (operation == TokenType::Increment ||
+        operation == TokenType::Decrement) {
+        const std::string update =
+            operation == TokenType::Increment ? "increment" : "decrement";
         const SemanticType place = PlaceType(expression.Operand());
         if (place.IsError()) {
             Report(diagnostics::DiagnosticCode::SemanticInvalidAssignmentTarget,
                    expression.Operand().Range(),
-                   "increment requires a storage location");
+                   update + " requires a storage location");
             return SemanticType::Error();
         }
         if (place.IsConst()) {
             Report(diagnostics::DiagnosticCode::SymbolNotWritable,
                    expression.Operand().Range(),
-                   "increment target is not writable");
+                   update + " target is not writable");
             return SemanticType::Error();
         }
         if (!place.IsInteger()) {
             Report(diagnostics::DiagnosticCode::IncompatibleType,
                    expression.Range(),
-                   "increment requires an integer storage location");
+                   update + " requires an integer storage location");
             return SemanticType::Error();
         }
         return place.WithoutConst();
@@ -4281,6 +4284,56 @@ SemanticType SemanticAnalyzer::AnalyzeAssignment(
     const core::AssignmentExpression& expression) {
     const SemanticType targetValue = AnalyzeExpression(expression.Target());
     const SemanticType target = PlaceType(expression.Target());
+    const TokenType operation = expression.OperatorType();
+    if (operation != TokenType::Assign) {
+        if (targetValue.IsError()) return SemanticType::Error();
+        if (target.IsError()) {
+            Report(diagnostics::DiagnosticCode::SemanticInvalidAssignmentTarget,
+                   expression.Target().Range(),
+                   "expression is not a storage location");
+            return SemanticType::Error();
+        }
+        const core::Expression* place = &expression.Target();
+        while (place->Kind() == core::AstNodeKind::ParenthesizedExpression) {
+            place = &static_cast<const core::ParenthesizedExpression&>(*place)
+                         .Inner();
+        }
+        const Symbol* symbol =
+            place->Kind() == core::AstNodeKind::NameExpression
+                ? _model.SymbolFor(
+                      static_cast<const core::NameExpression&>(*place))
+                : nullptr;
+        if (target.IsConst() || (symbol != nullptr && !symbol->Writable())) {
+            Report(diagnostics::DiagnosticCode::SymbolNotWritable,
+                   expression.Target().Range(),
+                   symbol != nullptr
+                       ? "'" + symbol->Name() + "' is not writable"
+                       : "assignment target is not writable");
+            return SemanticType::Error();
+        }
+        const SemanticType value =
+            AnalyzeExpression(expression.Value(), target.WithoutConst());
+        if (value.IsError()) return SemanticType::Error();
+        const bool arithmetic = operation == TokenType::AddAssign ||
+                                operation == TokenType::SubAssign ||
+                                operation == TokenType::MulAssign ||
+                                operation == TokenType::DivAssign;
+        const bool xorAssignment = operation == TokenType::XorAssign;
+        const bool supported =
+            target.WithoutConst() == value.WithoutConst() &&
+            ((arithmetic && target.IsNumeric()) ||
+             (xorAssignment &&
+              (target.IsInteger() || target.Kind() == SemanticTypeKind::Bool)));
+        if (!supported) {
+            Report(diagnostics::DiagnosticCode::InvalidOperand,
+                   expression.Range(),
+                   "compound assignment operator is not defined for types '" +
+                       target.Name() + "' and '" + value.Name() + "'");
+            return SemanticType::Error();
+        }
+        return target.WithoutConst();
+    }
+
     if (target.OwnsStorage()) RecordCleanupEffects(target);
     if (IsNoneLiteral(expression.Value()))
         MarkDirectConstruction(_directConstructions, expression.Value(), true);

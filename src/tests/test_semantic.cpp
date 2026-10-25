@@ -3483,6 +3483,23 @@ TEST(SemanticAnalyzerTests, IncrementHonorsPlacesConstBorrowingAndUnsafe) {
                      .diagnostics.HasErrors());
 }
 
+TEST(SemanticAnalyzerTests, CompoundUpdatesHonorTypesPlacesAndInitialization) {
+    EXPECT_FALSE(Analyze("void f() { i := 8; i--; i += 2; i -= 1; i *= 3; "
+                         "i /= 2; i ^= 4; f64 x = 8.0; x += 2.0; x -= 1.0; "
+                         "x *= 3.0; x /= 2.0; bool b = true; b ^= false; }")
+                     .diagnostics.HasErrors());
+
+    for (const std::string& source :
+         {"void f() { i32 x; x--; }", "void f() { i32 x; x += 1; }",
+          "void f() { const i32 x = 1; x -= 1; }",
+          "void f() { f64 x = 1.0; x ^= 1.0; }",
+          "void f() { bool x = true; x += false; }",
+          "void f() { (1 + 2) *= 3; }"}) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
 TEST(SemanticAnalyzerTests, RangeCopiesRespectLoansAndIterationLifetimes) {
     EXPECT_TRUE(
         Analyze(

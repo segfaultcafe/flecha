@@ -3001,16 +3001,23 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                                        symbol.Name());
         }
         case lowering::BoundNodeKind::IncrementExpression: {
-            const auto& increment =
+            const auto& update =
                 static_cast<const lowering::BoundIncrementExpression&>(
                     expression);
-            llvm::Value* storage = EmitAddress(increment.Target());
+            llvm::Value* storage = EmitAddress(update.Target());
             if (storage == nullptr) return nullptr;
             llvm::Type* type = MapType(expression.Type());
-            llvm::Value* previous =
-                _builder.CreateLoad(type, storage, "increment.old");
-            llvm::Value* next = _builder.CreateAdd(
-                previous, llvm::ConstantInt::get(type, 1), "increment.next");
+            const bool increment =
+                update.OperatorType() == TokenType::Increment;
+            llvm::Value* previous = _builder.CreateLoad(
+                type, storage, increment ? "increment.old" : "decrement.old");
+            llvm::Value* next =
+                increment ? _builder.CreateAdd(previous,
+                                               llvm::ConstantInt::get(type, 1),
+                                               "increment.next")
+                          : _builder.CreateSub(previous,
+                                               llvm::ConstantInt::get(type, 1),
+                                               "decrement.next");
             _builder.CreateStore(next, storage);
             return previous;
         }
@@ -3047,6 +3054,54 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
             if (value == nullptr) return nullptr;
             value = CoerceValue(value, assignment.Value().Type(),
                                 assignment.Target().Type());
+            if (assignment.OperatorType() != TokenType::Assign) {
+                if (value == nullptr) return nullptr;
+                llvm::Type* type = MapType(assignment.Target().Type());
+                llvm::Value* previous =
+                    _builder.CreateLoad(type, storage, "compound.old");
+                const bool floating = assignment.Target().Type().IsFloating();
+                switch (assignment.OperatorType()) {
+                    case TokenType::AddAssign:
+                        value = floating ? _builder.CreateFAdd(previous, value,
+                                                               "compound.add")
+                                         : _builder.CreateAdd(previous, value,
+                                                              "compound.add");
+                        break;
+                    case TokenType::SubAssign:
+                        value = floating ? _builder.CreateFSub(previous, value,
+                                                               "compound.sub")
+                                         : _builder.CreateSub(previous, value,
+                                                              "compound.sub");
+                        break;
+                    case TokenType::MulAssign:
+                        value = floating ? _builder.CreateFMul(previous, value,
+                                                               "compound.mul")
+                                         : _builder.CreateMul(previous, value,
+                                                              "compound.mul");
+                        break;
+                    case TokenType::DivAssign:
+                        if (floating) {
+                            value = _builder.CreateFDiv(previous, value,
+                                                        "compound.div");
+                        } else if (IsUnsigned(assignment.Target().Type())) {
+                            value = _builder.CreateUDiv(previous, value,
+                                                        "compound.div");
+                        } else {
+                            value = _builder.CreateSDiv(previous, value,
+                                                        "compound.div");
+                        }
+                        break;
+                    case TokenType::XorAssign:
+                        value =
+                            _builder.CreateXor(previous, value, "compound.xor");
+                        break;
+                    default:
+                        Fail("unsupported compound assignment operator");
+                        return nullptr;
+                }
+                _builder.CreateStore(value, storage);
+                return value;
+            }
             if (value != nullptr && assignment.Target().Type().OwnsStorage()) {
                 value = EmitValueCopy(value, assignment.Target().Type(), false);
             }

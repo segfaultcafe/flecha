@@ -1,0 +1,130 @@
+module storage;
+
+// Owns typed uninitialized storage without tracking which slots contain live
+// values. The caller must destroy or extract every live element before this
+// storage is released.
+export structure RawStorage<T> {
+    private own *T data;
+    private usize allocated;
+};
+
+RawStorage<T> RawStorage<T>::init() override {
+    return build RawStorage<T> {};
+}
+
+RawStorage<T> RawStorage<T>::zero() override {
+    return build RawStorage<T> {
+        self.data = null;
+        self.allocated = 0;
+    };
+}
+
+// Releases the allocation without destroying any slots. The containing data
+// structure remains responsible for destroying or extracting every live slot.
+void RawStorage<T>::tear(&self) override {
+    unsafe {
+        __storage_free(self->data);
+    }
+}
+
+// Allocates capacity uninitialized T slots.
+unsafe (RawStorage<T>, error) RawStorage<T>::withCapacity(usize capacity) {
+    if capacity == 0 {
+        return (RawStorage<T>::init(), none);
+    }
+
+    data, allocationErr := __storage_new<[]T>(capacity);
+    if allocationErr != none {
+        return (none, allocationErr);
+    }
+
+    return (build RawStorage<T> {
+        self.data = data;
+        self.allocated = capacity;
+    }, none);
+}
+
+usize RawStorage<T>::capacity(&const self) {
+    return self->allocated;
+}
+
+// Initializes one caller-proven uninitialized slot.
+unsafe void RawStorage<T>::initialize(&self, usize index, T value) {
+    __storage_initialize(self->data, index, value);
+}
+
+// Relocates a live slot within this allocation into an uninitialized slot.
+unsafe void RawStorage<T>::relocate(
+    &self,
+    usize destination,
+    usize source,
+) {
+    __storage_relocate(self->data, destination, self->data, source);
+}
+
+// Relocates a live slot from source into an uninitialized slot in this
+// allocation.
+unsafe void RawStorage<T>::relocateFrom(
+    &self,
+    usize destination,
+    &RawStorage<T> source,
+    usize sourceIndex,
+) {
+    source->relocateInto(
+        sourceIndex,
+        self->data,
+        destination
+    );
+}
+
+// Extracts a live value and leaves its slot uninitialized.
+unsafe T RawStorage<T>::extract(&self, usize index) {
+    return __storage_extract(self->data, index);
+}
+
+// Destroys a live value and leaves its slot uninitialized.
+unsafe void RawStorage<T>::destroy(&self, usize index) {
+    __storage_destroy(self->data, index);
+}
+
+// Returns a semantic copy of a caller-proven live value. Specialization fails
+// when T cannot be copied.
+unsafe T RawStorage<T>::get(&const self, usize index) {
+    return self->data[index];
+}
+
+// Borrows a caller-proven contiguous range of live values.
+unsafe []const T RawStorage<T>::view(
+    &const self,
+    usize start,
+    usize end,
+) <-self {
+    return self->data[start:end];
+}
+
+// Mutably borrows a caller-proven contiguous range of live values.
+unsafe []T RawStorage<T>::viewRef(
+    &self,
+    usize start,
+    usize end,
+) <-self {
+    return self->data[start:end];
+}
+
+// Owning fields are accessed only through their own receiver. This helper lends
+// the destination allocation while preserving the source storage's ownership.
+// The caller holds an exclusive source borrow because relocation invalidates
+// the source slot, although the RawStorage metadata itself is unchanged.
+private unsafe void RawStorage<T>::relocateInto(
+    &const self,
+    usize source,
+    lend *T destinationData,
+    usize destination,
+) {
+    __storage_relocate(
+        destinationData,
+        destination,
+        self->data,
+        source
+    );
+}

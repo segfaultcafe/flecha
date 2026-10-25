@@ -518,9 +518,11 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
         case core::AstNodeKind::UnaryExpression: {
             const core::UnaryExpression& unary =
                 static_cast<const core::UnaryExpression&>(expression);
-            if (unary.OperatorType() == TokenType::Increment)
+            if (unary.OperatorType() == TokenType::Increment ||
+                unary.OperatorType() == TokenType::Decrement)
                 return std::make_unique<BoundIncrementExpression>(
-                    expression.Range(), LowerPlace(unary.Operand()));
+                    expression.Range(), LowerPlace(unary.Operand()),
+                    unary.OperatorType());
             if (unary.OperatorType() == TokenType::Mul)
                 return LowerPlace(expression);
             if (unary.OperatorType() == TokenType::RawAddress ||
@@ -573,7 +575,8 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const semantic::SemanticType targetType = target->Type();
             return std::make_unique<BoundAssignmentExpression>(
                 expression.Range(), std::move(target),
-                LowerExpression(assignment.Value(), targetType));
+                LowerExpression(assignment.Value(), targetType),
+                assignment.OperatorType());
         }
         case core::AstNodeKind::CallExpression: {
             const core::CallExpression& call =

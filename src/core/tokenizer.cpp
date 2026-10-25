@@ -197,18 +197,25 @@ Token Tokenizer::NextToken() {
         case '}':
             return makeToken(TokenType::RCurly);
         case '+':
-            return makeToken(Match('+') ? TokenType::Increment
+            if (Match('+')) return makeToken(TokenType::Increment);
+            return makeToken(Match('=') ? TokenType::AddAssign
                                         : TokenType::Add);
         case '-':
-            return makeToken(Match('>') ? TokenType::Arrow : TokenType::Sub);
+            if (Match('>')) return makeToken(TokenType::Arrow);
+            if (Match('-')) return makeToken(TokenType::Decrement);
+            return makeToken(Match('=') ? TokenType::SubAssign
+                                        : TokenType::Sub);
         case '*':
-            return makeToken(TokenType::Mul);
+            return makeToken(Match('=') ? TokenType::MulAssign
+                                        : TokenType::Mul);
         case '/':
-            return makeToken(TokenType::Div);
+            return makeToken(Match('=') ? TokenType::DivAssign
+                                        : TokenType::Div);
         case '%':
             return makeToken(TokenType::Mod);
         case '^':
-            return makeToken(TokenType::Xor);
+            return makeToken(Match('=') ? TokenType::XorAssign
+                                        : TokenType::Xor);
         case '~':
             return makeToken(TokenType::BitNot);
         case '@':

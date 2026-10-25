@@ -1,0 +1,125 @@
+module owning_elements;
+
+@imports :: lib::std::containers::deque;
+
+i32 checkStrings() {
+    values := deque::Deque<string>::init();
+
+    if values.pushBack("one".cast<string>) != none or
+        values.pushBack("two".cast<string>) != none or
+        values.pushFront("zero".cast<string>) != none or
+        values.pushBack("three".cast<string>) != none or
+        values.pushBack("four".cast<string>) != none {
+        return 1;
+    }
+
+    if values.len() != 5 or values.capacity() != 8 {
+        return 2;
+    }
+
+    first, firstError := values.popFront();
+    last, lastError := values.popBack();
+
+    if firstError != none or lastError != none or first != "zero" or
+        last != "four" {
+        return 3;
+    }
+
+    one, oneError := values.popFront();
+    two, twoError := values.popFront();
+    three, threeError := values.popFront();
+
+    if oneError != none or twoError != none or threeError != none or
+        one != "one" or two != "two" or three != "three" or
+        !values.empty() {
+        return 4;
+    }
+
+    return 42;
+}
+
+error pushBackSlice(&deque::Deque<own []i32> values, i32 value) {
+    owner, allocationError := new<own []i32>(1);
+
+    if allocationError != none {
+        return allocationError;
+    }
+
+    owner[0] = value;
+    return values->pushBack(owner);
+}
+
+error pushFrontSlice(&deque::Deque<own []i32> values, i32 value) {
+    owner, allocationError := new<own []i32>(1);
+
+    if allocationError != none {
+        return allocationError;
+    }
+
+    owner[0] = value;
+    return values->pushFront(owner);
+}
+
+i32 popFrontSlice(&deque::Deque<own []i32> values, i32 expected) {
+    owner, popError := values->popFront();
+
+    if popError != none or owner.len() != 1 or owner[0] != expected {
+        return 1;
+    }
+
+    return 42;
+}
+
+i32 checkOwningSlices() {
+    values := deque::Deque<own []i32>::init();
+
+    if pushBackSlice(&values, 1) != none or
+        pushBackSlice(&values, 2) != none or
+        pushFrontSlice(&values, 0) != none or
+        pushBackSlice(&values, 3) != none or
+        pushBackSlice(&values, 4) != none {
+        return 5;
+    }
+
+    if values.len() != 5 or values.capacity() != 8 {
+        return 6;
+    }
+
+    first, firstError := values.popFront();
+    last, lastError := values.popBack();
+
+    if firstError != none or lastError != none or first.len() != 1 or
+        last.len() != 1 or first[0] != 0 or last[0] != 4 {
+        return 7;
+    }
+
+    replacement, allocationError := new<own []i32>(1);
+
+    if allocationError != none {
+        return 8;
+    }
+
+    replacement[0] = 42;
+
+    if values.set(1, replacement) != none {
+        return 9;
+    }
+
+    if popFrontSlice(&values, 1) != 42 or
+        popFrontSlice(&values, 42) != 42 or
+        popFrontSlice(&values, 3) != 42 or !values.empty() {
+        return 10;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    result := checkStrings();
+
+    if result != 42 {
+        return result;
+    }
+
+    return checkOwningSlices();
+}

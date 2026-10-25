@@ -1328,20 +1328,24 @@ class AssignmentExpression final : public Expression {
    public:
     AssignmentExpression(source::SourceRange range,
                          std::unique_ptr<Expression> target,
-                         std::unique_ptr<Expression> value)
+                         std::unique_ptr<Expression> value,
+                         TokenType operatorType = TokenType::Assign)
         : Expression(range),
           _target(std::move(target)),
-          _value(std::move(value)) {}
+          _value(std::move(value)),
+          _operatorType(operatorType) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::AssignmentExpression;
     }
     [[nodiscard]] const Expression& Target() const { return *_target; }
     [[nodiscard]] const Expression& Value() const { return *_value; }
+    [[nodiscard]] TokenType OperatorType() const { return _operatorType; }
 
    private:
     std::unique_ptr<Expression> _target;
     std::unique_ptr<Expression> _value;
+    TokenType _operatorType;
 };
 
 class CallExpression final : public Expression {

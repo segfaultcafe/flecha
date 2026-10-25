@@ -37,6 +37,7 @@ enum class ValueKind {
     Callable,
     LentCapture
 };
+
 struct Value final {
     ValueKind kind = ValueKind::Unknown;
     Identity identity = nullptr;
@@ -46,6 +47,7 @@ struct Value final {
     const core::BlockStatement* scope = nullptr;
     bool operator==(const Value&) const = default;
 };
+
 struct Resource final {
     bool live = true;
     bool owned = true;
@@ -53,6 +55,7 @@ struct Resource final {
     bool nullable = false;
     bool operator==(const Resource&) const = default;
 };
+
 struct Deferred final {
     const core::BlockStatement* scope = nullptr;
     const core::Expression* call = nullptr;
@@ -61,6 +64,7 @@ struct Deferred final {
     std::vector<Value> arguments;
     bool operator==(const Deferred&) const = default;
 };
+
 struct State final {
     std::map<const Symbol*, Value> bindings;
     std::map<const core::Expression*, Value> values;
@@ -72,6 +76,7 @@ struct State final {
     std::map<const core::StructureField*, Value> fieldValues;
     bool operator==(const State&) const = default;
 };
+
 struct Outcome final {
     State state;
     Value result;
@@ -96,7 +101,8 @@ bool IsOwnedClosureCapture(Identity identity) {
 
 // Keep paths separate: merging a successful new with its failure loses the
 // relationship between its pointer and error, and invents leaks at error exits.
-// The finite budget fails closed instead of silently widening away obligations.
+// Exact state deduplication preserves those correlations; cyclic deferred
+// ownership is diagnosed when its registration is revisited in the same scope.
 class AllocationChecker final {
    public:
     AllocationChecker(const core::CompilationUnit& unit,
@@ -207,18 +213,14 @@ class AllocationChecker final {
         }
         SeedFields(function, state);
         SeedCaptures(function, state);
-        const auto savedSteps = _steps;
-        _steps = 0;
         for (auto& outcome : Run(function, std::move(state), arguments))
             _nullShapes[{&function, mask}].push_back(std::move(outcome.result));
-        _steps = savedSteps;
     }
+
     void Verify(const core::FunctionDeclaration& function) {
         if (_verified.contains(&function) || _verifying.contains(&function))
             return;
         _verifying.insert(&function);
-        const auto savedSteps = _steps;
-        _steps = 0;
         State state;
         std::vector<Value> arguments;
         for (const auto& parameter : function.Parameters()) {
@@ -239,7 +241,6 @@ class AllocationChecker final {
         auto outcomes = Run(function, std::move(state), arguments);
         for (auto& outcome : outcomes)
             _returnShapes[&function].push_back(std::move(outcome.result));
-        _steps = savedSteps;
         _verifying.erase(&function);
         _verified.insert(&function);
     }
@@ -252,12 +253,14 @@ class AllocationChecker final {
             if (HasContract(*element)) return true;
         return false;
     }
+
     bool HasContracts(const core::FunctionDeclaration& function) const {
         if (HasContract(function.ReturnType())) return true;
         for (const auto& parameter : function.Parameters())
             if (HasContract(parameter->Type())) return true;
         return false;
     }
+
     bool HasResourceCaptures(const core::FunctionDeclaration& function) const {
         for (const ClosureCapture& capture : _model.Captures(function)) {
             const auto mode = capture.syntax->Mode();
@@ -268,11 +271,13 @@ class AllocationChecker final {
         }
         return false;
     }
+
     const FunctionSymbol* Function(
         const core::FunctionDeclaration& function) const {
         return static_cast<const FunctionSymbol*>(
             _model.DeclaredSymbol(function));
     }
+
     bool HasOwningFields(const core::FunctionDeclaration& function) const {
         const auto* symbol = Function(function);
         if (!symbol || !symbol->Owner()) return false;
@@ -282,6 +287,7 @@ class AllocationChecker final {
                 return true;
         return false;
     }
+
     void SeedFields(const core::FunctionDeclaration& function, State& state) {
         if (!HasOwningFields(function) || !Function(function)->HasReceiver())
             return;
@@ -295,6 +301,7 @@ class AllocationChecker final {
                                                field.syntax};
         }
     }
+
     void SeedCaptures(const core::FunctionDeclaration& function, State& state) {
         const bool once = Function(function) && Function(function)->IsOnce();
         for (const ClosureCapture& capture : _model.Captures(function)) {
@@ -312,6 +319,7 @@ class AllocationChecker final {
                                                 capture.syntax};
         }
     }
+
     bool HasLentCapture(const Value& value, Identity identity = nullptr) const {
         if (value.kind == ValueKind::LentCapture &&
             (identity == nullptr || value.identity == identity))
@@ -321,6 +329,7 @@ class AllocationChecker final {
                                return HasLentCapture(child, identity);
                            });
     }
+
     bool ActiveLend(const State& state, Identity identity) const {
         for (const auto& [symbol, value] : state.bindings)
             if (HasLentCapture(value, identity)) return true;
@@ -331,6 +340,7 @@ class AllocationChecker final {
                 if (HasLentCapture(value, identity)) return true;
         return false;
     }
+
     bool Lent(const State& state, const Value& value) const {
         if (value.kind == ValueKind::LentCapture) return true;
         const auto found = state.resources.find(value.identity);
@@ -341,10 +351,12 @@ class AllocationChecker final {
             if (Lent(state, child)) return true;
         return false;
     }
+
     void Invalidate(Value& value, Identity identity) {
         if (value.identity == identity) value.kind = ValueKind::Transferred;
         for (auto& child : value.elements) Invalidate(child, identity);
     }
+
     bool Transfer(State& state, const Value& value, const core::AstNode& at) {
         if (value.kind == ValueKind::Null) return true;
         CheckUse(state, value, at);
@@ -361,6 +373,7 @@ class AllocationChecker final {
                    value.identity);
             return false;
         }
+
         for (const auto& deferred : state.deferred)
             if (RefersTo(deferred.callee, value.identity)) {
                 Report(DiagnosticCode::UnverifiedOwnership, at,
@@ -423,16 +436,19 @@ class AllocationChecker final {
         const auto found = state.values.find(&expression);
         return found == state.values.end() ? Value{} : found->second;
     }
+
     Value Binding(const State& state, const Symbol* symbol) const {
         const auto found = state.bindings.find(symbol);
         return found == state.bindings.end() ? Value{} : found->second;
     }
+
     void Put(State& state, const core::Expression& expression, Value value) {
         if (value.kind == ValueKind::Unknown)
             state.values.erase(&expression);
         else
             state.values[&expression] = std::move(value);
     }
+
     void Bind(State& state, const Symbol* symbol, Value value) {
         if (!symbol) return;
         if (value.kind == ValueKind::Unknown)
@@ -440,6 +456,7 @@ class AllocationChecker final {
         else
             state.bindings[symbol] = std::move(value);
     }
+
     bool Contains(const Value& value, Identity identity) const {
         // An interior address can observe storage but cannot discharge its
         // allocation obligation. Only the original pointer can be returned as
@@ -450,17 +467,20 @@ class AllocationChecker final {
             value.elements.begin(), value.elements.end(),
             [&](const Value& child) { return Contains(child, identity); });
     }
+
     bool RefersTo(const Value& value, Identity identity) const {
         if (value.identity == identity) return true;
         for (const auto& child : value.elements)
             if (RefersTo(child, identity)) return true;
         return false;
     }
+
     bool Tracks(const Value& value) const {
         if (value.identity) return true;
         return std::any_of(value.elements.begin(), value.elements.end(),
                            [&](const Value& child) { return Tracks(child); });
     }
+
     void CheckUse(const State& state, const Value& value,
                   const core::AstNode& at, bool dereference = false) {
         const auto found = state.resources.find(value.identity);
@@ -481,6 +501,7 @@ class AllocationChecker final {
                    "error or pointer first");
         for (const Value& child : value.elements) CheckUse(state, child, at);
     }
+
     void Free(State& state, const Value& value, const core::AstNode& at) {
         if (value.kind == ValueKind::Null) return;
         if (Lent(state, value)) {
@@ -523,6 +544,7 @@ class AllocationChecker final {
         if (value.identity == identity) value.kind = ValueKind::Dangling;
         for (Value& child : value.elements) Retire(child, identity);
     }
+
     bool Allocate(State& state, const core::CallExpression& call) {
         const SemanticType resultType = _model.TypeOf(call);
         if (resultType.Kind() == SemanticTypeKind::Tuple &&
@@ -591,6 +613,7 @@ class AllocationChecker final {
                          static_cast<const core::NameExpression&>(target))
                    : nullptr;
     }
+
     Value Address(const State& state,
                   const core::Expression& expression) const {
         const core::Expression& target = Unwrap(expression);
@@ -626,6 +649,7 @@ class AllocationChecker final {
         }
         return {};
     }
+
     void Assign(State& state, const core::Expression& target, Value value) {
         if (const Symbol* symbol = DirectTarget(target)) {
             Bind(state, symbol, std::move(value));
@@ -717,6 +741,7 @@ class AllocationChecker final {
                 static_cast<const core::MemberCallExpression&>(expression));
         return nullptr;
     }
+
     std::vector<Value> Arguments(const State& state,
                                  const core::Expression& expression) const {
         std::vector<Value> result;
@@ -798,6 +823,7 @@ class AllocationChecker final {
             }
         }
     }
+
     std::vector<Outcome> Invoke(const core::Expression& expression,
                                 const FunctionSymbol* function,
                                 const std::vector<Value>& arguments,
@@ -1051,6 +1077,7 @@ class AllocationChecker final {
             result.elements.push_back(owned(i) ? makeOwned(i) : Value{});
         return result;
     }
+
     void CheckReturn(State& state, const Value& result,
                      const core::TypeNode& type, const core::AstNode& at,
                      bool explicitContract,
@@ -1280,6 +1307,14 @@ class AllocationChecker final {
             case AstNodeKind::AssignmentExpression: {
                 const auto& assignment =
                     static_cast<const core::AssignmentExpression&>(expression);
+                if (assignment.OperatorType() != TokenType::Assign) {
+                    Value current = Get(state, assignment.Target());
+                    CheckUse(state, current, expression);
+                    Value value = Get(state, assignment.Value());
+                    CheckUse(state, value, expression);
+                    Assign(state, assignment.Target(), {});
+                    return {};
+                }
                 Value value = Get(state, assignment.Value());
                 CheckUse(state, value, expression);
                 Assign(state, assignment.Target(), value);
@@ -1325,7 +1360,8 @@ class AllocationChecker final {
                         return Binding(state, operand.address);
                     return {};
                 }
-                if (unary.OperatorType() == TokenType::Increment)
+                if (unary.OperatorType() == TokenType::Increment ||
+                    unary.OperatorType() == TokenType::Decrement)
                     Assign(state, unary.Operand(), {});
                 if (unary.OperatorType() == TokenType::Bang) {
                     if (operand.kind == ValueKind::True)
@@ -1700,12 +1736,6 @@ class AllocationChecker final {
             auto& seen = visited[id];
             if (std::find(seen.begin(), seen.end(), state) != seen.end())
                 continue;
-            if (++_steps > 100000 || seen.size() >= 128) {
-                Report(DiagnosticCode::UnverifiedOwnership, function,
-                       "ownership analysis exceeded its path budget; simplify "
-                       "control flow or split this function");
-                break;
-            }
             seen.push_back(state);
             const FlowNode& node = graph.nodes[id];
             std::vector<State> outputs;
@@ -1837,15 +1867,17 @@ class AllocationChecker final {
                     // need execution at cleanup rather than at registration.
                     if (Tracks(retainedCallee) || owningResult ||
                         Relevant(Callee(call), arguments)) {
-                        if (state.deferred.size() >= 128) {
+                        Deferred registration{
+                            node.scopes.back(), &call, Callee(call),
+                            std::move(retainedCallee), std::move(arguments)};
+                        if (std::find(state.deferred.begin(),
+                                      state.deferred.end(),
+                                      registration) != state.deferred.end()) {
                             Report(DiagnosticCode::UnverifiedOwnership, call,
-                                   "cannot verify an unbounded number of "
-                                   "deferred pointer operations");
-                            continue;
-                        }
-                        state.deferred.push_back(
-                            {node.scopes.back(), &call, Callee(call),
-                             std::move(retainedCallee), std::move(arguments)});
+                                   "a deferred pointer operation is revisited "
+                                   "before leaving its scope");
+                        } else
+                            state.deferred.push_back(std::move(registration));
                     }
                     Drop(state, call);
                     CheckLost(state, *node.memoryDefer);
@@ -2082,7 +2114,6 @@ class AllocationChecker final {
     std::set<const core::FunctionDeclaration*> _resourceFunctions;
     std::vector<const core::FunctionDeclaration*> _active;
     std::set<std::pair<DiagnosticCode, source::SourceLocation>> _reported;
-    std::size_t _steps = 0;
 };
 }  // namespace
 

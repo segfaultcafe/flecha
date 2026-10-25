@@ -170,14 +170,17 @@ the following acceptance matrix:
 | Unsupported elements | Compile-time rejection of unsafe-tear immovable types, borrowed element storage, partial indexed moves, and use after a moved argument or extracted owner. |
 
 The complete Stage 2 array definition of done and test cases live in
-[`collections.md`](collections.md). Deque, stack, queue, heap, map, and set work
-does not begin until this gate passes.
+[`collections.md`](collections.md). Later containers reuse this ownership,
+storage, failure, and lifecycle foundation instead of adding parallel unsafe
+machinery.
 
 The array gate now passes: direct owning strings and slices, outer/inner and
 three-level nested growth, recursive destruction, failure injection, partial
 move diagnostics, and the complete shared/exclusive view matrix are covered by
-native, compile-fail, full-suite, and sanitizer tests. `Deque<T>` is the next
-Stage 2 collection.
+native, compile-fail, full-suite, and sanitizer tests. The `Deque<T>` gate also
+passes with circular move-only storage, bidirectional growth-failure coverage,
+nested ownership, compile-fail diagnostics, and sanitizer fixtures. Stack and
+queue adapters are next.
 
 ### 3. Text, parsing, and encoding
 

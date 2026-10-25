@@ -1534,9 +1534,13 @@ std::unique_ptr<Expression> Parser::ParseExpression() {
 
 std::unique_ptr<Expression> Parser::ParseAssignmentExpression() {
     std::unique_ptr<Expression> target = ParseBinaryExpression(1);
-    if (target == nullptr || !Match(TokenType::Assign)) {
+    if (target == nullptr ||
+        (!Check(TokenType::Assign) && !Check(TokenType::AddAssign) &&
+         !Check(TokenType::SubAssign) && !Check(TokenType::MulAssign) &&
+         !Check(TokenType::DivAssign) && !Check(TokenType::XorAssign))) {
         return target;
     }
+    const TokenType operation = Advance().type;
 
     const source::SourceRange targetRange = target->Range();
     const Expression* place = target.get();
@@ -1563,7 +1567,7 @@ std::unique_ptr<Expression> Parser::ParseAssignmentExpression() {
 
     return std::make_unique<AssignmentExpression>(
         source::SourceRange{targetRange.start, value->Range().end},
-        std::move(target), std::move(value));
+        std::move(target), std::move(value), operation);
 }
 
 int Parser::BinaryPrecedence(TokenType type) const {
@@ -1703,12 +1707,12 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
                 continue;
             }
         }
-        if (Check(TokenType::Increment)) {
+        if (Check(TokenType::Increment) || Check(TokenType::Decrement)) {
             const Token& operation = Advance();
             expression = std::make_unique<UnaryExpression>(
                 source::SourceRange{expression->Range().start,
                                     operation.range.end},
-                TokenType::Increment, std::move(expression));
+                operation.type, std::move(expression));
             continue;
         }
         if (Match(TokenType::As)) {

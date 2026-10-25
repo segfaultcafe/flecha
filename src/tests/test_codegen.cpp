@@ -2505,6 +2505,32 @@ TEST(CodeGeneratorTests, EmitsLoopUpdateTargetsAndSingleEvaluationIncrements) {
     EXPECT_NE(ir.find("increment.old = load i32"), std::string::npos);
 }
 
+TEST(CodeGeneratorTests, EmitsSingleEvaluationCompoundUpdates) {
+    GeneratedSource result = Generate(
+        "usize index() { return 0; } "
+        "i32 f() { a := [16]; old := a[index()]--; a[index()] += 2; "
+        "a[index()] -= 1; a[index()] *= 3; a[index()] /= 2; "
+        "a[index()] ^= 4; return old + a[0]; }");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    std::size_t calls = 0;
+    std::size_t position = 0;
+    while ((position = ir.find("call i64 @index()", position)) !=
+           std::string::npos) {
+        ++calls;
+        ++position;
+    }
+    EXPECT_EQ(calls, 6);
+    EXPECT_NE(ir.find("decrement.old = load i32"), std::string::npos);
+    EXPECT_NE(ir.find("compound.add = add i32"), std::string::npos);
+    EXPECT_NE(ir.find("compound.sub = sub i32"), std::string::npos);
+    EXPECT_NE(ir.find("compound.mul = mul i32"), std::string::npos);
+    EXPECT_NE(ir.find("compound.div = sdiv i32"), std::string::npos);
+    EXPECT_NE(ir.find("compound.xor = xor i32"), std::string::npos);
+}
+
 TEST(CodeGeneratorTests, EmitsSliceDescriptorsChecksAndReborrowedCalls) {
     GeneratedSource result = Generate(
         "usize size([]const u8 s) { return s.len(); }"

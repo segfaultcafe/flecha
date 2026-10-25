@@ -429,6 +429,22 @@ TEST(TokenizerTests, RecognizesLoopKeywordsAndAdjacentIncrement) {
     EXPECT_EQ(tokens[4].range.end.offset - tokens[4].range.start.offset, 2);
 }
 
+TEST(TokenizerTests, RecognizesPostfixAndCompoundUpdateOperators) {
+    const std::vector<Token> tokens =
+        Tokenize("x++ x-- x += 1 x -= 1 x *= 2 x /= 2 x ^= 3");
+    const std::vector<TokenType> expected{
+        TokenType::Identifier,    TokenType::Increment,  TokenType::Identifier,
+        TokenType::Decrement,     TokenType::Identifier, TokenType::AddAssign,
+        TokenType::NumberLiteral, TokenType::Identifier, TokenType::SubAssign,
+        TokenType::NumberLiteral, TokenType::Identifier, TokenType::MulAssign,
+        TokenType::NumberLiteral, TokenType::Identifier, TokenType::DivAssign,
+        TokenType::NumberLiteral, TokenType::Identifier, TokenType::XorAssign,
+        TokenType::NumberLiteral, TokenType::EOF_TOKEN};
+    ASSERT_EQ(tokens.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        EXPECT_EQ(tokens[index].type, expected[index]);
+}
+
 TEST(TokenizerTests, RecognizesOwnershipContractsAsKeywords) {
     const auto tokens = Tokenize("copy own lend copier owner lender");
     ASSERT_EQ(tokens.size(), 7);

@@ -74,19 +74,31 @@ An inclusive comparison such as `x <= 10` remains useful for numeric counters.
 The new loop forms do not have trailing `also` clauses; existing `while`/`also`
 syntax is unchanged.
 
-## Postfix increment
+## Postfix and compound updates
 
-`place++` requires an initialized, writable integer location. It evaluates the
-location once, adds one, stores the result, and yields the previous value.
+`place++` and `place--` require an initialized, writable integer location. They
+evaluate the location once, update it by one, and yield the previous value.
 Variables, array elements, and dereferenced references/pointers are supported.
-Const, borrow, bounds, and unsafe-context checks apply. Raw-pointer arithmetic,
-prefix `++`, and decrement are not included. Integer overflow wraps at the
-integer width, matching the current integer addition implementation.
+Const, borrow, bounds, and unsafe-context checks apply. Raw-pointer arithmetic
+and prefix `++`/`--` are not included. Integer overflow wraps at the integer
+width, matching ordinary integer addition and subtraction.
 
 ```flecha
 old := values[next_index()]++; // one index call; checked before load/store
+previous := values[next_index()]--;
 (*reference)++;
 unsafe { (*pointer)++; }
+```
+
+Compound assignments `+=`, `-=`, `*=`, and `/=` accept matching numeric
+operands. `^=` accepts matching integer or Boolean operands. Each operator
+evaluates its target location once, stores the updated value, and yields that
+new value.
+
+```flecha
+values[next_index()] += 2; // one index call
+total *= scale;
+flags ^= mask;
 ```
 
 ## Compiler representation and coverage
@@ -101,5 +113,6 @@ ordinary static checks. Lowered element accesses still use runtime bounds checks
 
 The shared control-flow graph routes `proceed` through the update and keeps
 iteration locals in their own scope. Native tests cover one-time evaluation,
-snapshot copies, empty/nested ranges, narrow indices, increment target evaluation,
-nested loop control, returns/jumps, and owning-string cleanup on each exit.
+snapshot copies, empty/nested ranges, narrow indices, update-target evaluation,
+compound arithmetic, nested loop control, returns/jumps, and owning-string
+cleanup on each exit.

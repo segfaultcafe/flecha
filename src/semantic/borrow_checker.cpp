@@ -321,7 +321,8 @@ class BorrowChecker final {
             case Kind::AssignmentExpression: {
                 const auto& assignment =
                     static_cast<const core::AssignmentExpression&>(expression);
-                if (Named(assignment.Target()) == nullptr)
+                if (assignment.OperatorType() != TokenType::Assign ||
+                    Named(assignment.Target()) == nullptr)
                     CollectUses(assignment.Target(), uses);
                 CollectUses(assignment.Value(), uses);
                 break;
@@ -1078,7 +1079,8 @@ class BorrowChecker final {
             case Kind::UnaryExpression: {
                 const auto& unary =
                     static_cast<const core::UnaryExpression&>(expression);
-                if (unary.OperatorType() == TokenType::Increment) {
+                if (unary.OperatorType() == TokenType::Increment ||
+                    unary.OperatorType() == TokenType::Decrement) {
                     CheckAccess(Place(unary.Operand()), true,
                                 expression.Range());
                     return {};

@@ -696,6 +696,31 @@ TEST(ParserAssignmentTests, AssignmentsAssociateRight) {
     EXPECT_EQ(outer.Value().Kind(), AstNodeKind::AssignmentExpression);
 }
 
+TEST(ParserAssignmentTests, ParsesCompoundAssignmentsAndPostfixDecrement) {
+    for (const auto& [text, operation] :
+         std::vector<std::pair<std::string, TokenType>>{
+             {"+=", TokenType::AddAssign},
+             {"-=", TokenType::SubAssign},
+             {"*=", TokenType::MulAssign},
+             {"/=", TokenType::DivAssign},
+             {"^=", TokenType::XorAssign}}) {
+        DiagnosticBag diagnostics;
+        auto unit = ParseSource("i32 check() { return value " + text + " 2; }",
+                                diagnostics);
+        ASSERT_FALSE(diagnostics.HasErrors()) << text;
+        const auto& assignment =
+            static_cast<const AssignmentExpression&>(ReturnedExpression(*unit));
+        EXPECT_EQ(assignment.OperatorType(), operation) << text;
+    }
+
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource("i32 check() { return value--; }", diagnostics);
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& decrement =
+        static_cast<const UnaryExpression&>(ReturnedExpression(*unit));
+    EXPECT_EQ(decrement.OperatorType(), TokenType::Decrement);
+}
+
 TEST(ParserAssignmentTests, ReportsInvalidAssignmentTarget) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =

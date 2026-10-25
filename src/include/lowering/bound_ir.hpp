@@ -568,28 +568,34 @@ class BoundFloatingConstantExpression final : public BoundExpression {
 class BoundIncrementExpression final : public BoundExpression {
    public:
     BoundIncrementExpression(source::SourceRange range,
-                             std::unique_ptr<BoundPlaceExpression> target)
+                             std::unique_ptr<BoundPlaceExpression> target,
+                             TokenType operatorType)
         : BoundExpression(range, target->Type().WithoutConst()),
-          _target(std::move(target)) {}
+          _target(std::move(target)),
+          _operatorType(operatorType) {}
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::IncrementExpression;
     }
     [[nodiscard]] const BoundPlaceExpression& Target() const {
         return *_target;
     }
+    [[nodiscard]] TokenType OperatorType() const { return _operatorType; }
 
    private:
     std::unique_ptr<BoundPlaceExpression> _target;
+    TokenType _operatorType;
 };
 
 class BoundAssignmentExpression final : public BoundExpression {
    public:
     BoundAssignmentExpression(source::SourceRange range,
                               std::unique_ptr<BoundPlaceExpression> target,
-                              std::unique_ptr<BoundExpression> value)
+                              std::unique_ptr<BoundExpression> value,
+                              TokenType operatorType = TokenType::Assign)
         : BoundExpression(range, target->Type()),
           _target(std::move(target)),
-          _value(std::move(value)) {}
+          _value(std::move(value)),
+          _operatorType(operatorType) {}
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::AssignmentExpression;
     }
@@ -597,10 +603,12 @@ class BoundAssignmentExpression final : public BoundExpression {
         return *_target;
     }
     [[nodiscard]] const BoundExpression& Value() const { return *_value; }
+    [[nodiscard]] TokenType OperatorType() const { return _operatorType; }
 
    private:
     std::unique_ptr<BoundPlaceExpression> _target;
     std::unique_ptr<BoundExpression> _value;
+    TokenType _operatorType;
 };
 
 class BoundAllocationExpression final : public BoundExpression {

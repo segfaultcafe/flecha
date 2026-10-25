@@ -12,16 +12,26 @@ std::string OperatorText(TokenType type) {
             return "=";
         case TokenType::Add:
             return "+";
+        case TokenType::AddAssign:
+            return "+=";
         case TokenType::Sub:
             return "-";
+        case TokenType::SubAssign:
+            return "-=";
         case TokenType::Mul:
             return "*";
+        case TokenType::MulAssign:
+            return "*=";
         case TokenType::Div:
             return "/";
+        case TokenType::DivAssign:
+            return "/=";
         case TokenType::Mod:
             return "%";
         case TokenType::Xor:
             return "^";
+        case TokenType::XorAssign:
+            return "^=";
         case TokenType::BitOr:
             return "|";
         case TokenType::BitNot:
@@ -420,13 +430,16 @@ class Dumper final {
                     _stream << "]";
                 }
             } break;
-            case BoundNodeKind::IncrementExpression:
-                _stream << "(post-increment ";
-                WriteExpression(
-                    static_cast<const BoundIncrementExpression&>(expression)
-                        .Target());
+            case BoundNodeKind::IncrementExpression: {
+                const auto& update =
+                    static_cast<const BoundIncrementExpression&>(expression);
+                _stream << (update.OperatorType() == TokenType::Increment
+                                ? "(post-increment "
+                                : "(post-decrement ");
+                WriteExpression(update.Target());
                 _stream << ")";
                 break;
+            }
             case BoundNodeKind::UnaryExpression: {
                 const BoundUnaryExpression& unary =
                     static_cast<const BoundUnaryExpression&>(expression);
@@ -495,7 +508,11 @@ class Dumper final {
             case BoundNodeKind::AssignmentExpression: {
                 const BoundAssignmentExpression& assignment =
                     static_cast<const BoundAssignmentExpression&>(expression);
-                _stream << "(store ";
+                if (assignment.OperatorType() == TokenType::Assign)
+                    _stream << "(store ";
+                else
+                    _stream << "(" << OperatorText(assignment.OperatorType())
+                            << "-store ";
                 if (assignment.Target().Kind() ==
                     BoundNodeKind::VariableExpression) {
                     _stream << static_cast<const BoundVariableExpression&>(
