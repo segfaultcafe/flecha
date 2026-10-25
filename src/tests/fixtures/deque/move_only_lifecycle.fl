@@ -1,0 +1,142 @@
+module move_only_lifecycle;
+
+@imports :: lib::std::containers::deque;
+
+structure Owner {
+    *i32 cleanupCount;
+    *i32 cleanupLog;
+    i32 id;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.cleanupLog = null;
+        self.id = 0;
+    };
+}
+
+Owner Owner::init(
+    *i32 cleanupCount,
+    *i32 cleanupLog,
+    i32 id,
+) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.cleanupLog = cleanupLog;
+        self.id = id;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount += 1;
+            *self->cleanupLog = *self->cleanupLog * 10 + self->id;
+        }
+    }
+}
+
+unsafe i32 earlyReturn(*i32 cleanupCount, *i32 cleanupLog) {
+    values := deque::Deque<Owner>::init();
+
+    if values.pushBack(Owner::init(cleanupCount, cleanupLog, 6)) != none or
+        values.pushFront(Owner::init(cleanupCount, cleanupLog, 7)) != none {
+        return 1;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
+
+    unsafe {
+        values := deque::Deque<Owner>::init();
+
+        if values.reserve(4) != none {
+            return 1;
+        }
+
+        loop i32 id = 1; id <= 4; id++ {
+            if values.pushBack(Owner::init(
+                &raw cleanupCount,
+                &raw cleanupLog,
+                id
+            )) != none {
+                return 2;
+            }
+        }
+
+        _, _ = values.popFront();
+        _, _ = values.popFront();
+
+        cleanupCount = 0;
+        cleanupLog = 0;
+
+        loop i32 id = 5; id <= 6; id++ {
+            if values.pushBack(Owner::init(
+                &raw cleanupCount,
+                &raw cleanupLog,
+                id
+            )) != none {
+                return 3;
+            }
+        }
+
+        if values.pushBack(Owner::init(
+            &raw cleanupCount,
+            &raw cleanupLog,
+            7
+        )) != none {
+            return 4;
+        }
+
+        if cleanupCount != 0 or cleanupLog != 0 or values.len() != 5 or
+            values.capacity() != 8 {
+            return 5;
+        }
+
+        values.clear();
+
+        if cleanupCount != 5 or cleanupLog != 76543 or !values.empty() or
+            values.capacity() != 8 {
+            return 6;
+        }
+
+        cleanupCount = 0;
+        cleanupLog = 0;
+
+        if values.pushFront(Owner::init(
+            &raw cleanupCount,
+            &raw cleanupLog,
+            8
+        )) != none or values.pushBack(Owner::init(
+            &raw cleanupCount,
+            &raw cleanupLog,
+            9
+        )) != none {
+            return 7;
+        }
+    }
+
+    if cleanupCount != 2 or cleanupLog != 98 {
+        return 8;
+    }
+
+    cleanupCount = 0;
+    cleanupLog = 0;
+
+    i32 result = 0;
+
+    unsafe {
+        result = earlyReturn(&raw cleanupCount, &raw cleanupLog);
+    }
+
+    if result != 42 or cleanupCount != 2 or cleanupLog != 67 {
+        return 9;
+    }
+
+    return 42;
+}

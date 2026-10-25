@@ -1,7 +1,7 @@
-module raw_storage_test;
+module storage_test;
 
 @imports
-    :: root::memory::raw_storage
+    :: root::memory::storage
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
@@ -43,7 +43,7 @@ void Owner::tear(&self) override {
 test manages_explicitly_live_slots(&testing::UnitTest t) {
     unsafe {
         empty, emptyError :=
-            raw_storage::RawStorage<i32>::withCapacity(0);
+            storage::RawStorage<i32>::withCapacity(0);
 
         asserts::is_true(
             t,
@@ -52,7 +52,7 @@ test manages_explicitly_live_slots(&testing::UnitTest t) {
         );
 
         storage, allocationError :=
-            raw_storage::RawStorage<i32>::withCapacity(4);
+            storage::RawStorage<i32>::withCapacity(4);
 
         asserts::is_true(
             t,
@@ -95,7 +95,7 @@ test manages_explicitly_live_slots(&testing::UnitTest t) {
         storage.initialize(1, extracted);
 
         replacement, replacementError :=
-            raw_storage::RawStorage<i32>::withCapacity(8);
+            storage::RawStorage<i32>::withCapacity(8);
 
         asserts::is_true(
             t,
@@ -128,9 +128,9 @@ test relocates_move_only_values_without_copying(&testing::UnitTest t) {
 
     unsafe {
         storage, allocationError :=
-            raw_storage::RawStorage<Owner>::withCapacity(3);
+            storage::RawStorage<Owner>::withCapacity(3);
         replacement, replacementError :=
-            raw_storage::RawStorage<Owner>::withCapacity(2);
+            storage::RawStorage<Owner>::withCapacity(2);
 
         asserts::is_true(
             t,

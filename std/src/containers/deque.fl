@@ -2,11 +2,11 @@ module deque;
 
 @imports
     :: root::containers::errors
-    :: root::memory::raw_storage;
+    :: root::memory::storage;
 
 // Owns a growable double-ended sequence backed by circular raw storage.
 export structure Deque<T> {
-    private raw_storage::RawStorage<T> storage;
+    private storage::RawStorage<T> storage;
     private usize head;
     private usize length;
 };
@@ -39,7 +39,7 @@ error Deque<T>::reserve(&self, usize capacity) {
 
     unsafe {
         replacement, allocationError :=
-            raw_storage::RawStorage<T>::withCapacity(capacity);
+            storage::RawStorage<T>::withCapacity(capacity);
 
         if allocationError != none {
             return allocationError;
@@ -153,6 +153,60 @@ error Deque<T>::pushFront(&self, T value) {
 
         return (self->storage.extract(SOURCE), none);
     }
+}
+
+// Removes all logical elements while retaining the allocation.
+void Deque<T>::clear(&self) {
+    unsafe {
+        usize remaining = self->length;
+
+        while remaining > 0 {
+            remaining--;
+            self->storage.destroy(self->physicalIndex(remaining));
+        }
+    }
+
+    self->head = 0;
+    self->length = 0;
+}
+
+// Copies the first element or reports DequeError.Empty.
+(T, error) Deque<T>::front(&const self) {
+    if self->empty() {
+        return (none, errors::DequeError.Empty);
+    }
+
+    unsafe {
+        return (self->storage.get(self->head), none);
+    }
+}
+
+// Copies the final element or reports DequeError.Empty.
+(T, error) Deque<T>::back(&const self) {
+    if self->empty() {
+        return (none, errors::DequeError.Empty);
+    }
+
+    unsafe {
+        const usize LAST = self->physicalIndex(self->length - 1);
+        return (self->storage.get(LAST), none);
+    }
+}
+
+// Replaces the indexed element or reports DequeError.IndexOutOfBounds.
+error Deque<T>::set(&self, usize index, T value) {
+    if index >= self->length {
+        return errors::DequeError.IndexOutOfBounds;
+    }
+
+    unsafe {
+        const usize SLOT = self->physicalIndex(index);
+
+        self->storage.destroy(SLOT);
+        self->storage.initialize(SLOT, value);
+    }
+
+    return none;
 }
 
 usize Deque<T>::len(&const self) {

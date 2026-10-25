@@ -1,4 +1,4 @@
-module raw_storage;
+module storage;
 
 // Owns typed uninitialized storage without tracking which slots contain live
 // values. The caller must destroy or extract every live element before this

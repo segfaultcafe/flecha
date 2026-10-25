@@ -1,0 +1,113 @@
+module nested_ownership;
+
+@imports :: lib::std::containers::deque;
+
+i32 checkTwoLevels() {
+    outer := deque::Deque<deque::Deque<i32>>::init();
+
+    loop i32 row = 0; row < 5; row++ {
+        inner := deque::Deque<i32>::init();
+
+        loop i32 column = 0; column < 5; column++ {
+            if inner.pushBack(row * 10 + column) != none {
+                return 1;
+            }
+        }
+
+        if inner.capacity() != 8 or outer.pushBack(inner) != none {
+            return 2;
+        }
+    }
+
+    if outer.len() != 5 or outer.capacity() != 8 {
+        return 3;
+    }
+
+    loop i32 row = 0; row < 5; row++ {
+        inner, popError := outer.popFront();
+
+        if popError != none or inner.len() != 5 or inner.capacity() != 8 {
+            return 4;
+        }
+
+        first, firstError := inner.front();
+        last, lastError := inner.back();
+
+        if firstError != none or lastError != none or first != row * 10 or
+            last != row * 10 + 4 {
+            return 5;
+        }
+    }
+
+    if !outer.empty() or outer.capacity() != 8 {
+        return 6;
+    }
+
+    return 42;
+}
+
+i32 checkThreeLevels() {
+    outer := deque::Deque<deque::Deque<deque::Deque<i32>>>::init();
+
+    loop i32 group = 0; group < 5; group++ {
+        middle := deque::Deque<deque::Deque<i32>>::init();
+
+        loop i32 row = 0; row < 5; row++ {
+            inner := deque::Deque<i32>::init();
+
+            loop i32 column = 0; column < 5; column++ {
+                if inner.pushBack(group * 100 + row * 10 + column) != none {
+                    return 7;
+                }
+            }
+
+            if middle.pushBack(inner) != none {
+                return 8;
+            }
+        }
+
+        if middle.capacity() != 8 or outer.pushBack(middle) != none {
+            return 9;
+        }
+    }
+
+    if outer.len() != 5 or outer.capacity() != 8 {
+        return 10;
+    }
+
+    middle, outerPopError := outer.popBack();
+
+    if outerPopError != none {
+        return 11;
+    }
+
+    inner, middlePopError := middle.popBack();
+
+    if middlePopError != none {
+        return 11;
+    }
+
+    value, innerPopError := inner.popBack();
+
+    if innerPopError != none or value != 444 {
+        return 11;
+    }
+
+    outer.clear();
+
+    if !outer.empty() or outer.capacity() != 8 {
+        return 12;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    result := checkTwoLevels();
+
+    if result != 42 {
+        return result;
+    }
+
+    return checkThreeLevels();
+}

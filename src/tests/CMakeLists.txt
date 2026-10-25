@@ -553,6 +553,44 @@ foreach(case IN ITEMS
             -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
 endforeach()
 
+# Deque hardening uses the allocation-auditing collection harness. Failure
+# cases inject at the initial allocation and at the first growth allocation;
+# the remaining cases run under the configured sanitizers without injection.
+foreach(case IN ITEMS
+        move_only_initial_failure
+        move_only_growth_failure
+        move_only_front_growth_failure
+        move_only_lifecycle
+        owning_elements
+        nested_ownership)
+    set(deque_fail_call 0)
+    if(case STREQUAL "move_only_initial_failure")
+        set(deque_fail_call 1)
+    elseif(case STREQUAL "move_only_growth_failure" OR
+           case STREQUAL "move_only_front_growth_failure")
+        set(deque_fail_call 2)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeDeque.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/deque/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_deque_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${deque_fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+add_test(NAME CompilerDiagnostics.SafeDeque
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_deque_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_deque_diagnostics.cmake)
+
 add_test(NAME CompilerDiagnostics.SafeArray
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
