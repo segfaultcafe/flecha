@@ -224,5 +224,5 @@ multiple shared views coexist and owner access resumes after the final view
 use, including for nested inner views.
 
 The complete Stage 2 contract and acceptance matrix are specified in
-[`collections.md`](collections.md). The `Array<T>` and `Deque<T>` gates are
-complete; stack and queue adapters are the next collection layer.
+[`collections.md`](collections.md). The `Array<T>`, `Deque<T>`, `Stack<T>`, and
+`Queue<T>` gates are complete; binary heap is the next collection layer.

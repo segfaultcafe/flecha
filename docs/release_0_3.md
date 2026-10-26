@@ -183,8 +183,10 @@ three-level nested growth, recursive destruction, failure injection, partial
 move diagnostics, and the complete shared/exclusive view matrix are covered by
 native, compile-fail, full-suite, and sanitizer tests. The `Deque<T>` gate also
 passes with circular move-only storage, bidirectional growth-failure coverage,
-nested ownership, compile-fail diagnostics, and sanitizer fixtures. Stack and
-queue adapters are next.
+nested ownership, compile-fail diagnostics, and sanitizer fixtures. The
+`Stack<T>` and `Queue<T>` adapter gates now pass the same allocation-failure,
+move-only lifecycle, nested ownership, diagnostics, and sanitizer requirements.
+Binary heap is the next collection layer.
 
 ### 3. Text, parsing, and encoding
 
