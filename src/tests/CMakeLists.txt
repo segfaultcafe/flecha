@@ -624,6 +624,10 @@ foreach(case IN ITEMS
 endforeach()
 
 function(add_hash_map_case name source fail_call)
+    set(compile_timeout 30)
+    if(name STREQUAL "nested_ownership")
+        set(compile_timeout 90)
+    endif()
     add_test(NAME StandardLibraryTests.SafeHashMap.${name}
         COMMAND ${CMAKE_COMMAND}
             -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
@@ -635,6 +639,7 @@ function(add_hash_map_case name source fail_call)
             -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
             -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
             -DFLECHA_ARRAY_FAIL_CALL=${fail_call}
+            -DFLECHA_COMPILE_TIMEOUT=${compile_timeout}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
 endfunction()
 
