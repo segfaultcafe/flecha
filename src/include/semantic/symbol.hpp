@@ -88,7 +88,7 @@ class FunctionSymbol final : public Symbol {
                    bool isPrivate = false, bool hasReceiver = false,
                    bool isExtern = false, std::string linkName = {},
                    const EnumType* enumOwner = nullptr,
-                   std::optional<std::size_t> borrowSourceIndex = std::nullopt,
+                   std::vector<std::size_t> borrowSourceIndices = {},
                    std::vector<core::OwnershipContract> parameterContracts = {})
         : FunctionSymbol(std::move(name),
                          std::make_shared<const CallableSignature>(
@@ -96,7 +96,7 @@ class FunctionSymbol final : public Symbol {
                                                std::move(parameterTypes),
                                                std::move(parameterContracts),
                                                {},
-                                               borrowSourceIndex,
+                                               std::move(borrowSourceIndices),
                                                isUnsafe}),
                          declarationRange, builtIn, owner, isPrivate,
                          hasReceiver, isExtern, std::move(linkName),
@@ -137,8 +137,8 @@ class FunctionSymbol final : public Symbol {
     bool HasReceiver() const { return _hasReceiver; }
     bool IsExtern() const { return _isExtern; }
     const std::string& LinkName() const { return _linkName; }
-    [[nodiscard]] std::optional<std::size_t> BorrowSourceIndex() const {
-        return _signature->borrowSourceIndex;
+    [[nodiscard]] const std::vector<std::size_t>& BorrowSourceIndices() const {
+        return _signature->borrowSourceIndices;
     }
     [[nodiscard]] core::OwnershipContract ParameterContract(
         std::size_t index) const {

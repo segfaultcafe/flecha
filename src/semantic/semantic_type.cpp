@@ -166,7 +166,7 @@ bool CallableSignature::operator==(const CallableSignature& other) const {
     return result == other.result && parameters == other.parameters &&
            parameterContracts == other.parameterContracts &&
            resultContracts == other.resultContracts &&
-           borrowSourceIndex == other.borrowSourceIndex &&
+           borrowSourceIndices == other.borrowSourceIndices &&
            isUnsafe == other.isUnsafe && isOnce == other.isOnce;
 }
 

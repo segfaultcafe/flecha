@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -923,37 +924,54 @@ void SemanticAnalyzer::ResolveCallableTypes(const core::CompilationUnit& unit) {
 
         const bool requiresBorrowSource =
             RequiresBorrowSource(signature.result);
-        if (requiresBorrowSource && !syntax.HasBorrowSource())
+        if (requiresBorrowSource && !syntax.HasBorrowSources())
             Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                    syntax.Range(),
                    "reference and slice callable results require a '<- "
-                   "parameter>' borrow contract");
-        else if (!CanCarryBorrow(signature.result) && syntax.HasBorrowSource())
+                   "source>' borrow contract");
+        else if (!CanCarryBorrow(signature.result) && syntax.HasBorrowSources())
             Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
-                   syntax.BorrowSourceRange(),
+                   syntax.BorrowSourceRanges().front(),
                    "a borrow contract requires a result that can carry a "
                    "borrow");
-        else if (syntax.HasBorrowSource()) {
-            for (std::size_t index = 0; index < syntax.Parameters().size();
-                 ++index)
-                if (syntax.Parameters()[index]->Name() ==
-                    syntax.BorrowSource()) {
-                    signature.borrowSourceIndex = index;
-                    break;
+        else if (syntax.HasBorrowSources()) {
+            std::set<std::size_t> seen;
+            for (std::size_t sourceIndex = 0;
+                 sourceIndex < syntax.BorrowSources().size(); ++sourceIndex) {
+                std::optional<std::size_t> parameterIndex;
+                for (std::size_t index = 0; index < syntax.Parameters().size();
+                     ++index) {
+                    if (syntax.Parameters()[index]->Name() ==
+                        syntax.BorrowSources()[sourceIndex]) {
+                        parameterIndex = index;
+                        break;
+                    }
                 }
-            if (!signature.borrowSourceIndex.has_value())
-                Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
-                       syntax.BorrowSourceRange(),
-                       "borrow source '" + syntax.BorrowSource() +
-                           "' is not a named callable parameter");
-            else if (!CanCarryBorrow(
-                         signature.parameters[*signature.borrowSourceIndex])) {
-                Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
-                       syntax.BorrowSourceRange(),
-                       "a callable borrow source must be a parameter that can "
-                       "carry a borrow");
-                signature.borrowSourceIndex.reset();
+
+                const auto range = syntax.BorrowSourceRanges()[sourceIndex];
+                if (!parameterIndex.has_value()) {
+                    Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                           range,
+                           "borrow source '" +
+                               syntax.BorrowSources()[sourceIndex] +
+                               "' is not a named callable parameter");
+                } else if (!seen.insert(*parameterIndex).second) {
+                    Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                           range,
+                           "duplicate borrow source '" +
+                               syntax.BorrowSources()[sourceIndex] + "'");
+                } else if (!CanCarryBorrow(
+                               signature.parameters[*parameterIndex])) {
+                    Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                           range,
+                           "a callable borrow source must be a parameter that "
+                           "can carry a borrow");
+                } else {
+                    signature.borrowSourceIndices.push_back(*parameterIndex);
+                }
             }
+            std::sort(signature.borrowSourceIndices.begin(),
+                      signature.borrowSourceIndices.end());
         }
         *_callableSignatures.at(&syntax) = std::move(signature);
     }
@@ -1635,7 +1653,7 @@ void SemanticAnalyzer::RegisterFunction(
                    "exactly one mutable '&testing::UnitTest' parameter");
     }
     const bool requiresBorrowSource = RequiresBorrowSource(returnType);
-    std::optional<std::size_t> borrowSourceIndex;
+    std::vector<std::size_t> borrowSourceIndices;
     if (returnType.Kind() == SemanticTypeKind::Tuple &&
         std::any_of(returnType.Elements().begin(), returnType.Elements().end(),
                     [](SemanticType element) {
@@ -1645,36 +1663,50 @@ void SemanticAnalyzer::RegisterFunction(
         Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                function.ReturnType().Range(),
                "borrowed multi-results must use a flat tuple");
-    if (requiresBorrowSource && !function.HasBorrowSource()) {
+    if (requiresBorrowSource && !function.HasBorrowSources()) {
         Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
                function.ReturnType().Range(),
-               "reference and slice results require a '<- parameter>' "
+               "reference and slice results require a '<- source>' "
                "borrow contract");
-    } else if (!CanCarryBorrow(returnType) && function.HasBorrowSource()) {
+    } else if (!CanCarryBorrow(returnType) && function.HasBorrowSources()) {
         Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
-               function.BorrowSourceRange(),
+               function.BorrowSourceRanges().front(),
                "a borrow contract requires a result that can carry a borrow");
-    } else if (function.HasBorrowSource()) {
-        for (std::size_t index = 0; index < function.Parameters().size();
-             ++index) {
-            if (function.Parameters()[index]->Name() ==
-                function.BorrowSource()) {
-                borrowSourceIndex = index;
-                break;
+    } else if (function.HasBorrowSources()) {
+        std::set<std::size_t> seen;
+        for (std::size_t sourceIndex = 0;
+             sourceIndex < function.BorrowSources().size(); ++sourceIndex) {
+            std::optional<std::size_t> parameterIndex;
+            for (std::size_t index = 0; index < function.Parameters().size();
+                 ++index) {
+                if (function.Parameters()[index]->Name() ==
+                    function.BorrowSources()[sourceIndex]) {
+                    parameterIndex = index;
+                    break;
+                }
+            }
+
+            const auto range = function.BorrowSourceRanges()[sourceIndex];
+            if (!parameterIndex.has_value()) {
+                Report(
+                    diagnostics::DiagnosticCode::InvalidBorrowContract, range,
+                    "borrow source '" + function.BorrowSources()[sourceIndex] +
+                        "' is not a parameter");
+            } else if (!seen.insert(*parameterIndex).second) {
+                Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                       range,
+                       "duplicate borrow source '" +
+                           function.BorrowSources()[sourceIndex] + "'");
+            } else if (!CanCarryBorrow(parameterTypes[*parameterIndex])) {
+                Report(
+                    diagnostics::DiagnosticCode::InvalidBorrowContract, range,
+                    "borrow source '" + function.BorrowSources()[sourceIndex] +
+                        "' must be a parameter that can carry a borrow");
+            } else {
+                borrowSourceIndices.push_back(*parameterIndex);
             }
         }
-        if (!borrowSourceIndex.has_value()) {
-            Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
-                   function.BorrowSourceRange(),
-                   "borrow source '" + function.BorrowSource() +
-                       "' is not a parameter");
-        } else if (!CanCarryBorrow(parameterTypes[*borrowSourceIndex])) {
-            Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
-                   function.BorrowSourceRange(),
-                   "borrow source '" + function.BorrowSource() +
-                       "' must be a parameter that can carry a borrow");
-            borrowSourceIndex.reset();
-        }
+        std::sort(borrowSourceIndices.begin(), borrowSourceIndices.end());
     }
     if (function.IsExtern()) {
         if (!function.Owner().empty() ||
@@ -1795,7 +1827,7 @@ void SemanticAnalyzer::RegisterFunction(
     auto signature = std::make_shared<const CallableSignature>(
         CallableSignature{returnType, parameterTypes, parameterContracts,
                           ResultContracts(function.ReturnType()),
-                          borrowSourceIndex, function.IsUnsafe(),
+                          borrowSourceIndices, function.IsUnsafe(),
                           function.HasModifier(core::FunctionModifier::Once)});
     const auto* symbol = static_cast<const FunctionSymbol*>(
         AddSymbol(std::make_unique<FunctionSymbol>(
@@ -2477,7 +2509,7 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
             } else if (returnStatement.Value() != nullptr &&
                        expected.Kind() == SemanticTypeKind::StringView &&
                        (_currentFunction == nullptr ||
-                        !_currentFunction->BorrowSourceIndex().has_value()) &&
+                        _currentFunction->BorrowSourceIndices().empty()) &&
                        BorrowsLocalString(*returnStatement.Value())) {
                 Report(diagnostics::DiagnosticCode::BorrowEscapesOwner,
                        returnStatement.Value()->Range(),
@@ -2929,12 +2961,15 @@ SemanticType SemanticAnalyzer::AnalyzeAnonymousFunction(
         }
         if (signature.isUnsafe)
             function.AddModifier(core::FunctionModifier::Unsafe);
-        if (signature.borrowSourceIndex.has_value()) {
-            const std::size_t source = *signature.borrowSourceIndex;
-            if (source < function.Parameters().size())
-                function.SetBorrowSource(
-                    function.Parameters()[source]->Name(),
-                    function.Parameters()[source]->NameRange());
+        if (!signature.borrowSourceIndices.empty()) {
+            std::vector<std::string> sources;
+            std::vector<source::SourceRange> ranges;
+            for (const std::size_t source : signature.borrowSourceIndices) {
+                if (source >= function.Parameters().size()) continue;
+                sources.push_back(function.Parameters()[source]->Name());
+                ranges.push_back(function.Parameters()[source]->NameRange());
+            }
+            function.SetBorrowSources(std::move(sources), std::move(ranges));
         }
     }
 

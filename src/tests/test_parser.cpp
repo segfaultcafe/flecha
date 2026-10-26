@@ -459,10 +459,56 @@ TEST(ParserTests, ParsesBorrowResultSourceAfterParameters) {
     ASSERT_EQ(unit->Declarations().size(), 1);
     const auto& function =
         static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
-    EXPECT_TRUE(function.HasBorrowSource());
-    EXPECT_EQ(function.BorrowSource(), "value");
-    EXPECT_EQ(function.BorrowSourceRange().start.offset, 41);
-    EXPECT_EQ(function.BorrowSourceRange().end.offset, 46);
+    EXPECT_TRUE(function.HasBorrowSources());
+    ASSERT_EQ(function.BorrowSources().size(), 1);
+    ASSERT_EQ(function.BorrowSourceRanges().size(), 1);
+    EXPECT_EQ(function.BorrowSources()[0], "value");
+    EXPECT_EQ(function.BorrowSourceRanges()[0].start.offset, 41);
+    EXPECT_EQ(function.BorrowSourceRanges()[0].end.offset, 46);
+}
+
+TEST(ParserTests, ParsesGroupedBorrowResultSources) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "&const i32 choose(&const i32 left, &const i32 right) "
+        "<- (left, right) { return left; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(function.BorrowSources().size(), 2);
+    EXPECT_EQ(function.BorrowSources()[0], "left");
+    EXPECT_EQ(function.BorrowSources()[1], "right");
+}
+
+TEST(ParserTests, ExpandsAllArgumentBorrowResultSources) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "&const i32 choose(&const i32 args, &const i32 other) "
+        "<- ...args { return args; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(function.BorrowSources().size(), 2);
+    EXPECT_EQ(function.BorrowSources()[0], "args");
+    EXPECT_EQ(function.BorrowSources()[1], "other");
+}
+
+TEST(ParserTests, RequiresArgsAfterBorrowSourceEllipsis) {
+    DiagnosticBag diagnostics;
+    (void)ParseSource(
+        "&const i32 invalid(&const i32 value) <- ...values { return value; }",
+        diagnostics);
+
+    EXPECT_TRUE(diagnostics.HasErrors());
+    ASSERT_FALSE(diagnostics.Diagnostics().empty());
+    EXPECT_EQ(diagnostics.Diagnostics().front().code,
+              DiagnosticCode::UnexpectedToken);
 }
 
 TEST(ParserTests, RequiresBorrowSourceAfterLeftArrow) {

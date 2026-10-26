@@ -89,7 +89,7 @@ Statements are terminated with semicolons. Blocks are enclosed in braces.
 Flecha function declarations place modifiers first, followed by the return type, function name, parameters, and body:
 
 ```text
-[modifiers] ReturnType functionName(parameters) [<- borrowSource] {
+[modifiers] ReturnType functionName(parameters) [<- borrowSources] {
     body
 }
 ```
@@ -113,7 +113,24 @@ unsafe void write_value(lend *u32 address, u32 value) {
 &const i32 view(&const i32 value) <- value {
     return value;
 }
+
+&const i32 choose(
+    bool first,
+    &const i32 left,
+    &const i32 right,
+) <- (left, right) {
+    if first {
+        return left;
+    }
+
+    return right;
+}
 ```
+
+A borrow-source contract may name one parameter, group an explicit source list
+as `<- (left, right)`, or select every named parameter with `<- ...args`.
+`args` is not a keyword; it is recognized specially only in that complete
+shorthand.
 
 Tentative function modifiers include:
 

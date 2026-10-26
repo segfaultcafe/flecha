@@ -395,6 +395,30 @@ TEST(SemanticCallableTests,
     ASSERT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticCallableTests, MultiSourceContractsAreOrderIndependent) {
+    Analysis result = Analyze(R"(
+        func Forward(&const i32 left, &const i32 right) => (&const i32)
+            <- (left, right);
+        func Reverse(&const i32 left, &const i32 right) => (&const i32)
+            <- (right, left);
+        func All(&const i32 left, &const i32 right) => (&const i32)
+            <- ...args;
+        &const i32 choose(&const i32 left, &const i32 right)
+            <- (left, right) {
+            return left;
+        }
+        void use() {
+            Forward forward = choose;
+            Reverse reverse = choose;
+            All all = choose;
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
 TEST(SemanticCallableTests,
      AllowsCheckedReferencesToRawOwningStructuresInSafeCallables) {
     Analysis result = Analyze(R"(
@@ -2938,6 +2962,42 @@ TEST(SemanticReferenceTests, ValidatesBorrowedResultContracts) {
     ASSERT_NE(diagnostic, nullptr);
     EXPECT_EQ(diagnostic->range.start.offset, unknown.find("missing"));
     EXPECT_EQ(diagnostic->range.Length(), std::string("missing").size());
+}
+
+TEST(SemanticReferenceTests, SupportsMultipleBorrowResultSources) {
+    const std::string grouped =
+        "&const i32 choose(bool first, &const i32 left, &const i32 right) "
+        "<- (left, right) { if first { return left; } return right; } ";
+    EXPECT_FALSE(Analyze(grouped).diagnostics.HasErrors());
+
+    const std::string all =
+        "&const i32 choose_all(&const i32 args, &const i32 other) "
+        "<- ...args { return args; } ";
+    EXPECT_FALSE(Analyze(all).diagnostics.HasErrors());
+
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(all + "i32 conflict() { i32 left = 1; i32 right = 2; "
+                          "result := choose_all(&left, &right); right = 3; "
+                          "return *result; }"),
+            DiagnosticCode::BorrowConflict),
+        nullptr);
+
+    EXPECT_FALSE(
+        Analyze("&const i32 identity(&const i32 args) <- args { return args; }")
+            .diagnostics.HasErrors());
+
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze("&const i32 duplicate(&const i32 left, &const i32 right) "
+                    "<- (left, left) { return left; }"),
+            DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("&const i32 invalid(bool first, &const i32 value) "
+                          "<- ...args { return value; }"),
+                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
 }
 
 TEST(SemanticReferenceTests, PropagatesBorrowedResultsIntoCallerState) {
