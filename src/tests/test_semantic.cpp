@@ -395,6 +395,30 @@ TEST(SemanticCallableTests,
     ASSERT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticCallableTests,
+     AllowsCheckedReferencesToRawOwningStructuresInSafeCallables) {
+    Analysis result = Analyze(R"(
+        structure Owner {
+            *i32 cleanup;
+            i32 value;
+        };
+        Owner Owner::zero() override { return build Owner {}; }
+        void Owner::tear(&self) override {}
+        func Less<T>(&const T, &const T) => (bool);
+        bool less(&const Owner left, &const Owner right) {
+            return left->value < right->value;
+        }
+        i32 main() {
+            Less<Owner> comparison = less;
+            return 0;
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
 TEST(SemanticCallableTests, SpecializesNestedGenericCallableTypes) {
     Analysis result = Analyze(R"(
         func Fold<T, U>([]const T values, U initial) => (U);

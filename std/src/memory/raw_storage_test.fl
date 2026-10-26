@@ -178,3 +178,50 @@ test relocates_move_only_values_without_copying(&testing::UnitTest t) {
         "each move-only owner is destroyed exactly once"
     );
 }
+
+test swaps_move_only_values_without_copying_or_cleanup(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
+
+    unsafe {
+        storage, allocationError :=
+            storage::RawStorage<Owner>::withCapacity(2);
+
+        asserts::is_true(
+            t,
+            allocationError == none,
+            "move-only storage allocation succeeds"
+        );
+
+        if allocationError != none {
+            return;
+        }
+
+        storage.initialize(
+            0,
+            Owner::init(&raw cleanupCount, &raw cleanupLog, 1)
+        );
+        storage.initialize(
+            1,
+            Owner::init(&raw cleanupCount, &raw cleanupLog, 2)
+        );
+
+        storage.swap(0, 1);
+        storage.swap(1, 1);
+
+        asserts::is_true(
+            t,
+            cleanupCount == 0 and cleanupLog == 0,
+            "swap and equal-index swap do not destroy owners"
+        );
+
+        storage.destroy(0);
+        storage.destroy(1);
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 2 and cleanupLog == 21,
+        "swap exchanges move-only owners and destroys each exactly once"
+    );
+}

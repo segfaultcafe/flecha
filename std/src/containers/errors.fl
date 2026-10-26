@@ -18,3 +18,7 @@ export error StackError {
 export error QueueError {
     Empty
 }
+
+export error HeapError {
+    Empty
+}

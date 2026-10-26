@@ -203,9 +203,13 @@ bool ContainsRawPointer(SemanticType type) {
             return std::any_of(
                 candidate.Elements().begin(), candidate.Elements().end(),
                 [&](SemanticType element) { return self(self, element); });
+        // A checked reference is not itself a raw-pointer capability. Its
+        // target may encapsulate raw storage behind an ordinary safe API, and
+        // borrowing that value must remain usable in safe callables (for
+        // example, comparators over move-only collection elements).
+        if (candidate.Kind() == SemanticTypeKind::Reference) return false;
         if (candidate.Kind() == SemanticTypeKind::Array ||
-            candidate.Kind() == SemanticTypeKind::Slice ||
-            candidate.Kind() == SemanticTypeKind::Reference)
+            candidate.Kind() == SemanticTypeKind::Slice)
             return self(self, *candidate.Target());
         if (candidate.Kind() == SemanticTypeKind::Structure) {
             if (!structures.insert(candidate.Structure()).second) return false;

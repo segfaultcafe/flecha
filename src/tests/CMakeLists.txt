@@ -628,6 +628,31 @@ foreach(case IN ITEMS
         move_only_growth_failure
         move_only_lifecycle
         nested_ownership)
+    set(binary_heap_fail_call 0)
+    if(case STREQUAL "move_only_initial_failure")
+        set(binary_heap_fail_call 1)
+    elseif(case STREQUAL "move_only_growth_failure")
+        set(binary_heap_fail_call 2)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeBinaryHeap.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/binary_heap/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_binary_heap_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${binary_heap_fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+foreach(case IN ITEMS
+        move_only_initial_failure
+        move_only_growth_failure
+        move_only_lifecycle
+        nested_ownership)
     set(queue_fail_call 0)
     if(case STREQUAL "move_only_initial_failure")
         set(queue_fail_call 1)
@@ -668,6 +693,13 @@ add_test(NAME CompilerDiagnostics.SafeQueue
         -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_queue_diagnostics
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_queue_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.SafeBinaryHeap
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_binary_heap_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_binary_heap_diagnostics.cmake)
 
 add_test(NAME CompilerDiagnostics.SafeArray
     COMMAND ${CMAKE_COMMAND}

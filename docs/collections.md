@@ -7,13 +7,15 @@ and acceptance tests are present.
 
 The first Stage 2 deliverable is an ownership-capable `Array<T>`. `Deque<T>`
 is the second and reuses the same storage and lifecycle rules. Stacks, queues,
-heaps, hash maps, and hash sets follow these foundations.
+and binary heaps now build on those foundations; hash maps and hash sets
+follow.
 
 **Acceptance status:** complete. The initialized-prefix implementation and its
 safe API now pass the full matrix below for allocation failure, move-only
 lifecycle, direct owning strings and slices, recursive nested ownership, and
-shared/exclusive view conflicts. The deque, stack, and queue gates described
-below are also complete, so Stage 2 can proceed to binary heap.
+shared/exclusive view conflicts. The deque, stack, queue, and binary-heap gates
+described below are also complete, so Stage 2 can proceed to hash-based
+collections.
 
 ## Supported element categories
 
@@ -237,5 +239,31 @@ The deque gate covers:
 - allocation auditing plus focused ASan/UBSan execution.
 
 `Deque<T>` is complete for the Stage 2 foundation. `Stack<T>` and `Queue<T>`
-are complete thin safe adapters over the array and deque foundations. Binary
-heap is the next collection layer.
+are complete thin safe adapters over the array and deque foundations.
+
+## Binary heap acceptance
+
+`BinaryHeap<T>` is a max-oriented heap backed directly by `RawStorage<T>`.
+Callers provide a `Less<T>` policy whose result is true when its left argument
+has lower priority than its right argument. Reversing that policy produces a
+min-oriented heap, and capturing callables are retained as part of the heap.
+
+The safe API provides `push`, ownership-transferring `pop`, copy-only `top`,
+capacity reservation, clearing, and length/capacity queries. Sifting exchanges
+live slots with move-only `RawStorage.swap`; it never creates semantic copies
+of elements. Allocation failure occurs before any relocation, preserving the
+existing heap and destroying a consumed rejected argument exactly once.
+
+The binary-heap gate covers:
+
+- scalar max- and min-oriented ordering plus capturing comparison policies;
+- initial and growth allocation failure with the existing heap unchanged;
+- move-only sifting, growth, extraction, clearing, capacity reuse, destruction,
+  and early-return cleanup;
+- two- and three-level nested heaps without cloning inner allocations;
+- rejection of immovable and borrowed elements, use after movement, private
+  representation access, and copy-only `top` on move-only elements; and
+- allocation auditing plus focused ASan/UBSan execution.
+
+`BinaryHeap<T>` is complete for the Stage 2 foundation. Hash map and hash set
+are the next collection layer.
