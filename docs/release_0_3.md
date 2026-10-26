@@ -186,7 +186,10 @@ passes with circular move-only storage, bidirectional growth-failure coverage,
 nested ownership, compile-fail diagnostics, and sanitizer fixtures. The
 `Stack<T>` and `Queue<T>` adapter gates now pass the same allocation-failure,
 move-only lifecycle, nested ownership, diagnostics, and sanitizer requirements.
-Binary heap is the next collection layer.
+The `BinaryHeap<T>` gate also passes with caller-supplied comparison policies,
+move-only sifting, strong growth-failure preservation, nested ownership,
+compile-fail diagnostics, and sanitizer fixtures. Hash map and hash set are the
+next collection layer.
 
 ### 3. Text, parsing, and encoding
 

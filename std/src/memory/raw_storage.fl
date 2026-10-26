@@ -82,6 +82,17 @@ unsafe T RawStorage<T>::extract(&self, usize index) {
     return __storage_extract(self->data, index);
 }
 
+// Exchanges two caller-proven live slots without copying either value.
+unsafe void RawStorage<T>::swap(&self, usize left, usize right) {
+    if left == right {
+        return;
+    }
+
+    T temporary = self->extract(left);
+    self->relocate(left, right);
+    self->initialize(right, temporary);
+}
+
 // Destroys a live value and leaves its slot uninitialized.
 unsafe void RawStorage<T>::destroy(&self, usize index) {
     __storage_destroy(self->data, index);

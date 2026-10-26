@@ -1,0 +1,190 @@
+module collections;
+
+@imports
+    :: root::containers::errors
+    :: root::memory::storage;
+
+// A max-oriented binary heap. less(left, right) returns true when left has
+// lower priority than right.
+export structure BinaryHeap<T> {
+    private storage::RawStorage<T> storage;
+    private usize length;
+    private Less<T> less;
+};
+
+BinaryHeap<T> BinaryHeap<T>::zero() override {
+    return build BinaryHeap<T> {};
+}
+
+BinaryHeap<T> BinaryHeap<T>::init(Less<T> less) <-less override {
+    return build BinaryHeap<T> {
+        self.less = less;
+    };
+}
+
+// Destroys every live element in reverse storage order. RawStorage releases
+// the allocation afterward without touching uninitialized slots.
+void BinaryHeap<T>::tear(&self) override {
+    unsafe {
+        while self->length > 0 {
+            self->length--;
+            self->storage.destroy(self->length);
+        }
+    }
+}
+
+error BinaryHeap<T>::reserve(&self, usize capacity) {
+    if capacity <= self->storage.capacity() {
+        return none;
+    }
+
+    unsafe {
+        replacement, allocationErr := storage::RawStorage<T>::withCapacity(capacity);
+        if allocationErr != none {
+            return allocationErr;
+        }
+
+        usize index = 0;
+        while index < self->length {
+            replacement.relocateFrom(index, &self->storage, index);
+            index++;
+        }
+
+        self->storage = replacement;
+    }
+
+    return none;
+}
+
+error BinaryHeap<T>::push(&self, T value) {
+    allocationErr := self->ensureSpareCapacity();
+    if allocationErr != none {
+        return allocationErr;
+    }
+
+    unsafe {
+        self->storage.initialize(self->length, value);
+    }
+
+    self->length++;
+    self->siftUp(self->length - 1);
+    return none;
+}
+
+// Copies the highest-priority element. Specialization fails when T is
+// move-only, just like Array.first, Stack.top, and Queue.front.
+(T, error) BinaryHeap<T>::top(&const self) {
+    if self->empty() {
+        return (none, errors::HeapError.Empty);
+    }
+
+    unsafe {
+        return (self->storage.get(0), none);
+    }
+}
+
+(T, error) BinaryHeap<T>::pop(&self) {
+    if self->empty() {
+        return (none, errors::HeapError.Empty);
+    }
+
+    unsafe {
+        T result = self->storage.extract(0);
+        self->length--;
+
+        if self->length > 0 {
+            self->storage.relocate(0, self->length);
+            self->siftDown();
+        }
+
+        return (result, none);
+    }
+}
+
+void BinaryHeap<T>::clear(&self) {
+    unsafe {
+        while self->length > 0 {
+            self->length--;
+            self->storage.destroy(self->length);
+        }
+    }
+}
+
+usize BinaryHeap<T>::len(&const self) {
+    return self->length;
+}
+
+usize BinaryHeap<T>::capacity(&const self) {
+    return self->storage.capacity();
+}
+
+bool BinaryHeap<T>::empty(&const self) {
+    return self->length == 0;
+}
+
+// Reports whether left has lower priority than right.
+private bool BinaryHeap<T>::lowerPriority(&const self, usize left, usize right) {
+    unsafe {
+        values := self->storage.view(0, self->length);
+        return (self->less)(&values[left], &values[right]);
+    }
+}
+
+private void BinaryHeap<T>::siftUp(&self, usize start) {
+    usize current = start;
+
+    while current > 0 {
+        const usize PARENT = (current - 1) / 2;
+
+        if !self->lowerPriority(PARENT, current) {
+            break;
+        }
+
+        unsafe {
+            self->storage.swap(PARENT, current);
+        }
+
+        current = PARENT;
+    }
+}
+
+private void BinaryHeap<T>::siftDown(&self) {
+    usize current = 0;
+
+    while current < self->length / 2 {
+        usize child = current * 2 + 1;
+        const usize RIGHT = child + 1;
+
+        if RIGHT < self->length and
+            self->lowerPriority(child, RIGHT) {
+            child = RIGHT;
+        }
+
+        if !self->lowerPriority(current, child) {
+            break;
+        }
+
+        unsafe {
+            self->storage.swap(current, child);
+        }
+
+        current = child;
+    }
+}
+
+private error BinaryHeap<T>::ensureSpareCapacity(&self) {
+    if self->length < self->storage.capacity() {
+        return none;
+    }
+
+    const usize CURRENT_CAPACITY = self->storage.capacity();
+    usize nextCapacity = 4;
+
+    if CURRENT_CAPACITY != 0 {
+        nextCapacity = CURRENT_CAPACITY * 2;
+    } also nextCapacity <= CURRENT_CAPACITY {
+        return AllocationError.OutOfMemory;
+    }
+
+    return self->reserve(nextCapacity);
+}
