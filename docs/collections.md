@@ -283,12 +283,14 @@ destroyed as `K` or `V`. Linear probing preserves collision chains across
 deletions, growth rehashes only occupied buckets, and allocation completes
 before any existing entry is relocated.
 
-The initializer uses generic default policies. Its correctness-first fallback
-hash places every key in one collision chain; callers that need normal
-open-addressing performance replace it while building the empty map. The
-consuming `self` receiver permits safe chaining on temporaries, and the
-multi-origin result contract retains borrows carried by both the map and the
-new policy:
+The initializer uses structural hashing and equality as its generic default
+policies. Scalars hash by value, aggregates hash their logical fields without
+reading padding, and equal keys always produce equal hashes. See
+[`hashing.md`](hashing.md) for the supported in-memory hashing contract.
+Callers with domain-specific key semantics can replace both policies while
+building the empty map. The consuming `self` receiver permits safe chaining on
+temporaries, and the multi-origin result contract retains borrows carried by
+both the map and the new policy:
 
 ```flecha
 map := HashMap<K, V>::init()

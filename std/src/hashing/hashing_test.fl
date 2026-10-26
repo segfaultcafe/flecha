@@ -1,0 +1,84 @@
+module hashing_test;
+
+@imports
+    :: root::hashing::hashing
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+structure HashRecord {
+    [2]i32 coordinates;
+    u8 category;
+};
+
+HashRecord HashRecord::zero() override {
+    return build HashRecord {};
+}
+
+HashRecord HashRecord::init([2]i32 coordinates, u8 category) override {
+    return build HashRecord {
+        self.coordinates = coordinates;
+        self.category = category;
+    };
+}
+
+test equal_scalars_and_strings_have_equal_hashes(&testing::UnitTest t) {
+    i32 first = 42;
+    i32 same = 42;
+    i32 different = 43;
+    string left = "structural";
+    string right = "struc" + "tural";
+    string other = "structure";
+
+    asserts::is_true(
+        t,
+        hashing::hash<i32>(&first) == hashing::hash<i32>(&same),
+        "equal integers have equal hashes"
+    );
+    asserts::is_true(
+        t,
+        hashing::hash<i32>(&first) != hashing::hash<i32>(&different),
+        "nearby integers are distributed independently"
+    );
+    asserts::is_true(
+        t,
+        hashing::hash_string(left.view()) == hashing::hash_string(right.view()),
+        "strings hash their content instead of their allocation"
+    );
+    asserts::is_true(
+        t,
+        hashing::hash_string(left.view()) != hashing::hash_string(other.view()),
+        "different string content changes the hash"
+    );
+}
+
+test floating_zero_signs_have_the_same_hash(&testing::UnitTest t) {
+    f64 positive = 0.0;
+    f64 negative = -0.0;
+
+    asserts::is_true(t, positive == negative, "zero signs compare equal");
+    asserts::is_true(
+        t,
+        hashing::hash<f64>(&positive) == hashing::hash<f64>(&negative),
+        "equal floating zero signs have equal hashes"
+    );
+}
+
+test aggregates_hash_fields_without_padding(&testing::UnitTest t) {
+    first := HashRecord::init([7, 11], 3);
+    same := HashRecord::init([7, 11], 3);
+    different := HashRecord::init([7, 12], 3);
+
+    asserts::is_true(t, first == same, "equal structures compare by fields");
+    asserts::is_true(
+        t,
+        hashing::hash<HashRecord>(&first) ==
+            hashing::hash<HashRecord>(&same),
+        "equal structures have equal hashes"
+    );
+    asserts::is_true(
+        t,
+        hashing::hash<HashRecord>(&first) !=
+            hashing::hash<HashRecord>(&different),
+        "a changed nested array field changes the hash"
+    );
+}

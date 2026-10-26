@@ -29,6 +29,22 @@ structure HashMapKeyOwner {
     i32 value;
 };
 
+structure HashMapDefaultKey {
+    i32 group;
+    i32 item;
+};
+
+HashMapDefaultKey HashMapDefaultKey::zero() override {
+    return build HashMapDefaultKey {};
+}
+
+HashMapDefaultKey HashMapDefaultKey::init(i32 group, i32 item) override {
+    return build HashMapDefaultKey {
+        self.group = group;
+        self.item = item;
+    };
+}
+
 HashMapKeyOwner HashMapKeyOwner::zero() override {
     return build HashMapKeyOwner {
         self.cleanupCount = null;
@@ -110,14 +126,40 @@ test hash_map_starts_empty_and_reports_missing_keys(&testing::UnitTest t) {
 
 test hash_map_default_policies_store_and_find_keys(&testing::UnitTest t) {
     values := collections::HashMap<i32, i32>::init();
-    setError := values.set(42, 99);
-    i32 key = 42;
-    actual, getError := values.get(&key);
+    bool inserted = true;
+    loop i32 key = 0; key < 20; key++ {
+        if values.set(key, key * 3) != none {
+            inserted = false;
+        }
+    }
+
+    bool found = true;
+    loop i32 key = 0; key < 20; key++ {
+        actual, getError := values.get(&key);
+        if getError != none or actual != key * 3 {
+            found = false;
+        }
+    }
 
     asserts::is_true(
         t,
-        setError == none and getError == none and actual == 99,
-        "default hash and equality policies form a usable map"
+        inserted and found and values.len() == 20,
+        "default hash and equality policies distribute and find many keys"
+    );
+}
+
+test hash_map_default_policies_hash_structure_fields(&testing::UnitTest t) {
+    values := collections::HashMap<HashMapDefaultKey, i32>::init();
+    firstError := values.set(HashMapDefaultKey::init(1, 2), 12);
+    secondError := values.set(HashMapDefaultKey::init(1, 3), 13);
+    probe := HashMapDefaultKey::init(1, 2);
+    actual, getError := values.get(&probe);
+
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none and getError == none and
+            actual == 12 and values.len() == 2,
+        "default policies hash and compare structure keys by their fields"
     );
 }
 

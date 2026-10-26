@@ -2,6 +2,7 @@ module collections;
 
 @imports
     :: root::containers::errors
+    :: root::hashing::hashing
     :: root::memory::storage;
 
 const u8 HASH_MAP_EMPTY = 0;
@@ -35,8 +36,7 @@ HashMap<K, V> HashMap<K, V>::zero() override {
     return build HashMap<K, V> {};
 }
 
-// Creates an empty map with correctness-first default policies. The fallback
-// hash intentionally collides for every key; use withHash for efficient lookup.
+// Creates an empty map with structural hash and equality policies.
 HashMap<K, V> HashMap<K, V>::init() override {
     return build HashMap<K, V> {
         self.hash = default_hash<K>;
@@ -192,10 +192,7 @@ error HashMap<K, V>::set(&self, K key, V value) {
 
 // Copies the value for key, or reports HashMapError.KeyNotFound. Specializing
 // this operation for a move-only V fails because lookup does not remove it.
-(V, error) HashMap<K, V>::get(
-    &const self,
-    &const K key,
-) {
+(V, error) HashMap<K, V>::get(&const self, &const K key) {
     if self->capacity() == 0 {
         return (none, errors::HashMapError.KeyNotFound);
     }
@@ -211,10 +208,7 @@ error HashMap<K, V>::set(&self, K key, V value) {
 }
 
 // Reports whether an equal key is present without copying either key or value.
-bool HashMap<K, V>::containsKey(
-    &const self,
-    &const K key,
-) {
+bool HashMap<K, V>::containsKey(&const self, &const K key) {
     if self->capacity() == 0 {
         return false;
     }
@@ -225,10 +219,7 @@ bool HashMap<K, V>::containsKey(
 
 // Removes key and transfers its value to the caller, or reports
 // HashMapError.KeyNotFound without mutation.
-(V, error) HashMap<K, V>::remove(
-    &self,
-    &const K key,
-) {
+(V, error) HashMap<K, V>::remove(&self, &const K key) {
     if self->capacity() == 0 {
         return (none, errors::HashMapError.KeyNotFound);
     }
@@ -264,10 +255,7 @@ void HashMap<K, V>::clear(&self) {
     self->length = 0;
 }
 
-private (usize, bool) HashMap<K, V>::findBucket(
-    &const self,
-    &const K key,
-) {
+private (usize, bool) HashMap<K, V>::findBucket(&const self, &const K key) {
     const usize CAPACITY = self->capacity();
     usize index = (self->hash)(key) % CAPACITY;
     usize firstDeleted = CAPACITY;
@@ -358,8 +346,7 @@ private error HashMap<K, V>::ensureSpareCapacity(&self) {
 }
 
 usize default_hash<K>(&const K key) {
-    key;
-    return 1;
+    return hashing::hash<K>(key);
 }
 
 bool default_equal<K>(&const K left, &const K right) {

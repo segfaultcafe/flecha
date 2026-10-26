@@ -290,6 +290,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/math.md`](docs/math.md) — standard-library ordered math operations
 - [`docs/bytes.md`](docs/bytes.md) — raw byte storage and sequence operations
 - [`docs/encoding.md`](docs/encoding.md) — binary and hexadecimal encoding
+- [`docs/hashing.md`](docs/hashing.md) — structural non-cryptographic hashing
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation
 - [`docs/enums.md`](docs/enums.md) — nominal enums, defaults, discriminants, and member functions
 - [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting setup
