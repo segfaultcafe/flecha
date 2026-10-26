@@ -1613,22 +1613,28 @@ void SemanticAnalyzer::RegisterFunction(
     for (const auto& parameter : function.Parameters()) {
         SemanticType type = ResolveType(parameter->Type());
         if (parameter->Name() == "self") {
+            const SemanticType receiverTarget =
+                type.Kind() == SemanticTypeKind::Reference ||
+                        type.Kind() == SemanticTypeKind::Pointer
+                    ? *type.Target()
+                    : type;
             const bool matchingOwner =
-                (owner && type.Target() &&
-                 type.Target()->Kind() == SemanticTypeKind::Structure &&
-                 type.Target()->Structure() == owner) ||
-                (enumOwner && type.Target() &&
-                 type.Target()->Kind() == SemanticTypeKind::Enum &&
-                 type.Target()->Enum() == enumOwner);
+                (owner &&
+                 receiverTarget.Kind() == SemanticTypeKind::Structure &&
+                 receiverTarget.Structure() == owner) ||
+                (enumOwner && receiverTarget.Kind() == SemanticTypeKind::Enum &&
+                 receiverTarget.Enum() == enumOwner);
             receiver = (owner || enumOwner) && parameterTypes.empty() &&
-                       (type.Kind() == SemanticTypeKind::Reference ||
+                       (type.Kind() == SemanticTypeKind::Structure ||
+                        type.Kind() == SemanticTypeKind::Enum ||
+                        type.Kind() == SemanticTypeKind::Reference ||
                         type.Kind() == SemanticTypeKind::Pointer) &&
                        matchingOwner;
             if (!receiver)
                 Report(diagnostics::DiagnosticCode::InvalidMember,
                        parameter->Range(),
-                       "self must be the first parameter and borrow or point "
-                       "to the owning structure or enum");
+                       "self must be the first parameter and own, borrow, or "
+                       "point to the owning structure or enum");
         }
         parameterTypes.push_back(type);
         parameterContracts.push_back(parameter->Type().Contract());
@@ -5749,25 +5755,37 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
     const std::size_t offset = function->HasReceiver() ? 1 : 0;
     if (offset && !isStatic) {
         const SemanticType expected = function->ParameterTypes()[0];
-        SemanticType target = receiver.Kind() == SemanticTypeKind::Structure ||
-                                      receiver.Kind() == SemanticTypeKind::Enum
-                                  ? PlaceType(expression.Receiver())
-                                  : *receiver.Target();
-        if (target.IsError())
-            Report(diagnostics::DiagnosticCode::InvalidReference,
-                   expression.Receiver().Range(),
-                   "method receiver requires addressable storage");
-        if (target.IsConst() && !expected.Target()->IsConst())
-            Report(diagnostics::DiagnosticCode::SymbolNotWritable,
-                   expression.Range(),
-                   "cannot mutably borrow a const receiver");
-        if (expected.Kind() == SemanticTypeKind::Pointer) {
-            RequireUnsafe(expression.Range());
-            if (receiver.Kind() == SemanticTypeKind::Reference)
-                Report(
-                    diagnostics::DiagnosticCode::ReferenceEscape,
-                    expression.Range(),
-                    "a checked reference cannot become a raw method receiver");
+        const bool owningReceiver =
+            expected.Kind() == SemanticTypeKind::Structure ||
+            expected.Kind() == SemanticTypeKind::Enum;
+        if (owningReceiver) {
+            CheckTransfer(expression.Receiver(), expected);
+            if (!IsAssignable(expected, receiver))
+                Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                       expression.Receiver().Range(),
+                       TypeMismatch(expected, receiver));
+        } else {
+            SemanticType target =
+                receiver.Kind() == SemanticTypeKind::Structure ||
+                        receiver.Kind() == SemanticTypeKind::Enum
+                    ? PlaceType(expression.Receiver())
+                    : *receiver.Target();
+            if (target.IsError())
+                Report(diagnostics::DiagnosticCode::InvalidReference,
+                       expression.Receiver().Range(),
+                       "method receiver requires addressable storage");
+            if (target.IsConst() && !expected.Target()->IsConst())
+                Report(diagnostics::DiagnosticCode::SymbolNotWritable,
+                       expression.Range(),
+                       "cannot mutably borrow a const receiver");
+            if (expected.Kind() == SemanticTypeKind::Pointer) {
+                RequireUnsafe(expression.Range());
+                if (receiver.Kind() == SemanticTypeKind::Reference)
+                    Report(diagnostics::DiagnosticCode::ReferenceEscape,
+                           expression.Range(),
+                           "a checked reference cannot become a raw method "
+                           "receiver");
+            }
         }
     }
     if (expression.Arguments().size() + offset !=

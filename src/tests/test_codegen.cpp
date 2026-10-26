@@ -1988,6 +1988,54 @@ TEST(NativeCompilerTests, RunsWholeValueMovesWithExactlyOnceCleanup) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsChainedOwningReceiverMethods) {
+    GeneratedSource result = Generate(R"(
+        structure Box { *i32 tears; i32 value; };
+        unsafe Box Box::init(*i32 tears) override {
+            return build Box { self.tears = tears; };
+        }
+        void Box::tear(&self) override {
+            unsafe { (*self->tears)++; }
+        }
+        Box Box::withValue(self, i32 value) {
+            self.value = value;
+            return self;
+        }
+        i32 Box::read(&const self) { return self->value; }
+        i32 main() {
+            tears := 0;
+            answer := 0;
+            unsafe {
+                box := Box::init(&raw tears)
+                    .withValue(20)
+                    .withValue(42);
+                answer = box.read();
+            }
+            if tears != 1 { return 1; }
+            return answer;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_owning_receiver_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_owning_receiver_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsMoveOnlyMatchResults) {
     GeneratedSource result = Generate(R"(
         enum Pick { Left, Right, }

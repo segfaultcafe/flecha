@@ -17,10 +17,14 @@ func Mapper<T>(T value) => (T);
 
 i32 main() {
     box := Box<i32>::init();
-    box.set(identity<i32>(42));
+    Mapper<i32> mapper = identity<i32>;
+    box.set(mapper(42));
     return box.get();
 }
 ```
+
+Explicit specialization works both at a call (`identity<i32>(42)`) and when a
+generic function is retained as a callable value (`mapper = identity<i32>`).
 
 A method repeats its owner's parameter names in the same order. It may declare
 additional parameters: `U Box<T>::convert<U>(&const self)`. Such a method is called

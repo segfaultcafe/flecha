@@ -332,6 +332,21 @@ TEST(SemanticCallableTests, SpecializesGenericCallableSignaturesStructurally) {
     EXPECT_EQ(symbol->ParameterTypes()[0].Name(), "func(i32) => (i32)");
 }
 
+TEST(SemanticCallableTests, SpecializesGenericFunctionsUsedAsValues) {
+    Analysis result = Analyze(R"(
+        func Mapper<T>(T) => (T);
+        T identity<T>(T value) { return value; }
+        i32 main() {
+            Mapper<i32> mapper = identity<i32>;
+            return mapper(42);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
 TEST(SemanticCallableTests, SpecializesGenericOnceCallableSignatures) {
     Analysis result = Analyze(R"(
         once func Transform<T>(T) => (T);
@@ -4727,6 +4742,58 @@ TEST(SemanticStructureTests, MovesSafeTearValuesAndRestoresReassignedSources) {
         ADD_FAILURE() << diagnostic.message;
 }
 
+TEST(SemanticStructureTests, OwningReceiversConsumeValuesAndChainTemporaries) {
+    const std::string source = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        Box Box::withValue(self, i32 value) {
+            self.value = value;
+            return self;
+        }
+    )";
+
+    Analysis valid = Analyze(source + R"(
+        i32 use() {
+            box := Box::init().withValue(42).withValue(21);
+            return box.value * 2;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis moved = Analyze(source + R"(
+        i32 use() {
+            box := Box::init();
+            changed := box.withValue(42);
+            return box.value;
+        }
+    )");
+    EXPECT_NE(FindDiagnostic(moved, DiagnosticCode::MovedValue), nullptr);
+}
+
+TEST(SemanticStructureTests, OwningReceiversCanReplaceBorrowCarryingFields) {
+    Analysis result = Analyze(R"(
+        func Action(i32) => (i32);
+        structure Holder { Action action; };
+        Holder Holder::withAction(self, Action action) <- ...args {
+            self.action = action;
+            return self;
+        }
+        i32 first(i32 value) { return value; }
+        i32 second(i32 value) { return value * 2; }
+        i32 use() {
+            holder := build Holder { self.action = first; };
+            changed := holder.withAction(second);
+            return (changed.action)(21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
 TEST(SemanticStructureTests, DiscardingAWholeNonCopyableValueConsumesIt) {
     const std::string prefix = R"(
         structure Box { i32 value; };
@@ -5237,12 +5304,10 @@ TEST(SemanticAllocationTests,
                   )"),
                              DiagnosticCode::InvalidAllocation),
               nullptr);
-    EXPECT_NE(
-        FindDiagnostic(
-            Analyze("unsafe void f(*i32 storage) { "
-                    "__storage_extract(storage); }"),
-            DiagnosticCode::WrongArgumentCount),
-        nullptr);
+    EXPECT_NE(FindDiagnostic(Analyze("unsafe void f(*i32 storage) { "
+                                     "__storage_extract(storage); }"),
+                             DiagnosticCode::WrongArgumentCount),
+              nullptr);
 }
 
 TEST(SemanticAllocationTests,

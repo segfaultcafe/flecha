@@ -738,12 +738,18 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         std::unique_ptr<Parameter> parameter;
         // Receiver shorthand is only legal in the first slot of a method.
         if (!owner.empty() && parameters.empty() &&
-            (Check(TokenType::Ampersand) || Check(TokenType::Mul)) &&
-            ((Peek(1).type == TokenType::Identifier &&
-              Peek(1).value == "self") ||
-             (Peek(1).type == TokenType::Const &&
-              Peek(2).type == TokenType::Identifier &&
-              Peek(2).value == "self"))) {
+            Check(TokenType::Identifier) && Current().value == "self") {
+            const Token& self = Advance();
+            auto receiver = std::make_unique<TypeNode>(self.range, owner);
+            parameter = std::make_unique<Parameter>(
+                receiver->Range(), std::move(receiver), self.value, self.range);
+        } else if (!owner.empty() && parameters.empty() &&
+                   (Check(TokenType::Ampersand) || Check(TokenType::Mul)) &&
+                   ((Peek(1).type == TokenType::Identifier &&
+                     Peek(1).value == "self") ||
+                    (Peek(1).type == TokenType::Const &&
+                     Peek(2).type == TokenType::Identifier &&
+                     Peek(2).value == "self"))) {
             const Token& prefix = Advance();
             const bool readonly = Match(TokenType::Const);
             const Token& self = Advance();
@@ -1760,7 +1766,12 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             std::size_t offset = 0;
             if (ScanTypeArguments(offset) &&
                 (Peek(offset).type == TokenType::LParen ||
-                 Peek(offset).type == TokenType::Scope)) {
+                 Peek(offset).type == TokenType::Scope ||
+                 Peek(offset).type == TokenType::SemiColon ||
+                 Peek(offset).type == TokenType::Comma ||
+                 Peek(offset).type == TokenType::RParen ||
+                 Peek(offset).type == TokenType::RBracket ||
+                 Peek(offset).type == TokenType::RCurly)) {
                 static_cast<NameExpression&>(*expression).typeArguments =
                     ParseTypeArguments();
                 continue;

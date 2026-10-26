@@ -676,7 +676,7 @@ class BorrowChecker final {
         for (const Origin& origin : access.origins) {
             for (const auto& [symbol, value] : *_state) {
                 if (!_active.contains(symbol) || symbol == access.handle ||
-                    origin.parents.contains(symbol))
+                    symbol == origin.owner || origin.parents.contains(symbol))
                     continue;
                 for (const Origin& loan : value.origins) {
                     if (Overlaps(loan, origin) && (write || loan.exclusive)) {
@@ -1273,9 +1273,15 @@ class BorrowChecker final {
                     Value mutableReceiver;
                     bool hasMutableReceiver = false;
                     if (method->HasReceiver()) {
-                        Value value = call.Access() == TokenType::Arrow
-                                          ? Evaluate(call.Receiver())
-                                          : Place(call.Receiver());
+                        const auto receiverType = method->ParameterTypes()[0];
+                        const bool owningReceiver =
+                            receiverType.Kind() ==
+                                SemanticTypeKind::Structure ||
+                            receiverType.Kind() == SemanticTypeKind::Enum;
+                        Value value =
+                            owningReceiver || call.Access() == TokenType::Arrow
+                                ? Evaluate(call.Receiver())
+                                : Place(call.Receiver());
                         if (std::find(method->BorrowSourceIndices().begin(),
                                       method->BorrowSourceIndices().end(),
                                       0) != method->BorrowSourceIndices().end())

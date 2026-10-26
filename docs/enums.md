@@ -81,10 +81,10 @@ State State::initial() {
 
 Value receivers use `.`, reference and pointer receivers use `->`, and static
 functions use `State::initial()`. The first parameter may be `&self`,
-`&const self`, `*self`, or `*const self`; checked-reference and unsafe-pointer
-rules are unchanged. Methods may be `private`, and exporting an enum exposes
-its non-private methods. Methods may declare explicit generic parameters. A
-method and variant cannot share a name.
+`&const self`, `*self`, `*const self`, or the consuming value receiver `self`;
+checked-reference and unsafe-pointer rules are unchanged. Methods may be
+`private`, and exporting an enum exposes its non-private methods. Methods may
+declare explicit generic parameters. A method and variant cannot share a name.
 
 Enum initialization and destruction are compiler-defined. `init`, `zero`, and
 `tear` are reserved and cannot be declared as enum methods.

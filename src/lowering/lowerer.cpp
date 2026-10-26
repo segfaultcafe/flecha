@@ -630,10 +630,17 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             if (const auto* method = _semanticModel->MethodFor(member)) {
                 std::vector<std::unique_ptr<BoundExpression>> arguments;
                 if (method->HasReceiver()) {
-                    if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
+                    const semantic::SemanticType parameter =
+                        method->ParameterTypes()[0];
+                    if (parameter.Kind() ==
                             semantic::SemanticTypeKind::Structure ||
-                        _semanticModel->TypeOf(member.Receiver()).Kind() ==
-                            semantic::SemanticTypeKind::Enum)
+                        parameter.Kind() == semantic::SemanticTypeKind::Enum)
+                        arguments.push_back(
+                            LowerExpression(member.Receiver(), parameter));
+                    else if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
+                                 semantic::SemanticTypeKind::Structure ||
+                             _semanticModel->TypeOf(member.Receiver()).Kind() ==
+                                 semantic::SemanticTypeKind::Enum)
                         arguments.push_back(
                             std::make_unique<BoundAddressExpression>(
                                 member.Receiver().Range(),

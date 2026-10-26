@@ -1737,6 +1737,43 @@ TEST(ParserStructureTests, ParsesPrivateFieldsMethodsReceiversAndConstruction) {
     EXPECT_EQ(access.Access(), TokenType::Arrow);
 }
 
+TEST(ParserStructureTests, ParsesContextualOwningSelfReceiver) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "structure Box { i32 value; }; "
+        "Box Box::withValue(self, i32 value) { "
+        "self.value = value; return self; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& method =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(method.Parameters().size(), 2);
+    EXPECT_EQ(method.Parameters()[0]->Name(), "self");
+    EXPECT_EQ(method.Parameters()[0]->Type().TypeForm(), TypeKind::Named);
+    EXPECT_EQ(method.Parameters()[0]->Type().Name(), "Box");
+}
+
+TEST(ParserCallableTests, ParsesSpecializedGenericFunctionValues) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "func Mapper<T>(T) => (T); T identity<T>(T value) { return value; } "
+        "void use() { Mapper<i32> mapper = identity<i32>; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& use =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[2]);
+    const auto& declaration = static_cast<const VariableDeclarationStatement&>(
+        *use.Body().Statements()[0]);
+    const auto& value =
+        static_cast<const NameExpression&>(*declaration.Initializer());
+    ASSERT_EQ(value.typeArguments.size(), 1);
+    EXPECT_EQ(value.typeArguments[0]->TypeForm(), TypeKind::Primitive);
+    EXPECT_EQ(value.typeArguments[0]->Type(), PrimitiveType::I32);
+}
+
 TEST(ParserStructureTests, RejectsMalformedStructureSyntax) {
     for (const std::string& source :
          {"structure Box { i32 x; }", "structure { i32 x; };",

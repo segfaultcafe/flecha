@@ -57,10 +57,13 @@ unsafe {
 }
 ```
 
-The first receiver parameter can be `&self`, `&const self`, `*self`, or
-`*const self`. Its target is the method's structure. Explicitly writing
-`&Box self` is equivalent. A method without a receiver is static and uses
-`Box::method()`. There is no method overloading in this milestone.
+The first receiver parameter can be `self`, `&self`, `&const self`, `*self`, or
+`*const self`. Its target is the method's structure. A bare `self` consumes the
+value and permits chaining on temporaries; inside that method, fields use `.`
+and returning `self` transfers the complete value. Explicitly writing
+`Box self` or `&Box self` is equivalent to the corresponding shorthand. A
+method without a receiver is static and uses `Box::method()`. There is no method
+overloading in this milestone.
 
 Reference receivers participate in checked borrowing. The implicit receiver
 borrow lasts throughout argument evaluation and the call. Field borrows
@@ -69,6 +72,15 @@ is not yet supported. A read-only receiver cannot call a mutable method or
 write fields. A raw pointer receiver requires unsafe permission. Unsafe methods
 obey the ordinary lexical unsafe-call rules. Checked references do not implicitly
 convert to raw pointer receivers.
+
+```flecha
+Box Box::withValue(self, i32 value) {
+    self.value = value;
+    return self;
+}
+
+box := Box::init().withValue(42);
+```
 
 ## Initialization
 
