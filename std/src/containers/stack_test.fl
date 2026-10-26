@@ -1,0 +1,70 @@
+module collections_test;
+
+@imports
+    :: root::containers::collections
+    :: root::containers::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test empty_stack_has_zero_state_and_reports_stack_errors(
+    &testing::UnitTest t
+) {
+    values := collections::Stack<i32>::init();
+
+    missingTop, topError := values.top();
+    missingPop, popError := values.pop();
+
+    asserts::is_true(t, values.empty(), "a new stack is empty");
+    asserts::is_true(t, values.len() == 0, "a new stack has zero length");
+    asserts::is_true(
+        t,
+        values.capacity() == 0,
+        "a new stack has zero capacity"
+    );
+    asserts::is_true(
+        t,
+        missingTop == none and topError == errors::StackError.Empty,
+        "top reports StackError.Empty"
+    );
+    asserts::is_true(
+        t,
+        missingPop == none and popError == errors::StackError.Empty,
+        "pop reports StackError.Empty"
+    );
+}
+
+test push_top_and_pop_follow_lifo_order(&testing::UnitTest t) {
+    values := collections::Stack<i32>::init();
+
+    firstPush := values.push(10);
+    secondPush := values.push(20);
+    thirdPush := values.push(30);
+
+    top, topError := values.top();
+    first, firstError := values.pop();
+    second, secondError := values.pop();
+    third, thirdError := values.pop();
+
+    asserts::is_true(
+        t,
+        firstPush == none and secondPush == none and thirdPush == none,
+        "push accepts values"
+    );
+    asserts::is_true(
+        t,
+        topError == none and top == 30,
+        "top reads the most recently pushed value"
+    );
+    asserts::is_true(
+        t,
+        firstError == none and first == 30 and
+            secondError == none and second == 20 and
+            thirdError == none and third == 10,
+        "pop removes values in LIFO order"
+    );
+    asserts::is_true(
+        t,
+        values.empty() and values.len() == 0,
+        "popping every value empties the stack"
+    );
+}

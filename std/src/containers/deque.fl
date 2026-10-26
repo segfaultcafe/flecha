@@ -1,4 +1,4 @@
-module deque;
+module collections;
 
 @imports
     :: root::containers::errors

@@ -1,7 +1,7 @@
-module deque_test;
+module collections_test;
 
 @imports
-    :: root::containers::deque
+    :: root::containers::collections
     :: root::containers::errors
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
@@ -42,7 +42,7 @@ void TrackedOwner::tear(&self) override {
 }
 
 test empty_deque_has_zero_length_and_capacity(&testing::UnitTest t) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
 
     asserts::is_true(
         t,
@@ -62,7 +62,7 @@ test empty_deque_has_zero_length_and_capacity(&testing::UnitTest t) {
 }
 
 test reserve_allocates_without_changing_length(&testing::UnitTest t) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
 
     allocationError := values.reserve(8);
 
@@ -97,7 +97,7 @@ test reserve_allocates_without_changing_length(&testing::UnitTest t) {
 }
 
 test push_back_grows_and_preserves_order(&testing::UnitTest t) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
 
     error pushError = none;
     loop i32 value = 0; value < 9; value++ {
@@ -143,7 +143,7 @@ test push_back_grows_and_preserves_order(&testing::UnitTest t) {
 }
 
 test pop_front_removes_values_in_logical_order(&testing::UnitTest t) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
     operationError := values.reserve(4);
     loop i32 value = 0; value < 4; value++ {
         operationError = values.pushBack(value);
@@ -161,7 +161,7 @@ test pop_front_removes_values_in_logical_order(&testing::UnitTest t) {
 }
 
 test reserve_linearizes_wrapped_storage(&testing::UnitTest t) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
     operationError := values.reserve(4);
     loop i32 value = 0; value < 4; value++ {
         operationError = values.pushBack(value);
@@ -188,7 +188,7 @@ test reserve_linearizes_wrapped_storage(&testing::UnitTest t) {
 test push_back_reuses_wrapped_front_slots(
     &testing::UnitTest t
 ) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
     operationError := values.reserve(4);
     loop i32 value = 0; value < 4; value++ {
         operationError = values.pushBack(value);
@@ -216,7 +216,7 @@ test push_back_reuses_wrapped_front_slots(
 }
 
 test pop_front_drains_and_retains_capacity(&testing::UnitTest t) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
     operationError := values.reserve(4);
     loop i32 value = 2; value <= 5; value++ {
         operationError = values.pushBack(value);
@@ -241,7 +241,7 @@ test pop_front_drains_and_retains_capacity(&testing::UnitTest t) {
 }
 
 test emptied_deque_reuses_retained_capacity(&testing::UnitTest t) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
     operationError := values.reserve(4);
     loop i32 value = 0; value < 2; value++ {
         operationError = values.pushBack(value);
@@ -261,7 +261,7 @@ test emptied_deque_reuses_retained_capacity(&testing::UnitTest t) {
 }
 
 test push_front_wraps_and_grows(&testing::UnitTest t) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
 
     operationError := values.reserve(4);
 
@@ -315,7 +315,7 @@ test push_front_wraps_and_grows(&testing::UnitTest t) {
 }
 
 test pop_back_drains_wrapped_storage(&testing::UnitTest t) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
 
     operationError := values.reserve(4);
 
@@ -357,7 +357,7 @@ test pop_back_drains_wrapped_storage(&testing::UnitTest t) {
 test clear_drains_wrapped_storage_and_reuses_capacity(
     &testing::UnitTest t
 ) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
 
     operationError := values.reserve(4);
 
@@ -408,7 +408,7 @@ test clear_destroys_move_only_values_once_in_reverse_order(
     i32 cleanupLog = 0;
 
     unsafe {
-        values := deque::Deque<TrackedOwner>::init();
+        values := collections::Deque<TrackedOwner>::init();
 
         operationError := values.reserve(4);
 
@@ -476,7 +476,7 @@ test clear_destroys_move_only_values_once_in_reverse_order(
 test front_and_back_read_wrapped_endpoints(
     &testing::UnitTest t
 ) {
-    values := deque::Deque<i32>::init();
+    values := collections::Deque<i32>::init();
 
     _, emptyFrontError := values.front();
     _, emptyBackError := values.back();
@@ -518,7 +518,7 @@ test set_replaces_wrapped_move_only_values_exactly_once(
     i32 cleanupLog = 0;
 
     unsafe {
-        values := deque::Deque<TrackedOwner>::init();
+        values := collections::Deque<TrackedOwner>::init();
 
         operationError := values.reserve(4);
 
@@ -594,7 +594,7 @@ test growth_relocates_wrapped_move_only_values_without_cleanup(
     i32 cleanupLog = 0;
 
     unsafe {
-        values := deque::Deque<TrackedOwner>::init();
+        values := collections::Deque<TrackedOwner>::init();
 
         operationError := values.reserve(4);
 

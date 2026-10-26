@@ -55,8 +55,12 @@ The initial public module layout is:
 std::math::*              numeric, integer, bits, floating_point, constants
 std::memory::*            slices
 std::bytes::*             buffer, sequence
-std::containers::*        algorithms, array, deque, stack, queue, heap,
+std::containers::collections
+                          algorithms, array, deque, stack, queue, heap,
                           hash_map, hash_set
+std::containers::raw_array
+                          low-level compatibility array
+std::containers::errors   collection errors
 std::text::*              ascii, utf8, builder, parse, format
 std::encoding::*          binary, hex, base64, json
 std::io::*                errors, file, buffered, stdio, filesystem, path,
@@ -73,9 +77,9 @@ std::tests::*             testing, asserts, fixtures, golden, benchmark
 This map defines public ownership and naming rather than requiring every
 operation to live in a separate source file. Closely related operations belong
 in one cohesive module; submodules are reserved for independently useful API
-families. Existing public paths such as `std::io::filesystem` and
-`std::containers::array` remain valid. Moving an existing public declaration
-requires compatibility review.
+families. Safe containers and their algorithms share the cohesive
+`std::containers::collections` module; low-level raw storage remains separate.
+Moving an existing public declaration requires compatibility review.
 
 ## Implementation sequence
 

@@ -1,9 +1,9 @@
 module owning_elements;
 
-@imports :: lib::std::containers::deque;
+@imports :: lib::std::containers::collections;
 
 i32 checkStrings() {
-    values := deque::Deque<string>::init();
+    values := collections::Deque<string>::init();
 
     if values.pushBack("one".cast<string>) != none or
         values.pushBack("two".cast<string>) != none or
@@ -38,7 +38,7 @@ i32 checkStrings() {
     return 42;
 }
 
-error pushBackSlice(&deque::Deque<own []i32> values, i32 value) {
+error pushBackSlice(&collections::Deque<own []i32> values, i32 value) {
     owner, allocationError := new<own []i32>(1);
 
     if allocationError != none {
@@ -49,7 +49,7 @@ error pushBackSlice(&deque::Deque<own []i32> values, i32 value) {
     return values->pushBack(owner);
 }
 
-error pushFrontSlice(&deque::Deque<own []i32> values, i32 value) {
+error pushFrontSlice(&collections::Deque<own []i32> values, i32 value) {
     owner, allocationError := new<own []i32>(1);
 
     if allocationError != none {
@@ -60,7 +60,7 @@ error pushFrontSlice(&deque::Deque<own []i32> values, i32 value) {
     return values->pushFront(owner);
 }
 
-i32 popFrontSlice(&deque::Deque<own []i32> values, i32 expected) {
+i32 popFrontSlice(&collections::Deque<own []i32> values, i32 expected) {
     owner, popError := values->popFront();
 
     if popError != none or owner.len() != 1 or owner[0] != expected {
@@ -71,7 +71,7 @@ i32 popFrontSlice(&deque::Deque<own []i32> values, i32 expected) {
 }
 
 i32 checkOwningSlices() {
-    values := deque::Deque<own []i32>::init();
+    values := collections::Deque<own []i32>::init();
 
     if pushBackSlice(&values, 1) != none or
         pushBackSlice(&values, 2) != none or

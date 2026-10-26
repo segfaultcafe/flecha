@@ -219,7 +219,7 @@ if(NOT createResult EQUAL 0)
 endif()
 file(WRITE "${OUTPUT_ROOT}/hello/src/main.fl"
     "module main;\n"
-    "@imports :: lib::std::containers::array;\n"
+    "@imports :: lib::std::containers::collections;\n"
     "void main() { stdoutln(\"Hello from Flecha!\"); }\n")
 execute_process(
     COMMAND "${LONGBOW}" check

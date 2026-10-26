@@ -1,6 +1,6 @@
 module move_only_push;
 
-@imports :: lib::std::containers::array;
+@imports :: lib::std::containers::collections;
 
 structure Owner {
     *i32 cleanupCount;
@@ -41,7 +41,7 @@ i32 main() {
     i32 cleanupCount = 0;
     i32 cleanupLog = 0;
     {
-        values := array::Array<Owner>::init();
+        values := collections::Array<Owner>::init();
         loop i32 value = 1; value <= 4; value++ {
             Owner owner = none;
             unsafe {
