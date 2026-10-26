@@ -623,6 +623,30 @@ foreach(case IN ITEMS
             -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
 endforeach()
 
+function(add_hash_map_case name source fail_call)
+    add_test(NAME StandardLibraryTests.SafeHashMap.${name}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/hash_map/${source}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_hash_map_${name}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endfunction()
+
+add_hash_map_case(initial_state_failure move_only_initial_failure 1)
+add_hash_map_case(initial_key_failure move_only_initial_failure 2)
+add_hash_map_case(initial_value_failure move_only_initial_failure 3)
+add_hash_map_case(growth_state_failure move_only_growth_failure 4)
+add_hash_map_case(growth_key_failure move_only_growth_failure 5)
+add_hash_map_case(growth_value_failure move_only_growth_failure 6)
+add_hash_map_case(move_only_lifecycle move_only_lifecycle 0)
+add_hash_map_case(nested_ownership nested_ownership 0)
+
 foreach(case IN ITEMS
         move_only_initial_failure
         move_only_growth_failure
@@ -700,6 +724,13 @@ add_test(NAME CompilerDiagnostics.SafeBinaryHeap
         -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_binary_heap_diagnostics
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_binary_heap_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.SafeHashMap
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_hash_map_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_hash_map_diagnostics.cmake)
 
 add_test(NAME CompilerDiagnostics.SafeArray
     COMMAND ${CMAKE_COMMAND}

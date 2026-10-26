@@ -1,0 +1,122 @@
+module move_only_lifecycle;
+
+@imports :: lib::std::containers::collections;
+
+structure Owner {
+    *i32 cleanupCount;
+    i32 id;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.id = 0;
+    };
+}
+
+Owner Owner::init(*i32 cleanupCount, i32 id) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.id = id;
+    };
+}
+
+Owner Owner::probe(i32 id) {
+    unsafe {
+        return Owner::init(null, id);
+    }
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            (*self->cleanupCount)++;
+        }
+    }
+}
+
+i32 Owner::get(&const self) {
+    return self->id;
+}
+
+usize ownerHash(&const Owner key) {
+    return key->get().cast<usize>;
+}
+
+bool ownerEqual(&const Owner left, &const Owner right) {
+    return left->get() == right->get();
+}
+
+void visitOwnerPair(&const Owner key, &const Owner value) {
+    key->get();
+    value->get();
+}
+
+i32 main() {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::HashMap<Owner, Owner>::init(
+            ownerHash,
+            ownerEqual
+        );
+
+        unsafe {
+            loop i32 id = 1; id <= 7; id++ {
+                if values.set(
+                    Owner::init(&raw cleanupCount, id),
+                    Owner::init(&raw cleanupCount, id * 10)
+                ) != none {
+                    return 1;
+                }
+            }
+
+            if values.set(
+                Owner::init(&raw cleanupCount, 1),
+                Owner::init(&raw cleanupCount, 100)
+            ) != none {
+                return 2;
+            }
+        }
+
+        if cleanupCount != 2 or values.len() != 7 or
+            values.capacity() != 16 {
+            return 3;
+        }
+
+        values.forEach(visitOwnerPair);
+
+        probe := Owner::probe(2);
+        {
+            removed, removeError := values.remove(&probe);
+            if removeError != none or removed.get() != 20 or
+                cleanupCount != 3 {
+                return 4;
+            }
+        }
+
+        if cleanupCount != 4 {
+            return 5;
+        }
+
+        values.clear();
+        if !values.empty() or values.capacity() != 16 or cleanupCount != 16 {
+            return 6;
+        }
+
+        unsafe {
+            if values.set(
+                Owner::init(&raw cleanupCount, 8),
+                Owner::init(&raw cleanupCount, 80)
+            ) != none {
+                return 7;
+            }
+        }
+    }
+
+    if cleanupCount != 18 {
+        return 8;
+    }
+
+    return 42;
+}

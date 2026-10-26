@@ -1,0 +1,102 @@
+module move_only_growth_failure;
+
+@imports :: lib::std::containers::collections;
+
+structure Owner {
+    *i32 cleanupCount;
+    i32 id;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.id = 0;
+    };
+}
+
+Owner Owner::init(*i32 cleanupCount, i32 id) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.id = id;
+    };
+}
+
+Owner Owner::probe(i32 id) {
+    unsafe {
+        return Owner::init(null, id);
+    }
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            (*self->cleanupCount)++;
+        }
+    }
+}
+
+i32 Owner::get(&const self) {
+    return self->id;
+}
+
+usize ownerHash(&const Owner key) {
+    return key->get().cast<usize>;
+}
+
+bool ownerEqual(&const Owner left, &const Owner right) {
+    return left->get() == right->get();
+}
+
+i32 main() {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::HashMap<Owner, Owner>::init(
+            ownerHash,
+            ownerEqual
+        );
+
+        unsafe {
+            loop i32 id = 1; id <= 6; id++ {
+                if values.set(
+                    Owner::init(&raw cleanupCount, id),
+                    Owner::init(&raw cleanupCount, id * 10)
+                ) != none {
+                    return 1;
+                }
+            }
+
+            if values.set(
+                Owner::init(&raw cleanupCount, 7),
+                Owner::init(&raw cleanupCount, 70)
+            ) != AllocationError.OutOfMemory {
+                return 2;
+            }
+        }
+
+        if cleanupCount != 2 or values.len() != 6 or
+            values.capacity() != 8 {
+            return 3;
+        }
+
+        loop i32 id = 1; id <= 6; id++ {
+            probe := Owner::probe(id);
+            {
+                removed, removeError := values.remove(&probe);
+                if removeError != none or removed.get() != id * 10 {
+                    return 4;
+                }
+            }
+        }
+
+        if !values.empty() or values.capacity() != 8 or cleanupCount != 14 {
+            return 5;
+        }
+    }
+
+    if cleanupCount != 14 {
+        return 6;
+    }
+
+    return 42;
+}
