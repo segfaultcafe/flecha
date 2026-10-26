@@ -55,7 +55,7 @@ library scaffolds also have valid importable module names.
 | `longbow check` | Load and check source and its reachable imports without emitting artifacts |
 | `longbow build` | Compile a program, or emit a host-native object for a library |
 | `longbow run -- ARGS` | Build, then run the program and propagate its exit status |
-| `longbow test [--verbose]` | Discover declared `<name>_test` logical modules, run each once, and optionally show individual test results |
+| `longbow test [--verbose]` | Discover every source file declaring a `<name>_test` module, run each file's tests, and optionally show individual results |
 | `longbow clean` | Remove the project's generated `target` directory |
 
 Commands locate the nearest ancestor `longbow.toml`, so they also work inside
@@ -66,8 +66,9 @@ Flecha code. Existing `.gitignore` files are preserved by `init`.
 
 Since Flecha 0.2.1, test discovery reads module declarations rather than file
 suffixes. Several arbitrarily named files may contribute to one logical test
-module; Longbow deduplicates those source units and creates one complete test
-harness for the module.
+module. Longbow invokes every such source file, while each compiler invocation
+loads the complete logical module and runs only the tests declared in its entry
+file.
 
 ## Library projects and local dependencies
 

@@ -92,7 +92,21 @@ add_test(
 set_tests_properties(LanguageTestTests.LongbowDiscovery PROPERTIES
     WORKING_DIRECTORY
         ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project
-    PASS_REGULAR_EXPRESSION "OK \\[2/2\\] tests passed"
+    PASS_REGULAR_EXPRESSION "OK \\[2/2\\] test files passed"
+)
+
+add_test(
+    NAME LanguageTestTests.FileLocalSelection
+    COMMAND $<TARGET_FILE:flecha>
+        test
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project/src/boundary_cases.fl
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project/src
+        --lib std=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project/deps/std/src
+        --verbose
+)
+set_tests_properties(LanguageTestTests.FileLocalSelection PROPERTIES
+    PASS_REGULAR_EXPRESSION "aggregates_test_sources [\.]+ ok"
+    FAIL_REGULAR_EXPRESSION "discovers_tests"
 )
 
 add_test(
