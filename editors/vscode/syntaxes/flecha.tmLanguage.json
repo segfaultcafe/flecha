@@ -18,6 +18,7 @@
     {"include": "#types"},
     {"include": "#modifiers"},
     {"include": "#control"},
+    {"include": "#borrowAllArguments"},
     {"include": "#constants"},
     {"include": "#labels"},
     {"include": "#numbers"},
@@ -146,6 +147,14 @@
     "control": {
       "name": "keyword.control.flecha",
       "match": "\\b(?:module|enum|structure|build|return|defer|yield|if|match|else|also|while|for|loop|range|proceed|break|jumpto|as)\\b"
+    },
+    "borrowAllArguments": {
+      "match": "(<-)(\\s*)(\\.\\.\\.)(\\s*)(args)\\b",
+      "captures": {
+        "1": {"name": "keyword.operator.flecha"},
+        "3": {"name": "keyword.operator.flecha"},
+        "5": {"name": "variable.language.flecha"}
+      }
     },
     "constants": {
       "patterns": [
