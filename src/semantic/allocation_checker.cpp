@@ -1743,6 +1743,9 @@ class AllocationChecker final {
                 const core::Expression& expression = *node.memoryExpression;
                 const FunctionSymbol* callee = Callee(expression);
                 if (expression.Kind() == AstNodeKind::CallExpression &&
+                    callee &&
+                    (callee->BuiltIn() == BuiltInFunction::New ||
+                     callee->BuiltIn() == BuiltInFunction::StorageNew) &&
                     static_cast<const core::CallExpression&>(expression)
                         .TypeArgument()) {
                     // Allocation happens before its conditional initializer.

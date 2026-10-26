@@ -612,7 +612,8 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 const semantic::SemanticType parameterType =
                     (!function ||
                      function->BuiltIn() == semantic::BuiltInFunction::None ||
-                     function->BuiltIn() == semantic::BuiltInFunction::Free)
+                     function->BuiltIn() == semantic::BuiltInFunction::Free ||
+                     function->BuiltIn() == semantic::BuiltInFunction::Hash)
                         ? signature.parameters[arguments.size()]
                         : semantic::SemanticType::Error();
                 arguments.push_back(LowerExpression(*argument, parameterType));

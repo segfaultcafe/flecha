@@ -31,6 +31,7 @@ enum class BuiltInFunction {
     New,
     Free,
     Take,
+    Hash,
     StorageNew,
     StorageInitialize,
     StorageRelocate,

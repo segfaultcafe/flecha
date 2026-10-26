@@ -1747,12 +1747,14 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
         if (expression->Kind() == AstNodeKind::NameExpression &&
             (static_cast<const NameExpression&>(*expression).Name() == "new" ||
              static_cast<const NameExpression&>(*expression).Name() ==
-                 "__storage_new") &&
+                 "__storage_new" ||
+             static_cast<const NameExpression&>(*expression).Name() ==
+                 "__hash") &&
             Match(TokenType::Less)) {
             auto type = ParseType(true);
             if (!type ||
-                !ConsumeTypeArgumentClose("'>' after allocation type") ||
-                !Consume(TokenType::LParen, "'(' after new<T>"))
+                !ConsumeTypeArgumentClose("'>' after intrinsic type") ||
+                !Consume(TokenType::LParen, "'(' after typed intrinsic"))
                 return expression;
             source::SourceLocation end = expression->Range().end;
             auto arguments = ParseArgumentList(end);

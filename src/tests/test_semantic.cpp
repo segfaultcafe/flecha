@@ -1560,6 +1560,41 @@ TEST(SemanticBuiltInTests, ProvidesTypedStandardOutput) {
     EXPECT_EQ(lineSymbol->BuiltIn(), BuiltInFunction::StdoutLine);
 }
 
+TEST(SemanticBuiltInTests, SpecializesAndValidatesStructuralHashing) {
+    Analysis valid = Analyze(
+        "usize hash_value(&const i32 value) { return __hash<i32>(value); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(valid.diagnostics.HasErrors());
+    const auto& returnStatement = static_cast<const ReturnStatement&>(
+        *FunctionAt(valid, 0).Body().Statements()[0]);
+    const auto& call =
+        static_cast<const CallExpression&>(*returnStatement.Value());
+    const auto& name = static_cast<const NameExpression&>(call.Callee());
+    const auto* symbol =
+        static_cast<const FunctionSymbol*>(valid.model.SymbolFor(name));
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->BuiltIn(), BuiltInFunction::Hash);
+    EXPECT_EQ(symbol->ReturnType().Kind(), SemanticTypeKind::USize);
+    ASSERT_EQ(symbol->ParameterTypes().size(), 1);
+    EXPECT_EQ(symbol->ParameterTypes()[0].Kind(), SemanticTypeKind::Reference);
+
+    Analysis wrongType = Analyze(
+        "usize hash_value() { i32 value = 1; return __hash<i64>(&value); }");
+    EXPECT_NE(FindDiagnostic(wrongType, DiagnosticCode::IncompatibleArgument),
+              nullptr);
+
+    Analysis unsupported = Analyze(
+        "usize hash_values([]i32 values) { return __hash<[]i32>(values); }");
+    EXPECT_NE(FindDiagnostic(unsupported, DiagnosticCode::InvalidOperand),
+              nullptr);
+
+    Analysis wrongCount =
+        Analyze("usize hash_value() { return __hash<i32>(); }");
+    EXPECT_NE(FindDiagnostic(wrongCount, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+}
+
 TEST(SemanticBuiltInTests, ValidatesStandardOutputArguments) {
     Analysis valid = Analyze(
         "void Main() { stdout(); stdout(42, false, 'x', 1.5); "

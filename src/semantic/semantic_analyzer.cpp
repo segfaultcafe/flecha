@@ -1365,6 +1365,7 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     for (const auto& [name, intrinsic] :
          {std::pair{"new", BuiltInFunction::New},
           std::pair{"free", BuiltInFunction::Free},
+          std::pair{"__hash", BuiltInFunction::Hash},
           std::pair{"__storage_new", BuiltInFunction::StorageNew},
           std::pair{"__storage_initialize", BuiltInFunction::StorageInitialize},
           std::pair{"__storage_relocate", BuiltInFunction::StorageRelocate},
@@ -2419,6 +2420,7 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
             if (function != nullptr &&
                 (function->BuiltIn() == BuiltInFunction::New ||
                  function->BuiltIn() == BuiltInFunction::Take ||
+                 function->BuiltIn() == BuiltInFunction::Hash ||
                  function->BuiltIn() == BuiltInFunction::StorageNew ||
                  function->BuiltIn() == BuiltInFunction::StorageInitialize ||
                  function->BuiltIn() == BuiltInFunction::StorageRelocate ||
@@ -2427,8 +2429,7 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                  function->BuiltIn() == BuiltInFunction::StorageFree)) {
                 Report(diagnostics::DiagnosticCode::InvalidDefer,
                        expression->Range(),
-                       "allocation, take, and collection storage intrinsics "
-                       "cannot be deferred");
+                       "compiler intrinsics cannot be deferred");
                 break;
             }
             std::vector<const Symbol*>& captures =
@@ -4727,6 +4728,55 @@ SemanticType SemanticAnalyzer::AnalyzeStorageCall(
     return result;
 }
 
+SemanticType SemanticAnalyzer::AnalyzeHashCall(
+    const core::CallExpression& expression) {
+    SemanticType value = SemanticType::Error();
+    if (!expression.TypeArgument()) {
+        Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
+               "hashing requires __hash<T>(value)");
+    } else {
+        value = ResolveType(*expression.TypeArgument());
+        if (!value.IsError() && !IsEqualityComparable(value))
+            Report(diagnostics::DiagnosticCode::InvalidOperand,
+                   expression.TypeArgument()->Range(),
+                   "hashing requires an equality-comparable value type");
+    }
+
+    if (expression.Arguments().size() != 1)
+        Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+               expression.Range(),
+               "__hash<T> requires exactly one borrowed value");
+
+    SemanticType parameter(SemanticTypeKind::Reference,
+                           value.IsError() ? value : value.WithConst());
+    for (std::size_t i = 0; i < expression.Arguments().size(); ++i) {
+        const auto& argument = expression.Arguments()[i];
+        const SemanticType actual = AnalyzeExpression(*argument);
+        if (i != 0) continue;
+        const bool direct = !value.IsError() && IsAssignable(value, actual);
+        const bool referenced =
+            !value.IsError() && actual.Kind() == SemanticTypeKind::Reference &&
+            actual.Target()->WithoutConst() == value.WithoutConst();
+        if (!direct && !referenced && !actual.IsError())
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   argument->Range(),
+                   "hash argument must be the selected value or a reference "
+                   "to it");
+        parameter = actual;
+    }
+
+    const auto& callee =
+        static_cast<const core::NameExpression&>(expression.Callee());
+    const SemanticType result(SemanticTypeKind::USize);
+    auto specialized = std::make_unique<FunctionSymbol>(
+        callee.Name(), result, std::vector<SemanticType>{parameter},
+        callee.Range(), BuiltInFunction::Hash);
+    _model._bindings[&callee] = specialized.get();
+    _model._types.insert_or_assign(&callee, specialized->Type());
+    _model._symbols.push_back(std::move(specialized));
+    return result;
+}
+
 SemanticType SemanticAnalyzer::AnalyzeCall(
     const core::CallExpression& expression) {
     if (expression.Callee().Kind() == core::AstNodeKind::NameExpression &&
@@ -4811,6 +4861,8 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                      function->BuiltIn() == BuiltInFunction::StorageNew ||
                      function->BuiltIn() == BuiltInFunction::StorageFree))
         return AnalyzeAllocationCall(expression, function->BuiltIn());
+    if (function && function->BuiltIn() == BuiltInFunction::Hash)
+        return AnalyzeHashCall(expression);
     if (function &&
         (function->BuiltIn() == BuiltInFunction::StorageInitialize ||
          function->BuiltIn() == BuiltInFunction::StorageRelocate ||

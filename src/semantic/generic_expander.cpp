@@ -1476,6 +1476,16 @@ class Expander {
                     static_cast<const CallExpression&>(expression);
                 if (call.Callee().Kind() != AstNodeKind::NameExpression)
                     return {};
+                const auto& callee =
+                    static_cast<const NameExpression&>(call.Callee());
+                if (call.TypeArgument() && callee.Name() == "__hash") {
+                    if (!expressionTypes.contains(&expression))
+                        expressionTypes[&expression] =
+                            std::make_unique<TypeNode>(expression.Range(),
+                                                       PrimitiveType::USize);
+                    return {expressionTypes[&expression].get(),
+                            current->moduleId};
+                }
                 if (call.TypeArgument()) {
                     if (!expressionTypes.contains(&expression)) {
                         const auto& element =

@@ -553,6 +553,23 @@ TEST(ParserTests, ParsesOwningSliceTypesInDeclarationsAndAllocations) {
     EXPECT_EQ(call.TypeArgument()->Contract(), OwnershipContract::Own);
 }
 
+TEST(ParserTests, ParsesTypedHashIntrinsicCalls) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "usize hash_value(&const i32 value) { return __hash<i32>(value); }",
+        diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& call =
+        static_cast<const CallExpression&>(ReturnedExpression(*unit));
+    ASSERT_NE(call.TypeArgument(), nullptr);
+    EXPECT_EQ(call.TypeArgument()->TypeForm(), TypeKind::Primitive);
+    EXPECT_EQ(call.TypeArgument()->Type(), PrimitiveType::I32);
+    ASSERT_EQ(call.Arguments().size(), 1);
+}
+
 TEST(ParserTests, ParsesExternDeclarationWithSemicolonAndModifiers) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(
