@@ -22,3 +22,9 @@ export error QueueError {
 export error HeapError {
     Empty
 }
+
+// Reports failures from hash-map key lookup and removal.
+export error HashMapError {
+    // No entry has a key equal to the requested key.
+    KeyNotFound
+}

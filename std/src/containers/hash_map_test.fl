@@ -1,0 +1,384 @@
+module collections_test;
+
+@imports
+    :: root::containers::collections
+    :: root::containers::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+usize integerHash(&const i32 key) {
+    return (*key).cast<usize>;
+}
+
+usize collisionHash(&const i32 key) {
+    return 1;
+}
+
+bool integerEqual(&const i32 left, &const i32 right) {
+    return *left == *right;
+}
+
+structure HashMapKeyOwner {
+    *i32 cleanupCount;
+    i32 value;
+};
+
+HashMapKeyOwner HashMapKeyOwner::zero() override {
+    return build HashMapKeyOwner {
+        self.cleanupCount = null;
+        self.value = 0;
+    };
+}
+
+HashMapKeyOwner HashMapKeyOwner::init(
+    *i32 cleanupCount,
+    i32 value,
+) override {
+    return build HashMapKeyOwner {
+        self.cleanupCount = cleanupCount;
+        self.value = value;
+    };
+}
+
+void HashMapKeyOwner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            (*self->cleanupCount)++;
+        }
+    }
+}
+
+i32 HashMapKeyOwner::get(&const self) {
+    return self->value;
+}
+
+usize ownerKeyHash(&const HashMapKeyOwner key) {
+    return key->get().cast<usize>;
+}
+
+bool ownerKeyEqual(
+    &const HashMapKeyOwner left,
+    &const HashMapKeyOwner right,
+) {
+    return left->get() == right->get();
+}
+
+HashMapKeyOwner ownerKeyProbe(i32 value) {
+    unsafe {
+        return HashMapKeyOwner::init(null, value);
+    }
+}
+
+void visitOwnerKey(
+    &const HashMapKeyOwner key,
+    &const i32 value,
+) {
+    key->get();
+    *value;
+}
+
+test hash_map_starts_empty_and_reports_missing_keys(&testing::UnitTest t) {
+    values := collections::HashMap<i32, i32>::init(
+        integerHash,
+        integerEqual
+    );
+    i32 key = 7;
+
+    missing, getError := values.get(&key);
+    removed, removeError := values.remove(&key);
+
+    asserts::is_true(t, values.empty(), "a new map is empty");
+    asserts::is_true(t, values.len() == 0, "a new map has zero entries");
+    asserts::is_true(t, values.capacity() == 0, "a new map has no buckets");
+    asserts::is_false(t, values.containsKey(&key), "a missing key is absent");
+    asserts::is_true(
+        t,
+        missing == none and getError == errors::HashMapError.KeyNotFound,
+        "get reports HashMapError.KeyNotFound"
+    );
+    asserts::is_true(
+        t,
+        removed == none and removeError == errors::HashMapError.KeyNotFound,
+        "remove reports HashMapError.KeyNotFound"
+    );
+}
+
+test hash_map_inserts_replaces_and_grows(&testing::UnitTest t) {
+    values := collections::HashMap<i32, i32>::init(
+        integerHash,
+        integerEqual
+    );
+
+    loop i32 key = 0; key < 20; key++ {
+        setError := values.set(key, key * 10);
+        if setError != none {
+            asserts::is_true(t, false, "set grows the map");
+            return;
+        }
+    }
+
+    i32 replacedKey = 7;
+    replaceError := values.set(replacedKey, 999);
+    replacement, getError := values.get(&replacedKey);
+
+    asserts::is_true(
+        t,
+        replaceError == none and getError == none and replacement == 999,
+        "set replaces the value of an equal key"
+    );
+    asserts::is_true(t, values.len() == 20, "replacement preserves map length");
+
+    bool preserved = true;
+    loop i32 key = 0; key < 20; key++ {
+        actual, err := values.get(&key);
+        i32 expected = key * 10;
+        if key == replacedKey {
+            expected = 999;
+        }
+
+        if err != none or actual != expected {
+            preserved = false;
+        }
+    }
+
+    asserts::is_true(t, preserved, "growth preserves every key-value entry");
+}
+
+test hash_map_resolves_collisions_and_reuses_deleted_buckets(
+    &testing::UnitTest t,
+) {
+    values := collections::HashMap<i32, i32>::init(
+        collisionHash,
+        integerEqual
+    );
+
+    firstError := values.set(1, 10);
+    secondError := values.set(2, 20);
+    thirdError := values.set(3, 30);
+
+    i32 removedKey = 2;
+    removed, removeError := values.remove(&removedKey);
+    insertError := values.set(4, 40);
+
+    i32 firstKey = 1;
+    i32 thirdKey = 3;
+    i32 fourthKey = 4;
+    first, firstGetError := values.get(&firstKey);
+    third, thirdGetError := values.get(&thirdKey);
+    fourth, fourthGetError := values.get(&fourthKey);
+
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none and thirdError == none and
+            removeError == none and removed == 20 and insertError == none,
+        "colliding entries can be inserted and removed"
+    );
+    asserts::is_true(
+        t,
+        firstGetError == none and first == 10 and
+            thirdGetError == none and third == 30 and
+            fourthGetError == none and fourth == 40,
+        "probing crosses and reuses a deleted bucket"
+    );
+    asserts::is_false(
+        t,
+        values.containsKey(&removedKey),
+        "the removed key stays absent"
+    );
+}
+
+test hash_map_clear_retains_and_reuses_bucket_storage(&testing::UnitTest t) {
+    values := collections::HashMap<i32, i32>::init(
+        integerHash,
+        integerEqual
+    );
+
+    reserveError := values.reserve(16);
+    setError := values.set(1, 10);
+    setError = values.set(2, 20);
+    values.clear();
+
+    asserts::is_true(
+        t,
+        reserveError == none and setError == none and values.empty() and
+            values.capacity() == 16,
+        "clear removes entries and retains buckets"
+    );
+
+    reuseError := values.set(3, 30);
+    i32 key = 3;
+    actual, getError := values.get(&key);
+    asserts::is_true(
+        t,
+        reuseError == none and getError == none and actual == 30 and
+            values.len() == 1 and values.capacity() == 16,
+        "a cleared map reuses retained bucket storage"
+    );
+}
+
+test hash_map_for_each_visits_borrowed_entries(&testing::UnitTest t) {
+    values := collections::HashMap<i32, i32>::init(
+        collisionHash,
+        integerEqual
+    );
+    firstError := values.set(1, 10);
+    secondError := values.set(2, 20);
+    thirdError := values.set(3, 30);
+
+    usize visits = 0;
+    i32 total = 0;
+    values.forEach([&visits, &total](key, value) => {
+        visits++;
+        total = total + *key + *value;
+    });
+
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none and thirdError == none and
+            visits == 3 and total == 66,
+        "forEach borrows every entry exactly once"
+    );
+}
+
+test hash_map_grows_and_cleans_move_only_keys_once(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::HashMap<HashMapKeyOwner, i32>::init(
+            ownerKeyHash,
+            ownerKeyEqual
+        );
+
+        unsafe {
+            loop i32 key = 1; key <= 7; key++ {
+                setError := values.set(
+                    HashMapKeyOwner::init(&raw cleanupCount, key),
+                    key * 10
+                );
+                if setError != none {
+                    asserts::is_true(t, false, "move-only keys grow the map");
+                    return;
+                }
+            }
+
+            replacementError := values.set(
+                HashMapKeyOwner::init(&raw cleanupCount, 1),
+                999
+            );
+            asserts::is_true(
+                t,
+                replacementError == none and cleanupCount == 1 and
+                    values.len() == 7 and values.capacity() == 16,
+                "an equal incoming move-only key is consumed exactly once"
+            );
+        }
+
+        probe := ownerKeyProbe(1);
+        replaced, getError := values.get(&probe);
+        removed, removeError := values.remove(&probe);
+        asserts::is_true(
+            t,
+            getError == none and replaced == 999 and
+                removeError == none and removed == 999 and cleanupCount == 2,
+            "lookup borrows and removal destroys the stored move-only key"
+        );
+
+        values.forEach(visitOwnerKey);
+        asserts::is_true(
+            t,
+            values.len() == 6,
+            "forEach borrows move-only keys without copying them"
+        );
+
+        values.clear();
+        asserts::is_true(
+            t,
+            values.empty() and cleanupCount == 8,
+            "clear destroys every remaining move-only key once"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 8,
+        "map destruction does not repeat move-only key cleanup"
+    );
+}
+
+test hash_map_replaces_removes_and_clears_move_only_values_once(
+    &testing::UnitTest t,
+) {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::HashMap<i32, PushOwner>::init(
+            integerHash,
+            integerEqual
+        );
+
+        unsafe {
+            firstError := values.set(
+                1,
+                PushOwner::init(&raw cleanupCount, 10)
+            );
+            replacementError := values.set(
+                1,
+                PushOwner::init(&raw cleanupCount, 20)
+            );
+
+            asserts::is_true(
+                t,
+                firstError == none and replacementError == none and
+                    values.len() == 1 and cleanupCount == 1,
+                "replacement cleans the previous move-only value once"
+            );
+        }
+
+        i32 firstKey = 1;
+        {
+            removed, removeError := values.remove(&firstKey);
+            asserts::is_true(
+                t,
+                removeError == none and removed.get() == 20 and
+                    values.empty() and cleanupCount == 1,
+                "remove transfers a move-only value without cleanup"
+            );
+        }
+
+        asserts::is_true(
+            t,
+            cleanupCount == 2,
+            "the removed move-only value is cleaned by its new owner"
+        );
+
+        unsafe {
+            secondError := values.set(
+                2,
+                PushOwner::init(&raw cleanupCount, 30)
+            );
+            values.clear();
+
+            asserts::is_true(
+                t,
+                secondError == none and values.empty() and cleanupCount == 3,
+                "clear cleans a stored move-only value once"
+            );
+
+            finalError := values.set(
+                3,
+                PushOwner::init(&raw cleanupCount, 40)
+            );
+            asserts::is_true(
+                t,
+                finalError == none and values.len() == 1,
+                "a map can be reused after clearing move-only values"
+            );
+        }
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 4,
+        "map destruction cleans its final move-only value once"
+    );
+}
