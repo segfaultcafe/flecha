@@ -12,8 +12,8 @@ heaps, hash maps, and hash sets follow these foundations.
 **Acceptance status:** complete. The initialized-prefix implementation and its
 safe API now pass the full matrix below for allocation failure, move-only
 lifecycle, direct owning strings and slices, recursive nested ownership, and
-shared/exclusive view conflicts. The deque gate described below is also
-complete, so Stage 2 can proceed to stack and queue adapters.
+shared/exclusive view conflicts. The deque, stack, and queue gates described
+below are also complete, so Stage 2 can proceed to binary heap.
 
 ## Supported element categories
 
@@ -237,4 +237,5 @@ The deque gate covers:
 - allocation auditing plus focused ASan/UBSan execution.
 
 `Deque<T>` is complete for the Stage 2 foundation. `Stack<T>` and `Queue<T>`
-are the next collection layer and can be thin safe adapters over this API.
+are complete thin safe adapters over the array and deque foundations. Binary
+heap is the next collection layer.

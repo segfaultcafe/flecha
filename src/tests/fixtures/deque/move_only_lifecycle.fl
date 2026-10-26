@@ -1,6 +1,6 @@
 module move_only_lifecycle;
 
-@imports :: lib::std::containers::deque;
+@imports :: lib::std::containers::collections;
 
 structure Owner {
     *i32 cleanupCount;
@@ -38,7 +38,7 @@ void Owner::tear(&self) override {
 }
 
 unsafe i32 earlyReturn(*i32 cleanupCount, *i32 cleanupLog) {
-    values := deque::Deque<Owner>::init();
+    values := collections::Deque<Owner>::init();
 
     if values.pushBack(Owner::init(cleanupCount, cleanupLog, 6)) != none or
         values.pushFront(Owner::init(cleanupCount, cleanupLog, 7)) != none {
@@ -53,7 +53,7 @@ i32 main() {
     i32 cleanupLog = 0;
 
     unsafe {
-        values := deque::Deque<Owner>::init();
+        values := collections::Deque<Owner>::init();
 
         if values.reserve(4) != none {
             return 1;

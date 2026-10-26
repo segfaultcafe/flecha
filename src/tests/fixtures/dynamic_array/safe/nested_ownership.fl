@@ -1,6 +1,6 @@
 module nested_ownership;
 
-@imports :: lib::std::containers::array;
+@imports :: lib::std::containers::collections;
 
 structure Owner {
     *i32 cleanupCount;
@@ -34,9 +34,9 @@ void Owner::tear(&self) override {
 }
 
 i32 check_outer_and_inner_growth() {
-    outer := array::Array<array::Array<i32>>::init();
+    outer := collections::Array<collections::Array<i32>>::init();
     loop i32 row = 0; row < 5; row++ {
-        inner := array::Array<i32>::init();
+        inner := collections::Array<i32>::init();
         loop i32 column = 0; column < 5; column++ {
             if inner.push(row * 10 + column) != none {
                 return 1;
@@ -77,7 +77,7 @@ i32 check_outer_and_inner_growth() {
         return 8;
     }
 
-    empty := array::Array<i32>::init();
+    empty := collections::Array<i32>::init();
     if outer.push(empty) != none {
         return 9;
     }
@@ -91,11 +91,11 @@ i32 check_outer_and_inner_growth() {
 }
 
 i32 check_three_level_growth() {
-    outer := array::Array<array::Array<array::Array<i32>>>::init();
+    outer := collections::Array<collections::Array<collections::Array<i32>>>::init();
     loop i32 group = 0; group < 5; group++ {
-        middle := array::Array<array::Array<i32>>::init();
+        middle := collections::Array<collections::Array<i32>>::init();
         loop i32 row = 0; row < 5; row++ {
-            inner := array::Array<i32>::init();
+            inner := collections::Array<i32>::init();
             loop i32 column = 0; column < 5; column++ {
                 if inner.push(group * 100 + row * 10 + column) != none {
                     return 11;
@@ -131,11 +131,11 @@ unsafe i32 check_recursive_destruction() {
     i32 cleanupCount = 0;
     i32 cleanupLog = 0;
     {
-        outer := array::Array<array::Array<array::Array<Owner>>>::init();
+        outer := collections::Array<collections::Array<collections::Array<Owner>>>::init();
         loop i32 group = 0; group < 2; group++ {
-            middle := array::Array<array::Array<Owner>>::init();
+            middle := collections::Array<collections::Array<Owner>>::init();
             loop i32 row = 0; row < 2; row++ {
-                inner := array::Array<Owner>::init();
+                inner := collections::Array<Owner>::init();
                 const i32 FIRST = group * 3 + row * 2 + 1;
                 const i32 LAST = FIRST + (1 - row);
                 loop i32 id = FIRST; id <= LAST; id++ {

@@ -2,9 +2,8 @@ module std;
 
 @imports
     :: root::containers::raw_array
-    :: root::containers::array
+    :: root::containers::collections
     :: root::containers::errors as containers_errors
-    :: root::containers::algorithms
     :: root::bytes::buffer
     :: root::bytes::sequence
     :: root::encoding::binary

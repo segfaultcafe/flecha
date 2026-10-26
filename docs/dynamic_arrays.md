@@ -174,14 +174,14 @@ Both containers use the shared `errors::ArrayError` from
 
 ```flecha
 @imports
-    :: lib::std::containers::array
+    :: lib::std::containers::collections
     :: lib::std::containers::errors;
 ```
 
-Construct with `array::Array<i32>::init()`. The collection returns elements by
-value without exposing backing pointers or uninitialized capacity. Bounds
-errors check the used length. Growth failure preserves length, capacity, and
-existing contents.
+Construct with `collections::Array<i32>::init()`. The collection returns
+elements by value without exposing backing pointers or uninitialized capacity.
+Bounds errors check the used length. Growth failure preserves length, capacity,
+and existing contents.
 
 `RawArray` now has a safe initializer and a safe `tear` containing internal
 unsafe cleanup. The wrapper's generated lifecycle initializes and destroys its
@@ -224,5 +224,5 @@ multiple shared views coexist and owner access resumes after the final view
 use, including for nested inner views.
 
 The complete Stage 2 contract and acceptance matrix are specified in
-[`collections.md`](collections.md). The `Array<T>` and `Deque<T>` gates are
-complete; stack and queue adapters are the next collection layer.
+[`collections.md`](collections.md). The `Array<T>`, `Deque<T>`, `Stack<T>`, and
+`Queue<T>` gates are complete; binary heap is the next collection layer.

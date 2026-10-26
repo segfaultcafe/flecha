@@ -1,9 +1,9 @@
 module owning_elements;
 
-@imports :: lib::std::containers::array;
+@imports :: lib::std::containers::collections;
 
 i32 check_strings() {
-    values := array::Array<string>::init();
+    values := collections::Array<string>::init();
     if values.push("zero".cast<string>) != none ||
         values.push("one".cast<string>) != none ||
         values.push("two".cast<string>) != none ||
@@ -41,7 +41,7 @@ i32 check_strings() {
 }
 
 i32 check_owning_slices() {
-    values := array::Array<own []i32>::init();
+    values := collections::Array<own []i32>::init();
     loop i32 id = 1; id <= 5; id++ {
         owner, allocationError := new<own []i32>(2);
         if allocationError != none {

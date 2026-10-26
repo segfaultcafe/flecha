@@ -10,3 +10,11 @@ export error DequeError {
     Empty,
     IndexOutOfBounds
 }
+
+export error StackError {
+    Empty
+}
+
+export error QueueError {
+    Empty
+}

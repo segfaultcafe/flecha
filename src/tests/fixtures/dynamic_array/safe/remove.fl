@@ -1,11 +1,11 @@
 module remove;
 
 @imports
-    :: lib::std::containers::array
+    :: lib::std::containers::collections
     :: lib::std::containers::errors;
 
 i32 check_errors() {
-    values := array::Array<i32>::init();
+    values := collections::Array<i32>::init();
     missing, emptyError := values.remove(0);
     if emptyError != errors::ArrayError.IndexOutOfBounds || missing != none {
         return 1;
@@ -29,7 +29,7 @@ i32 check_errors() {
 }
 
 i32 check_middle() {
-    values := array::Array<i32>::init();
+    values := collections::Array<i32>::init();
     if values.push(10) != none || values.push(20) != none ||
         values.push(30) != none || values.push(40) != none {
         return 5;
@@ -60,7 +60,7 @@ i32 check_middle() {
 }
 
 i32 check_edges() {
-    values := array::Array<i32>::init();
+    values := collections::Array<i32>::init();
     if values.push(10) != none || values.push(20) != none ||
         values.push(30) != none || values.push(40) != none {
         return 11;

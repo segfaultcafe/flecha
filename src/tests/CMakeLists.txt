@@ -598,12 +598,76 @@ foreach(case IN ITEMS
             -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
 endforeach()
 
+foreach(case IN ITEMS
+        move_only_initial_failure
+        move_only_growth_failure
+        move_only_lifecycle
+        nested_ownership)
+    set(stack_fail_call 0)
+    if(case STREQUAL "move_only_initial_failure")
+        set(stack_fail_call 1)
+    elseif(case STREQUAL "move_only_growth_failure")
+        set(stack_fail_call 2)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeStack.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/stack/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_stack_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${stack_fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+foreach(case IN ITEMS
+        move_only_initial_failure
+        move_only_growth_failure
+        move_only_lifecycle
+        nested_ownership)
+    set(queue_fail_call 0)
+    if(case STREQUAL "move_only_initial_failure")
+        set(queue_fail_call 1)
+    elseif(case STREQUAL "move_only_growth_failure")
+        set(queue_fail_call 2)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeQueue.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/queue/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_queue_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${queue_fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
 add_test(NAME CompilerDiagnostics.SafeDeque
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_deque_diagnostics
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_deque_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.SafeStack
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_stack_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_stack_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.SafeQueue
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_queue_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_queue_diagnostics.cmake)
 
 add_test(NAME CompilerDiagnostics.SafeArray
     COMMAND ${CMAKE_COMMAND}

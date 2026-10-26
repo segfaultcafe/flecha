@@ -1,11 +1,11 @@
 module scalars;
 
 @imports
-    :: lib::std::containers::array
+    :: lib::std::containers::collections
     :: lib::std::containers::errors;
 
 i32 check_endpoints() {
-    values := array::Array<i32>::init();
+    values := collections::Array<i32>::init();
     if !values.empty() {
         return 15;
     }
@@ -33,7 +33,7 @@ i32 check_endpoints() {
 
 i32 check_array<T>(T first, T second) {
     {
-        values := array::Array<T>::init();
+        values := collections::Array<T>::init();
         if values.reserve(0) != none || values.capacity() != 0 {
             return 1;
         }

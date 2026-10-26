@@ -1,11 +1,11 @@
 module own_capture;
 
-@imports :: lib::std::containers::array;
+@imports :: lib::std::containers::collections;
 
 func Reader() => (i32);
 
 Reader make_reader() {
-    values := array::Array<i32>::init();
+    values := collections::Array<i32>::init();
     if values.push(20) != none { return () => { return 1; }; }
     if values.push(22) != none { return () => { return 2; }; }
 

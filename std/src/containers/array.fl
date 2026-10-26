@@ -1,9 +1,8 @@
-module array;
+module collections;
 
 @imports
     :: root::containers::raw_array
-    :: root::containers::errors
-    :: root::containers::algorithms;
+    :: root::containers::errors;
 
 // Owns a growable sequence and exposes safe checked element operations.
 export structure Array<T> {
@@ -55,22 +54,22 @@ error Array<T>::push(&self, T value) {
 
 // Returns the first index equal to value and true, or zero and false.
 (usize, bool) Array<T>::indexOf(&const self, T value) {
-    return algorithms::index_of<T>(self->view(), value);
+    return index_of<T>(self->view(), value);
 }
 
 // Reports whether an element is equal to value.
 bool Array<T>::contains(&const self, T value) {
-    return algorithms::contains<T>(self->view(), value);
+    return contains<T>(self->view(), value);
 }
 
 // Reverses the logical elements in place.
 void Array<T>::reverse(&self) {
-    algorithms::reverse<T>(self->viewRef());
+    reverse<T>(self->viewRef());
 }
 
 // Replaces every logical element with a semantic copy of value.
 void Array<T>::fill(&self, T value) {
-    algorithms::fill<T>(self->viewRef(), value);
+    fill<T>(self->viewRef(), value);
 }
 
 // Appends semantic copies of source, preserving contents on allocation error.
@@ -184,36 +183,36 @@ void Array<T>::clear(&self) {
 }
 
 // Sorts elements in place with less as a strict ordering.
-void Array<T>::sortBy(&self, algorithms::Less<T> less) {
-    algorithms::sort_by<T>(self->viewRef(), less);
+void Array<T>::sortBy(&self, Less<T> less) {
+    sort_by<T>(self->viewRef(), less);
 }
 
 // Calls action once for each element in index order.
-void Array<T>::forEach(&const self, algorithms::Action<T> action) {
-    algorithms::for_each<T>(self->view(), action);
+void Array<T>::forEach(&const self, Action<T> action) {
+    for_each<T>(self->view(), action);
 }
 
 // Returns the first accepted index and true, or zero and false.
-(usize, bool) Array<T>::findIf(&const self, algorithms::Predicate<T> predicate) {
-    return algorithms::find_if<T>(self->view(), predicate);
+(usize, bool) Array<T>::findIf(&const self, Predicate<T> predicate) {
+    return find_if<T>(self->view(), predicate);
 }
 
 // Reports whether predicate accepts at least one element.
-bool Array<T>::anyOf(&const self, algorithms::Predicate<T> predicate) {
-    return algorithms::any_of<T>(self->view(), predicate);
+bool Array<T>::anyOf(&const self, Predicate<T> predicate) {
+    return any_of<T>(self->view(), predicate);
 }
 
 // Reports whether predicate accepts every element.
-bool Array<T>::allOf(&const self, algorithms::Predicate<T> predicate) {
-    return algorithms::all_of<T>(self->view(), predicate);
+bool Array<T>::allOf(&const self, Predicate<T> predicate) {
+    return all_of<T>(self->view(), predicate);
 }
 
 // Counts the elements accepted by predicate.
-usize Array<T>::countIf(&const self, algorithms::Predicate<T> predicate) {
-    return algorithms::count_if<T>(self->view(), predicate);
+usize Array<T>::countIf(&const self, Predicate<T> predicate) {
+    return count_if<T>(self->view(), predicate);
 }
 
 // Folds elements from left to right, beginning with initial.
-A Array<T>::fold<A>(&const self, A initial, algorithms::Folder<T, A> folder) {
-    return algorithms::fold<T, A>(self->view(), initial, folder);
+A Array<T>::fold<A>(&const self, A initial, Folder<T, A> folder) {
+    return fold<T, A>(self->view(), initial, folder);
 }

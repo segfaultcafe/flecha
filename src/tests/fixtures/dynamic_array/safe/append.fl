@@ -1,9 +1,9 @@
 module append;
 
-@imports :: lib::std::containers::array;
+@imports :: lib::std::containers::collections;
 
 i32 main() {
-    values := array::Array<i32>::init();
+    values := collections::Array<i32>::init();
     if values.push(10) != none || values.push(20) != none {
         return 1;
     }

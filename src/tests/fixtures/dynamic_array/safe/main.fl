@@ -1,12 +1,12 @@
 module main;
 
 @imports
-    :: lib::std::containers::array
+    :: lib::std::containers::collections
     :: lib::std::containers::errors;
 
 i32 main() {
     {
-        a := array::Array<i32>::init();
+        a := collections::Array<i32>::init();
         if a.len() != 0 || a.capacity() != 0 {
             return 1;
         }
@@ -106,7 +106,7 @@ i32 main() {
             return 19;
         }
 
-        other := array::Array<i32>::init();
+        other := collections::Array<i32>::init();
         if other.push(7) != none {
             return 20;
         }

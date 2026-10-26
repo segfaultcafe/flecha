@@ -1,6 +1,6 @@
 module move_only_front_growth_failure;
 
-@imports :: lib::std::containers::deque;
+@imports :: lib::std::containers::collections;
 
 structure Owner {
     *i32 cleanupCount;
@@ -41,7 +41,7 @@ i32 Owner::get(&const self) {
     return self->id;
 }
 
-i32 popExpected(&deque::Deque<Owner> values, i32 expected) {
+i32 popExpected(&collections::Deque<Owner> values, i32 expected) {
     owner, popError := values->popFront();
 
     if popError != none or owner.get() != expected {
@@ -56,7 +56,7 @@ i32 main() {
     i32 cleanupLog = 0;
 
     {
-        values := deque::Deque<Owner>::init();
+        values := collections::Deque<Owner>::init();
 
         if values.reserve(4) != none {
             return 1;

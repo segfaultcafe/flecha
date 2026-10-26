@@ -78,6 +78,27 @@ TEST_F(ModuleTests, ComposesLogicalModulesAcrossArbitraryFilenames) {
     EXPECT_NE(Check().find("cannot open module 'first_piece'"),
               std::string::npos);
 }
+
+TEST_F(ModuleTests, GivesAnonymousFunctionsUniqueNamesAcrossSourceUnits) {
+    Write("first_piece.fl", R"(module shared;
+        func Reader() => (i32);
+        export i32 first() {
+            Reader read = []() => (i32) { return 20; };
+            return read();
+        }
+    )");
+    Write("second_piece.fl", R"(module shared;
+        export i32 second() {
+            Reader read = []() => (i32) { return 22; };
+            return read();
+        }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::shared;
+        i32 main() { return shared::first() + shared::second(); }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+
 TEST_F(ModuleTests, SharesModuleConstantsAcrossFilesAndImportsExports) {
     Write("constant_values.fl", R"(module constants;
         const i32 BASE = 40;

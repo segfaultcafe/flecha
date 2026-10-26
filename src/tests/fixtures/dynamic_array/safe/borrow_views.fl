@@ -1,9 +1,9 @@
 module borrow_views;
 
-@imports :: lib::std::containers::array;
+@imports :: lib::std::containers::collections;
 
 i32 main() {
-    values := array::Array<i32>::init();
+    values := collections::Array<i32>::init();
     if values.push(10) != none || values.push(20) != none {
         return 1;
     }
@@ -28,8 +28,8 @@ i32 main() {
         return 5;
     }
 
-    outer := array::Array<array::Array<i32>>::init();
-    inner := array::Array<i32>::init();
+    outer := collections::Array<collections::Array<i32>>::init();
+    inner := collections::Array<i32>::init();
     if inner.push(7) != none || outer.push(inner) != none {
         return 6;
     }
@@ -37,7 +37,7 @@ i32 main() {
     if innerView[0] != 7 {
         return 7;
     }
-    replacement := array::Array<i32>::init();
+    replacement := collections::Array<i32>::init();
     if outer.push(replacement) != none || outer.len() != 2 {
         return 8;
     }

@@ -334,7 +334,8 @@ std::string ModuleLoader::VisitModule(
         for (const auto& diagnostic : lexical.Diagnostics())
             _diagnostics.Report(diagnostic.code, locate(diagnostic.range),
                                 diagnostic.message, diagnostic.severity);
-        Parser parser(std::move(tokens), _diagnostics);
+        Parser parser(std::move(tokens), _diagnostics,
+                      "s" + std::to_string(sourceIndex) + "$");
         parser.ParseHeader();
 
         std::vector<Import> expanded;

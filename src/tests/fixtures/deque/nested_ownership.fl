@@ -1,12 +1,12 @@
 module nested_ownership;
 
-@imports :: lib::std::containers::deque;
+@imports :: lib::std::containers::collections;
 
 i32 checkTwoLevels() {
-    outer := deque::Deque<deque::Deque<i32>>::init();
+    outer := collections::Deque<collections::Deque<i32>>::init();
 
     loop i32 row = 0; row < 5; row++ {
-        inner := deque::Deque<i32>::init();
+        inner := collections::Deque<i32>::init();
 
         loop i32 column = 0; column < 5; column++ {
             if inner.pushBack(row * 10 + column) != none {
@@ -47,13 +47,13 @@ i32 checkTwoLevels() {
 }
 
 i32 checkThreeLevels() {
-    outer := deque::Deque<deque::Deque<deque::Deque<i32>>>::init();
+    outer := collections::Deque<collections::Deque<collections::Deque<i32>>>::init();
 
     loop i32 group = 0; group < 5; group++ {
-        middle := deque::Deque<deque::Deque<i32>>::init();
+        middle := collections::Deque<collections::Deque<i32>>::init();
 
         loop i32 row = 0; row < 5; row++ {
-            inner := deque::Deque<i32>::init();
+            inner := collections::Deque<i32>::init();
 
             loop i32 column = 0; column < 5; column++ {
                 if inner.pushBack(group * 100 + row * 10 + column) != none {

@@ -1,0 +1,183 @@
+module collections_test;
+
+@imports
+    :: root::containers::collections
+    :: root::containers::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test empty_queue_has_zero_state_and_reports_queue_errors(
+    &testing::UnitTest t
+) {
+    values := collections::Queue<i32>::init();
+
+    missingFront, frontError := values.front();
+    missingDequeue, dequeueError := values.dequeue();
+
+    asserts::is_true(t, values.empty(), "a new queue is empty");
+    asserts::is_true(t, values.len() == 0, "a new queue has zero length");
+    asserts::is_true(
+        t,
+        values.capacity() == 0,
+        "a new queue has zero capacity"
+    );
+    asserts::is_true(
+        t,
+        missingFront == none and frontError == errors::QueueError.Empty,
+        "front reports QueueError.Empty"
+    );
+    asserts::is_true(
+        t,
+        missingDequeue == none and
+            dequeueError == errors::QueueError.Empty,
+        "dequeue reports QueueError.Empty"
+    );
+}
+
+test enqueue_front_and_dequeue_follow_fifo_order(
+    &testing::UnitTest t
+) {
+    values := collections::Queue<i32>::init();
+
+    firstEnqueue := values.enqueue(10);
+    secondEnqueue := values.enqueue(20);
+    thirdEnqueue := values.enqueue(30);
+
+    front, frontError := values.front();
+    first, firstError := values.dequeue();
+    second, secondError := values.dequeue();
+    third, thirdError := values.dequeue();
+
+    asserts::is_true(
+        t,
+        firstEnqueue == none and
+            secondEnqueue == none and
+            thirdEnqueue == none,
+        "enqueue accepts values"
+    );
+    asserts::is_true(
+        t,
+        frontError == none and front == 10,
+        "front reads the oldest queued value"
+    );
+    asserts::is_true(
+        t,
+        firstError == none and first == 10 and
+            secondError == none and second == 20 and
+            thirdError == none and third == 30,
+        "dequeue removes values in FIFO order"
+    );
+    asserts::is_true(
+        t,
+        values.empty() and values.len() == 0,
+        "dequeueing every value empties the queue"
+    );
+}
+
+test reserve_clear_and_reuse_preserve_queue_storage(
+    &testing::UnitTest t
+) {
+    values := collections::Queue<i32>::init();
+
+    firstEnqueue := values.enqueue(10);
+    secondEnqueue := values.enqueue(20);
+    reserveError := values.reserve(8);
+    front, frontError := values.front();
+
+    asserts::is_true(
+        t,
+        firstEnqueue == none and secondEnqueue == none and
+            reserveError == none and frontError == none and
+            front == 10 and values.len() == 2 and values.capacity() == 8,
+        "reserve preserves queue contents and length"
+    );
+
+    values.clear();
+    asserts::is_true(
+        t,
+        values.empty() and values.len() == 0 and values.capacity() == 8,
+        "clear empties the queue while retaining capacity"
+    );
+
+    reuseEnqueue := values.enqueue(42);
+    reused, reuseDequeue := values.dequeue();
+    asserts::is_true(
+        t,
+        reuseEnqueue == none and reuseDequeue == none and reused == 42 and
+            values.empty() and values.capacity() == 8,
+        "a cleared queue reuses retained storage"
+    );
+}
+
+test dequeue_transfers_move_only_values_and_cleans_each_once(
+    &testing::UnitTest t
+) {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::Queue<PushOwner>::init();
+        error operationError = none;
+
+        unsafe {
+            operationError = values.enqueue(
+                PushOwner::init(&raw cleanupCount, 10)
+            );
+            operationError = values.enqueue(
+                PushOwner::init(&raw cleanupCount, 20)
+            );
+        }
+
+        reserveError := values.reserve(8);
+        asserts::is_true(
+            t,
+            operationError == none and reserveError == none and
+                values.len() == 2 and values.capacity() == 8 and
+                cleanupCount == 0,
+            "queue growth relocates move-only values without cleanup"
+        );
+        if operationError != none or reserveError != none {
+            return;
+        }
+
+        {
+            extracted, dequeueError := values.dequeue();
+            asserts::is_true(
+                t,
+                dequeueError == none and extracted.get() == 10 and
+                    values.len() == 1 and cleanupCount == 0,
+                "dequeue transfers the oldest move-only value"
+            );
+        }
+
+        asserts::is_true(
+            t,
+            cleanupCount == 1,
+            "the dequeued owner is cleaned exactly once"
+        );
+
+        values.clear();
+        asserts::is_true(
+            t,
+            cleanupCount == 2 and values.empty() and values.capacity() == 8,
+            "clear cleans the remaining owner and retains storage"
+        );
+
+        unsafe {
+            operationError = values.enqueue(
+                PushOwner::init(&raw cleanupCount, 30)
+            );
+        }
+        asserts::is_true(
+            t,
+            operationError == none and values.len() == 1 and
+                values.capacity() == 8,
+            "a cleared queue accepts another move-only owner"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 3,
+        "queue destruction cleans only the final owner"
+    );
+}

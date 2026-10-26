@@ -34,7 +34,7 @@ if(NOT last_output STREQUAL "Hello from Flecha!\n")
 endif()
 file(WRITE "${TEST_ROOT}/hello/src/main.fl"
     "module main;\n"
-    "@imports :: lib::std::containers::array;\n"
+    "@imports :: lib::std::containers::collections;\n"
     "void main() { stdoutln(\"Hello from Flecha!\"); }\n")
 run_with_standard_library(0 "${TEST_ROOT}/hello" run)
 if(NOT last_output STREQUAL "Hello from Flecha!\n")

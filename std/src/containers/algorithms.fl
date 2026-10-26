@@ -1,4 +1,4 @@
-module algorithms;
+module collections;
 
 @imports :: root::memory::slices as mem_slices;
 
