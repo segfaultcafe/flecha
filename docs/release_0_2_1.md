@@ -136,8 +136,9 @@ boundary_cases.fl    -> module numeric_test;
 ```
 
 Running either test source unit loads the complete `numeric_test` logical
-module and discovers tests across all of its source units. Test filenames do
-not need an `_test.fl` suffix.
+module but executes only tests declared in the requested source file. Longbow
+invokes every test source file to retain complete project-wide coverage. Test
+filenames do not need an `_test.fl` suffix.
 
 Pairing grants the existing one-way access to the production module's
 module-private top-level declarations. It does not grant access to private
@@ -159,8 +160,8 @@ external namespace it uses.
 6. Require consistent private-module status across all source units in a
    logical module.
 7. Make compiler and Longbow test discovery inspect declared `_test` module
-   names, deduplicate their source units, and generate one harness for each
-   complete logical test module.
+   names, compile complete logical test modules, and generate one harness for
+   each requested test source file.
 8. Preserve one nominal identity and native symbol namespace across every
    source unit in the logical module.
 9. Allow implicit aliases for distinct same-named imports to bind an overlapping

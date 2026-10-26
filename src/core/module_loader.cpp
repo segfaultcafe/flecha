@@ -481,13 +481,15 @@ std::string ModuleLoader::VisitModule(
 
     if (entry && _mode == ModuleLoadMode::Test) {
         std::vector<const FunctionDeclaration*> tests;
-        for (const auto& source : sources)
+        for (const auto& source : sources) {
+            if (source.file != entrySource) continue;
             for (const auto& declaration : source.unit->Declarations())
                 if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
                     static_cast<const FunctionDeclaration&>(*declaration)
                         .IsTest())
                     tests.push_back(static_cast<const FunctionDeclaration*>(
                         declaration.get()));
+        }
         diagnostics::DiagnosticBag generatedDiagnostics;
         auto generatedTokens =
             Tokenizer(TestHarnessSource(tests, entrySource, _verboseTests),

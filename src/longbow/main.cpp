@@ -292,7 +292,7 @@ int Run(int argc, char** argv) {
         return 0;
     }
     if (command == "test") {
-        std::map<std::pair<fs::path, std::string>, fs::path> logicalTests;
+        std::vector<fs::path> tests;
         const fs::path sourceRoot = root / "src";
         if (fs::is_directory(sourceRoot))
             for (const auto& item :
@@ -302,19 +302,8 @@ int Run(int argc, char** argv) {
                     continue;
                 const auto module = DeclaredModule(item.path());
                 if (!module || !module->ends_with("_test")) continue;
-                const auto key = std::make_pair(
-                    fs::weakly_canonical(item.path().parent_path()), *module);
-                auto [found, inserted] =
-                    logicalTests.emplace(key, fs::weakly_canonical(item.path()));
-                if (!inserted && item.path() < found->second)
-                    found->second = fs::weakly_canonical(item.path());
+                tests.push_back(fs::weakly_canonical(item.path()));
             }
-        std::vector<fs::path> tests;
-        tests.reserve(logicalTests.size());
-        for (const auto& [key, entry] : logicalTests) {
-            (void)key;
-            tests.push_back(entry);
-        }
         std::sort(tests.begin(), tests.end());
         std::size_t passed = 0;
         std::size_t failed = 0;
@@ -347,11 +336,11 @@ int Run(int argc, char** argv) {
             const std::size_t total = passed + failed;
             if (failed == 0)
                 std::cout << "\nOK [" << passed << "/" << total
-                          << "] test modules passed\n";
+                          << "] test files passed\n";
             else
                 std::cout << "\nFAIL [" << passed << "/" << total
                           << "] test files passed, but [" << failed << "/"
-                          << total << "] test modules failed\n";
+                          << total << "] test files failed\n";
         } else if (tests.empty())
             std::cout << "no test files found\n";
         return failed == 0 ? 0 : 1;
