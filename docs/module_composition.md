@@ -144,8 +144,10 @@ basic_cases.fl     -> module homer_test;
 boundary_cases.fl  -> module homer_test;
 ```
 
-Running either source unit loads the whole `homer_test` module and discovers
-tests from both. Test filenames do not require an `_test.fl` suffix.
+Running either source unit loads the whole `homer_test` module for compilation
+but executes only tests declared in the requested source file. Longbow invokes
+every source file contributing to a test module. Test filenames do not require
+an `_test.fl` suffix.
 
 The existing test privilege remains one-way: the paired test module may access
 module-private top-level declarations in the production module, but not private
