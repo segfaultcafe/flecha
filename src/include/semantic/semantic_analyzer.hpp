@@ -121,6 +121,7 @@ class SemanticAnalyzer final {
         const core::AssignmentExpression& expression);
     SemanticType AnalyzeAllocationCall(const core::CallExpression& expression,
                                        BuiltInFunction intrinsic);
+    SemanticType AnalyzeHashCall(const core::CallExpression& expression);
     SemanticType AnalyzeStorageCall(const core::CallExpression& expression,
                                     BuiltInFunction intrinsic);
     SemanticType AnalyzeCall(const core::CallExpression& expression);

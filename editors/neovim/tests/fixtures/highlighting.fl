@@ -58,6 +58,8 @@ error genericError = MathError.Overflow;
 structure Box { private i32 x; };
 Box Box::init() override { return build Box {}; }
 i32 Box::value(&self) { return self->x; }
+&const i32 borrow_all(&const i32 args) <- ...args { return args; }
+args := 0;
 
 unsafe { pointer, err := new<u8>(42); defer free(pointer); }
 error allocError = AllocationError.OutOfMemory;

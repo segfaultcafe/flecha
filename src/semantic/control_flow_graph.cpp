@@ -439,8 +439,22 @@ class GraphBuilder final {
             case core::AstNodeKind::CallExpression: {
                 const auto& call =
                     static_cast<const core::CallExpression&>(expression);
+                const auto* callee =
+                    call.Callee().Kind() == core::AstNodeKind::NameExpression
+                        ? _model.SymbolFor(
+                              static_cast<const core::NameExpression&>(
+                                  call.Callee()))
+                        : nullptr;
+                const auto* function =
+                    callee && callee->Kind() == SymbolKind::Function
+                        ? static_cast<const FunctionSymbol*>(callee)
+                        : nullptr;
+                const bool allocation =
+                    function &&
+                    (function->BuiltIn() == BuiltInFunction::New ||
+                     function->BuiltIn() == BuiltInFunction::StorageNew);
                 const bool dynamic =
-                    call.TypeArgument() &&
+                    allocation && call.TypeArgument() &&
                     call.TypeArgument()->TypeForm() == core::TypeKind::Slice;
                 const NodeId failure = next;
                 if (dynamic) {
@@ -451,7 +465,7 @@ class GraphBuilder final {
                      argument != call.Arguments().rend(); ++argument) {
                     next = BuildExpression(**argument, next);
                 }
-                if (call.TypeArgument() && !dynamic) {
+                if (allocation && call.TypeArgument() && !dynamic) {
                     next = AddNode({next, failure});
                     _graph.nodes[next].allocation = &call;
                 }

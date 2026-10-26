@@ -173,7 +173,7 @@ struct CallableSignature final {
     std::vector<SemanticType> parameters;
     std::vector<core::OwnershipContract> parameterContracts;
     std::vector<core::OwnershipContract> resultContracts;
-    std::optional<std::size_t> borrowSourceIndex;
+    std::vector<std::size_t> borrowSourceIndices;
     bool isUnsafe = false;
     bool isOnce = false;
 

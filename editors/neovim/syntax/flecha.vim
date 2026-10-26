@@ -27,6 +27,7 @@ syntax keyword flechaCast as
 syntax keyword flechaBoolean true false
 syntax keyword flechaConstant none null
 syntax keyword flechaSelf self
+syntax match flechaSelf /\%(<-\s*\.\.\.\s*\)\@<=args\>/
 syntax keyword flechaWordOperator and or
 
 syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>\|<=\|>=\|&&\|||\|[&|~=+*\/%^!<>-]/

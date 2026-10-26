@@ -8,6 +8,7 @@ module std;
     :: root::bytes::sequence
     :: root::encoding::binary
     :: root::encoding::hex
+    :: root::hashing::hashing
     :: root::io::stream
     :: root::io::filesystem
     :: root::io::file

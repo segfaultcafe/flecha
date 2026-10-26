@@ -7,15 +7,14 @@ and acceptance tests are present.
 
 The first Stage 2 deliverable is an ownership-capable `Array<T>`. `Deque<T>`
 is the second and reuses the same storage and lifecycle rules. Stacks, queues,
-and binary heaps now build on those foundations; hash maps and hash sets
-follow.
+binary heaps, and hash maps now build on those foundations; hash sets follow.
 
 **Acceptance status:** complete. The initialized-prefix implementation and its
 safe API now pass the full matrix below for allocation failure, move-only
 lifecycle, direct owning strings and slices, recursive nested ownership, and
-shared/exclusive view conflicts. The deque, stack, queue, and binary-heap gates
-described below are also complete, so Stage 2 can proceed to hash-based
-collections.
+shared/exclusive view conflicts. The deque, stack, queue, binary-heap, and
+hash-map gates described below are also complete, so Stage 2 can proceed to
+hash sets.
 
 ## Supported element categories
 
@@ -265,5 +264,58 @@ The binary-heap gate covers:
   representation access, and copy-only `top` on move-only elements; and
 - allocation auditing plus focused ASan/UBSan execution.
 
-`BinaryHeap<T>` is complete for the Stage 2 foundation. Hash map and hash set
-are the next collection layer.
+`BinaryHeap<T>` is complete for the Stage 2 foundation. The hash-map foundation
+is complete below; hash set follows it.
+
+## Hash map acceptance
+
+`HashMap<K, V>` is an open-addressed table with replaceable `Hash<K>` and
+`Equal<K>` policies. Its initial safe API provides insertion and
+replacement through `set`, copy-only lookup through `get`, noncopying
+`containsKey`, ownership-transferring `remove`, capacity reservation, clearing,
+length/capacity queries, and noncopying traversal through `forEach`. Traversal
+borrows each key and value and does not promise bucket order.
+
+Keys and values occupy parallel `RawStorage` allocations. A separate byte-state
+array distinguishes empty, occupied, and deleted buckets, so neither keys nor
+values need sentinel representations and spare buckets are never initialized or
+destroyed as `K` or `V`. Linear probing preserves collision chains across
+deletions, growth rehashes only occupied buckets, and allocation completes
+before any existing entry is relocated.
+
+The initializer uses structural hashing and equality as its generic default
+policies. Scalars hash by value, aggregates hash their logical fields without
+reading padding, and equal keys always produce equal hashes. See
+[`hashing.md`](hashing.md) for the supported in-memory hashing contract.
+Callers with domain-specific key semantics can replace both policies while
+building the empty map. The consuming `self` receiver permits safe chaining on
+temporaries, and the multi-origin result contract retains borrows carried by
+both the map and the new policy:
+
+```flecha
+map := HashMap<K, V>::init()
+    .withHash(hash)
+    .withEqual(equal);
+```
+
+Policy replacement on a nonempty map is ignored so existing bucket placement
+and equality semantics remain valid.
+
+The hash-map gate covers:
+
+- empty and missing-key behavior, insertion, replacement, growth, forced
+  collisions, deleted-bucket reuse, removal, clear/reuse, and iteration;
+- move-only keys and values across replacement, relocation, extraction,
+  traversal, clearing, and destruction with exactly-once cleanup;
+- failure injection at each of the state, key-storage, and value-storage
+  allocations during both initial insertion and later growth, preserving all
+  existing entries while consuming rejected arguments exactly once;
+- two- and three-level nested maps through outer and inner growth, extraction,
+  clearing, and destruction;
+- rejection of immovable and borrowed keys or values, use after movement,
+  private representation access, mutation during an active borrow, and
+  copy-only `get` on move-only values; and
+- allocation auditing plus dedicated ASan/UBSan and CI execution.
+
+`HashMap<K, V>` is complete for the Stage 2 foundation. Hash set reuse is the
+next hash-based collection layer.

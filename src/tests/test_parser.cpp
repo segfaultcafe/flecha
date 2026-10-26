@@ -459,10 +459,56 @@ TEST(ParserTests, ParsesBorrowResultSourceAfterParameters) {
     ASSERT_EQ(unit->Declarations().size(), 1);
     const auto& function =
         static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
-    EXPECT_TRUE(function.HasBorrowSource());
-    EXPECT_EQ(function.BorrowSource(), "value");
-    EXPECT_EQ(function.BorrowSourceRange().start.offset, 41);
-    EXPECT_EQ(function.BorrowSourceRange().end.offset, 46);
+    EXPECT_TRUE(function.HasBorrowSources());
+    ASSERT_EQ(function.BorrowSources().size(), 1);
+    ASSERT_EQ(function.BorrowSourceRanges().size(), 1);
+    EXPECT_EQ(function.BorrowSources()[0], "value");
+    EXPECT_EQ(function.BorrowSourceRanges()[0].start.offset, 41);
+    EXPECT_EQ(function.BorrowSourceRanges()[0].end.offset, 46);
+}
+
+TEST(ParserTests, ParsesGroupedBorrowResultSources) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "&const i32 choose(&const i32 left, &const i32 right) "
+        "<- (left, right) { return left; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(function.BorrowSources().size(), 2);
+    EXPECT_EQ(function.BorrowSources()[0], "left");
+    EXPECT_EQ(function.BorrowSources()[1], "right");
+}
+
+TEST(ParserTests, ExpandsAllArgumentBorrowResultSources) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "&const i32 choose(&const i32 args, &const i32 other) "
+        "<- ...args { return args; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(function.BorrowSources().size(), 2);
+    EXPECT_EQ(function.BorrowSources()[0], "args");
+    EXPECT_EQ(function.BorrowSources()[1], "other");
+}
+
+TEST(ParserTests, RequiresArgsAfterBorrowSourceEllipsis) {
+    DiagnosticBag diagnostics;
+    (void)ParseSource(
+        "&const i32 invalid(&const i32 value) <- ...values { return value; }",
+        diagnostics);
+
+    EXPECT_TRUE(diagnostics.HasErrors());
+    ASSERT_FALSE(diagnostics.Diagnostics().empty());
+    EXPECT_EQ(diagnostics.Diagnostics().front().code,
+              DiagnosticCode::UnexpectedToken);
 }
 
 TEST(ParserTests, RequiresBorrowSourceAfterLeftArrow) {
@@ -505,6 +551,23 @@ TEST(ParserTests, ParsesOwningSliceTypesInDeclarationsAndAllocations) {
     ASSERT_NE(call.TypeArgument(), nullptr);
     EXPECT_EQ(call.TypeArgument()->TypeForm(), TypeKind::Slice);
     EXPECT_EQ(call.TypeArgument()->Contract(), OwnershipContract::Own);
+}
+
+TEST(ParserTests, ParsesTypedHashIntrinsicCalls) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "usize hash_value(&const i32 value) { return __hash<i32>(value); }",
+        diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& call =
+        static_cast<const CallExpression&>(ReturnedExpression(*unit));
+    ASSERT_NE(call.TypeArgument(), nullptr);
+    EXPECT_EQ(call.TypeArgument()->TypeForm(), TypeKind::Primitive);
+    EXPECT_EQ(call.TypeArgument()->Type(), PrimitiveType::I32);
+    ASSERT_EQ(call.Arguments().size(), 1);
 }
 
 TEST(ParserTests, ParsesExternDeclarationWithSemicolonAndModifiers) {
@@ -1689,6 +1752,43 @@ TEST(ParserStructureTests, ParsesPrivateFieldsMethodsReceiversAndConstruction) {
     const auto& access =
         static_cast<const MemberAccessExpression&>(*returned.Value());
     EXPECT_EQ(access.Access(), TokenType::Arrow);
+}
+
+TEST(ParserStructureTests, ParsesContextualOwningSelfReceiver) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "structure Box { i32 value; }; "
+        "Box Box::withValue(self, i32 value) { "
+        "self.value = value; return self; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& method =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(method.Parameters().size(), 2);
+    EXPECT_EQ(method.Parameters()[0]->Name(), "self");
+    EXPECT_EQ(method.Parameters()[0]->Type().TypeForm(), TypeKind::Named);
+    EXPECT_EQ(method.Parameters()[0]->Type().Name(), "Box");
+}
+
+TEST(ParserCallableTests, ParsesSpecializedGenericFunctionValues) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "func Mapper<T>(T) => (T); T identity<T>(T value) { return value; } "
+        "void use() { Mapper<i32> mapper = identity<i32>; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& use =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[2]);
+    const auto& declaration = static_cast<const VariableDeclarationStatement&>(
+        *use.Body().Statements()[0]);
+    const auto& value =
+        static_cast<const NameExpression&>(*declaration.Initializer());
+    ASSERT_EQ(value.typeArguments.size(), 1);
+    EXPECT_EQ(value.typeArguments[0]->TypeForm(), TypeKind::Primitive);
+    EXPECT_EQ(value.typeArguments[0]->Type(), PrimitiveType::I32);
 }
 
 TEST(ParserStructureTests, RejectsMalformedStructureSyntax) {

@@ -1,0 +1,354 @@
+module collections;
+
+@imports
+    :: root::containers::errors
+    :: root::hashing::hashing
+    :: root::memory::storage;
+
+const u8 HASH_MAP_EMPTY = 0;
+const u8 HASH_MAP_OCCUPIED = 1;
+const u8 HASH_MAP_DELETED = 2;
+const usize HASH_MAP_INITIAL_CAPACITY = 8;
+
+// Produces a stable hash for a borrowed key while it is stored in a map.
+export func Hash<K>(&const K key) => (usize);
+
+// Reports whether two borrowed keys identify the same map entry.
+export func Equal<K>(&const K left, &const K right) => (bool);
+
+// Visits one borrowed key-value pair for its side effects.
+export func HashMapAction<K, V>(&const K key, &const V value) => ();
+
+// Owns unique key-value entries in an open-addressed hash table. The supplied
+// hash and equality policies must agree: equal keys must have equal hashes.
+export structure HashMap<K, V> {
+    private {
+        storage::RawStorage<K> keys;
+        storage::RawStorage<V> values;
+        own []u8 states;
+        usize length;
+        Hash<K> hash;
+        Equal<K> equal;
+    }
+};
+
+HashMap<K, V> HashMap<K, V>::zero() override {
+    return build HashMap<K, V> {};
+}
+
+// Creates an empty map with structural hash and equality policies.
+HashMap<K, V> HashMap<K, V>::init() override {
+    return build HashMap<K, V> {
+        self.hash = default_hash<K>;
+        self.equal = default_equal<K>;
+    };
+}
+
+// Replaces the hash policy while consuming and returning the map for chaining.
+HashMap<K, V> HashMap<K, V>::withHash(self, Hash<K> hash) <-...args {
+    if !self.empty() {
+        return self;
+    }
+    self.hash = hash;
+    return self;
+}
+
+// Replaces the equality policy while consuming and returning the map.
+HashMap<K, V> HashMap<K, V>::withEqual(self, Equal<K> equal) <-...args {
+    if !self.empty() {
+        return self;
+    }
+    self.equal = equal;
+    return self;
+}
+
+// Destroys all stored keys and values. RawStorage releases the two allocations
+// afterward without touching empty or deleted buckets.
+void HashMap<K, V>::tear(&self) override {
+    unsafe {
+        loop usize index = 0; index < self->states.len(); index++ {
+            if self->states[index] == HASH_MAP_OCCUPIED {
+                self->values.destroy(index);
+                self->keys.destroy(index);
+            }
+        }
+    }
+}
+
+// Returns the number of stored key-value entries.
+usize HashMap<K, V>::len(&const self) {
+    return self->length;
+}
+
+// Returns the number of buckets available before another allocation.
+usize HashMap<K, V>::capacity(&const self) {
+    return self->states.len();
+}
+
+// Reports whether the map contains no entries.
+bool HashMap<K, V>::empty(&const self) {
+    return self->length == 0;
+}
+
+// Calls action once for every entry. Bucket order is unspecified.
+void HashMap<K, V>::forEach(&const self, HashMapAction<K, V> action) {
+    unsafe {
+        loop usize index = 0; index < self->capacity(); index++ {
+            if self->states[index] == HASH_MAP_OCCUPIED {
+                keys := self->keys.view(index, index + 1);
+                values := self->values.view(index, index + 1);
+                action(&keys[0], &values[0]);
+            }
+        }
+    }
+}
+
+// Ensures at least capacity buckets while preserving every entry. Allocation
+// failure leaves the map unchanged.
+error HashMap<K, V>::reserve(&self, usize capacity) {
+    if capacity <= self->capacity() {
+        return none;
+    }
+
+    replacementStates, stateError := new<own []u8>(capacity);
+    if stateError != none {
+        return stateError;
+    }
+
+    unsafe {
+        replacementKeys, keyError :=
+            storage::RawStorage<K>::withCapacity(capacity);
+        if keyError != none {
+            return keyError;
+        }
+
+        replacementValues, valueError :=
+            storage::RawStorage<V>::withCapacity(capacity);
+        if valueError != none {
+            return valueError;
+        }
+
+        loop usize index = 0; index < self->capacity(); index++ {
+            if self->states[index] == HASH_MAP_OCCUPIED {
+                const usize HASH = self->hashAt(index);
+                const usize DESTINATION = self->findOpenBucket(
+                    HASH,
+                    replacementStates[:]
+                );
+
+                replacementKeys.relocateFrom(
+                    DESTINATION,
+                    &self->keys,
+                    index
+                );
+                replacementValues.relocateFrom(
+                    DESTINATION,
+                    &self->values,
+                    index
+                );
+                replacementStates[DESTINATION] = HASH_MAP_OCCUPIED;
+            }
+        }
+
+        self->keys = replacementKeys;
+        self->values = replacementValues;
+    }
+
+    self->states = replacementStates;
+    return none;
+}
+
+// Inserts a new entry or replaces the value of an equal key. The map owns both
+// arguments when called. Growth failure preserves existing entries but still
+// consumes and destroys the rejected arguments.
+error HashMap<K, V>::set(&self, K key, V value) {
+    if self->capacity() != 0 {
+        existing, found := self->findBucket(&key);
+        if found {
+            unsafe {
+                self->values.destroy(existing);
+                self->values.initialize(existing, value);
+            }
+
+            return none;
+        }
+    }
+
+    growthError := self->ensureSpareCapacity();
+    if growthError != none {
+        return growthError;
+    }
+
+    destination, _ := self->findBucket(&key);
+    unsafe {
+        self->keys.initialize(destination, key);
+        self->values.initialize(destination, value);
+    }
+
+    self->states[destination] = HASH_MAP_OCCUPIED;
+    self->length++;
+    return none;
+}
+
+// Copies the value for key, or reports HashMapError.KeyNotFound. Specializing
+// this operation for a move-only V fails because lookup does not remove it.
+(V, error) HashMap<K, V>::get(&const self, &const K key) {
+    if self->capacity() == 0 {
+        return (none, errors::HashMapError.KeyNotFound);
+    }
+
+    index, found := self->findBucket(key);
+    if !found {
+        return (none, errors::HashMapError.KeyNotFound);
+    }
+
+    unsafe {
+        return (self->values.get(index), none);
+    }
+}
+
+// Reports whether an equal key is present without copying either key or value.
+bool HashMap<K, V>::containsKey(&const self, &const K key) {
+    if self->capacity() == 0 {
+        return false;
+    }
+
+    _, found := self->findBucket(key);
+    return found;
+}
+
+// Removes key and transfers its value to the caller, or reports
+// HashMapError.KeyNotFound without mutation.
+(V, error) HashMap<K, V>::remove(&self, &const K key) {
+    if self->capacity() == 0 {
+        return (none, errors::HashMapError.KeyNotFound);
+    }
+
+    index, found := self->findBucket(key);
+    if !found {
+        return (none, errors::HashMapError.KeyNotFound);
+    }
+
+    unsafe {
+        V result = self->values.extract(index);
+        self->keys.destroy(index);
+        self->states[index] = HASH_MAP_DELETED;
+        self->length--;
+        return (result, none);
+    }
+}
+
+// Destroys all entries while retaining bucket allocations and callable
+// policies for reuse.
+void HashMap<K, V>::clear(&self) {
+    unsafe {
+        loop usize index = 0; index < self->capacity(); index++ {
+            if self->states[index] == HASH_MAP_OCCUPIED {
+                self->values.destroy(index);
+                self->keys.destroy(index);
+            }
+
+            self->states[index] = HASH_MAP_EMPTY;
+        }
+    }
+
+    self->length = 0;
+}
+
+private (usize, bool) HashMap<K, V>::findBucket(&const self, &const K key) {
+    const usize CAPACITY = self->capacity();
+    usize index = (self->hash)(key) % CAPACITY;
+    usize firstDeleted = CAPACITY;
+    usize visited = 0;
+
+    while visited < CAPACITY {
+        const u8 STATE = self->states[index];
+        if STATE == HASH_MAP_EMPTY {
+            if firstDeleted != CAPACITY {
+                return (firstDeleted, false);
+            }
+
+            return (index, false);
+        }
+
+        if STATE == HASH_MAP_DELETED {
+            if firstDeleted == CAPACITY {
+                firstDeleted = index;
+            }
+        } else if self->keyEquals(index, key) {
+            return (index, true);
+        }
+
+        index++;
+        if index == CAPACITY {
+            index = 0;
+        }
+
+        visited++;
+    }
+
+    return (firstDeleted, false);
+}
+
+private usize HashMap<K, V>::findOpenBucket(
+    &const self,
+    usize hash,
+    []const u8 states,
+) {
+    const usize CAPACITY = states.len();
+    usize index = hash % CAPACITY;
+
+    while states[index] == HASH_MAP_OCCUPIED {
+        index++;
+        if index == CAPACITY {
+            index = 0;
+        }
+    }
+
+    return index;
+}
+
+private usize HashMap<K, V>::hashAt(
+    &const self,
+    usize index,
+) {
+    unsafe {
+        keys := self->keys.view(index, index + 1);
+        return (self->hash)(&keys[0]);
+    }
+}
+
+private bool HashMap<K, V>::keyEquals(
+    &const self,
+    usize index,
+    &const K key,
+) {
+    unsafe {
+        keys := self->keys.view(index, index + 1);
+        return (self->equal)(&keys[0], key);
+    }
+}
+
+private error HashMap<K, V>::ensureSpareCapacity(&self) {
+    const usize CAPACITY = self->capacity();
+    if CAPACITY != 0 and self->length + 1 <= CAPACITY - CAPACITY / 4 {
+        return none;
+    }
+
+    usize nextCapacity = HASH_MAP_INITIAL_CAPACITY;
+    if CAPACITY != 0 {
+        nextCapacity = CAPACITY * 2;
+    } also nextCapacity <= CAPACITY {
+        return AllocationError.OutOfMemory;
+    }
+
+    return self->reserve(nextCapacity);
+}
+
+usize default_hash<K>(&const K key) {
+    return hashing::hash<K>(key);
+}
+
+bool default_equal<K>(&const K left, &const K right) {
+    return *left == *right;
+}

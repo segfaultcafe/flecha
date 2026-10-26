@@ -1351,6 +1351,71 @@ TEST(NativeCompilerTests, EmitsIeeeFloatingPointConstantsAndComparisons) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsStructuralHashIntrinsic) {
+    GeneratedSource result = Generate(R"(
+        structure HashPair {
+            [2]i32 values;
+            u8 category;
+        };
+
+        HashPair HashPair::zero() override {
+            return build HashPair {};
+        }
+
+        HashPair HashPair::init([2]i32 values, u8 category) override {
+            return build HashPair {
+                self.values = values;
+                self.category = category;
+            };
+        }
+
+        i32 main() {
+            i32 first = 42;
+            i32 same = 42;
+            i32 different = 43;
+            if __hash<i32>(&first) != __hash<i32>(&same) { return 1; }
+            if __hash<i32>(&first) == __hash<i32>(&different) { return 2; }
+
+            f64 positive = 0.0;
+            f64 negative = -0.0;
+            if __hash<f64>(&positive) != __hash<f64>(&negative) { return 3; }
+
+            string text = "struc" + "tural";
+            if __hash<stringv>(text.view()) != __hash<stringv>("structural") {
+                return 4;
+            }
+
+            left := HashPair::init([7, 11], 3);
+            right := HashPair::init([7, 11], 3);
+            other := HashPair::init([7, 12], 3);
+            if __hash<HashPair>(&left) != __hash<HashPair>(&right) { return 5; }
+            if __hash<HashPair>(&left) == __hash<HashPair>(&other) { return 6; }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_structural_hash_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_structural_hash_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsCapturelessAnonymousFunctions) {
     GeneratedSource result = Generate(R"(
         func Mapper(i32) => (i32);
@@ -1980,6 +2045,54 @@ TEST(NativeCompilerTests, RunsWholeValueMovesWithExactlyOnceCleanup) {
     ASSERT_TRUE(compiler.Ready()) << compiler.Error();
     ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
                                          "native_whole_value_moves_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsChainedOwningReceiverMethods) {
+    GeneratedSource result = Generate(R"(
+        structure Box { *i32 tears; i32 value; };
+        unsafe Box Box::init(*i32 tears) override {
+            return build Box { self.tears = tears; };
+        }
+        void Box::tear(&self) override {
+            unsafe { (*self->tears)++; }
+        }
+        Box Box::withValue(self, i32 value) {
+            self.value = value;
+            return self;
+        }
+        i32 Box::read(&const self) { return self->value; }
+        i32 main() {
+            tears := 0;
+            answer := 0;
+            unsafe {
+                box := Box::init(&raw tears)
+                    .withValue(20)
+                    .withValue(42);
+                answer = box.read();
+            }
+            if tears != 1 { return 1; }
+            return answer;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_owning_receiver_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_owning_receiver_test",
                                          executablePath.string()))
         << compiler.Error();
     const std::string executablePathText = executablePath.string();

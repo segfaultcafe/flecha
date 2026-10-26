@@ -65,6 +65,7 @@ foreach(required IN ITEMS
         min_value max_value
         nan infinity negative_infinity min_positive epsilon
         signed_integer unsigned_integer integer floating_point numeric
+        borrowAllArguments
         "storage.type.function.flecha"
         "storage.type.typeset.flecha"
         "entity.name.type.typeset.flecha"

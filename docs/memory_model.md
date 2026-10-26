@@ -612,8 +612,8 @@ Agreed direction:
 
 Next proposals to settle:
 
-1. More expressive borrowed-result contracts for results that may originate
-   from multiple inputs; the single-origin `<- origin` form is implemented.
+1. More general inferred resource effects beyond explicit single-source,
+   grouped-source, and `<- ...args` result-origin contracts.
 2. Reference borrowing of strings/views and nested reference storage.
 3. Ownership contracts for external declarations and more general inferred
    recursive effects.
@@ -628,9 +628,9 @@ is documented in [const declarations and types](const_types.md). Unsafe pointer 
 Checked scalar and pointer-slot references are documented in
 [checked references](checked_references.md). Checked slices, system allocation,
 direct, indirect, and member deferred calls, explicit cross-function ownership
-contracts, general whole-value moves, and single-origin borrowed-result
-contracts are also implemented. More general inferred resource effects remain
-future work. Named and generic
+contracts, general whole-value moves, and single- and multi-origin
+borrowed-result contracts are also implemented. More general inferred resource
+effects remain future work. Named and generic
 [error values](error_values.md) are implemented.
 [Tuples and destructuring](tuples.md) are implemented.
 

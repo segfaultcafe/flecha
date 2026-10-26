@@ -68,6 +68,10 @@ class Parser {
     std::unique_ptr<FunctionDeclaration> ParseTestDeclaration();
     std::unique_ptr<CallableTypeDeclaration> ParseCallableTypeDeclaration();
     std::unique_ptr<FunctionDeclaration> ParseFunctionDeclaration();
+    bool ParseBorrowSources(
+        const std::vector<std::unique_ptr<Parameter>>& parameters,
+        std::vector<std::string>& sources,
+        std::vector<source::SourceRange>& ranges);
     std::unique_ptr<TypeNode> ParseType(bool allowOwn = false,
                                         bool allowLend = false,
                                         bool allowTupleOwners = false);

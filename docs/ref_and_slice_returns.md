@@ -22,14 +22,46 @@ the parameter that anchors those returned loans with `<-`:
 and before the function body. It is compile-time information and does not alter
 the native representation of references, slices, or functions.
 
-The named source must be a checked-reference or checked-slice parameter. A
-method receiver is an ordinary source parameter named `self`. Raw pointers,
-owning pointers, value parameters, locals, and temporaries cannot anchor a safe
-borrowed result. An `unsafe` context does not relax these rules.
+One source may be named directly. Multiple possible sources use a grouped
+contract, and the all-parameter shorthand expands to every named parameter:
+
+```flecha
+&const i32 choose(
+    bool first,
+    &const i32 left,
+    &const i32 right,
+) <- (left, right) {
+    if first {
+        return left;
+    }
+
+    return right;
+}
+
+Handler Handler::init(First first, Second second) <- ...args {
+    return build Handler {
+        self.first = first;
+        self.second = second;
+    };
+}
+```
+
+`args` remains an ordinary identifier everywhere else. Only the complete
+`<- ...args` form has special meaning. It is equivalent to explicitly grouping
+all named parameters in declaration order. Every selected source must be able
+to carry a borrow; use the grouped form when scalar or otherwise unrelated
+parameters must be excluded.
+
+For checked-reference and checked-slice results, each named source must be a
+checked-reference or checked-slice parameter. A method receiver is an ordinary
+source parameter named `self`. Raw pointers, owning pointers, value parameters,
+locals, and temporaries cannot anchor a safe borrowed result. An `unsafe`
+context does not relax these rules.
 
 Every reference and slice result requires a contract. A contract on a result
-that contains no borrowed value is an error. The first version names exactly
-one source; contracts such as `<- (left, right)` remain future work.
+that cannot carry a borrow is an error. Every reachable return path must derive
+the result from one or more declared sources. At call sites, a multi-source
+result conservatively retains loans from every declared source.
 
 ## Result rules
 

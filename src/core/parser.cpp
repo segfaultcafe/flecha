@@ -584,22 +584,17 @@ Parser::ParseCallableTypeDeclaration() {
     if (Consume(TokenType::RParen, "')' after callable results") == nullptr)
         return nullptr;
 
-    std::string borrowSource;
-    source::SourceRange borrowSourceRange;
-    if (Match(TokenType::LeftArrow)) {
-        const Token* source =
-            Consume(TokenType::Identifier, "borrow source after '<-'");
-        if (source == nullptr) return nullptr;
-        borrowSource = source->value;
-        borrowSourceRange = source->range;
-    }
+    std::vector<std::string> borrowSources;
+    std::vector<source::SourceRange> borrowSourceRanges;
+    if (!ParseBorrowSources(parameters, borrowSources, borrowSourceRanges))
+        return nullptr;
     const Token* semicolon =
         Consume(TokenType::SemiColon, "';' after callable type declaration");
     if (semicolon == nullptr) return nullptr;
     auto declaration = std::make_unique<CallableTypeDeclaration>(
         source::SourceRange{start, semicolon->range.end}, name->value,
         name->range, std::move(parameters), std::move(results), isUnsafe,
-        isOnce, std::move(borrowSource), borrowSourceRange);
+        isOnce, std::move(borrowSources), std::move(borrowSourceRanges));
     declaration->genericParameters = std::move(genericParameters);
     declaration->genericConstraints = std::move(genericConstraints);
     if (parameterStart != parameterEnd)
@@ -610,6 +605,75 @@ Parser::ParseCallableTypeDeclaration() {
     declaration->templateTokens.assign(_tokens.begin() + tokenStart,
                                        _tokens.begin() + _position);
     return declaration;
+}
+
+bool Parser::ParseBorrowSources(
+    const std::vector<std::unique_ptr<Parameter>>& parameters,
+    std::vector<std::string>& sources,
+    std::vector<source::SourceRange>& ranges) {
+    if (!Match(TokenType::LeftArrow)) return true;
+
+    if (Match(TokenType::Dot)) {
+        if (Consume(TokenType::Dot, "second '.' in '...args'") == nullptr ||
+            Consume(TokenType::Dot, "third '.' in '...args'") == nullptr)
+            return false;
+        const Token* args =
+            Consume(TokenType::Identifier, "'args' after '<- ...'");
+        if (args == nullptr) return false;
+        if (args->value != "args") {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::UnexpectedToken, args->range,
+                "the all-parameter borrow shorthand is spelled '...args'");
+            return false;
+        }
+        if (parameters.empty()) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::InvalidBorrowContract, args->range,
+                "'<- ...args' requires at least one named parameter");
+            return false;
+        }
+        for (const auto& parameter : parameters) {
+            if (parameter->Name().empty()) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::InvalidBorrowContract,
+                    parameter->Range(),
+                    "'<- ...args' requires every parameter to be named");
+                return false;
+            }
+            sources.push_back(parameter->Name());
+            ranges.push_back(parameter->NameRange());
+        }
+        return true;
+    }
+
+    if (Match(TokenType::LParen)) {
+        if (Check(TokenType::RParen)) {
+            const Token* close =
+                Consume(TokenType::RParen, "borrow sources after '<- ('");
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::InvalidBorrowContract,
+                close == nullptr ? Current().range : close->range,
+                "a grouped borrow contract requires at least one source");
+            return false;
+        }
+        while (!Check(TokenType::RParen) && !IsAtEnd()) {
+            const Token* source =
+                Consume(TokenType::Identifier, "borrow source name");
+            if (source == nullptr) return false;
+            sources.push_back(source->value);
+            ranges.push_back(source->range);
+            if (!Match(TokenType::Comma)) break;
+        }
+        return Consume(TokenType::RParen, "')' after grouped borrow sources") !=
+               nullptr;
+    }
+
+    const Token* source =
+        Consume(TokenType::Identifier, "borrow source after '<-'");
+    if (source == nullptr) return false;
+    sources.push_back(source->value);
+    ranges.push_back(source->range);
+    return true;
 }
 
 std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
@@ -674,12 +738,18 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         std::unique_ptr<Parameter> parameter;
         // Receiver shorthand is only legal in the first slot of a method.
         if (!owner.empty() && parameters.empty() &&
-            (Check(TokenType::Ampersand) || Check(TokenType::Mul)) &&
-            ((Peek(1).type == TokenType::Identifier &&
-              Peek(1).value == "self") ||
-             (Peek(1).type == TokenType::Const &&
-              Peek(2).type == TokenType::Identifier &&
-              Peek(2).value == "self"))) {
+            Check(TokenType::Identifier) && Current().value == "self") {
+            const Token& self = Advance();
+            auto receiver = std::make_unique<TypeNode>(self.range, owner);
+            parameter = std::make_unique<Parameter>(
+                receiver->Range(), std::move(receiver), self.value, self.range);
+        } else if (!owner.empty() && parameters.empty() &&
+                   (Check(TokenType::Ampersand) || Check(TokenType::Mul)) &&
+                   ((Peek(1).type == TokenType::Identifier &&
+                     Peek(1).value == "self") ||
+                    (Peek(1).type == TokenType::Const &&
+                     Peek(2).type == TokenType::Identifier &&
+                     Peek(2).value == "self"))) {
             const Token& prefix = Advance();
             const bool readonly = Match(TokenType::Const);
             const Token& self = Advance();
@@ -712,15 +782,10 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         return nullptr;
     }
 
-    std::string borrowSource;
-    source::SourceRange borrowSourceRange;
-    if (Match(TokenType::LeftArrow)) {
-        const Token* source =
-            Consume(TokenType::Identifier, "borrow source after '<-'");
-        if (source == nullptr) return nullptr;
-        borrowSource = source->value;
-        borrowSourceRange = source->range;
-    }
+    std::vector<std::string> borrowSources;
+    std::vector<source::SourceRange> borrowSourceRanges;
+    if (!ParseBorrowSources(parameters, borrowSources, borrowSourceRanges))
+        return nullptr;
 
     if (Match(TokenType::Override))
         modifiers.push_back(FunctionModifier::Override);
@@ -743,8 +808,8 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     auto declaration = std::make_unique<FunctionDeclaration>(
         source::SourceRange{start, end}, std::move(modifiers),
         std::move(returnType), name->value, std::move(parameters),
-        std::move(body), name->range, std::move(owner), std::move(borrowSource),
-        borrowSourceRange);
+        std::move(body), name->range, std::move(owner),
+        std::move(borrowSources), std::move(borrowSourceRanges));
     declaration->genericParameters = std::move(genericParameters);
     declaration->ownerParameters = std::move(ownerParameters);
     declaration->genericConstraints = std::move(genericConstraints);
@@ -1682,12 +1747,14 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
         if (expression->Kind() == AstNodeKind::NameExpression &&
             (static_cast<const NameExpression&>(*expression).Name() == "new" ||
              static_cast<const NameExpression&>(*expression).Name() ==
-                 "__storage_new") &&
+                 "__storage_new" ||
+             static_cast<const NameExpression&>(*expression).Name() ==
+                 "__hash") &&
             Match(TokenType::Less)) {
             auto type = ParseType(true);
             if (!type ||
-                !ConsumeTypeArgumentClose("'>' after allocation type") ||
-                !Consume(TokenType::LParen, "'(' after new<T>"))
+                !ConsumeTypeArgumentClose("'>' after intrinsic type") ||
+                !Consume(TokenType::LParen, "'(' after typed intrinsic"))
                 return expression;
             source::SourceLocation end = expression->Range().end;
             auto arguments = ParseArgumentList(end);
@@ -1701,7 +1768,12 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             std::size_t offset = 0;
             if (ScanTypeArguments(offset) &&
                 (Peek(offset).type == TokenType::LParen ||
-                 Peek(offset).type == TokenType::Scope)) {
+                 Peek(offset).type == TokenType::Scope ||
+                 Peek(offset).type == TokenType::SemiColon ||
+                 Peek(offset).type == TokenType::Comma ||
+                 Peek(offset).type == TokenType::RParen ||
+                 Peek(offset).type == TokenType::RBracket ||
+                 Peek(offset).type == TokenType::RCurly)) {
                 static_cast<NameExpression&>(*expression).typeArguments =
                     ParseTypeArguments();
                 continue;
@@ -2035,20 +2107,16 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
                 : "explicit anonymous functions require a type for every "
                   "parameter");
 
-    std::string borrowSource;
-    source::SourceRange borrowSourceRange;
-    if (Match(TokenType::LeftArrow)) {
-        const Token* source =
-            Consume(TokenType::Identifier, "borrow source after '<-'");
-        if (source == nullptr) return nullptr;
-        borrowSource = source->value;
-        borrowSourceRange = source->range;
-        if (inferredSignature)
-            _diagnostics.Report(
-                diagnostics::DiagnosticCode::UnexpectedToken, source->range,
-                "a contextually inferred anonymous function inherits its "
-                "borrow contract");
-    }
+    std::vector<std::string> borrowSources;
+    std::vector<source::SourceRange> borrowSourceRanges;
+    if (!ParseBorrowSources(parameters, borrowSources, borrowSourceRanges))
+        return nullptr;
+    if (inferredSignature && !borrowSources.empty())
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::UnexpectedToken,
+            borrowSourceRanges.front(),
+            "a contextually inferred anonymous function inherits its borrow "
+            "contract");
 
     auto body = ParseBlockStatement();
     if (body == nullptr) return nullptr;
@@ -2072,7 +2140,7 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
     auto function = std::make_unique<FunctionDeclaration>(
         range, std::move(modifiers), std::move(returnType), name,
         std::move(parameters), std::move(body), first.range, "",
-        std::move(borrowSource), borrowSourceRange);
+        std::move(borrowSources), std::move(borrowSourceRanges));
     return std::make_unique<AnonymousFunctionExpression>(
         range, std::move(function), std::move(captures), inferredSignature,
         explicitCaptureList);

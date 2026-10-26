@@ -2258,6 +2258,137 @@ llvm::Value* LlvmCodeGenerator::EmitValueEquality(llvm::Value* left,
     return _builder.CreateICmpEQ(left, right, "eq");
 }
 
+llvm::Value* LlvmCodeGenerator::EmitHashMix(llvm::Value* hash,
+                                            llvm::Value* value) {
+    auto* type = llvm::cast<llvm::IntegerType>(hash->getType());
+    const std::uint64_t prime =
+        type->getBitWidth() == 32 ? 16777619ULL : 1099511628211ULL;
+    return _builder.CreateMul(_builder.CreateXor(hash, value, "hash.xor"),
+                              llvm::ConstantInt::get(type, prime), "hash.mix");
+}
+
+llvm::Value* LlvmCodeGenerator::EmitStringHash(llvm::Value* value,
+                                               semantic::SemanticType type) {
+    llvm::Value* view = EmitStringView(value, type);
+    if (!view) return nullptr;
+    llvm::Value* data = _builder.CreateExtractValue(view, 0, "hash.data");
+    llvm::Value* length = _builder.CreateExtractValue(view, 1, "hash.length");
+    auto* hashType = llvm::cast<llvm::IntegerType>(
+        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize)));
+    const std::uint64_t offset =
+        hashType->getBitWidth() == 32 ? 2166136261ULL : 14695981039346656037ULL;
+    llvm::Value* initial = llvm::ConstantInt::get(hashType, offset);
+    llvm::Value* zero = llvm::ConstantInt::get(hashType, 0);
+    llvm::BasicBlock* entry = _builder.GetInsertBlock();
+    llvm::BasicBlock* body =
+        llvm::BasicBlock::Create(_context, "hash.string", _currentFunction);
+    llvm::BasicBlock* done =
+        llvm::BasicBlock::Create(_context, "hash.string.end", _currentFunction);
+    _builder.CreateCondBr(_builder.CreateICmpEQ(length, zero), done, body);
+
+    _builder.SetInsertPoint(body);
+    llvm::PHINode* index = _builder.CreatePHI(hashType, 2, "hash.index");
+    llvm::PHINode* hash = _builder.CreatePHI(hashType, 2, "hash.value");
+    index->addIncoming(zero, entry);
+    hash->addIncoming(initial, entry);
+    llvm::Value* address = _builder.CreateInBoundsGEP(
+        llvm::Type::getInt8Ty(_context), data, index, "hash.byte.address");
+    llvm::Value* byte = _builder.CreateLoad(llvm::Type::getInt8Ty(_context),
+                                            address, "hash.byte");
+    byte = _builder.CreateZExt(byte, hashType, "hash.byte.value");
+    llvm::Value* nextHash = EmitHashMix(hash, byte);
+    llvm::Value* nextIndex =
+        _builder.CreateAdd(index, llvm::ConstantInt::get(hashType, 1));
+    index->addIncoming(nextIndex, body);
+    hash->addIncoming(nextHash, body);
+    _builder.CreateCondBr(_builder.CreateICmpULT(nextIndex, length), body,
+                          done);
+
+    _builder.SetInsertPoint(done);
+    llvm::PHINode* result =
+        _builder.CreatePHI(hashType, 2, "hash.string.result");
+    result->addIncoming(initial, entry);
+    result->addIncoming(nextHash, body);
+    return result;
+}
+
+llvm::Value* LlvmCodeGenerator::EmitValueHash(llvm::Value* value,
+                                              semantic::SemanticType type) {
+    using Kind = semantic::SemanticTypeKind;
+    auto* hashType = llvm::cast<llvm::IntegerType>(
+        MapType(semantic::SemanticType(Kind::USize)));
+    const std::uint64_t offset =
+        hashType->getBitWidth() == 32 ? 2166136261ULL : 14695981039346656037ULL;
+    llvm::Value* hash = llvm::ConstantInt::get(hashType, offset);
+    if (type.Kind() == Kind::String || type.Kind() == Kind::StringView)
+        return EmitStringHash(value, type);
+    if (type.Kind() == Kind::Structure) {
+        for (std::size_t i = 0; i < type.Structure()->fields.size(); ++i) {
+            llvm::Value* field =
+                EmitValueHash(_builder.CreateExtractValue(value, i),
+                              type.Structure()->fields[i].type);
+            if (!field) return nullptr;
+            hash = EmitHashMix(hash, field);
+        }
+        return hash;
+    }
+    if (type.Kind() == Kind::Array) {
+        for (std::uint64_t i = 0; i < type.Length(); ++i) {
+            llvm::Value* element = EmitValueHash(
+                _builder.CreateExtractValue(value, {static_cast<unsigned>(i)}),
+                *type.Target());
+            if (!element) return nullptr;
+            hash = EmitHashMix(hash, element);
+        }
+        return hash;
+    }
+    if (type.Kind() == Kind::Tuple) {
+        for (std::size_t i = 0; i < type.Elements().size(); ++i) {
+            llvm::Value* field = EmitValueHash(
+                _builder.CreateExtractValue(value, i), type.Elements()[i]);
+            if (!field) return nullptr;
+            hash = EmitHashMix(hash, field);
+        }
+        return hash;
+    }
+    if (type.Kind() == Kind::ErrorValue) {
+        llvm::Value* family = _builder.CreatePtrToInt(
+            _builder.CreateExtractValue(value, 0), hashType, "hash.family");
+        llvm::Value* code =
+            _builder.CreateIntCast(_builder.CreateExtractValue(value, 1),
+                                   hashType, false, "hash.error.code");
+        return EmitHashMix(EmitHashMix(hash, family), code);
+    }
+    if (type.Kind() == Kind::Enum)
+        return EmitValueHash(value, type.Enum()->backing);
+    if (type.IsFloating()) {
+        auto* bitsType = llvm::IntegerType::get(
+            _context, type.Kind() == Kind::F32 ? 32 : 64);
+        llvm::Value* bits =
+            _builder.CreateBitCast(value, bitsType, "hash.bits");
+        llvm::Value* isZero = _builder.CreateFCmpOEQ(
+            value, llvm::ConstantFP::get(value->getType(), 0.0),
+            "hash.float.zero");
+        bits =
+            _builder.CreateSelect(isZero, llvm::ConstantInt::get(bitsType, 0),
+                                  bits, "hash.float.bits");
+        return EmitHashMix(
+            hash, _builder.CreateIntCast(bits, hashType, false, "hash.float"));
+    }
+    if (type.Kind() == Kind::Pointer) {
+        return EmitHashMix(
+            hash, _builder.CreatePtrToInt(value, hashType, "hash.pointer"));
+    }
+    if (type.IsInteger() || type.Kind() == Kind::Bool ||
+        type.Kind() == Kind::Char || type.Kind() == Kind::NamedError) {
+        return EmitHashMix(hash, _builder.CreateIntCast(value, hashType, false,
+                                                        "hash.scalar"));
+    }
+    Fail("hashing is not implemented for type '" + std::string(type.Name()) +
+         "'");
+    return nullptr;
+}
+
 llvm::Value* LlvmCodeGenerator::EmitBinary(
     const lowering::BoundBinaryExpression& expression) {
     if (expression.Type().Kind() == semantic::SemanticTypeKind::Bool &&
@@ -3132,6 +3263,22 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
         case lowering::BoundNodeKind::CallExpression: {
             const lowering::BoundCallExpression& call =
                 static_cast<const lowering::BoundCallExpression&>(expression);
+            if (call.Function().BuiltIn() == semantic::BuiltInFunction::Hash) {
+                llvm::Value* value = EmitExpression(*call.Arguments().front());
+                if (!value) return nullptr;
+                const semantic::SemanticType parameterType =
+                    call.Function().ParameterTypes().front();
+                const semantic::SemanticType valueType =
+                    parameterType.Kind() ==
+                            semantic::SemanticTypeKind::Reference
+                        ? *parameterType.Target()
+                        : parameterType;
+                if (parameterType.Kind() ==
+                    semantic::SemanticTypeKind::Reference)
+                    value = _builder.CreateLoad(MapType(valueType), value,
+                                                "hash.input");
+                return EmitValueHash(value, valueType);
+            }
             if (call.Function().BuiltIn() == semantic::BuiltInFunction::Take) {
                 auto* address = EmitAddress(
                     static_cast<const lowering::BoundPlaceExpression&>(

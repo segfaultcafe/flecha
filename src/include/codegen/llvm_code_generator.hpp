@@ -144,6 +144,12 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::Value* EmitValueEquality(llvm::Value* left,
                                                  llvm::Value* right,
                                                  semantic::SemanticType type);
+    [[nodiscard]] llvm::Value* EmitValueHash(llvm::Value* value,
+                                             semantic::SemanticType type);
+    [[nodiscard]] llvm::Value* EmitStringHash(llvm::Value* value,
+                                              semantic::SemanticType type);
+    [[nodiscard]] llvm::Value* EmitHashMix(llvm::Value* hash,
+                                           llvm::Value* value);
     [[nodiscard]] llvm::Value* EmitBooleanLogical(
         const lowering::BoundBinaryExpression& expression);
     [[nodiscard]] llvm::Value* EmitStringViewEquality(llvm::Value* left,

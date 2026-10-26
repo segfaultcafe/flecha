@@ -506,14 +506,14 @@ class BuildExpression final : public Expression {
 
 class FunctionDeclaration final : public Declaration {
    public:
-    FunctionDeclaration(source::SourceRange range,
-                        std::vector<FunctionModifier> modifiers,
-                        std::unique_ptr<TypeNode> returnType, std::string name,
-                        std::vector<std::unique_ptr<Parameter>> parameters,
-                        std::unique_ptr<BlockStatement> body,
-                        source::SourceRange nameRange = {},
-                        std::string owner = {}, std::string borrowSource = {},
-                        source::SourceRange borrowSourceRange = {})
+    FunctionDeclaration(
+        source::SourceRange range, std::vector<FunctionModifier> modifiers,
+        std::unique_ptr<TypeNode> returnType, std::string name,
+        std::vector<std::unique_ptr<Parameter>> parameters,
+        std::unique_ptr<BlockStatement> body,
+        source::SourceRange nameRange = {}, std::string owner = {},
+        std::vector<std::string> borrowSources = {},
+        std::vector<source::SourceRange> borrowSourceRanges = {})
         : Declaration(range),
           _owner(std::move(owner)),
           _modifiers(std::move(modifiers)),
@@ -522,8 +522,8 @@ class FunctionDeclaration final : public Declaration {
           _parameters(std::move(parameters)),
           _body(std::move(body)),
           _nameRange(nameRange.Empty() ? range : nameRange),
-          _borrowSource(std::move(borrowSource)),
-          _borrowSourceRange(borrowSourceRange) {}
+          _borrowSources(std::move(borrowSources)),
+          _borrowSourceRanges(std::move(borrowSourceRanges)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::FunctionDeclaration;
@@ -566,18 +566,20 @@ class FunctionDeclaration final : public Declaration {
         return _parameters;
     }
     [[nodiscard]] const BlockStatement& Body() const { return *_body; }
-    [[nodiscard]] bool HasBorrowSource() const {
-        return !_borrowSource.empty();
+    [[nodiscard]] bool HasBorrowSources() const {
+        return !_borrowSources.empty();
     }
-    [[nodiscard]] const std::string& BorrowSource() const {
-        return _borrowSource;
+    [[nodiscard]] const std::vector<std::string>& BorrowSources() const {
+        return _borrowSources;
     }
-    [[nodiscard]] const source::SourceRange& BorrowSourceRange() const {
-        return _borrowSourceRange;
+    [[nodiscard]] const std::vector<source::SourceRange>& BorrowSourceRanges()
+        const {
+        return _borrowSourceRanges;
     }
-    void SetBorrowSource(std::string source, source::SourceRange range) {
-        _borrowSource = std::move(source);
-        _borrowSourceRange = range;
+    void SetBorrowSources(std::vector<std::string> sources,
+                          std::vector<source::SourceRange> ranges) {
+        _borrowSources = std::move(sources);
+        _borrowSourceRanges = std::move(ranges);
     }
 
    private:
@@ -588,8 +590,8 @@ class FunctionDeclaration final : public Declaration {
     std::vector<std::unique_ptr<Parameter>> _parameters;
     std::unique_ptr<BlockStatement> _body;
     source::SourceRange _nameRange;
-    std::string _borrowSource;
-    source::SourceRange _borrowSourceRange;
+    std::vector<std::string> _borrowSources;
+    std::vector<source::SourceRange> _borrowSourceRanges;
     bool _isTest = false;
     bool _isTestHarness = false;
 };
@@ -660,13 +662,13 @@ class AnonymousFunctionExpression final : public Expression {
 
 class CallableTypeDeclaration final : public Declaration {
    public:
-    CallableTypeDeclaration(source::SourceRange range, std::string name,
-                            source::SourceRange nameRange,
-                            std::vector<std::unique_ptr<Parameter>> parameters,
-                            std::vector<std::unique_ptr<TypeNode>> results,
-                            bool isUnsafe, bool isOnce,
-                            std::string borrowSource = {},
-                            source::SourceRange borrowSourceRange = {})
+    CallableTypeDeclaration(
+        source::SourceRange range, std::string name,
+        source::SourceRange nameRange,
+        std::vector<std::unique_ptr<Parameter>> parameters,
+        std::vector<std::unique_ptr<TypeNode>> results, bool isUnsafe,
+        bool isOnce, std::vector<std::string> borrowSources = {},
+        std::vector<source::SourceRange> borrowSourceRanges = {})
         : Declaration(range),
           _name(std::move(name)),
           _nameRange(nameRange),
@@ -674,8 +676,8 @@ class CallableTypeDeclaration final : public Declaration {
           _results(std::move(results)),
           _isUnsafe(isUnsafe),
           _isOnce(isOnce),
-          _borrowSource(std::move(borrowSource)),
-          _borrowSourceRange(borrowSourceRange) {}
+          _borrowSources(std::move(borrowSources)),
+          _borrowSourceRanges(std::move(borrowSourceRanges)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::CallableTypeDeclaration;
@@ -694,14 +696,15 @@ class CallableTypeDeclaration final : public Declaration {
     }
     [[nodiscard]] bool IsUnsafe() const { return _isUnsafe; }
     [[nodiscard]] bool IsOnce() const { return _isOnce; }
-    [[nodiscard]] bool HasBorrowSource() const {
-        return !_borrowSource.empty();
+    [[nodiscard]] bool HasBorrowSources() const {
+        return !_borrowSources.empty();
     }
-    [[nodiscard]] const std::string& BorrowSource() const {
-        return _borrowSource;
+    [[nodiscard]] const std::vector<std::string>& BorrowSources() const {
+        return _borrowSources;
     }
-    [[nodiscard]] const source::SourceRange& BorrowSourceRange() const {
-        return _borrowSourceRange;
+    [[nodiscard]] const std::vector<source::SourceRange>& BorrowSourceRanges()
+        const {
+        return _borrowSourceRanges;
     }
 
    private:
@@ -711,8 +714,8 @@ class CallableTypeDeclaration final : public Declaration {
     std::vector<std::unique_ptr<TypeNode>> _results;
     bool _isUnsafe;
     bool _isOnce;
-    std::string _borrowSource;
-    source::SourceRange _borrowSourceRange;
+    std::vector<std::string> _borrowSources;
+    std::vector<source::SourceRange> _borrowSourceRanges;
 };
 
 struct Import final {

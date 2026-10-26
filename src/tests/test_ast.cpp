@@ -144,11 +144,14 @@ TEST(AstTests, RepresentsBorrowResultContract) {
         std::move(parameters),
         std::make_unique<BlockStatement>(
             RANGE, std::vector<std::unique_ptr<Statement>>{}),
-        RANGE, "", "value", RANGE);
+        RANGE, "", std::vector<std::string>{"value"},
+        std::vector<SourceRange>{RANGE});
 
-    EXPECT_TRUE(function->HasBorrowSource());
-    EXPECT_EQ(function->BorrowSource(), "value");
-    EXPECT_EQ(function->BorrowSourceRange(), RANGE);
+    EXPECT_TRUE(function->HasBorrowSources());
+    ASSERT_EQ(function->BorrowSources().size(), 1);
+    ASSERT_EQ(function->BorrowSourceRanges().size(), 1);
+    EXPECT_EQ(function->BorrowSources()[0], "value");
+    EXPECT_EQ(function->BorrowSourceRanges()[0], RANGE);
 }
 
 TEST(AstTests, NodesAreMoveOnly) {
