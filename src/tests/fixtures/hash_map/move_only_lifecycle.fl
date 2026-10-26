@@ -56,10 +56,9 @@ i32 main() {
     i32 cleanupCount = 0;
 
     {
-        values := collections::HashMap<Owner, Owner>::init(
-            ownerHash,
-            ownerEqual
-        );
+        values := collections::HashMap<Owner, Owner>::init()
+            .withHash(ownerHash)
+            .withEqual(ownerEqual);
 
         unsafe {
             loop i32 id = 1; id <= 7; id++ {

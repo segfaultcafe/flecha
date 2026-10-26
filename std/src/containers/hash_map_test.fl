@@ -18,6 +18,12 @@ bool integerEqual(&const i32 left, &const i32 right) {
     return *left == *right;
 }
 
+bool neverEqual(&const i32 left, &const i32 right) {
+    left;
+    right;
+    return false;
+}
+
 structure HashMapKeyOwner {
     *i32 cleanupCount;
     i32 value;
@@ -78,10 +84,9 @@ void visitOwnerKey(
 }
 
 test hash_map_starts_empty_and_reports_missing_keys(&testing::UnitTest t) {
-    values := collections::HashMap<i32, i32>::init(
-        integerHash,
-        integerEqual
-    );
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(integerHash)
+        .withEqual(integerEqual);
     i32 key = 7;
 
     missing, getError := values.get(&key);
@@ -103,11 +108,39 @@ test hash_map_starts_empty_and_reports_missing_keys(&testing::UnitTest t) {
     );
 }
 
-test hash_map_inserts_replaces_and_grows(&testing::UnitTest t) {
-    values := collections::HashMap<i32, i32>::init(
-        integerHash,
-        integerEqual
+test hash_map_default_policies_store_and_find_keys(&testing::UnitTest t) {
+    values := collections::HashMap<i32, i32>::init();
+    setError := values.set(42, 99);
+    i32 key = 42;
+    actual, getError := values.get(&key);
+
+    asserts::is_true(
+        t,
+        setError == none and getError == none and actual == 99,
+        "default hash and equality policies form a usable map"
     );
+}
+
+test hash_map_keeps_policies_when_entries_exist(&testing::UnitTest t) {
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(integerHash)
+        .withEqual(integerEqual);
+    setError := values.set(7, 42);
+    unchanged := values.withHash(collisionHash).withEqual(neverEqual);
+    i32 key = 7;
+    actual, getError := unchanged.get(&key);
+
+    asserts::is_true(
+        t,
+        setError == none and getError == none and actual == 42,
+        "policy replacement cannot invalidate existing buckets"
+    );
+}
+
+test hash_map_inserts_replaces_and_grows(&testing::UnitTest t) {
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(integerHash)
+        .withEqual(integerEqual);
 
     loop i32 key = 0; key < 20; key++ {
         setError := values.set(key, key * 10);
@@ -147,10 +180,9 @@ test hash_map_inserts_replaces_and_grows(&testing::UnitTest t) {
 test hash_map_resolves_collisions_and_reuses_deleted_buckets(
     &testing::UnitTest t,
 ) {
-    values := collections::HashMap<i32, i32>::init(
-        collisionHash,
-        integerEqual
-    );
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(collisionHash)
+        .withEqual(integerEqual);
 
     firstError := values.set(1, 10);
     secondError := values.set(2, 20);
@@ -188,10 +220,9 @@ test hash_map_resolves_collisions_and_reuses_deleted_buckets(
 }
 
 test hash_map_clear_retains_and_reuses_bucket_storage(&testing::UnitTest t) {
-    values := collections::HashMap<i32, i32>::init(
-        integerHash,
-        integerEqual
-    );
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(integerHash)
+        .withEqual(integerEqual);
 
     reserveError := values.reserve(16);
     setError := values.set(1, 10);
@@ -217,10 +248,9 @@ test hash_map_clear_retains_and_reuses_bucket_storage(&testing::UnitTest t) {
 }
 
 test hash_map_for_each_visits_borrowed_entries(&testing::UnitTest t) {
-    values := collections::HashMap<i32, i32>::init(
-        collisionHash,
-        integerEqual
-    );
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(collisionHash)
+        .withEqual(integerEqual);
     firstError := values.set(1, 10);
     secondError := values.set(2, 20);
     thirdError := values.set(3, 30);
@@ -244,10 +274,9 @@ test hash_map_grows_and_cleans_move_only_keys_once(&testing::UnitTest t) {
     i32 cleanupCount = 0;
 
     {
-        values := collections::HashMap<HashMapKeyOwner, i32>::init(
-            ownerKeyHash,
-            ownerKeyEqual
-        );
+        values := collections::HashMap<HashMapKeyOwner, i32>::init()
+            .withHash(ownerKeyHash)
+            .withEqual(ownerKeyEqual);
 
         unsafe {
             loop i32 key = 1; key <= 7; key++ {
@@ -311,10 +340,9 @@ test hash_map_replaces_removes_and_clears_move_only_values_once(
     i32 cleanupCount = 0;
 
     {
-        values := collections::HashMap<i32, PushOwner>::init(
-            integerHash,
-            integerEqual
-        );
+        values := collections::HashMap<i32, PushOwner>::init()
+            .withHash(integerHash)
+            .withEqual(integerEqual);
 
         unsafe {
             firstError := values.set(

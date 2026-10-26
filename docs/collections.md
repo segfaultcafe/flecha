@@ -269,8 +269,8 @@ is complete below; hash set follows it.
 
 ## Hash map acceptance
 
-`HashMap<K, V>` is an open-addressed table with caller-supplied
-`Hash<K>` and `Equal<K>` policies. Its initial safe API provides insertion and
+`HashMap<K, V>` is an open-addressed table with replaceable `Hash<K>` and
+`Equal<K>` policies. Its initial safe API provides insertion and
 replacement through `set`, copy-only lookup through `get`, noncopying
 `containsKey`, ownership-transferring `remove`, capacity reservation, clearing,
 length/capacity queries, and noncopying traversal through `forEach`. Traversal
@@ -283,15 +283,21 @@ destroyed as `K` or `V`. Linear probing preserves collision chains across
 deletions, growth rehashes only occupied buckets, and allocation completes
 before any existing entry is relocated.
 
-The hash-map initializer retains both callable policies with the multi-origin
-result contract shorthand:
+The initializer uses generic default policies. Its correctness-first fallback
+hash places every key in one collision chain; callers that need normal
+open-addressing performance replace it while building the empty map. The
+consuming `self` receiver permits safe chaining on temporaries, and the
+multi-origin result contract retains borrows carried by both the map and the
+new policy:
 
 ```flecha
-HashMap<K, V> HashMap<K, V>::init(
-    Hash<K> hash,
-    Equal<K> equal,
-) <- ...args override;
+map := HashMap<K, V>::init()
+    .withHash(hash)
+    .withEqual(equal);
 ```
+
+Policy replacement on a nonempty map is ignored so existing bucket placement
+and equality semantics remain valid.
 
 The hash-map gate covers:
 

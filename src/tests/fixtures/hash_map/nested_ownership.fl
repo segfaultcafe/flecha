@@ -14,13 +14,12 @@ i32 checkTwoLevels() {
     outer := collections::HashMap<
         i32,
         collections::HashMap<i32, i32>
-    >::init(integerHash, integerEqual);
+    >::init().withHash(integerHash).withEqual(integerEqual);
 
     loop i32 row = 0; row < 7; row++ {
-        inner := collections::HashMap<i32, i32>::init(
-            integerHash,
-            integerEqual
-        );
+        inner := collections::HashMap<i32, i32>::init()
+            .withHash(integerHash)
+            .withEqual(integerEqual);
         loop i32 column = 0; column <= row; column++ {
             if inner.set(column, row * 10 + column) != none {
                 return 1;
@@ -60,19 +59,18 @@ i32 checkThreeLevels() {
     outer := collections::HashMap<
         i32,
         collections::HashMap<i32, collections::HashMap<i32, i32>>
-    >::init(integerHash, integerEqual);
+    >::init().withHash(integerHash).withEqual(integerEqual);
 
     loop i32 group = 0; group < 3; group++ {
         middle := collections::HashMap<
             i32,
             collections::HashMap<i32, i32>
-        >::init(integerHash, integerEqual);
+        >::init().withHash(integerHash).withEqual(integerEqual);
 
         loop i32 row = 0; row <= group; row++ {
-            inner := collections::HashMap<i32, i32>::init(
-                integerHash,
-                integerEqual
-            );
+            inner := collections::HashMap<i32, i32>::init()
+                .withHash(integerHash)
+                .withEqual(integerEqual);
             loop i32 column = 0; column <= row; column++ {
                 if inner.set(column, group * 100 + row * 10 + column) != none {
                     return 7;

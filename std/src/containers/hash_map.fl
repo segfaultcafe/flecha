@@ -35,15 +35,31 @@ HashMap<K, V> HashMap<K, V>::zero() override {
     return build HashMap<K, V> {};
 }
 
-// Creates an empty map that retains the supplied hash and equality policies.
-HashMap<K, V> HashMap<K, V>::init(
-    Hash<K> hash,
-    Equal<K> equal,
-) <-...args override {
+// Creates an empty map with correctness-first default policies. The fallback
+// hash intentionally collides for every key; use withHash for efficient lookup.
+HashMap<K, V> HashMap<K, V>::init() override {
     return build HashMap<K, V> {
-        self.hash = hash;
-        self.equal = equal;
+        self.hash = default_hash<K>;
+        self.equal = default_equal<K>;
     };
+}
+
+// Replaces the hash policy while consuming and returning the map for chaining.
+HashMap<K, V> HashMap<K, V>::withHash(self, Hash<K> hash) <-...args {
+    if !self.empty() {
+        return self;
+    }
+    self.hash = hash;
+    return self;
+}
+
+// Replaces the equality policy while consuming and returning the map.
+HashMap<K, V> HashMap<K, V>::withEqual(self, Equal<K> equal) <-...args {
+    if !self.empty() {
+        return self;
+    }
+    self.equal = equal;
+    return self;
 }
 
 // Destroys all stored keys and values. RawStorage releases the two allocations
@@ -75,10 +91,7 @@ bool HashMap<K, V>::empty(&const self) {
 }
 
 // Calls action once for every entry. Bucket order is unspecified.
-void HashMap<K, V>::forEach(
-    &const self,
-    HashMapAction<K, V> action,
-) {
+void HashMap<K, V>::forEach(&const self, HashMapAction<K, V> action) {
     unsafe {
         loop usize index = 0; index < self->capacity(); index++ {
             if self->states[index] == HASH_MAP_OCCUPIED {
@@ -342,4 +355,13 @@ private error HashMap<K, V>::ensureSpareCapacity(&self) {
     }
 
     return self->reserve(nextCapacity);
+}
+
+usize default_hash<K>(&const K key) {
+    key;
+    return 1;
+}
+
+bool default_equal<K>(&const K left, &const K right) {
+    return *left == *right;
 }

@@ -26,32 +26,37 @@ bool integerEqual(&const i32 left, &const i32 right) {
 
 reject_hash_map(move_reuse FLECHA-S0059 "${integer_policies}
 void main() {
-    values := collections::HashMap<i32, i32>::init(integerHash, integerEqual);
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(integerHash).withEqual(integerEqual);
     moved := values;
     values.len();
 }")
 
 reject_hash_map(private_keys FLECHA-S0044 "${integer_policies}
 void main() {
-    values := collections::HashMap<i32, i32>::init(integerHash, integerEqual);
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(integerHash).withEqual(integerEqual);
     values.keys.capacity();
 }")
 
 reject_hash_map(private_states FLECHA-S0044 "${integer_policies}
 void main() {
-    values := collections::HashMap<i32, i32>::init(integerHash, integerEqual);
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(integerHash).withEqual(integerEqual);
     values.states.len();
 }")
 
 reject_hash_map(private_hash FLECHA-S0044 "${integer_policies}
 void main() {
-    values := collections::HashMap<i32, i32>::init(integerHash, integerEqual);
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(integerHash).withEqual(integerEqual);
     values.hash;
 }")
 
 reject_hash_map(active_borrow_mutation FLECHA-S0029 "${integer_policies}
 void main() {
-    values := collections::HashMap<i32, i32>::init(integerHash, integerEqual);
+    values := collections::HashMap<i32, i32>::init()
+        .withHash(integerHash).withEqual(integerEqual);
     borrowed := &values;
     values.set(1, 10);
     borrowed->len();
@@ -73,7 +78,8 @@ bool equal(&const Immovable left, &const Immovable right) {
 }
 
 void main() {
-    values := collections::HashMap<Immovable, i32>::init(hash, equal);
+    values := collections::HashMap<Immovable, i32>::init()
+        .withHash(hash).withEqual(equal);
     values.reserve(1);
 }
 ]=])
@@ -86,10 +92,8 @@ structure Immovable {
 unsafe void Immovable::tear(&self) override {}
 
 void main() {
-    values := collections::HashMap<i32, Immovable>::init(
-        integerHash,
-        integerEqual
-    );
+    values := collections::HashMap<i32, Immovable>::init()
+        .withHash(integerHash).withEqual(integerEqual);
     values.reserve(1);
 }")
 
@@ -103,17 +107,16 @@ bool equal(&const []i32 left, &const []i32 right) {
 }
 
 void main() {
-    values := collections::HashMap<[]i32, i32>::init(hash, equal);
+    values := collections::HashMap<[]i32, i32>::init()
+        .withHash(hash).withEqual(equal);
     values.reserve(1);
 }
 ]=])
 
 reject_hash_map(borrowed_reference_value FLECHA-S0047 "${integer_policies}
 void main() {
-    values := collections::HashMap<i32, &i32>::init(
-        integerHash,
-        integerEqual
-    );
+    values := collections::HashMap<i32, &i32>::init()
+        .withHash(integerHash).withEqual(integerEqual);
     values.reserve(1);
 }")
 
@@ -143,7 +146,8 @@ endfunction()
 
 reject_move_only_hash_map(key_argument_reuse FLECHA-S0059 [=[
 void main() {
-    values := collections::HashMap<Owner, i32>::init(ownerHash, ownerEqual);
+    values := collections::HashMap<Owner, i32>::init()
+        .withHash(ownerHash).withEqual(ownerEqual);
     key := Owner::init();
     values.set(key, 10);
     key.value;
@@ -160,10 +164,8 @@ bool integerEqual(&const i32 left, &const i32 right) {
 }
 
 void main() {
-    values := collections::HashMap<i32, Owner>::init(
-        integerHash,
-        integerEqual
-    );
+    values := collections::HashMap<i32, Owner>::init()
+        .withHash(integerHash).withEqual(integerEqual);
     value := Owner::init();
     values.set(1, value);
     value.value;
@@ -180,10 +182,8 @@ bool integerEqual(&const i32 left, &const i32 right) {
 }
 
 void main() {
-    values := collections::HashMap<i32, Owner>::init(
-        integerHash,
-        integerEqual
-    );
+    values := collections::HashMap<i32, Owner>::init()
+        .withHash(integerHash).withEqual(integerEqual);
     i32 key = 1;
     values.get(&key);
 }
