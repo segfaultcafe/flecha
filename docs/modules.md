@@ -171,10 +171,11 @@ arithmetic_cases.fl  -> module numeric_test;
 boundary_cases.fl    -> module numeric_test;
 ```
 
-Running either source unit with `flecha test` loads the complete test module and
-generates one harness containing tests from both. Longbow discovers declared
-`_test` modules and runs each logical test module once. Imports remain
-source-local in test modules too.
+Running either source unit with `flecha test` loads the complete test module but
+generates a harness containing only tests declared in the requested file.
+Longbow discovers and runs every source file declaring a `_test` module so a
+project-wide run still executes the complete suite. Imports remain source-local
+in test modules too.
 
 The paired test module can access module-private top-level declarations in its
 production module. That privilege does not expose private structure or enum
