@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.5 - 2026-10-27
+
+Flecha 0.2.5 allows Longbow to create and operate on projects whose names are
+not Flecha identifiers.
+
 ### Fixed
 
 - Longbow project names now accept spaces and hyphens, and `check`, `build`,
