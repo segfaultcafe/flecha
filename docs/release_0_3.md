@@ -194,7 +194,11 @@ allocation-failure preservation, nested ownership, diagnostics, and dedicated
 sanitizer fixtures. The `HashSet<T>` gate now passes through the same probing
 engine with an empty marker type, including deduplication, zero-sized marker
 allocation failure, move-only lifecycle, nested ownership, diagnostics, and
-dedicated sanitizer fixtures.
+dedicated sanitizer fixtures. The collection-algorithm gate now passes as well:
+ordered binary search, unstable partitioning, and adjacent deduplication join
+the existing linear search and heap sort surface. Slice transformations remain
+explicitly copy-based, while Array transformations relocate move-only values
+and destroy removed duplicates exactly once.
 
 ### 3. Text, parsing, and encoding
 

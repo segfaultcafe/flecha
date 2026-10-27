@@ -182,3 +182,65 @@ void RawArray<T>::clear(&self) {
         }
     }
 }
+
+// Reverses live elements through relocation rather than semantic copies.
+void RawArray<T>::reverse(&self) {
+    unsafe {
+        usize left = 0;
+        usize right = self->length;
+
+        while left < right {
+            right--;
+            if left >= right {
+                break;
+            }
+
+            self->swapAt(left, right);
+            left++;
+        }
+    }
+}
+
+// Exchanges two caller-proven live elements without semantic copies.
+unsafe void RawArray<T>::swap(&self, usize left, usize right) {
+    self->swapAt(left, right);
+}
+
+// Borrows one caller-proven live element, including during internal compaction.
+unsafe []const T RawArray<T>::viewAt(&const self, usize index) <-self {
+    return self->storage[index:index + 1];
+}
+
+// Destroys one caller-proven live element during internal compaction.
+unsafe void RawArray<T>::destroyAt(&self, usize index) {
+    __storage_destroy(self->storage, index);
+}
+
+// Relocates a live source into a caller-proven uninitialized destination.
+unsafe void RawArray<T>::relocate(
+    &self,
+    usize destination,
+    usize source,
+) {
+    __storage_relocate(self->storage, destination, self->storage, source);
+}
+
+// Commits a caller-proven initialized prefix after internal compaction.
+unsafe void RawArray<T>::commitLength(&self, usize length) {
+    self->length = length;
+}
+
+// Exchanges two caller-proven live elements without copying either value.
+private unsafe void RawArray<T>::swapAt(
+    &self,
+    usize left,
+    usize right,
+) {
+    if left == right {
+        return;
+    }
+
+    T temporary = __storage_extract(self->storage, left);
+    __storage_relocate(self->storage, left, self->storage, right);
+    __storage_initialize(self->storage, right, temporary);
+}

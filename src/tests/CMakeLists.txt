@@ -127,6 +127,13 @@ add_test(NAME CompilerDiagnostics.SliceCopyability
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/slice_copy_diagnostics
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_slice_copy_diagnostics.cmake)
 
+add_test(NAME CompilerDiagnostics.CollectionAlgorithms
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/collection_algorithm_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_collection_algorithm_diagnostics.cmake)
+
 add_test(NAME EditorTests.VSCodeManifest
     COMMAND ${CMAKE_COMMAND}
         -DEDITOR_ROOT=${PROJECT_SOURCE_DIR}/editors/vscode
@@ -540,6 +547,7 @@ foreach(case IN ITEMS
         swap_remove
         structure_mutations
         algorithms
+        algorithms_move_only
         move_only_initial_failure
         move_only_push
         move_only_lifecycle
