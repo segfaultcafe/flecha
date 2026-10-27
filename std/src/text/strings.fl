@@ -1,6 +1,8 @@
 module strings;
 
-@imports :: root::bytes::buffer;
+@imports
+    :: root::text::runtime
+    :: root::bytes::buffer;
 
 // Builds byte-oriented text incrementally with explicit allocation failures.
 export structure StringBuilder {
@@ -71,6 +73,16 @@ error StringBuilder::appendRepeated(&self, char value, usize times) {
     return none;
 }
 
+// Borrows the builder contents as text.
+stringv StringBuilder::view(&const self) <-self {
+    return stringv_from_bytes(self->storage.bytes());
+}
+
+// Copies the builder contents into an owning string.
+(string, error) StringBuilder::asString(&const self) {
+    return string_from_bytes(self->storage.bytes());
+}
+
 // Appends line followed by a newline, preserving contents on allocation error.
 error StringBuilder::appendLine(&self, stringv line) {
     usize additional = line.len().cast<usize>;
@@ -114,4 +126,28 @@ private error StringBuilder::reserveAdditional(&self, usize additional) {
     }
 
     return self->storage.reserve(REQUIRED);
+}
+
+// Borrows value as byte-oriented text without allocating.
+export stringv stringv_from_bytes([]const u8 value) <-value {
+    return value.cast<stringv>;
+}
+
+// Copies value into a null-terminated owning string.
+export (string, error) string_from_bytes([]const u8 value) {
+    string result = none;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_string_try_from_bytes(
+            &raw result,
+            value.data(),
+            value.len()
+        );
+
+        if status != 0 {
+            return (none, AllocationError.OutOfMemory);
+        }
+    }
+
+    return (result, none);
 }

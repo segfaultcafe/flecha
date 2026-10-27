@@ -159,3 +159,58 @@ test string_builder_reserve_and_clear_preserve_allocation(
     asserts::is_true(t, value.len() == 0, "clear resets the byte length");
     asserts::is_true(t, value.capacity() == 32, "clear retains allocation");
 }
+
+test string_builder_borrows_accumulated_text(&testing::UnitTest t) {
+    value := strings::StringBuilder::init();
+    appendError := value.append("flecha");
+
+    asserts::is_true(t, appendError == none, "the setup append succeeds");
+    text := value.view();
+    asserts::is_true(t, text == "flecha", "view borrows the accumulated text");
+    asserts::is_true(t, text.len() == 6, "view preserves the byte length");
+}
+
+test string_builder_copies_an_independent_owning_string(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    appendError := value.append("flecha");
+    text, copyError := value.asString();
+
+    asserts::is_true(
+        t,
+        appendError == none and copyError == none,
+        "builder text copy succeeds"
+    );
+    if copyError != none {
+        return;
+    }
+
+    value.clear();
+    replacementError := value.append("arrow");
+    asserts::is_true(t, replacementError == none, "builder remains reusable");
+    asserts::is_true(
+        t,
+        text == "flecha",
+        "owned copy is independent of builder"
+    );
+    asserts::is_true(
+        t,
+        value.view() == "arrow",
+        "builder stores replacement text"
+    );
+}
+
+test string_builder_copies_empty_text_without_allocation(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    text, err := value.asString();
+
+    asserts::is_true(t, err == none, "empty string copy succeeds");
+    asserts::is_true(
+        t,
+        text.len() == 0,
+        "empty builder produces an empty string"
+    );
+}

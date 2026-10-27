@@ -1,0 +1,7 @@
+module runtime;
+
+quiver extern unsafe i32 flecha_runtime_v1_string_try_from_bytes(
+    *string output,
+    *const u8 data,
+    usize length
+);
