@@ -253,6 +253,28 @@ TEST_F(ModuleTests, ExportedGenericCallableSignaturesCrossModuleBoundaries) {
           "}; return callbacks::apply<i32>(increment, 41); }");
     EXPECT_EQ(Check(), "");
 }
+TEST_F(ModuleTests,
+       ContextuallyInfersConstNominalParametersInsideGenericFunctions) {
+    Write("adapter.fl", R"(module adapter;
+        structure Marker {};
+        export func Action<T>(&const T) => ();
+        func PairAction<K, V>(&const K, &const V) => ();
+
+        void consume<K, V>(PairAction<K, V> action) {}
+
+        export void adapt<T>(Action<T> action) {
+            consume<T, Marker>([&action](key, marker) => {
+                action(key);
+            });
+        }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::adapter;
+        void main() {
+            adapter::adapt<i32>((value) => {});
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+}
 TEST_F(ModuleTests, GenericCallableExportsRespectTypeVisibility) {
     Write("callbacks.fl",
           "module callbacks; structure Hidden { i32 value; }; export func "
