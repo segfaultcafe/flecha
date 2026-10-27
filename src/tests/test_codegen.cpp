@@ -596,6 +596,21 @@ TEST(LlvmCodeGeneratorTests, EmitsChainedNumericConversions) {
     EXPECT_NE(ir.find("fptosi float"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests,
+     EmitsByteCharacterCastsAsRepresentationPreserving) {
+    GeneratedSource result = Generate(
+        "i32 main() { u8 byte = 65; character := byte.cast<char>; "
+        "roundTrip := character.cast<u8>; return roundTrip as i32; }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    EXPECT_TRUE(result.generator->Error().empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("store i8 65"), std::string::npos);
+    EXPECT_EQ(ir.find("unsupported LLVM cast"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsShortCircuitBooleanLogic) {
     GeneratedSource result =
         Generate("bool both(bool left, bool right) { return left and right; }");

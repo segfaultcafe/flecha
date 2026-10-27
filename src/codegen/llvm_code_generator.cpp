@@ -2164,6 +2164,11 @@ llvm::Value* LlvmCodeGenerator::EmitCast(
             result, _builder.CreateExtractValue(value, 1, "slice.length"), 1,
             "slice.stringv");
     }
+    if ((sourceType.Kind() == semantic::SemanticTypeKind::U8 &&
+         expression.Type().Kind() == semantic::SemanticTypeKind::Char) ||
+        (sourceType.Kind() == semantic::SemanticTypeKind::Char &&
+         expression.Type().Kind() == semantic::SemanticTypeKind::U8))
+        return value;
 
     if (sourceType.IsInteger() && expression.Type().IsInteger()) {
         return _builder.CreateIntCast(value, targetType,
