@@ -1,0 +1,332 @@
+module collections_test;
+
+@imports
+    :: root::containers::collections
+    :: root::containers::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+usize setIntegerHash(&const i32 value) {
+    return (*value).cast<usize>;
+}
+
+usize setCollisionHash(&const i32 value) {
+    value;
+    return 1;
+}
+
+bool setIntegerEqual(&const i32 left, &const i32 right) {
+    return *left == *right;
+}
+
+bool setNeverEqual(&const i32 left, &const i32 right) {
+    left;
+    right;
+    return false;
+}
+
+structure HashSetDefaultValue {
+    i32 group;
+    i32 item;
+};
+
+HashSetDefaultValue HashSetDefaultValue::zero() override {
+    return build HashSetDefaultValue {};
+}
+
+HashSetDefaultValue HashSetDefaultValue::init(
+    i32 group,
+    i32 item,
+) override {
+    return build HashSetDefaultValue {
+        self.group = group;
+        self.item = item;
+    };
+}
+
+structure HashSetOwner {
+    *i32 cleanupCount;
+    i32 value;
+};
+
+HashSetOwner HashSetOwner::zero() override {
+    return build HashSetOwner {
+        self.cleanupCount = null;
+        self.value = 0;
+    };
+}
+
+HashSetOwner HashSetOwner::init(*i32 cleanupCount, i32 value) override {
+    return build HashSetOwner {
+        self.cleanupCount = cleanupCount;
+        self.value = value;
+    };
+}
+
+void HashSetOwner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            (*self->cleanupCount)++;
+        }
+    }
+}
+
+i32 HashSetOwner::get(&const self) {
+    return self->value;
+}
+
+usize setOwnerHash(&const HashSetOwner value) {
+    return value->get().cast<usize>;
+}
+
+bool setOwnerEqual(
+    &const HashSetOwner left,
+    &const HashSetOwner right,
+) {
+    return left->get() == right->get();
+}
+
+HashSetOwner setOwnerProbe(i32 value) {
+    unsafe {
+        return HashSetOwner::init(null, value);
+    }
+}
+
+void visitSetOwner(&const HashSetOwner value) {
+    value->get();
+}
+
+test hash_set_starts_empty_and_reports_missing_values(&testing::UnitTest t) {
+    values := collections::HashSet<i32>::init()
+        .withHash(setIntegerHash)
+        .withEqual(setIntegerEqual);
+    i32 missing = 7;
+    eraseError := values.erase(&missing);
+
+    asserts::is_true(t, values.empty(), "a new set is empty");
+    asserts::is_true(t, values.len() == 0, "a new set has zero values");
+    asserts::is_true(t, values.capacity() == 0, "a new set has no buckets");
+    asserts::is_false(
+        t,
+        values.contains(&missing),
+        "a missing value is absent"
+    );
+    asserts::is_true(
+        t,
+        eraseError == errors::HashMapError.KeyNotFound,
+        "erase reports HashMapError.KeyNotFound"
+    );
+}
+
+test hash_set_default_policies_store_and_find_values(&testing::UnitTest t) {
+    values := collections::HashSet<i32>::init();
+    bool inserted = true;
+    loop i32 value = 0; value < 20; value++ {
+        if values.insert(value) != none {
+            inserted = false;
+        }
+    }
+
+    bool found = true;
+    loop i32 value = 0; value < 20; value++ {
+        if !values.contains(&value) {
+            found = false;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        inserted and found and values.len() == 20,
+        "default policies distribute and find many values"
+    );
+}
+
+test hash_set_default_policies_hash_structure_fields(&testing::UnitTest t) {
+    values := collections::HashSet<HashSetDefaultValue>::init();
+    firstError := values.insert(HashSetDefaultValue::init(1, 2));
+    secondError := values.insert(HashSetDefaultValue::init(1, 3));
+    probe := HashSetDefaultValue::init(1, 2);
+
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none and
+            values.contains(&probe) and values.len() == 2,
+        "default policies hash and compare structure values by their fields"
+    );
+}
+
+test hash_set_keeps_policies_when_values_exist(&testing::UnitTest t) {
+    values := collections::HashSet<i32>::init()
+        .withHash(setIntegerHash)
+        .withEqual(setIntegerEqual);
+    insertError := values.insert(7);
+    unchanged := values.withHash(setCollisionHash).withEqual(setNeverEqual);
+    i32 probe = 7;
+
+    asserts::is_true(
+        t,
+        insertError == none and unchanged.contains(&probe),
+        "policy replacement cannot invalidate existing buckets"
+    );
+}
+
+test hash_set_inserts_deduplicates_and_grows(&testing::UnitTest t) {
+    values := collections::HashSet<i32>::init()
+        .withHash(setIntegerHash)
+        .withEqual(setIntegerEqual);
+
+    loop i32 value = 0; value < 20; value++ {
+        if values.insert(value) != none {
+            asserts::is_true(t, false, "insert grows the set");
+            return;
+        }
+    }
+
+    duplicateError := values.insert(7);
+    bool preserved = true;
+    loop i32 value = 0; value < 20; value++ {
+        if !values.contains(&value) {
+            preserved = false;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        duplicateError == none and values.len() == 20 and preserved,
+        "duplicate insertion preserves length and growth preserves values"
+    );
+}
+
+test hash_set_resolves_collisions_and_reuses_deleted_buckets(
+    &testing::UnitTest t,
+) {
+    values := collections::HashSet<i32>::init()
+        .withHash(setCollisionHash)
+        .withEqual(setIntegerEqual);
+
+    firstError := values.insert(1);
+    secondError := values.insert(2);
+    thirdError := values.insert(3);
+    i32 removed = 2;
+    eraseError := values.erase(&removed);
+    insertError := values.insert(4);
+    i32 first = 1;
+    i32 third = 3;
+    i32 fourth = 4;
+
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none and thirdError == none and
+            eraseError == none and insertError == none,
+        "colliding values can be inserted and erased"
+    );
+    asserts::is_true(
+        t,
+        values.contains(&first) and values.contains(&third) and
+            values.contains(&fourth) and !values.contains(&removed),
+        "probing crosses and reuses a deleted bucket"
+    );
+}
+
+test hash_set_clear_retains_and_reuses_bucket_storage(&testing::UnitTest t) {
+    values := collections::HashSet<i32>::init()
+        .withHash(setIntegerHash)
+        .withEqual(setIntegerEqual);
+
+    reserveError := values.reserve(16);
+    firstError := values.insert(1);
+    secondError := values.insert(2);
+    values.clear();
+
+    asserts::is_true(
+        t,
+        reserveError == none and firstError == none and secondError == none and
+            values.empty() and values.capacity() == 16,
+        "clear removes values and retains buckets"
+    );
+
+    reuseError := values.insert(3);
+    i32 probe = 3;
+    asserts::is_true(
+        t,
+        reuseError == none and values.contains(&probe) and
+            values.len() == 1 and values.capacity() == 16,
+        "a cleared set reuses retained bucket storage"
+    );
+}
+
+test hash_set_for_each_visits_borrowed_values(&testing::UnitTest t) {
+    values := collections::HashSet<i32>::init()
+        .withHash(setCollisionHash)
+        .withEqual(setIntegerEqual);
+    firstError := values.insert(1);
+    secondError := values.insert(2);
+    thirdError := values.insert(3);
+
+    usize visits = 0;
+    i32 total = 0;
+    values.forEach([&visits, &total](value) => {
+        visits++;
+        total = total + *value;
+    });
+
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none and thirdError == none and
+            visits == 3 and total == 6,
+        "forEach borrows every value exactly once"
+    );
+}
+
+test hash_set_cleans_move_only_values_once(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::HashSet<HashSetOwner>::init()
+            .withHash(setOwnerHash)
+            .withEqual(setOwnerEqual);
+
+        unsafe {
+            loop i32 value = 1; value <= 7; value++ {
+                if values.insert(
+                    HashSetOwner::init(&raw cleanupCount, value)
+                ) != none {
+                    asserts::is_true(t, false, "move-only values grow the set");
+                    return;
+                }
+            }
+
+            duplicateError := values.insert(
+                HashSetOwner::init(&raw cleanupCount, 1)
+            );
+            asserts::is_true(
+                t,
+                duplicateError == none and cleanupCount == 1 and
+                    values.len() == 7 and values.capacity() == 16,
+                "an equal incoming move-only value is consumed exactly once"
+            );
+        }
+
+        probe := setOwnerProbe(1);
+        eraseError := values.erase(&probe);
+        asserts::is_true(
+            t,
+            eraseError == none and cleanupCount == 2,
+            "erase destroys the stored move-only value"
+        );
+
+        values.forEach(visitSetOwner);
+        values.clear();
+        asserts::is_true(
+            t,
+            values.empty() and cleanupCount == 8,
+            "traversal borrows and clear destroys remaining values once"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 8,
+        "set destruction does not repeat move-only cleanup"
+    );
+}

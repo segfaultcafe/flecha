@@ -1,0 +1,66 @@
+module move_only_initial_failure;
+
+@imports :: lib::std::containers::collections;
+
+structure Owner {
+    *i32 cleanupCount;
+    i32 id;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.id = 0;
+    };
+}
+
+Owner Owner::init(*i32 cleanupCount, i32 id) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.id = id;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            (*self->cleanupCount)++;
+        }
+    }
+}
+
+usize ownerHash(&const Owner value) {
+    return value->id.cast<usize>;
+}
+
+bool ownerEqual(&const Owner left, &const Owner right) {
+    return left->id == right->id;
+}
+
+i32 main() {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::HashSet<Owner>::init()
+            .withHash(ownerHash)
+            .withEqual(ownerEqual);
+
+        unsafe {
+            insertError := values.insert(
+                Owner::init(&raw cleanupCount, 1)
+            );
+            if insertError != AllocationError.OutOfMemory {
+                return 1;
+            }
+        }
+
+        if !values.empty() or values.capacity() != 0 or cleanupCount != 1 {
+            return 2;
+        }
+    }
+
+    if cleanupCount != 1 {
+        return 3;
+    }
+    return 42;
+}
