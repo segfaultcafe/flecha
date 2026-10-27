@@ -33,3 +33,129 @@ test string_builder_with_capacity_reserves_storage(&testing::UnitTest t) {
         "StringBuilder preserves the requested capacity"
     );
 }
+
+test string_builder_appends_text_characters_and_bytes(&testing::UnitTest t) {
+    value := strings::StringBuilder::init();
+    textError := value.append("fle");
+    charError := value.appendChar('c');
+    [3]u8 suffix = [104, 0, 97];
+    bytesError := value.appendBytes(suffix[:]);
+
+    asserts::is_true(
+        t,
+        textError == none and charError == none and bytesError == none,
+        "every append operation succeeds"
+    );
+    asserts::is_true(t, value.len() == 7, "appends advance the byte length");
+
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes[0] == 102 and bytes[1] == 108 and bytes[2] == 101 and
+            bytes[3] == 99 and bytes[4] == 104 and bytes[5] == 0 and
+            bytes[6] == 97,
+        "appends preserve byte order including embedded nulls"
+    );
+}
+
+test string_builder_appends_repeated_characters_and_lines(
+    &testing::UnitTest t
+) {
+    value, allocationError := strings::StringBuilder::withCapacity(8);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup builder is constructed");
+        return;
+    }
+
+    prefixError := value.append("ab");
+    repeatError := value.appendRepeated('x', 3);
+    lineError := value.appendLine("123");
+
+    asserts::is_true(
+        t,
+        prefixError == none and repeatError == none and lineError == none,
+        "compound appends succeed"
+    );
+    asserts::is_true(t, value.len() == 9, "compound appends include newline");
+    asserts::is_true(
+        t,
+        value.capacity() >= 9,
+        "appendLine reserves text and newline together"
+    );
+
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes[0] == 97 and bytes[1] == 98 and bytes[2] == 120 and
+            bytes[3] == 120 and bytes[4] == 120 and bytes[5] == 49 and
+            bytes[6] == 50 and bytes[7] == 51 and bytes[8] == 10,
+        "repetition and line appending preserve exact contents"
+    );
+}
+
+test string_builder_compound_appends_handle_empty_inputs(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    repeatError := value.appendRepeated('x', 0);
+    lineError := value.appendLine("");
+
+    asserts::is_true(
+        t,
+        repeatError == none and lineError == none,
+        "empty compound appends succeed"
+    );
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes.len() == 1 and bytes[0] == 10,
+        "an empty line appends only a newline"
+    );
+}
+
+test string_builder_repetition_overflow_preserves_contents(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    setupError := value.appendChar('a');
+    const usize ORIGINAL_CAPACITY = value.capacity();
+    overflowError := value.appendRepeated('x', usize.max_value);
+
+    asserts::is_true(t, setupError == none, "the setup append succeeds");
+    asserts::is_true(
+        t,
+        overflowError == AllocationError.OutOfMemory,
+        "capacity overflow reports allocation failure"
+    );
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        value.len() == 1 and value.capacity() == ORIGINAL_CAPACITY and
+            bytes[0] == 97,
+        "overflow preserves length capacity and contents"
+    );
+}
+
+test string_builder_reserve_and_clear_preserve_allocation(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    appendError := value.append("flecha");
+    reserveError := value.reserve(32);
+
+    asserts::is_true(
+        t,
+        appendError == none and reserveError == none,
+        "append and reserve succeed"
+    );
+    asserts::is_true(
+        t,
+        value.len() == 6 and value.capacity() == 32,
+        "reserve retains accumulated bytes"
+    );
+
+    value.clear();
+    asserts::is_true(t, value.empty(), "clear makes the builder empty");
+    asserts::is_true(t, value.len() == 0, "clear resets the byte length");
+    asserts::is_true(t, value.capacity() == 32, "clear retains allocation");
+}
