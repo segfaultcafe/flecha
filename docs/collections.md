@@ -264,8 +264,8 @@ The binary-heap gate covers:
   representation access, and copy-only `top` on move-only elements; and
 - allocation auditing plus focused ASan/UBSan execution.
 
-`BinaryHeap<T>` is complete for the Stage 2 foundation. The hash-map foundation
-is complete below; hash set follows it.
+`BinaryHeap<T>` is complete for the Stage 2 foundation. The hash-map and
+hash-set foundations are complete below.
 
 ## Hash map acceptance
 
@@ -317,5 +317,36 @@ The hash-map gate covers:
   copy-only `get` on move-only values; and
 - allocation auditing plus dedicated ASan/UBSan and CI execution.
 
-`HashMap<K, V>` is complete for the Stage 2 foundation. Hash set reuse is the
-next hash-based collection layer.
+`HashMap<K, V>` is complete for the Stage 2 foundation.
+
+## Hash set acceptance
+
+`HashSet<T>` reuses `HashMap<T, HashSetMarker>` for hashing, equality, probing,
+growth, deletion, and ownership. `HashSetMarker` is an empty structure: marker
+storage preserves the map's allocation and failure contract without adding a
+payload byte to every bucket. Runtime array allocations retain their logical
+element count even when the element size is zero.
+
+The safe API provides `insert`, noncopying `contains`, `erase`, capacity
+reservation, clearing, length/capacity queries, and borrowed traversal through
+`forEach`. Duplicate insertion consumes the incoming value exactly once but
+does not change the set's length. `init` supplies structural defaults, while
+`withHash` and `withEqual` support the same safe chaining and empty-collection
+policy replacement contract as `HashMap`.
+
+The hash-set gate covers:
+
+- default and caller-supplied policies, insertion, deduplication, growth,
+  forced collisions, deleted-bucket reuse, missing values, clear/reuse, and
+  traversal;
+- move-only values across duplicate insertion, relocation, erasure, clearing,
+  and destruction with exactly-once cleanup;
+- failure injection at the state, value, and zero-sized marker allocations
+  during initial insertion and growth, preserving existing values while
+  consuming a rejected value exactly once;
+- two- and three-level ownership nesting with sets stored inside owning maps;
+- rejection of immovable and borrowed values, use after movement, private
+  representation access, and mutation during an active borrow; and
+- allocation auditing plus dedicated ASan/UBSan and CI execution.
+
+`HashSet<T>` is complete for the Stage 2 foundation.

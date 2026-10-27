@@ -225,5 +225,5 @@ use, including for nested inner views.
 
 The complete Stage 2 contract and acceptance matrix are specified in
 [`collections.md`](collections.md). The `Array<T>`, `Deque<T>`, `Stack<T>`,
-`Queue<T>`, `BinaryHeap<T>`, and `HashMap<K, V>` gates are complete; hash set
-is the next collection layer.
+`Queue<T>`, `BinaryHeap<T>`, `HashMap<K, V>`, and `HashSet<T>` gates are
+complete.

@@ -223,6 +223,14 @@ jobs:
           ctest --test-dir build-sanitizers --output-on-failure
           -R '^StandardLibraryTests\.SafeHashMap\..*$'
 
+      - name: Run sanitized hash set tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          ctest --test-dir build-sanitizers --output-on-failure
+          -R '^StandardLibraryTests\.SafeHashSet\..*$'
+
   platform-build:
     name: Create package (${{ matrix.name }})
     needs: contribution-policy

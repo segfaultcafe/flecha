@@ -188,10 +188,13 @@ nested ownership, compile-fail diagnostics, and sanitizer fixtures. The
 move-only lifecycle, nested ownership, diagnostics, and sanitizer requirements.
 The `BinaryHeap<T>` gate also passes with caller-supplied comparison policies,
 move-only sifting, strong growth-failure preservation, nested ownership,
-compile-fail diagnostics, and sanitizer fixtures. The `HashMap<K, V>` gate now
+compile-fail diagnostics, and sanitizer fixtures. The `HashMap<K, V>` gate
 passes as well, including move-only keys and values, borrowed iteration,
 allocation-failure preservation, nested ownership, diagnostics, and dedicated
-sanitizer fixtures. Hash set follows it.
+sanitizer fixtures. The `HashSet<T>` gate now passes through the same probing
+engine with an empty marker type, including deduplication, zero-sized marker
+allocation failure, move-only lifecycle, nested ownership, diagnostics, and
+dedicated sanitizer fixtures.
 
 ### 3. Text, parsing, and encoding
 

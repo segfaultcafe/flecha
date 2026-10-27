@@ -1,0 +1,109 @@
+module nested_ownership;
+
+@imports :: lib::std::containers::collections;
+
+usize integerHash(&const i32 value) {
+    return (*value).cast<usize>;
+}
+
+bool integerEqual(&const i32 left, &const i32 right) {
+    return *left == *right;
+}
+
+collections::HashSet<i32> makeSet(i32 count) {
+    values := collections::HashSet<i32>::init()
+        .withHash(integerHash)
+        .withEqual(integerEqual);
+    loop i32 value = 0; value < count; value++ {
+        if values.insert(value) != none {
+            return values;
+        }
+    }
+    return values;
+}
+
+i32 checkTwoLevels() {
+    outer := collections::HashMap<
+        i32,
+        collections::HashSet<i32>
+    >::init().withHash(integerHash).withEqual(integerEqual);
+
+    loop i32 row = 0; row < 7; row++ {
+        if outer.set(row, makeSet(row + 1)) != none {
+            return 1;
+        }
+    }
+
+    if outer.len() != 7 or outer.capacity() != 16 {
+        return 2;
+    }
+
+    i32 outerKey = 6;
+    inner, outerRemoveError := outer.remove(&outerKey);
+    if outerRemoveError != none {
+        return 3;
+    }
+    i32 member = 6;
+    if inner.len() != 7 or inner.capacity() != 16 or
+        !inner.contains(&member) {
+        return 4;
+    }
+
+    outer.clear();
+    if !outer.empty() or outer.capacity() != 16 {
+        return 5;
+    }
+    return 42;
+}
+
+i32 checkThreeLevels() {
+    outer := collections::HashMap<
+        i32,
+        collections::HashMap<i32, collections::HashSet<i32>>
+    >::init().withHash(integerHash).withEqual(integerEqual);
+
+    loop i32 group = 0; group < 3; group++ {
+        middle := collections::HashMap<
+            i32,
+            collections::HashSet<i32>
+        >::init().withHash(integerHash).withEqual(integerEqual);
+
+        loop i32 row = 0; row <= group; row++ {
+            if middle.set(row, makeSet(row + 1)) != none {
+                return 5;
+            }
+        }
+        if outer.set(group, middle) != none {
+            return 6;
+        }
+    }
+
+    i32 groupKey = 2;
+    middle, outerRemoveError := outer.remove(&groupKey);
+    if outerRemoveError != none {
+        return 7;
+    }
+    i32 rowKey = 2;
+    inner, middleRemoveError := middle.remove(&rowKey);
+    if middleRemoveError != none {
+        return 8;
+    }
+    i32 member = 2;
+    if inner.len() != 3 or !inner.contains(&member) {
+        return 9;
+    }
+
+    outer.clear();
+    if !outer.empty() or outer.capacity() != 8 {
+        return 10;
+    }
+    return 42;
+}
+
+i32 main() {
+    result := checkTwoLevels();
+    if result != 42 {
+        return result;
+    }
+    return checkThreeLevels();
+}

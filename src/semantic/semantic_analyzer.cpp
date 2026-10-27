@@ -2775,7 +2775,8 @@ std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
     };
     const auto visibleName = [&](SymbolKind kind) {
         for (const auto& symbol : _model._symbols)
-            if (symbol->Kind() == kind && symbol->Type() == type)
+            if (symbol->Kind() == kind &&
+                symbol->Type() == type.WithoutConst())
                 if (const auto name = _currentScope->NameFor(*symbol))
                     return *name;
         return type.Name();
