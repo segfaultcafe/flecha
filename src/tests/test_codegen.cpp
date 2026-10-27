@@ -623,6 +623,21 @@ TEST(LlvmCodeGeneratorTests, EmitsStringViewsAndContentEquality) {
     EXPECT_NE(ir.find("{ ptr, i64 }"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, EmitsBorrowedByteSlicesAsStringViews) {
+    GeneratedSource result = Generate(
+        "stringv view([]const u8 bytes) <-bytes { "
+        "return bytes.cast<stringv>; } "
+        "i32 main() { [3]u8 bytes = ['f', 'l', 'e']; "
+        "text := view(bytes[:]); if text[1] == 'l' { return 42; } "
+        "return 0; }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("slice.stringv"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsCheckedStringViewOperations) {
     GeneratedSource result = Generate(
         "i32 main() { text := \"flecha\"; first := text.at(0); "

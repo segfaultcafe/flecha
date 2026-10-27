@@ -2155,6 +2155,15 @@ llvm::Value* LlvmCodeGenerator::EmitCast(
         expression.Type().Kind() == semantic::SemanticTypeKind::StringView) {
         return EmitStringView(value, sourceType);
     }
+    if (sourceType.Kind() == semantic::SemanticTypeKind::Slice &&
+        expression.Type().Kind() == semantic::SemanticTypeKind::StringView) {
+        llvm::Value* result = llvm::UndefValue::get(targetType);
+        result = _builder.CreateInsertValue(
+            result, _builder.CreateExtractValue(value, 0, "slice.data"), 0);
+        return _builder.CreateInsertValue(
+            result, _builder.CreateExtractValue(value, 1, "slice.length"), 1,
+            "slice.stringv");
+    }
 
     if (sourceType.IsInteger() && expression.Type().IsInteger()) {
         return _builder.CreateIntCast(value, targetType,

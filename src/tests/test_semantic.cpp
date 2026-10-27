@@ -1719,6 +1719,28 @@ TEST(SemanticStringTests, SupportsOwningConversionsAndLiteralMembers) {
         SemanticTypeKind::StringView);
 }
 
+TEST(SemanticStringTests, CastsBorrowedByteSlicesToStringViews) {
+    Analysis valid = Analyze(
+        "stringv view([]const u8 bytes) <-bytes { "
+        "return bytes.cast<stringv>; }");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis mutableSlice = Analyze(
+        "stringv view([]u8 bytes) <-bytes { return bytes.cast<stringv>; }");
+    EXPECT_FALSE(mutableSlice.diagnostics.HasErrors());
+
+    Analysis wrongElement = Analyze(
+        "void bad([]const i8 bytes) { bytes.cast<stringv>; }");
+    EXPECT_NE(FindDiagnostic(wrongElement, DiagnosticCode::InvalidCast),
+              nullptr);
+
+    Analysis missingContract = Analyze(
+        "stringv bad([]const u8 bytes) { return bytes.cast<stringv>; }");
+    EXPECT_NE(
+        FindDiagnostic(missingContract, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+}
+
 TEST(SemanticStringTests, FormatsScalarsOnlyAsOwningStrings) {
     Analysis valid = Analyze(
         "void Main() { integer := 42.string(); decimal := 1.5.string(); "
