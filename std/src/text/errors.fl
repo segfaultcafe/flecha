@@ -1,0 +1,8 @@
+module errors;
+
+export error ParseError {
+    Empty,
+    InvalidSyntax,
+    InvalidBase,
+    Overflow,
+}

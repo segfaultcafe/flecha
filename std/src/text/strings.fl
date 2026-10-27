@@ -1,0 +1,32 @@
+module strings;
+
+@imports
+    :: root::text::errors
+    :: root::bytes::buffer;
+
+export structure StringBuilder {
+    private buffer::Buffer storage;
+};
+
+StringBuilder StringBuilder::init() override {
+    return build StringBuilder {};
+}
+
+(StringBuilder, error) StringBuilder::withCapacity(usize capacity) {
+    buffer, err := buffer::Buffer::withCapacity(capacity);
+    if err != none {
+        return (StringBuilder::init(), err);
+    }
+
+    return (build StringBuilder {
+        self.storage = buffer;
+    }, none);
+}
+
+usize StringBuilder::len(&const self) {
+    return self->storage.len();
+}
+
+usize StringBuilder::capacity(&const self) {
+    return self->storage.capacity();
+}

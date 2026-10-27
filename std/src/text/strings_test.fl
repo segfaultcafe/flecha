@@ -1,0 +1,35 @@
+module strings_test;
+
+@imports
+    :: root::text::strings
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test string_builder_init_is_empty_and_uses_no_allocation(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+
+    asserts::is_true(t, value.len() == 0, "StringBuilder starts empty");
+    asserts::is_true(
+        t,
+        value.capacity() == 0,
+        "StringBuilder init does not allocate"
+    );
+}
+
+test string_builder_with_capacity_reserves_storage(&testing::UnitTest t) {
+    value, err := strings::StringBuilder::withCapacity(12);
+
+    asserts::is_true(t, err == none, "StringBuilder allocation succeeds");
+    if err != none {
+        return;
+    }
+
+    asserts::is_true(t, value.len() == 0, "reserved builder remains empty");
+    asserts::is_true(
+        t,
+        value.capacity() == 12,
+        "StringBuilder preserves the requested capacity"
+    );
+}
