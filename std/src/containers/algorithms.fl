@@ -70,6 +70,119 @@ export (usize, bool) find_if<T>([]const T values, Predicate<T> predicate) {
     return (none, false);
 }
 
+// Returns the first index where needle can be inserted without placing it
+// after an equivalent value in a range ordered by less.
+export usize lower_bound_by<T>(
+    []const T values,
+    &const T needle,
+    Less<T> less,
+) {
+    usize first = 0;
+    usize count = values.len();
+
+    while count > 0 {
+        const usize STEP = count / 2;
+        const usize MIDDLE = first + STEP;
+        if less(&values[MIDDLE], needle) {
+            first = MIDDLE + 1;
+            count = count - STEP - 1;
+        } else {
+            count = STEP;
+        }
+    }
+
+    return first;
+}
+
+// Returns the first index where needle can be inserted after every equivalent
+// value in a range ordered by less.
+export usize upper_bound_by<T>(
+    []const T values,
+    &const T needle,
+    Less<T> less,
+) {
+    usize first = 0;
+    usize count = values.len();
+
+    while count > 0 {
+        const usize STEP = count / 2;
+        const usize MIDDLE = first + STEP;
+        if !less(needle, &values[MIDDLE]) {
+            first = MIDDLE + 1;
+            count = count - STEP - 1;
+        } else {
+            count = STEP;
+        }
+    }
+
+    return first;
+}
+
+// Returns the first equivalent index and true, or its insertion index and
+// false, in a range ordered by less.
+export (usize, bool) binary_search_by<T>(
+    []const T values,
+    &const T needle,
+    Less<T> less,
+) {
+    usize first = 0;
+    usize count = values.len();
+
+    while count > 0 {
+        const usize STEP = count / 2;
+        const usize MIDDLE = first + STEP;
+        if less(&values[MIDDLE], needle) {
+            first = MIDDLE + 1;
+            count = count - STEP - 1;
+        } else {
+            count = STEP;
+        }
+    }
+
+    if first < values.len() and !less(needle, &values[first]) {
+        return (first, true);
+    }
+
+    return (first, false);
+}
+
+// Returns the first index where needle can be inserted in ascending order.
+export usize lower_bound<T>([]const T values, &const T needle) {
+    return lower_bound_by<T>(
+        values,
+        needle,
+        [](&const T left, &const T right) => (bool) {
+            return *left < *right;
+        }
+    );
+}
+
+// Returns the first index after needle's equivalent range in ascending order.
+export usize upper_bound<T>([]const T values, &const T needle) {
+    return upper_bound_by<T>(
+        values,
+        needle,
+        [](&const T left, &const T right) => (bool) {
+            return *left < *right;
+        }
+    );
+}
+
+// Returns the first equivalent index and true, or its ascending insertion
+// index and false.
+export (usize, bool) binary_search<T>(
+    []const T values,
+    &const T needle,
+) {
+    return binary_search_by<T>(
+        values,
+        needle,
+        [](&const T left, &const T right) => (bool) {
+            return *left < *right;
+        }
+    );
+}
+
 // Returns the first index equal to needle and true, or zero and false.
 export (usize, bool) index_of<T>([]const T values, T needle) {
     for (i, val) := range values {
@@ -117,6 +230,52 @@ export void for_each<T>([]const T values, Action<T> action) {
     loop usize index = 0; index < values.len(); index++ {
         action(&values[index]);
     }
+}
+
+// Places accepted elements before rejected elements and returns the boundary.
+// Slice element exchange is semantic-copy based.
+export usize partition_by<T>([]T values, Predicate<T> predicate) {
+    usize boundary = 0;
+    loop usize index = 0; index < values.len(); index++ {
+        if predicate(&values[index]) {
+            if boundary != index {
+                mem_slices::swap<T>(values, boundary, index);
+            }
+            boundary++;
+        }
+    }
+
+    return boundary;
+}
+
+// Compacts adjacent equivalent elements into the returned prefix length.
+// Elements outside that prefix remain valid but have unspecified values.
+export usize dedup_by<T>([]T values, Equal<T> equal) {
+    if values.len() < 2 {
+        return values.len();
+    }
+
+    usize write = 1;
+    loop usize read = 1; read < values.len(); read++ {
+        if !equal(&values[write - 1], &values[read]) {
+            if write != read {
+                values[write] = values[read];
+            }
+            write++;
+        }
+    }
+
+    return write;
+}
+
+// Compacts adjacent equal elements into the returned prefix length.
+export usize dedup<T>([]T values) {
+    return dedup_by<T>(
+        values,
+        [](&const T left, &const T right) => (bool) {
+            return *left == *right;
+        }
+    );
 }
 
 // Sorts in place with an unstable heap sort using less as a strict ordering.

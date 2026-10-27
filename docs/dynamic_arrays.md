@@ -209,7 +209,10 @@ Generic specialization preserves ownership qualifiers, shared views retain
 deep constness, and raw collection storage distinguishes an owning-slice
 element from the legacy owning-buffer spelling. Nested arrays support growth at
 every level, extraction, three-level ownership, and recursive reverse-order
-destruction.
+destruction. Array reversal, heap sorting, partitioning, and adjacent
+deduplication exchange or compact elements through relocation rather than
+semantic copies, so they support the same move-only categories. Deduplication
+destroys removed values exactly once and retains the allocation.
 
 `StandardLibraryTests.SafeArray.*` runs growth/failure, scalar, structure, and
 scope-cleanup checks through safe callers with allocation tracking. Dedicated

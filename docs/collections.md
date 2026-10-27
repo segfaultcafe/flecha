@@ -7,14 +7,15 @@ and acceptance tests are present.
 
 The first Stage 2 deliverable is an ownership-capable `Array<T>`. `Deque<T>`
 is the second and reuses the same storage and lifecycle rules. Stacks, queues,
-binary heaps, and hash maps now build on those foundations; hash sets follow.
+binary heaps, hash maps, and hash sets now build on those foundations.
 
 **Acceptance status:** complete. The initialized-prefix implementation and its
 safe API now pass the full matrix below for allocation failure, move-only
 lifecycle, direct owning strings and slices, recursive nested ownership, and
-shared/exclusive view conflicts. The deque, stack, queue, binary-heap, and
-hash-map gates described below are also complete, so Stage 2 can proceed to
-hash sets.
+shared/exclusive view conflicts. The deque, stack, queue, binary-heap,
+hash-map, and hash-set gates described below are also complete. The collection
+algorithm gate covers the remaining sorting, searching, partitioning, and
+deduplication work.
 
 ## Supported element categories
 
@@ -350,3 +351,41 @@ The hash-set gate covers:
 - allocation auditing plus dedicated ASan/UBSan and CI execution.
 
 `HashSet<T>` is complete for the Stage 2 foundation.
+
+## Collection algorithm acceptance
+
+The collection module provides linear predicates and search through `any_of`,
+`all_of`, `count_if`, `find_if`, `index_of`, and `contains`; traversal and
+aggregation through `for_each` and `fold`; and in-place `reverse`, `sort`, and
+`sort_by` operations. Heap sort is unstable, uses constant auxiliary storage,
+and has `O(n log n)` worst-case comparisons.
+
+Ordered ranges add `lower_bound`, `upper_bound`, and `binary_search`, plus
+their `_by` forms for caller-supplied ordering. They borrow both the range and
+needle, take `O(log n)` comparisons, and do not require copyable elements.
+`binary_search` returns the first equivalent index when found and the insertion
+index otherwise.
+
+`partition_by` performs an unstable in-place partition and returns the first
+rejected index. `dedup` and `dedup_by` compact adjacent equivalent values and
+return the unique prefix length. Their free slice forms use semantic copies;
+the suffix after slice deduplication remains valid but unspecified. `Array<T>`
+provides `sort`, `sortBy`, `reverse`, `partitionBy`, `dedup`, and `dedupBy`
+through relocation-aware storage operations. Array deduplication shrinks the
+logical length and destroys every removed value exactly once, so all Array
+transformations support move-only elements.
+
+The algorithm gate covers:
+
+- empty, singleton, duplicate-heavy, present, and missing ordered searches,
+  including ascending and caller-supplied descending order;
+- unstable partition boundaries, one predicate visit per element, and empty
+  ranges;
+- natural and caller-supplied adjacent equivalence, compacted prefixes, and
+  Array logical-length updates;
+- move-only Array reversal, sorting, ordered search, partitioning, and
+  deduplication with exactly-once cleanup; and
+- compile-time rejection of copy-based slice transformations for move-only and
+  immovable elements, plus focused ASan/UBSan execution.
+
+The sorting, searching, partitioning, and deduplication requirement is complete.

@@ -37,6 +37,24 @@ i32 PushOwner::get(&const self) {
     return self->value;
 }
 
+PushOwner pushOwnerProbe(i32 value) {
+    unsafe {
+        return PushOwner::init(null, value);
+    }
+}
+
+bool pushOwnerLess(&const PushOwner left, &const PushOwner right) {
+    return left->get() < right->get();
+}
+
+bool pushOwnerEqual(&const PushOwner left, &const PushOwner right) {
+    return left->get() == right->get();
+}
+
+bool pushOwnerEven(&const PushOwner value) {
+    return value->get() % 2 == 0;
+}
+
 test push_moves_grows_and_destroys_noncopyable_values_once(&testing::UnitTest t) {
     i32 cleanupCount = 0;
     {
@@ -330,7 +348,7 @@ test sort_orders_values_and_handles_small_arrays(&testing::UnitTest t) {
         asserts::is_true(t, false, "the sortable Array is constructed");
         return;
     }
-    collections::sort<i32>(values.viewRef());
+    values.sort();
     first, firstError := values.get(0);
     second, secondError := values.get(1);
     middle, middleError := values.get(3);
@@ -365,6 +383,71 @@ test sort_by_accepts_an_inferred_generic_comparator(&testing::UnitTest t) {
             middleError == none and middle == 3 and
             lastError == none and last == 1,
         "sortBy uses the inferred comparator ordering"
+    );
+}
+
+test transformations_relocate_move_only_values_and_dedup_cleans_once(
+    &testing::UnitTest t,
+) {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::Array<PushOwner>::init();
+        [5]i32 source = [3, 1, 2, 2, 4];
+        unsafe {
+            loop usize index = 0; index < source.len(); index++ {
+                if values.push(
+                    PushOwner::init(&raw cleanupCount, source[index])
+                ) != none {
+                    asserts::is_true(t, false, "move-only setup succeeds");
+                    return;
+                }
+            }
+        }
+
+        values.reverse();
+        reversed := values.view();
+        asserts::is_true(
+            t,
+            reversed[0].get() == 4 and reversed[4].get() == 3 and
+                cleanupCount == 0,
+            "reverse relocates move-only values"
+        );
+
+        values.sortBy(pushOwnerLess);
+        probe := pushOwnerProbe(2);
+        foundIndex, found := values.binarySearchBy(&probe, pushOwnerLess);
+        sorted := values.view();
+        asserts::is_true(
+            t,
+            found and foundIndex == 1 and sorted[0].get() == 1 and
+                sorted[4].get() == 4 and cleanupCount == 0,
+            "sort and ordered search support move-only values"
+        );
+
+        uniqueLength := values.dedupBy(pushOwnerEqual);
+        asserts::is_true(
+            t,
+            uniqueLength == 4 and values.len() == 4 and cleanupCount == 1,
+            "dedup destroys one duplicate move-only value"
+        );
+
+        boundary := values.partitionBy(pushOwnerEven);
+        partitioned := values.view();
+        asserts::is_true(
+            t,
+            boundary == 2 and partitioned[0].get() % 2 == 0 and
+                partitioned[1].get() % 2 == 0 and
+                partitioned[2].get() % 2 != 0 and
+                partitioned[3].get() % 2 != 0 and cleanupCount == 1,
+            "partition relocates move-only values without cleanup"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 5,
+        "transformations clean every original move-only value exactly once"
     );
 }
 

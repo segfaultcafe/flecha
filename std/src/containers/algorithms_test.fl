@@ -9,6 +9,23 @@ bool is_negative(&const i32 value) {
     return *value < 0;
 }
 
+bool descending_less(&const i32 left, &const i32 right) {
+    return *left > *right;
+}
+
+bool same_absolute_value(&const i32 left, &const i32 right) {
+    i32 leftValue = *left;
+    if leftValue < 0 {
+        leftValue = -leftValue;
+    }
+
+    i32 rightValue = *right;
+    if rightValue < 0 {
+        rightValue = -rightValue;
+    }
+    return leftValue == rightValue;
+}
+
 test find_if_returns_the_first_matching_index(&testing::UnitTest t) {
     [5]i32 values = [1, 4, 8, 12, 16];
     i32 threshold = 7;
@@ -39,6 +56,77 @@ test find_if_accepts_named_functions_and_empty_slices(&testing::UnitTest t) {
     [0]i32 empty = [];
     emptyIndex, foundEmpty := collections::find_if<i32>(empty[:], is_negative);
     asserts::is_true(t, !foundEmpty and emptyIndex == 0, "find_if accepts an empty slice");
+}
+
+test ordered_search_finds_duplicate_ranges_and_insertion_points(
+    &testing::UnitTest t,
+) {
+    [6]i32 values = [1, 2, 2, 2, 4, 8];
+    i32 present = 2;
+    i32 between = 3;
+    i32 before = 0;
+    i32 after = 9;
+
+    presentIndex, foundPresent := collections::binary_search<i32>(
+        values[:],
+        &present
+    );
+    betweenIndex, foundBetween := collections::binary_search<i32>(
+        values[:],
+        &between
+    );
+
+    asserts::is_true(
+        t,
+        collections::lower_bound<i32>(values[:], &present) == 1 and
+            collections::upper_bound<i32>(values[:], &present) == 4 and
+            foundPresent and presentIndex == 1,
+        "ordered search returns the complete duplicate range"
+    );
+    asserts::is_true(
+        t,
+        !foundBetween and betweenIndex == 4 and
+            collections::lower_bound<i32>(values[:], &before) == 0 and
+            collections::upper_bound<i32>(values[:], &after) == 6,
+        "ordered search returns boundary insertion points for missing values"
+    );
+}
+
+test ordered_search_accepts_custom_ordering_and_empty_slices(
+    &testing::UnitTest t,
+) {
+    [5]i32 descending = [9, 7, 7, 3, 1];
+    i32 needle = 7;
+
+    index, found := collections::binary_search_by<i32>(
+        descending[:],
+        &needle,
+        descending_less
+    );
+    asserts::is_true(
+        t,
+        found and index == 1 and
+            collections::lower_bound_by<i32>(
+                descending[:], &needle, descending_less
+            ) == 1 and
+            collections::upper_bound_by<i32>(
+                descending[:], &needle, descending_less
+            ) == 3,
+        "ordered search follows caller-supplied ordering"
+    );
+
+    [0]i32 empty = [];
+    emptyIndex, foundEmpty := collections::binary_search<i32>(
+        empty[:],
+        &needle
+    );
+    asserts::is_true(
+        t,
+        !foundEmpty and emptyIndex == 0 and
+            collections::lower_bound<i32>(empty[:], &needle) == 0 and
+            collections::upper_bound<i32>(empty[:], &needle) == 0,
+        "ordered search accepts an empty range"
+    );
 }
 
 test index_of_finds_the_first_match(&testing::UnitTest t) {
@@ -112,6 +200,71 @@ test fill_mutates_every_element(&testing::UnitTest t) {
     asserts::is_true(t, empty.len() == 0, "fill accepts an empty slice");
 }
 
+test partition_groups_matches_and_returns_the_boundary(&testing::UnitTest t) {
+    [6]i32 values = [1, 2, 3, 4, 5, 6];
+    usize visits = 0;
+    boundary := collections::partition_by<i32>(
+        values[:],
+        [&visits](value) => {
+            visits++;
+            return *value % 2 == 0;
+        }
+    );
+
+    bool grouped = true;
+    loop usize index = 0; index < boundary; index++ {
+        if values[index] % 2 != 0 {
+            grouped = false;
+        }
+    }
+    loop usize index = boundary; index < values.len(); index++ {
+        if values[index] % 2 == 0 {
+            grouped = false;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        boundary == 3 and visits == 6 and grouped,
+        "partition visits once and separates accepted values"
+    );
+
+    [0]i32 empty = [];
+    emptyBoundary := collections::partition_by<i32>(empty[:], is_negative);
+    asserts::is_true(t, emptyBoundary == 0, "partition accepts an empty slice");
+}
+
+test dedup_compacts_adjacent_equivalent_values(&testing::UnitTest t) {
+    [7]i32 values = [1, 1, 2, 2, 2, 3, 3];
+    uniqueLength := collections::dedup<i32>(values[:]);
+    asserts::is_true(
+        t,
+        uniqueLength == 3 and values[0] == 1 and
+            values[1] == 2 and values[2] == 3,
+        "dedup returns the compacted unique prefix"
+    );
+
+    [5]i32 magnitudes = [1, -1, 2, -2, 2];
+    magnitudeLength := collections::dedup_by<i32>(
+        magnitudes[:],
+        same_absolute_value
+    );
+    asserts::is_true(
+        t,
+        magnitudeLength == 2 and magnitudes[0] == 1 and magnitudes[1] == 2,
+        "dedup_by uses caller-supplied equivalence"
+    );
+
+    [0]i32 empty = [];
+    [1]i32 singleton = [42];
+    asserts::is_true(
+        t,
+        collections::dedup<i32>(empty[:]) == 0 and
+            collections::dedup<i32>(singleton[:]) == 1,
+        "dedup preserves empty and singleton ranges"
+    );
+}
+
 test callback_algorithms_accept_generic_callable_specializations(&testing::UnitTest t) {
     [4]i32 values = [4, 1, 3, 2];
     i32 total = 0;
@@ -152,6 +305,16 @@ test array_members_delegate_to_algorithms(&testing::UnitTest t) {
     asserts::is_true(t, values.contains(1), "Array.contains finds a present value");
     asserts::is_false(t, values.contains(9), "Array.contains rejects a missing value");
 
+    i32 orderedNeedle = 3;
+    orderedIndex, orderedFound := values.binarySearch(&orderedNeedle);
+    asserts::is_true(
+        t,
+        orderedFound and orderedIndex == 2 and
+            values.lowerBound(&orderedNeedle) == 2 and
+            values.upperBound(&orderedNeedle) == 3,
+        "Array ordered-search members delegate to slice algorithms"
+    );
+
     values.reverse();
     first, firstError := values.get(0);
     last, lastError := values.get(3);
@@ -163,6 +326,29 @@ test array_members_delegate_to_algorithms(&testing::UnitTest t) {
         value, getError := values.get(i);
         asserts::is_true(t, getError == none and value == 42, "Array.fill replaces an element");
     }
+}
+
+test array_partition_and_dedup_update_logical_values(&testing::UnitTest t) {
+    [7]i32 source = [1, 1, 2, 2, 3, 3, 4];
+    values, createError := collections::Array<i32>::fromSlice(source[:]);
+    if createError != none {
+        asserts::is_true(t, false, "the Array is constructed");
+        return;
+    }
+
+    uniqueLength := values.dedup();
+    boundary := values.partitionBy((value) => {
+        return *value % 2 == 0;
+    });
+    view := values.view();
+
+    asserts::is_true(
+        t,
+        uniqueLength == 4 and values.len() == 4 and boundary == 2 and
+            view[0] % 2 == 0 and view[1] % 2 == 0 and
+            view[2] % 2 != 0 and view[3] % 2 != 0,
+        "Array dedup shrinks and partition returns its logical boundary"
+    );
 }
 
 test predicate_algorithms_short_circuit_and_count(&testing::UnitTest t) {

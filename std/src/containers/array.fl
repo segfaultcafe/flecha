@@ -64,7 +64,9 @@ bool Array<T>::contains(&const self, T value) {
 
 // Reverses the logical elements in place.
 void Array<T>::reverse(&self) {
-    reverse<T>(self->viewRef());
+    unsafe {
+        self->inner.reverse();
+    }
 }
 
 // Replaces every logical element with a semantic copy of value.
@@ -184,7 +186,151 @@ void Array<T>::clear(&self) {
 
 // Sorts elements in place with less as a strict ordering.
 void Array<T>::sortBy(&self, Less<T> less) {
-    sort_by<T>(self->viewRef(), less);
+    const usize LEN = self->len();
+    if LEN < 2 {
+        return;
+    }
+
+    usize root = LEN / 2;
+    while root > 0 {
+        root--;
+
+        usize current = root;
+        while current < LEN / 2 {
+            usize child = current * 2 + 1;
+            bool preferRight = false;
+            if child + 1 < LEN {
+                values := self->view();
+                preferRight = less(&values[child], &values[child + 1]);
+            }
+            if preferRight {
+                child++;
+            }
+
+            bool ordered = false;
+            {
+                values := self->view();
+                ordered = !less(&values[current], &values[child]);
+            }
+            if ordered {
+                break;
+            }
+
+            unsafe {
+                self->inner.swap(current, child);
+            }
+            current = child;
+        }
+    }
+
+    usize heapLen = LEN;
+    while heapLen > 1 {
+        heapLen--;
+        unsafe {
+            self->inner.swap(0, heapLen);
+        }
+
+        usize current = 0;
+        while current < heapLen / 2 {
+            usize child = current * 2 + 1;
+            bool preferRight = false;
+            if child + 1 < heapLen {
+                values := self->view();
+                preferRight = less(&values[child], &values[child + 1]);
+            }
+            if preferRight {
+                child++;
+            }
+
+            bool ordered = false;
+            {
+                values := self->view();
+                ordered = !less(&values[current], &values[child]);
+            }
+            if ordered {
+                break;
+            }
+
+            unsafe {
+                self->inner.swap(current, child);
+            }
+            current = child;
+        }
+    }
+}
+
+// Sorts elements in ascending order with relocation-only swaps.
+void Array<T>::sort(&self) {
+    self->sortBy(
+        [](&const T left, &const T right) => (bool) {
+            return *left < *right;
+        }
+    );
+}
+
+// Places accepted elements before rejected elements and returns the boundary.
+usize Array<T>::partitionBy(&self, Predicate<T> predicate) {
+    usize boundary = 0;
+    loop usize index = 0; index < self->len(); index++ {
+        bool accepted = false;
+        {
+            values := self->view();
+            accepted = predicate(&values[index]);
+        }
+        if accepted {
+            if boundary != index {
+                unsafe {
+                    self->inner.swap(boundary, index);
+                }
+            }
+            boundary++;
+        }
+    }
+
+    return boundary;
+}
+
+// Removes adjacent equivalent elements and returns the new logical length.
+usize Array<T>::dedupBy(&self, Equal<T> equal) {
+    const usize ORIGINAL_LENGTH = self->len();
+    if ORIGINAL_LENGTH < 2 {
+        return ORIGINAL_LENGTH;
+    }
+
+    usize write = 1;
+    loop usize read = 1; read < ORIGINAL_LENGTH; read++ {
+        bool duplicate = false;
+        unsafe {
+            left := self->inner.viewAt(write - 1);
+            right := self->inner.viewAt(read);
+            duplicate = equal(&left[0], &right[0]);
+        }
+
+        unsafe {
+            if duplicate {
+                self->inner.destroyAt(read);
+            } else {
+                if write != read {
+                    self->inner.relocate(write, read);
+                }
+                write++;
+            }
+        }
+    }
+
+    unsafe {
+        self->inner.commitLength(write);
+    }
+    return write;
+}
+
+// Removes adjacent equal elements and returns the new logical length.
+usize Array<T>::dedup(&self) {
+    return self->dedupBy(
+        [](&const T left, &const T right) => (bool) {
+            return *left == *right;
+        }
+    );
 }
 
 // Calls action once for each element in index order.
@@ -195,6 +341,42 @@ void Array<T>::forEach(&const self, Action<T> action) {
 // Returns the first accepted index and true, or zero and false.
 (usize, bool) Array<T>::findIf(&const self, Predicate<T> predicate) {
     return find_if<T>(self->view(), predicate);
+}
+
+// Returns the first insertion index in a range ordered by less.
+usize Array<T>::lowerBoundBy(&const self, &const T needle, Less<T> less) {
+    return lower_bound_by<T>(self->view(), needle, less);
+}
+
+// Returns the first index after needle's equivalent range ordered by less.
+usize Array<T>::upperBoundBy(&const self, &const T needle, Less<T> less) {
+    return upper_bound_by<T>(self->view(), needle, less);
+}
+
+// Returns the first equivalent index and true, or its insertion index and
+// false, in a range ordered by less.
+(usize, bool) Array<T>::binarySearchBy(
+    &const self,
+    &const T needle,
+    Less<T> less,
+) {
+    return binary_search_by<T>(self->view(), needle, less);
+}
+
+// Returns the first insertion index in ascending order.
+usize Array<T>::lowerBound(&const self, &const T needle) {
+    return lower_bound<T>(self->view(), needle);
+}
+
+// Returns the first index after needle's ascending equivalent range.
+usize Array<T>::upperBound(&const self, &const T needle) {
+    return upper_bound<T>(self->view(), needle);
+}
+
+// Returns the first ascending equivalent index and true, or its insertion
+// index and false.
+(usize, bool) Array<T>::binarySearch(&const self, &const T needle) {
+    return binary_search<T>(self->view(), needle);
 }
 
 // Reports whether predicate accepts at least one element.
