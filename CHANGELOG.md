@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Longbow project names now accept spaces and hyphens, and `check`, `build`,
+  `run`, `test`, and `clean` accept an optional project directory.
+
 ## 0.2.4 - 2026-10-25
 
 Flecha 0.2.4 corrects test selection for logical modules composed from
