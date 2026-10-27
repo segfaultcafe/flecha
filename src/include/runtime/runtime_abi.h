@@ -16,6 +16,11 @@ typedef struct FlechaRuntimeString {
     size_t capacity;
 } FlechaRuntimeString;
 
+typedef enum FlechaRuntimeStringStatus {
+    FLECHA_RUNTIME_STRING_OK = 0,
+    FLECHA_RUNTIME_STRING_OUT_OF_MEMORY = 1,
+} FlechaRuntimeStringStatus;
+
 typedef enum FlechaRuntimeReadFileStatus {
     FLECHA_RUNTIME_READ_FILE_OK = 0,
     FLECHA_RUNTIME_READ_FILE_NOT_FOUND = 1,
@@ -87,6 +92,11 @@ uint8_t flecha_runtime_v1_string_view_at(const char* data, size_t length,
                                          uint32_t index);
 void flecha_runtime_v1_string_view_check_substr(size_t length, uint32_t start,
                                                 uint32_t count);
+// Copies bytes into null-terminated owned string storage. Empty input succeeds
+// without allocating. Every failure resets output to the empty string.
+int32_t flecha_runtime_v1_string_try_from_bytes(FlechaRuntimeString* output,
+                                                const uint8_t* data,
+                                                size_t length);
 void flecha_runtime_v1_string_from_view(FlechaRuntimeString* output,
                                         const char* data, size_t length);
 void flecha_runtime_v1_string_clone(FlechaRuntimeString* output,
