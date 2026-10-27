@@ -1,0 +1,137 @@
+module ascii_test;
+
+@imports
+    :: root::text::ascii
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test ascii_classification_matches_every_byte(&testing::UnitTest t) {
+    bool asciiMatches = true;
+    bool alphabeticMatches = true;
+    bool alphanumericMatches = true;
+    bool digitMatches = true;
+    bool hexDigitMatches = true;
+    bool whitespaceMatches = true;
+    bool controlMatches = true;
+    bool printableMatches = true;
+
+    loop u16 code = 0; code < 256; code++ {
+        value := code.cast<u8>.cast<char>;
+        bool expectedAlphabetic =
+            (code >= 65 and code <= 90) or
+            (code >= 97 and code <= 122);
+        bool expectedDigit = code >= 48 and code <= 57;
+        bool expectedHexDigit = expectedDigit or
+            (code >= 65 and code <= 70) or
+            (code >= 97 and code <= 102);
+        bool expectedWhitespace =
+            code == 32 or (code >= 9 and code <= 13);
+
+        asciiMatches = asciiMatches and
+            ascii::is_ascii(value) == (code <= 127);
+        alphabeticMatches = alphabeticMatches and
+            ascii::is_ascii_alphabetic(value) == expectedAlphabetic;
+        alphanumericMatches = alphanumericMatches and
+            ascii::is_ascii_alphanumeric(value) ==
+                (expectedAlphabetic or expectedDigit);
+        digitMatches = digitMatches and
+            ascii::is_ascii_digit(value) == expectedDigit;
+        hexDigitMatches = hexDigitMatches and
+            ascii::is_ascii_hex_digit(value) == expectedHexDigit;
+        whitespaceMatches = whitespaceMatches and
+            ascii::is_ascii_whitespace(value) == expectedWhitespace;
+        controlMatches = controlMatches and
+            ascii::is_ascii_control(value) ==
+                (code <= 31 or code == 127);
+        printableMatches = printableMatches and
+            ascii::is_ascii_printable(value) ==
+                (code >= 32 and code <= 126);
+    }
+
+    asserts::is_true(t, asciiMatches, "ASCII range matches all byte values");
+    asserts::is_true(
+        t,
+        alphabeticMatches,
+        "ASCII alphabetic classification matches all byte values"
+    );
+    asserts::is_true(
+        t,
+        alphanumericMatches,
+        "ASCII alphanumeric classification matches all byte values"
+    );
+    asserts::is_true(t, digitMatches, "ASCII digits match all byte values");
+    asserts::is_true(
+        t,
+        hexDigitMatches,
+        "ASCII hexadecimal digits match all byte values"
+    );
+    asserts::is_true(
+        t,
+        whitespaceMatches,
+        "ASCII whitespace matches all byte values"
+    );
+    asserts::is_true(
+        t,
+        controlMatches,
+        "ASCII control characters match all byte values"
+    );
+    asserts::is_true(
+        t,
+        printableMatches,
+        "ASCII printable characters match all byte values"
+    );
+}
+
+test ascii_case_conversion_matches_every_byte(&testing::UnitTest t) {
+    bool lowercaseMatches = true;
+    bool uppercaseMatches = true;
+    bool lowercaseIsIdempotent = true;
+    bool uppercaseIsIdempotent = true;
+
+    loop u16 code = 0; code < 256; code++ {
+        value := code.cast<u8>.cast<char>;
+        lowercase := ascii::to_ascii_lowercase(value);
+        uppercase := ascii::to_ascii_uppercase(value);
+        u8 lowercaseByte = lowercase;
+        u8 uppercaseByte = uppercase;
+        u16 expectedLowercase = code;
+        u16 expectedUppercase = code;
+
+        if code >= 65 and code <= 90 {
+            expectedLowercase = code + 32;
+        }
+        if code >= 97 and code <= 122 {
+            expectedUppercase = code - 32;
+        }
+
+        lowercaseMatches = lowercaseMatches and
+            lowercaseByte == expectedLowercase.cast<u8>;
+        uppercaseMatches = uppercaseMatches and
+            uppercaseByte == expectedUppercase.cast<u8>;
+        lowercaseIsIdempotent = lowercaseIsIdempotent and
+            ascii::to_ascii_lowercase(lowercase) == lowercase;
+        uppercaseIsIdempotent = uppercaseIsIdempotent and
+            ascii::to_ascii_uppercase(uppercase) == uppercase;
+    }
+
+    asserts::is_true(
+        t,
+        lowercaseMatches,
+        "ASCII lowercase conversion matches all byte values"
+    );
+    asserts::is_true(
+        t,
+        uppercaseMatches,
+        "ASCII uppercase conversion matches all byte values"
+    );
+    asserts::is_true(
+        t,
+        lowercaseIsIdempotent,
+        "ASCII lowercase conversion is idempotent"
+    );
+    asserts::is_true(
+        t,
+        uppercaseIsIdempotent,
+        "ASCII uppercase conversion is idempotent"
+    );
+}

@@ -20,6 +20,7 @@ module std;
     :: root::math::errors as math_errors
     :: root::memory::slices
     :: root::memory::errors as memory_errors
+    :: root::text::ascii
     :: root::text::strings
     :: root::text::errors as text_errors
     :: root::tests::testing
