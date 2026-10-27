@@ -32,12 +32,36 @@
 
 namespace fs = std::filesystem;
 namespace {
-bool ValidName(const std::string& name) {
+bool ValidIdentifier(const std::string& name) {
     flecha::diagnostics::DiagnosticBag diagnostics;
     const auto tokens = flecha::core::Tokenizer(name, diagnostics).Tokenize();
     return std::regex_match(name, std::regex("[a-z][a-z0-9_]*")) &&
            name != "root" && name != "lib" && tokens.size() == 2 &&
            tokens[0].type == TokenType::Identifier;
+}
+bool ValidProjectName(const std::string& name) {
+    return std::regex_match(name,
+                            std::regex("[A-Za-z0-9][A-Za-z0-9 _.-]*"));
+}
+std::string ModuleName(const std::string& projectName) {
+    std::string module;
+    bool separator = false;
+    for (char character : projectName) {
+        if (character >= 'A' && character <= 'Z')
+            character = static_cast<char>(character - 'A' + 'a');
+        if ((character >= 'a' && character <= 'z') ||
+            (character >= '0' && character <= '9') || character == '_') {
+            if (separator && !module.empty() && module.back() != '_')
+                module += '_';
+            module += character;
+            separator = false;
+        } else
+            separator = true;
+    }
+    if (module.empty()) module = "project";
+    if (module[0] < 'a' || module[0] > 'z') module = "project_" + module;
+    if (!ValidIdentifier(module)) module += "_project";
+    return module;
 }
 std::optional<std::string> DeclaredModule(const fs::path& file) {
     std::ifstream stream(file);
@@ -109,7 +133,7 @@ Manifest ReadManifest(const fs::path& directory) {
         } else if (section == "[dependencies]" &&
                    std::regex_match(line, match, dependency)) {
             const std::string name = match[1];
-            if (!ValidName(name) ||
+            if (!ValidIdentifier(name) ||
                 !manifest.dependencies
                      .emplace(name, directory / match[2].str() / "src")
                      .second)
@@ -118,7 +142,7 @@ Manifest ReadManifest(const fs::path& directory) {
         } else if (section == "[native]" &&
                    std::regex_match(line, match, dependency)) {
             const std::string name = match[1];
-            if (!ValidName(name) ||
+            if (!ValidIdentifier(name) ||
                 !manifest.native.emplace(name, directory / match[2].str())
                      .second)
                 throw std::runtime_error("invalid or duplicate native input '" +
@@ -127,10 +151,10 @@ Manifest ReadManifest(const fs::path& directory) {
             throw std::runtime_error("unsupported manifest syntax at line " +
                                      std::to_string(number));
     }
-    if (!ValidName(manifest.name))
+    if (!ValidProjectName(manifest.name))
         throw std::runtime_error(
-            "package.name must be a lowercase identifier (root and lib are "
-            "reserved)");
+            "package.name must start with a letter or digit and contain only "
+            "letters, digits, spaces, hyphens, underscores, or dots");
     if (manifest.kind != "program" && manifest.kind != "library")
         throw std::runtime_error("package.kind must be program or library");
     return manifest;
@@ -143,10 +167,11 @@ void Write(const fs::path& file, const std::string& text) {
 void Create(const fs::path& directory, bool library, bool initialize) {
     const fs::path absolute = fs::absolute(directory).lexically_normal();
     const std::string name = absolute.filename().string();
-    if (!ValidName(name))
+    if (!ValidProjectName(name))
         throw std::runtime_error(
-            "project directory name must be a lowercase identifier (root and "
-            "lib are reserved)");
+            "project directory name must start with a letter or digit and "
+            "contain only letters, digits, spaces, hyphens, underscores, or "
+            "dots");
     if (!initialize && fs::exists(absolute))
         throw std::runtime_error("destination already exists: " +
                                  absolute.string());
@@ -161,8 +186,9 @@ void Create(const fs::path& directory, bool library, bool initialize) {
     Write(absolute / "longbow.toml",
           "[package]\nname = \"" + name + "\"\nversion = \"0.1.0\"\nkind = \"" +
               (library ? "library" : "program") + "\"\n\n[dependencies]\n");
-    Write(absolute / "src" / (library ? name + ".fl" : "main.fl"),
-          library ? "module " + name +
+    const std::string module = ModuleName(name);
+    Write(absolute / "src" / (library ? module + ".fl" : "main.fl"),
+          library ? "module " + module +
                         ";\n\nexport i32 answer() {\n    return 42;\n}\n"
                   : "module main;\n\nvoid main() {\n    stdoutln(\"Hello from "
                     "Flecha!\");\n}\n");
@@ -172,10 +198,16 @@ void Create(const fs::path& directory, bool library, bool initialize) {
     std::cout << "Created " << (library ? "library " : "program ") << name
               << "\n";
 }
-fs::path ProjectRoot() {
-    for (fs::path directory = fs::current_path();;
+fs::path ProjectRoot(const std::optional<fs::path>& requested) {
+    fs::path start = requested ? fs::absolute(*requested).lexically_normal()
+                               : fs::current_path();
+    if (requested && !fs::is_directory(start))
+        throw std::runtime_error("project path is not a directory: " +
+                                 start.string());
+    for (fs::path directory = start;;
          directory = directory.parent_path()) {
         if (fs::is_regular_file(directory / "longbow.toml")) return directory;
+        if (requested) break;
         if (directory == directory.parent_path()) break;
     }
     throw std::runtime_error(
@@ -236,9 +268,9 @@ std::optional<fs::path> StandardLibrary(const char* executable) {
 void Usage() {
     std::cout << "usage: longbow new NAME [--lib]\n"
                  "       longbow init [--lib]\n"
-                 "       longbow check|build|run|clean\n"
-                 "       longbow test [--verbose]\n"
-                 "       longbow run -- [program arguments]\n";
+                 "       longbow check|build|clean [PROJECT]\n"
+                 "       longbow test [PROJECT] [--verbose]\n"
+                 "       longbow run [PROJECT] [-- program arguments]\n";
 }
 int Run(int argc, char** argv) {
     if (argc < 2) {
@@ -275,14 +307,28 @@ int Run(int argc, char** argv) {
         Usage();
         return 1;
     }
-    const bool verboseTests =
-        command == "test" && argc == 3 && std::string(argv[2]) == "--verbose";
-    if (argc > 2 && !verboseTests &&
-        (command != "run" || std::string(argv[2]) != "--")) {
+    int argument = 2;
+    std::optional<fs::path> project;
+    if (argument < argc && std::string(argv[argument]) != "--" &&
+        std::string(argv[argument]) != "--verbose")
+        project = fs::path(argv[argument++]);
+    bool verboseTests = false;
+    if (command == "test" && argument < argc &&
+        std::string(argv[argument]) == "--verbose") {
+        verboseTests = true;
+        ++argument;
+    }
+    int runArguments = argc;
+    if (command == "run" && argument < argc &&
+        std::string(argv[argument]) == "--") {
+        runArguments = ++argument;
+        argument = argc;
+    }
+    if (argument != argc) {
         Usage();
         return 1;
     }
-    const fs::path root = ProjectRoot();
+    const fs::path root = ProjectRoot(project);
     const Manifest manifest = ReadManifest(root);
     const fs::path target = root / "target";
     if (fs::is_symlink(target))
@@ -346,8 +392,9 @@ int Run(int argc, char** argv) {
         return failed == 0 ? 0 : 1;
     }
     const bool binary = manifest.kind == "program";
-    const fs::path entry =
-        root / "src" / (binary ? "main.fl" : manifest.name + ".fl");
+    const fs::path entry = root / "src" /
+                           (binary ? "main.fl"
+                                   : ModuleName(manifest.name) + ".fl");
     if (!fs::is_regular_file(entry))
         throw std::runtime_error("missing entry module " + entry.string());
     if (command == "run" && !binary)
@@ -386,7 +433,8 @@ int Run(int argc, char** argv) {
     const int result = Execute(compile);
     if (result != 0 || command != "run") return result;
     std::vector<std::string> run{output.string()};
-    for (int index = 3; index < argc; ++index) run.push_back(argv[index]);
+    for (int index = runArguments; index < argc; ++index)
+        run.push_back(argv[index]);
     return Execute(run);
 }
 }  // namespace

@@ -10,6 +10,10 @@ packages ship both tools; keeping them together is the supported setup on
 Linux, Windows, and macOS. See the [compiler guide](compiler.md) for the
 development-version format.
 
+Longbow can move to its own repository and release cycle when Flecha supports
+self-hosting and Longbow can be implemented directly in Flecha. Until then,
+the shared release version identifies the tested toolchain snapshot.
+
 Build both tools with `make build`. They are produced as `build/longbow` and
 `build/flecha`. Keep them together, put `flecha` on PATH, or set `FLECHA_COMPILER`
 to the compiler executable. This bootstrap implementation is C++; moving Longbow
@@ -43,23 +47,26 @@ kind = "program"
 [dependencies]
 ```
 
-Project names are lowercase identifiers, may contain digits and underscores after
-the first letter, and may not be language keywords or `root`/`lib`. This ensures
-library scaffolds also have valid importable module names.
+Project names may contain letters, digits, spaces, hyphens, underscores, and
+dots. They must begin with a letter or digit. Longbow normalizes a library
+project's name into a lowercase Flecha identifier for its entry filename and
+module declaration, so `math-tools` uses `src/math_tools.fl` and declares
+`module math_tools;`.
 
 | Command | Behavior |
 | --- | --- |
 | `longbow new NAME` | Create a new directory and program scaffold |
 | `longbow new NAME --lib` | Create a library with an exported example function |
 | `longbow init [--lib]` | Scaffold the current existing directory without overwriting source or a manifest |
-| `longbow check` | Load and check source and its reachable imports without emitting artifacts |
-| `longbow build` | Compile a program, or emit a host-native object for a library |
-| `longbow run -- ARGS` | Build, then run the program and propagate its exit status |
-| `longbow test [--verbose]` | Discover every source file declaring a `<name>_test` module, run each file's tests, and optionally show individual results |
-| `longbow clean` | Remove the project's generated `target` directory |
+| `longbow check [PROJECT]` | Load and check source and its reachable imports without emitting artifacts |
+| `longbow build [PROJECT]` | Compile a program, or emit a host-native object for a library |
+| `longbow run [PROJECT] -- ARGS` | Build, then run the program and propagate its exit status |
+| `longbow test [PROJECT] [--verbose]` | Discover every source file declaring a `<name>_test` module, run each file's tests, and optionally show individual results |
+| `longbow clean [PROJECT]` | Remove the project's generated `target` directory |
 
-Commands locate the nearest ancestor `longbow.toml`, so they also work inside
-`src`. Artifacts go to `target`. Failed compilation prevents `run` from executing
+Without `PROJECT`, commands locate the nearest ancestor `longbow.toml`, so they
+also work inside `src`. A supplied project directory is used directly, including
+paths such as `test-me` and `"hi mom"`. Artifacts go to `target`. Failed compilation prevents `run` from executing
 an older binary. Arguments are passed directly without a shell. The current
 language entry-point signatures do not yet expose command-line arguments to
 Flecha code. Existing `.gitignore` files are preserved by `init`.
