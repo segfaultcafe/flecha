@@ -204,6 +204,9 @@ ensures their targets remain live.
 
 Runtime scalar arrays use `flecha_runtime_v1_alloc_array(count, element_size,
 alignment)`, which checks multiplication before allocating zeroed storage.
+Zero-sized elements reserve one physical byte while preserving the requested
+logical element count, so distinct slots may share an address without carrying
+state.
 `flecha_runtime_v1_allocation_count(pointer)` returns the recorded count (zero
 for null); it requires a Flecha allocation base. New generated code carries an
 array owner's count in its `*[]T` value and does not call this function for owner

@@ -11,6 +11,8 @@ structure Owner {
     i32 id;
 };
 
+structure Empty {};
+
 Owner Owner::zero() override {
     return build Owner {
         self.cleanupCount = null;
@@ -119,6 +121,38 @@ test manages_explicitly_live_slots(&testing::UnitTest t) {
 
         storage.destroy(1);
         replacement.destroy(3);
+    }
+}
+
+test supports_zero_sized_elements(&testing::UnitTest t) {
+    unsafe {
+        values, allocationError :=
+            storage::RawStorage<Empty>::withCapacity(4);
+
+        asserts::is_true(
+            t,
+            allocationError == none and values.capacity() == 4,
+            "zero-sized element storage preserves its logical capacity"
+        );
+
+        if allocationError != none {
+            return;
+        }
+
+        values.initialize(0, Empty::zero());
+        values.initialize(3, Empty::zero());
+        first := values.extract(0);
+        values.initialize(1, first);
+
+        shared := values.view(1, 2);
+        asserts::is_true(
+            t,
+            shared.len() == 1,
+            "zero-sized initialized slots can be borrowed"
+        );
+
+        values.destroy(1);
+        values.destroy(3);
     }
 }
 

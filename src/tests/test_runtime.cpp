@@ -562,9 +562,16 @@ TEST(RuntimeAllocationTests, AllocatesZeroedRuntimeElementCounts) {
     flecha_runtime_v1_free(empty);
 }
 
+TEST(RuntimeAllocationTests, AllocatesZeroSizedRuntimeElements) {
+    void* elements = flecha_runtime_v1_alloc_array(37, 0, 64);
+    ASSERT_NE(elements, nullptr);
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(elements) % 64, 0u);
+    EXPECT_EQ(flecha_runtime_v1_allocation_count(elements), 37u);
+    flecha_runtime_v1_free(elements);
+}
+
 TEST(RuntimeAllocationTests, RejectsArrayOverflowBeforeAllocating) {
     EXPECT_EQ(flecha_runtime_v1_alloc_array(SIZE_MAX / 4 + 1, 4, 4), nullptr);
     EXPECT_EQ(flecha_runtime_v1_alloc_array(SIZE_MAX, 2, 8), nullptr);
-    EXPECT_EQ(flecha_runtime_v1_alloc_array(1, 0, 8), nullptr);
     EXPECT_EQ(flecha_runtime_v1_alloc_array(0, 4, 3), nullptr);
 }
