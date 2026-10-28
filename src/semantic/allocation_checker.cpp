@@ -746,9 +746,9 @@ class AllocationChecker final {
                                  const core::Expression& expression) const {
         std::vector<Value> result;
         if (expression.Kind() == AstNodeKind::CallExpression) {
-            for (const auto& argument :
-                 static_cast<const core::CallExpression&>(expression)
-                     .Arguments())
+            const auto& call =
+                static_cast<const core::CallExpression&>(expression);
+            for (const core::Expression* argument : _model.ArgumentsFor(call))
                 result.push_back(Get(state, *argument));
         } else if (expression.Kind() == AstNodeKind::MemberCallExpression) {
             const auto& call =
@@ -756,7 +756,7 @@ class AllocationChecker final {
             const FunctionSymbol* method = _model.MethodFor(call);
             if (method && method->HasReceiver())
                 result.push_back(Get(state, call.Receiver()));
-            for (const auto& argument : call.Arguments())
+            for (const core::Expression* argument : _model.ArgumentsFor(call))
                 result.push_back(Get(state, *argument));
         }
         return result;
@@ -1152,16 +1152,18 @@ class AllocationChecker final {
                 const auto& call =
                     static_cast<const core::CallExpression&>(expression);
                 state.values.erase(&call.Callee());
-                for (const auto& argument : call.Arguments())
-                    state.values.erase(argument.get());
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
+                    state.values.erase(argument);
                 break;
             }
             case AstNodeKind::MemberCallExpression: {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(expression);
                 state.values.erase(&call.Receiver());
-                for (const auto& argument : call.Arguments())
-                    state.values.erase(argument.get());
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
+                    state.values.erase(argument);
                 break;
             }
             case AstNodeKind::TupleExpression:
@@ -1587,7 +1589,8 @@ class AllocationChecker final {
                 const auto& call =
                     static_cast<const core::CallExpression&>(expression);
                 Drop(state, call.Callee());
-                for (const auto& argument : call.Arguments())
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
                     Drop(state, *argument);
                 break;
             }
@@ -1595,7 +1598,8 @@ class AllocationChecker final {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(expression);
                 Drop(state, call.Receiver());
-                for (const auto& argument : call.Arguments())
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
                     Drop(state, *argument);
                 break;
             }

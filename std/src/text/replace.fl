@@ -1,0 +1,67 @@
+module strings;
+
+// Copies value while replacing every non-overlapping occurrence of target.
+// An empty target matches at every byte boundary.
+export (string, error) replace(
+    stringv value,
+    stringv target,
+    stringv replacement,
+) {
+    result, allocationError :=
+        StringBuilder::withCapacity(value.len().cast<usize>);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    if target.len() == 0 {
+        appendError := result.append(replacement);
+        if appendError != none {
+            return (none, appendError);
+        }
+
+        loop u32 index = 0; index < value.len(); index++ {
+            appendError = result.appendChar(value[index].cast<char>);
+            if appendError != none {
+                return (none, appendError);
+            }
+
+            appendError = result.append(replacement);
+            if appendError != none {
+                return (none, appendError);
+            }
+        }
+
+        return result.asString();
+    }
+
+    u32 index = 0;
+    while index < value.len() {
+        bool matches = target.len() <= value.len() - index;
+        if matches {
+            loop u32 offset = 0; offset < target.len(); offset++ {
+                if value[index + offset] != target[offset] {
+                    matches = false;
+                    break;
+                }
+            }
+        }
+
+        if matches {
+            appendError := result.append(replacement);
+            if appendError != none {
+                return (none, appendError);
+            }
+
+            index += target.len();
+        } else {
+            appendError := result.appendChar(value[index].cast<char>);
+            if appendError != none {
+                return (none, appendError);
+            }
+
+            index++;
+        }
+    }
+
+    return result.asString();
+}

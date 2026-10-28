@@ -2,8 +2,9 @@
 
 Flecha implements compile-time specialization of functions, structures, and
 callable signatures. Type parameters are ordinary identifiers declared between
-`<` and `>`; `T` is not a keyword or a wildcard type. Every use supplies explicit
-concrete type arguments.
+`<` and `>`; `T` is not a keyword or a wildcard type. Generic types and callable
+aliases use explicit concrete type arguments. Free-function calls may infer them
+from arguments or an explicit expected result type.
 
 ```flecha
 T identity<T>(T value) { return value; }
@@ -18,13 +19,35 @@ func Mapper<T>(T value) => (T);
 i32 main() {
     box := Box<i32>::init();
     Mapper<i32> mapper = identity<i32>;
-    box.set(mapper(42));
+    box.set(identity(42));
     return box.get();
 }
 ```
 
 Explicit specialization works both at a call (`identity<i32>(42)`) and when a
 generic function is retained as a callable value (`mapper = identity<i32>`).
+At a direct free-function call, type arguments may be omitted when every type
+parameter has one consistent inference:
+
+```flecha
+T identity<T>(T value) { return value; }
+T parse<T>(stringv value) { return none; }
+
+i32 copied = identity(42);       // T is i32 from the argument.
+i32 parsed = parse("42");        // T is i32 from the declared result type.
+```
+
+Supplied arguments and an available expected result type are combined. If they
+disagree, or any type parameter remains unknown, the call is rejected and must
+use explicit arguments. Omitted default arguments provide no inference evidence.
+An inferred declaration such as `value := parse("42")` has no expected result
+type and therefore cannot infer `T`. Numeric and floating literals use their
+ordinary default types, `i32` and `f64`, when they are the evidence.
+
+Inference applies only to direct free-function calls. Generic function values,
+generic types, callable aliases, and generic methods keep explicit arguments.
+Type-set constraints are checked after inference exactly as for an explicit
+specialization.
 
 A method repeats its owner's parameter names in the same order. It may declare
 additional parameters: `U Box<T>::convert<U>(&const self)`. Such a method is called
@@ -111,10 +134,10 @@ AST declarations, caches specializations, and preserves source/module identity.
 The normal semantic, allocation, lowering, and native code generation passes
 then process those declarations. Generic templates themselves emit no code.
 
-There is no generic-argument inference, default type argument, variadic
-parameter pack, constant generic parameter, user specialization override,
-trait system, or separate compiled generic interface yet. The standard library
-provides [`RawArray<T>`](dynamic_arrays.md), implemented in Flecha. Its runtime
-storage currently supports numeric, boolean, and character elements; pointers
-and structures are not yet supported. Element restrictions are enforced when
-the relevant generic operations are instantiated.
+There is no partial explicit/inferred type-argument list, default type argument,
+variadic parameter pack, constant generic parameter, user specialization
+override, trait system, or separate compiled generic interface yet. The standard
+library provides [`RawArray<T>`](dynamic_arrays.md), implemented in Flecha. Its
+runtime storage currently supports numeric, boolean, and character elements;
+pointers and structures are not yet supported. Element restrictions are
+enforced when the relevant generic operations are instantiated.

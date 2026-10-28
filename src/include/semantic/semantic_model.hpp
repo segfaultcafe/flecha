@@ -39,6 +39,10 @@ class SemanticModel final {
     [[nodiscard]] SemanticType TypeOf(const core::Expression& expression) const;
     [[nodiscard]] TransferKind TransferOf(
         const core::Expression& expression) const;
+    [[nodiscard]] std::vector<const core::Expression*> ArgumentsFor(
+        const core::CallExpression& expression) const;
+    [[nodiscard]] std::vector<const core::Expression*> ArgumentsFor(
+        const core::MemberCallExpression& expression) const;
     [[nodiscard]] const core::ModuleConstantDeclaration* ModuleConstantFor(
         const Symbol& symbol) const;
     const StructureField* FieldFor(
@@ -95,6 +99,9 @@ class SemanticModel final {
     std::unordered_map<const core::AstNode*, const Symbol*> _declarations;
     std::unordered_map<const core::Expression*, SemanticType> _types;
     std::unordered_map<const core::Expression*, TransferKind> _transfers;
+    std::unordered_map<const core::Expression*,
+                       std::vector<const core::Expression*>>
+        _callArguments;
     std::unordered_map<const Symbol*, const core::ModuleConstantDeclaration*>
         _moduleConstants;
     std::unordered_map<const core::DestructureBinding*, const Symbol*>

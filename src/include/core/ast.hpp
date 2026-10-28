@@ -434,11 +434,13 @@ class StructureDeclaration final : public Declaration {
 class Parameter final : public AstNode {
    public:
     Parameter(source::SourceRange range, std::unique_ptr<TypeNode> type,
-              std::string name, source::SourceRange nameRange = {})
+              std::string name, source::SourceRange nameRange = {},
+              std::unique_ptr<Expression> defaultValue = nullptr)
         : AstNode(range),
           _type(std::move(type)),
           _name(std::move(name)),
-          _nameRange(nameRange.Empty() ? range : nameRange) {}
+          _nameRange(nameRange.Empty() ? range : nameRange),
+          _defaultValue(std::move(defaultValue)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::Parameter;
@@ -449,11 +451,15 @@ class Parameter final : public AstNode {
     [[nodiscard]] const source::SourceRange& NameRange() const {
         return _nameRange;
     }
+    [[nodiscard]] const Expression* DefaultValue() const {
+        return _defaultValue.get();
+    }
 
    private:
     std::unique_ptr<TypeNode> _type;
     std::string _name;
     source::SourceRange _nameRange;
+    std::unique_ptr<Expression> _defaultValue;
 };
 
 enum class FunctionModifier : std::uint8_t {

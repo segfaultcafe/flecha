@@ -512,9 +512,17 @@ std::unique_ptr<Parameter> Parser::ParseParameter() {
         return nullptr;
     }
 
-    return std::make_unique<Parameter>(
-        source::SourceRange{start, name->range.end}, std::move(type),
-        name->value, name->range);
+    std::unique_ptr<Expression> defaultValue;
+    source::SourceLocation end = name->range.end;
+    if (Match(TokenType::Assign)) {
+        defaultValue = ParseExpression();
+        if (defaultValue == nullptr) return nullptr;
+        end = defaultValue->Range().end;
+    }
+
+    return std::make_unique<Parameter>(source::SourceRange{start, end},
+                                       std::move(type), name->value,
+                                       name->range, std::move(defaultValue));
 }
 
 std::unique_ptr<Parameter> Parser::ParseCallableParameter() {

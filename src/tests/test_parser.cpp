@@ -1927,3 +1927,22 @@ TEST(ParserTests, RejectsDuplicateAndConflictingVisibilityModifiers) {
             << source;
     }
 }
+
+TEST(ParserTests, ParsesTrailingDefaultParameterValues) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "i32 format(i32 value, u8 base = 10) { return value; }", diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations().front());
+    ASSERT_EQ(function.Parameters().size(), 2);
+    EXPECT_EQ(function.Parameters()[0]->DefaultValue(), nullptr);
+    ASSERT_NE(function.Parameters()[1]->DefaultValue(), nullptr);
+    const auto& value = static_cast<const LiteralExpression&>(
+        *function.Parameters()[1]->DefaultValue());
+    EXPECT_EQ(value.Value(), "10");
+    EXPECT_EQ(function.Parameters()[1]->Range().end.offset,
+              function.Parameters()[1]->DefaultValue()->Range().end.offset);
+}

@@ -93,6 +93,7 @@ void Walk(const AstNode& input, const Callback& callback) {
         case AstNodeKind::Parameter: {
             NODE(Parameter);
             visit(n.Type());
+            optional(n.DefaultValue());
             break;
         }
         case AstNodeKind::BlockStatement: {
@@ -1376,8 +1377,231 @@ class Expander {
                                                 std::move(result));
         return result;
     }
+    bool IsGenericParameter(const Declaration& origin,
+                            const std::string& name) const {
+        return std::find(origin.genericParameters.begin(),
+                         origin.genericParameters.end(),
+                         name) != origin.genericParameters.end();
+    }
+    bool ContainsGenericParameter(const TypeNode& type,
+                                  const Declaration& origin) const {
+        if (type.TypeForm() == TypeKind::Named && type.typeArguments.empty() &&
+            IsGenericParameter(origin, type.Name()))
+            return true;
+        if (type.Target() && ContainsGenericParameter(*type.Target(), origin))
+            return true;
+        for (const auto& element : type.Elements())
+            if (ContainsGenericParameter(*element, origin)) return true;
+        for (const auto& argument : type.typeArguments)
+            if (ContainsGenericParameter(*argument, origin)) return true;
+        return false;
+    }
+    Tokens WithoutPatternQualifiers(Tokens tokens, const TypeNode& pattern) {
+        if (pattern.Contract() != OwnershipContract::None && !tokens.empty() &&
+            (tokens.front().type == TokenType::Own ||
+             tokens.front().type == TokenType::Lend))
+            tokens.erase(tokens.begin());
+        if (pattern.IsConst() && !tokens.empty() &&
+            tokens.front().type == TokenType::Const)
+            tokens.erase(tokens.begin());
+        return tokens;
+    }
+    bool BindInferred(const TypeNode& pattern, Tokens argument,
+                      std::map<std::string, Tokens>& inferred,
+                      std::string& conflict) {
+        argument = WithoutPatternQualifiers(std::move(argument), pattern);
+        const auto found = inferred.find(pattern.Name());
+        if (found == inferred.end()) {
+            inferred[pattern.Name()] = std::move(argument);
+            return true;
+        }
+        if (Key({found->second}) == Key({argument})) return true;
+        conflict = pattern.Name();
+        return false;
+    }
+    bool InferTypeArgument(const TypeNode& pattern, const TypeNode& actual,
+                           const FunctionDeclaration& origin,
+                           std::map<std::string, Tokens>& inferred,
+                           std::string& conflict) {
+        if (pattern.TypeForm() == TypeKind::Named &&
+            pattern.typeArguments.empty() &&
+            IsGenericParameter(origin, pattern.Name())) {
+            auto concrete = CopyType(actual);
+            return BindInferred(pattern,
+                                TypeTokens(*concrete, current->moduleId),
+                                inferred, conflict);
+        }
+        if (!ContainsGenericParameter(pattern, origin)) return true;
+
+        if (pattern.TypeForm() == TypeKind::Tuple) {
+            if (actual.TypeForm() != TypeKind::Tuple ||
+                pattern.Elements().size() != actual.Elements().size())
+                return false;
+            for (std::size_t index = 0; index < pattern.Elements().size();
+                 ++index)
+                if (!InferTypeArgument(*pattern.Elements()[index],
+                                       *actual.Elements()[index], origin,
+                                       inferred, conflict))
+                    return false;
+            return true;
+        }
+
+        if (pattern.Target()) {
+            const bool compatibleSlice =
+                pattern.TypeForm() == TypeKind::Slice &&
+                actual.TypeForm() == TypeKind::Array;
+            const bool compatibleIndirection =
+                (pattern.TypeForm() == TypeKind::Reference ||
+                 pattern.TypeForm() == TypeKind::Pointer) &&
+                (actual.TypeForm() == TypeKind::Reference ||
+                 actual.TypeForm() == TypeKind::Pointer);
+            if (!actual.Target() && !compatibleIndirection) return false;
+            if (pattern.TypeForm() != actual.TypeForm() && !compatibleSlice &&
+                !compatibleIndirection)
+                return false;
+            if (!actual.Target()) return false;
+            return InferTypeArgument(*pattern.Target(), *actual.Target(),
+                                     origin, inferred, conflict);
+        }
+
+        if (pattern.TypeForm() != TypeKind::Named ||
+            actual.TypeForm() != TypeKind::Named)
+            return false;
+
+        if (!pattern.typeArguments.empty() && !actual.typeArguments.empty() &&
+            pattern.Name() == actual.Name() &&
+            pattern.typeArguments.size() == actual.typeArguments.size()) {
+            for (std::size_t index = 0; index < pattern.typeArguments.size();
+                 ++index)
+                if (!InferTypeArgument(*pattern.typeArguments[index],
+                                       *actual.typeArguments[index], origin,
+                                       inferred, conflict))
+                    return false;
+            return true;
+        }
+
+        const Declaration* concrete =
+            Lookup(actual.Name(), current->moduleId, actual.Range(), false);
+        const Declaration* expected =
+            LookupFrom(pattern.Name(), origin, pattern.Range(), false);
+        for (const auto& instance : instances) {
+            if (instance.concrete != concrete || instance.origin != expected ||
+                instance.arguments.size() != pattern.typeArguments.size())
+                continue;
+            for (std::size_t index = 0; index < pattern.typeArguments.size();
+                 ++index) {
+                const auto& nested = *pattern.typeArguments[index];
+                if (!ContainsGenericParameter(nested, origin)) continue;
+                if (nested.TypeForm() != TypeKind::Named ||
+                    !nested.typeArguments.empty() ||
+                    !IsGenericParameter(origin, nested.Name()))
+                    return false;
+                if (!BindInferred(nested, instance.arguments[index], inferred,
+                                  conflict))
+                    return false;
+            }
+            return true;
+        }
+        return false;
+    }
+    void PrepareCallInference(CallExpression& call) {
+        if (call.Callee().Kind() != AstNodeKind::NameExpression) return;
+        auto& callee = const_cast<NameExpression&>(
+            static_cast<const NameExpression&>(call.Callee()));
+        if (!callee.typeArguments.empty() || Local(callee.Name())) return;
+        const auto* declaration =
+            Lookup(callee.Name(), current->moduleId, callee.Range(), false);
+        if (!declaration ||
+            declaration->Kind() != AstNodeKind::FunctionDeclaration ||
+            declaration->genericParameters.empty())
+            return;
+        const auto* function =
+            static_cast<const FunctionDeclaration*>(declaration);
+        if (!function->Owner().empty()) return;
+        inferredCalls[&callee] = function;
+    }
+    void RewriteInferredCall(CallExpression& call) {
+        if (call.Callee().Kind() != AstNodeKind::NameExpression) return;
+        auto& callee = const_cast<NameExpression&>(
+            static_cast<const NameExpression&>(call.Callee()));
+        const auto request = inferredCalls.find(&callee);
+        if (request == inferredCalls.end()) return;
+        const auto& origin = *request->second;
+        std::map<std::string, Tokens> inferred;
+        std::string conflict;
+        const std::size_t count =
+            std::min(call.Arguments().size(), origin.Parameters().size());
+        for (std::size_t index = 0; index < count; ++index) {
+            const TypeNode& pattern = origin.Parameters()[index]->Type();
+            if (!ContainsGenericParameter(pattern, origin)) continue;
+            auto actual = CopyView(ExpressionType(*call.Arguments()[index]),
+                                   call.Arguments()[index]->Range());
+            if (!actual) continue;
+            InferTypeArgument(pattern, *actual, origin, inferred, conflict);
+            if (!conflict.empty()) break;
+        }
+        if (conflict.empty()) {
+            const auto expected = contextualTypes.find(&call);
+            if (expected != contextualTypes.end() &&
+                ContainsGenericParameter(origin.ReturnType(), origin)) {
+                auto actual = CopyView(expected->second, call.Range());
+                if (actual)
+                    InferTypeArgument(origin.ReturnType(), *actual, origin,
+                                      inferred, conflict);
+            }
+        }
+        if (!conflict.empty()) {
+            Error(call.Range(), "conflicting inferred type arguments for '" +
+                                    conflict + "' in call to '" +
+                                    origin.Name() + "'");
+            return;
+        }
+        Arguments arguments;
+        for (const auto& parameter : origin.genericParameters) {
+            const auto found = inferred.find(parameter);
+            if (found == inferred.end()) {
+                Error(call.Range(), "cannot infer type argument '" + parameter +
+                                        "' for generic function '" +
+                                        origin.Name() +
+                                        "'; specify it explicitly");
+                return;
+            }
+            arguments.push_back(found->second);
+        }
+        if (auto* concrete = Instantiate(origin, arguments, call.Range()))
+            callee.Rename(Alias(*concrete));
+    }
     TypeView ExpressionType(const Expression& expression) {
         switch (expression.Kind()) {
+            case AstNodeKind::LiteralExpression: {
+                const auto& literal =
+                    static_cast<const LiteralExpression&>(expression);
+                PrimitiveType type;
+                switch (literal.LiteralType()) {
+                    case TokenType::NumberLiteral:
+                        type = PrimitiveType::I32;
+                        break;
+                    case TokenType::FloatLiteral:
+                        type = PrimitiveType::F64;
+                        break;
+                    case TokenType::True:
+                    case TokenType::False:
+                        type = PrimitiveType::Bool;
+                        break;
+                    case TokenType::CharLiteral:
+                        type = PrimitiveType::Char;
+                        break;
+                    case TokenType::StringLiteral:
+                        type = PrimitiveType::StringView;
+                        break;
+                    default:
+                        return {};
+                }
+                if (!expressionTypes.contains(&expression))
+                    expressionTypes[&expression] =
+                        std::make_unique<TypeNode>(expression.Range(), type);
+                return {expressionTypes[&expression].get(), current->moduleId};
+            }
             case AstNodeKind::NameExpression: {
                 const auto& name =
                     static_cast<const NameExpression&>(expression).Name();
@@ -1587,6 +1811,38 @@ class Expander {
     }
     void Rewrite(AstNode& node, bool enter) {
         if (failedBudget) return;
+        if (node.Kind() == AstNodeKind::FunctionDeclaration) {
+            if (enter)
+                functionContexts.push_back(
+                    &static_cast<const FunctionDeclaration&>(node));
+            else {
+                functionContexts.pop_back();
+                return;
+            }
+        }
+        if (enter && node.Kind() == AstNodeKind::VariableDeclarationStatement) {
+            const auto& variable =
+                static_cast<const VariableDeclarationStatement&>(node);
+            if (variable.ExplicitType() && variable.Initializer())
+                contextualTypes[variable.Initializer()] = {
+                    variable.ExplicitType(), current->moduleId};
+        }
+        if (enter && node.Kind() == AstNodeKind::ReturnStatement) {
+            const auto& statement = static_cast<const ReturnStatement&>(node);
+            if (statement.Value() && !functionContexts.empty())
+                contextualTypes[statement.Value()] = {
+                    &functionContexts.back()->ReturnType(),
+                    functionContexts.back()->moduleId};
+        }
+        if (enter && node.Kind() == AstNodeKind::ParenthesizedExpression) {
+            const auto& parenthesized =
+                static_cast<const ParenthesizedExpression&>(node);
+            const auto expected = contextualTypes.find(&parenthesized);
+            if (expected != contextualTypes.end())
+                contextualTypes[&parenthesized.Inner()] = expected->second;
+        }
+        if (enter && node.Kind() == AstNodeKind::CallExpression)
+            PrepareCallInference(static_cast<CallExpression&>(node));
         if (enter && node.Kind() == AstNodeKind::IsOfExpression)
             PrepareIsOf(static_cast<IsOfExpression&>(node));
         if (node.Kind() == AstNodeKind::BuildExpression) {
@@ -1612,6 +1868,8 @@ class Expander {
             }
         }
         if (!enter) {
+            if (node.Kind() == AstNodeKind::CallExpression)
+                RewriteInferredCall(static_cast<CallExpression&>(node));
             if (node.Kind() == AstNodeKind::MemberCallExpression)
                 RewriteMethod(static_cast<MemberCallExpression&>(node));
             if (node.Kind() == AstNodeKind::VariableDeclarationStatement) {
@@ -1700,7 +1958,8 @@ class Expander {
                              Instantiate(*origin, arguments, name.Range()))
                     name.Rename(Alias(*concrete));
                 name.typeArguments.clear();
-            } else if (origin && !origin->genericParameters.empty())
+            } else if (origin && !origin->genericParameters.empty() &&
+                       !inferredCalls.contains(&name))
                 Error(name.Range(), "generic declaration '" + name.Name() +
                                         "' requires explicit type arguments");
         }
@@ -1770,6 +2029,9 @@ class Expander {
         concreteMethods;
     std::map<const Declaration*, std::unique_ptr<TypeNode>> ownerTypes;
     std::map<const Expression*, std::unique_ptr<TypeNode>> expressionTypes;
+    std::map<const NameExpression*, const FunctionDeclaration*> inferredCalls;
+    std::map<const Expression*, TypeView> contextualTypes;
+    std::vector<const FunctionDeclaration*> functionContexts;
 };
 }  // namespace
 void ExpandGenerics(core::CompilationUnit& unit,

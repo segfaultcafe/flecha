@@ -412,6 +412,37 @@ TEST(NativeCompilerTests, RunsManagedSlicesStoredAsStructureBorrows) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsGenericAndMovableDefaultArguments) {
+    GeneratedSource result = Generate(R"(
+        T add<T: integer>(T value, T amount = 2) {
+            return value + amount;
+        }
+        i32 score(string value = "john") {
+            return add<i32>(40);
+        }
+        i32 main() { return score(); }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_default_arguments_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_default_arguments_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsFieldsAndMethodsWithTheSameName) {
     GeneratedSource result = Generate(R"(
         structure Cursor { usize position; };
@@ -1192,7 +1223,7 @@ TEST(NativeCompilerTests, RunsDefinedIntegerBitwiseAndShiftOperations) {
             if signed_shift_right(-1, 8) != (-1 as i8) { return 10; }
             if shift_left(1, usize.max_value) != (0 as u8) { return 11; }
             if signed_shift_right(1, 8) != (0 as i8) { return 12; }
-            if generic_bits<u8>(12, 10) != (247 as u8) { return 13; }
+            if generic_bits(12 as u8, 10 as u8) != (247 as u8) { return 13; }
             return 42;
         }
     )");

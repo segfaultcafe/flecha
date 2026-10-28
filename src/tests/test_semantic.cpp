@@ -94,6 +94,65 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::U8)));
 }
 
+TEST(SemanticTests, AcceptsTrailingDefaultArgumentsAtDirectCallsAndMethods) {
+    Analysis analysis = Analyze(R"(
+        i32 add(i32 value, i32 amount = 2) { return value + amount; }
+        structure Counter { i32 value; };
+        i32 Counter::add(&const self, i32 amount = 2) {
+            return self->value + amount;
+        }
+        i32 main() {
+            counter := Counter::init();
+            return add(38) + counter.add() + add(0, 2);
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticTests, RejectsRequiredParametersAfterDefaults) {
+    Analysis analysis =
+        Analyze("void invalid(i32 first = 1, i32 second) {} void main() {}");
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidDefaultArgument);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_NE(diagnostic->message.find("required parameter"),
+              std::string::npos);
+}
+
+TEST(SemanticTests, TypeChecksDefaultsAndCallArity) {
+    Analysis incompatible =
+        Analyze("void invalid(i32 value = true) {} void main() {}");
+    EXPECT_NE(
+        FindDiagnostic(incompatible, DiagnosticCode::InvalidDefaultArgument),
+        nullptr);
+
+    Analysis tooFew = Analyze(
+        "void value(i32 required, i32 optional = 2) {} "
+        "void main() { value(); }");
+    EXPECT_NE(FindDiagnostic(tooFew, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+
+    Analysis tooMany = Analyze(
+        "void value(i32 optional = 2) {} "
+        "void main() { value(1, 2); }");
+    EXPECT_NE(FindDiagnostic(tooMany, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+}
+
+TEST(SemanticTests, DoesNotCarryDefaultsThroughCallableValues) {
+    Analysis analysis = Analyze(R"(
+        func Binary(i32, i32) => (i32);
+        i32 add(i32 value, i32 amount = 2) { return value + amount; }
+        i32 invoke(Binary operation) { return operation(40); }
+        i32 main() { return invoke(add); }
+    )");
+
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+}
+
 TEST(SemanticConstTests, ResolvesAndValidatesModuleConstants) {
     auto valid = Analyze(R"(
         const usize BASE = 4;
@@ -6295,7 +6354,7 @@ TEST(SemanticGenericTests,
 TEST(SemanticGenericTests,
      RequiresExplicitArgumentsAndRejectsInvalidTemplates) {
     for (const auto& source :
-         {"T id<T>(T x) { return x; } void main() { id(1); }",
+         {"T make<T>() { return none; } void main() { make(); }",
           "T id<T>(T x) { return x; } void main() { id<i32, f64>(1); }",
           "i32 id(i32 x) { return x; } void main() { id<i32>(1); }",
           "structure Box<T> { T value; }; void main() { Box value; }",
@@ -6308,6 +6367,81 @@ TEST(SemanticGenericTests,
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+}
+
+TEST(SemanticGenericTests, InfersFreeFunctionArgumentsFromCallsAndResults) {
+    auto result = Analyze(R"(
+        structure Box<T> { T value; };
+        func Parser() => (i32);
+        T identity<T>(T value) { return value; }
+        T first<T>([]const T values) { return values[0]; }
+        T unbox<T>(Box<T> value) { return value.value; }
+        (T, U) pair<T, U>(T left, U right) { return (left, right); }
+        T with_default<T>(T value, T fallback = none) { return value; }
+        T parse<T: integer>(stringv value) { return none; }
+        i16 parse_i16(stringv value) { return parse(value); }
+        Parser make_parser() {
+            return []() => (i32) { return parse("42"); };
+        }
+
+        i32 main() {
+            i32 literal = identity(42);
+            u8 byte = 7;
+            u8 copied = identity(byte);
+            [2]i16 values = [20, 22];
+            i16 element = first(values[:]);
+            box := Box<i64>::init();
+            i64 boxed = unbox(box);
+            left, right := pair(byte, 9 as i64);
+            u8 defaulted = with_default(byte);
+            i32 parsed = parse("42");
+            i16 returned = parse_i16("42");
+            Parser parser = make_parser();
+            i32 callback_parsed = parser();
+            return literal + copied.cast<i32> + element.cast<i32> +
+                boxed.cast<i32> + left.cast<i32> + right.cast<i32> +
+                defaulted.cast<i32> + parsed + returned.cast<i32> +
+                callback_parsed;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests, DiagnosesMissingAndConflictingCallInference) {
+    auto missing = Analyze(R"(
+        T parse<T>(stringv value) { return none; }
+        void main() { parse("42"); }
+    )");
+    const auto* missingDiagnostic =
+        FindDiagnostic(missing, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(missingDiagnostic, nullptr);
+    EXPECT_NE(missingDiagnostic->message.find("cannot infer type argument 'T'"),
+              std::string::npos);
+
+    auto inferredDestination = Analyze(R"(
+        T parse<T>(stringv value) { return none; }
+        void main() { value := parse("42"); }
+    )");
+    EXPECT_NE(
+        FindDiagnostic(inferredDestination, DiagnosticCode::InvalidGeneric),
+        nullptr);
+
+    auto conflicting = Analyze(R"(
+        T choose<T>(T left, T right) { return left; }
+        void main() {
+            i8 small = 1;
+            i16 large = 2;
+            choose(small, large);
+        }
+    )");
+    const auto* conflictDiagnostic =
+        FindDiagnostic(conflicting, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(conflictDiagnostic, nullptr);
+    EXPECT_NE(conflictDiagnostic->message.find(
+                  "conflicting inferred type arguments for 'T'"),
+              std::string::npos);
 }
 
 TEST(SemanticGenericTests,

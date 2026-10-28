@@ -399,7 +399,7 @@ absence must not block the remaining application-capable standard library.
 Flecha 0.3.0 does not require:
 
 - a trait, interface, or protocol system;
-- generic-argument inference or variadic generics;
+- variadic generics or partial explicit/inferred type-argument lists;
 - exceptions, garbage collection, reflection, or async language syntax;
 - a package registry or remote dependency resolver;
 - HTTP, TLS, WebSockets, or an async executor in the standard library;

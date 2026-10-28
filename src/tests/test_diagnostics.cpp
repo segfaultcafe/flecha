@@ -85,6 +85,10 @@ TEST(DiagnosticTests, SemanticCodesAreStableAndContiguous) {
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidBorrowContract),
               "FLECHA-S0058");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::MovedValue), "FLECHA-S0059");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidFormat),
+              "FLECHA-S0060");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidDefaultArgument),
+              "FLECHA-S0061");
 }
 
 TEST(DiagnosticTests, CompilerCodesAreStableAndContiguous) {

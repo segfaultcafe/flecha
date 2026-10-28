@@ -63,6 +63,30 @@ TransferKind SemanticModel::TransferOf(
     return found == _transfers.end() ? TransferKind::Copy : found->second;
 }
 
+std::vector<const core::Expression*> SemanticModel::ArgumentsFor(
+    const core::CallExpression& expression) const {
+    if (const auto found = _callArguments.find(&expression);
+        found != _callArguments.end())
+        return found->second;
+    std::vector<const core::Expression*> arguments;
+    arguments.reserve(expression.Arguments().size());
+    for (const auto& argument : expression.Arguments())
+        arguments.push_back(argument.get());
+    return arguments;
+}
+
+std::vector<const core::Expression*> SemanticModel::ArgumentsFor(
+    const core::MemberCallExpression& expression) const {
+    if (const auto found = _callArguments.find(&expression);
+        found != _callArguments.end())
+        return found->second;
+    std::vector<const core::Expression*> arguments;
+    arguments.reserve(expression.Arguments().size());
+    for (const auto& argument : expression.Arguments())
+        arguments.push_back(argument.get());
+    return arguments;
+}
+
 const core::ModuleConstantDeclaration* SemanticModel::ModuleConstantFor(
     const Symbol& symbol) const {
     const auto found = _moduleConstants.find(&symbol);

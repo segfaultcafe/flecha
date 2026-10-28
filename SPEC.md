@@ -127,6 +127,22 @@ unsafe void write_value(lend *u32 address, u32 value) {
 }
 ```
 
+Named functions and methods may give trailing parameters default values:
+
+```flecha
+usize format_integer([]u8 destination, i32 value, u8 base = 10) {
+    // ...
+}
+```
+
+Once a parameter has a default, every parameter after it must also have a
+default. A direct call may omit any suffix of defaulted arguments; each omitted
+expression is evaluated for that call in the declaration's module scope.
+Parameters and `self` are not in scope inside a default expression. Defaults
+may produce copyable or movable values and follow the parameter's ordinary
+ownership contract. Callable types and anonymous functions do not carry
+defaults, so indirect calls still require their complete argument list.
+
 A borrow-source contract may name one parameter, group an explicit source list
 as `<- (left, right)`, or select every named parameter with `<- ...args`.
 `args` is not a keyword; it is recognized specially only in that complete
@@ -1118,6 +1134,14 @@ parameters and arguments:
 `Box<T>::method`. Structure specializations have distinct nominal identities;
 callable specializations remain structural. All specializations are checked on
 use.
+
+Direct free-function calls may omit their type arguments when every parameter
+can be inferred uniquely from supplied call arguments and, when present, the
+explicit type of a variable initializer or the declared result type of the
+enclosing function. These sources must agree. Omitted default arguments and
+inferred destinations provide no evidence. Calls with missing or conflicting
+inference require explicit type arguments. Generic types, callable aliases,
+generic function values, and generic methods remain explicit.
 References remain valid function parameters and cannot be stored in structure
 fields. Existing ownership, const, visibility, and lifecycle rules apply.
 See [generics](docs/generics.md) for the implemented rules and limits.

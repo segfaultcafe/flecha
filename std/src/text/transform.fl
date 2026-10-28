@@ -1,0 +1,43 @@
+module strings;
+
+@imports :: root::text::ascii;
+
+// Copies value while mapping ASCII uppercase letters to lowercase.
+export (string, error) to_ascii_lowercase(stringv value) {
+    result, allocationError :=
+        StringBuilder::withCapacity(value.len().cast<usize>);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    loop u32 index = 0; index < value.len(); index++ {
+        const char LOWER =
+            ascii::to_ascii_lowercase(value[index].cast<char>);
+        appendError := result.appendChar(LOWER);
+        if appendError != none {
+            return (none, appendError);
+        }
+    }
+
+    return result.asString();
+}
+
+// Copies value while mapping ASCII lowercase letters to uppercase.
+export (string, error) to_ascii_uppercase(stringv value) {
+    result, allocationError :=
+        StringBuilder::withCapacity(value.len().cast<usize>);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    loop u32 index = 0; index < value.len(); index++ {
+        const char UPPER =
+            ascii::to_ascii_uppercase(value[index].cast<char>);
+        appendError := result.appendChar(UPPER);
+        if appendError != none {
+            return (none, appendError);
+        }
+    }
+
+    return result.asString();
+}

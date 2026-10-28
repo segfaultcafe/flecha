@@ -1,0 +1,68 @@
+module strings;
+
+@imports :: root::text::errors;
+
+const u8 PARSE_MINUS = 45;
+const u8 PARSE_PLUS = 43;
+const u8 PARSE_ZERO = 48;
+const u8 PARSE_NINE = 57;
+
+export (T, error) stringv_to_int<T: integer>(stringv value) {
+    const usize LENGTH = value.len().cast<usize>;
+    if LENGTH == 0 {
+        return (none, errors::ParseError.Empty);
+    }
+
+    usize index = 0;
+    bool negative = false;
+
+    const u8 FIRST = value[0];
+    if FIRST == PARSE_MINUS or FIRST == PARSE_PLUS {
+        negative = FIRST == PARSE_MINUS;
+        index++;
+
+        if index == LENGTH {
+            return (none, errors::ParseError.InvalidSyntax);
+        }
+
+        if negative and T.isof<unsigned_integer> {
+            return (none, errors::ParseError.InvalidSyntax);
+        }
+    }
+
+    T result = none;
+    T radix = 10;
+
+    while index < LENGTH {
+        const u8 BYTE = value[index.cast<u32>];
+        if BYTE < PARSE_ZERO or BYTE > PARSE_NINE {
+            return (none, errors::ParseError.InvalidSyntax);
+        }
+
+        const T DIGIT = (BYTE - PARSE_ZERO).cast<T>;
+        product, multiplicationOverflow := result.overflow_mul(radix);
+        if multiplicationOverflow {
+            return (none, errors::ParseError.Overflow);
+        }
+
+        if negative {
+            next, subtractionOverflow := product.overflow_sub(DIGIT);
+            if subtractionOverflow {
+                return (none, errors::ParseError.Overflow);
+            }
+
+            result = next;
+        } else {
+            next, additionOverflow := product.overflow_add(DIGIT);
+            if additionOverflow {
+                return (none, errors::ParseError.Overflow);
+            }
+
+            result = next;
+        }
+
+        index++;
+    }
+
+    return (result, none);
+}
