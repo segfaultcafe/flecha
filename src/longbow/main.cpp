@@ -1,14 +1,13 @@
 #include <llvm/Support/Program.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <optional>
-#include <regex>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -17,6 +16,8 @@
 #include "core/parser.hpp"
 #include "core/tokenizer.hpp"
 #include "flecha/version.hpp"
+#include "longbow/manifest.hpp"
+#include "longbow/resolver.hpp"
 
 #ifndef FLECHA_EXECUTABLE_SUFFIX
 #define FLECHA_EXECUTABLE_SUFFIX ""
@@ -32,37 +33,6 @@
 
 namespace fs = std::filesystem;
 namespace {
-bool ValidIdentifier(const std::string& name) {
-    flecha::diagnostics::DiagnosticBag diagnostics;
-    const auto tokens = flecha::core::Tokenizer(name, diagnostics).Tokenize();
-    return std::regex_match(name, std::regex("[a-z][a-z0-9_]*")) &&
-           name != "root" && name != "lib" && tokens.size() == 2 &&
-           tokens[0].type == TokenType::Identifier;
-}
-bool ValidProjectName(const std::string& name) {
-    return std::regex_match(name,
-                            std::regex("[A-Za-z0-9][A-Za-z0-9 _.-]*"));
-}
-std::string ModuleName(const std::string& projectName) {
-    std::string module;
-    bool separator = false;
-    for (char character : projectName) {
-        if (character >= 'A' && character <= 'Z')
-            character = static_cast<char>(character - 'A' + 'a');
-        if ((character >= 'a' && character <= 'z') ||
-            (character >= '0' && character <= '9') || character == '_') {
-            if (separator && !module.empty() && module.back() != '_')
-                module += '_';
-            module += character;
-            separator = false;
-        } else
-            separator = true;
-    }
-    if (module.empty()) module = "project";
-    if (module[0] < 'a' || module[0] > 'z') module = "project_" + module;
-    if (!ValidIdentifier(module)) module += "_project";
-    return module;
-}
 std::optional<std::string> DeclaredModule(const fs::path& file) {
     std::ifstream stream(file);
     if (!stream) return std::nullopt;
@@ -77,88 +47,6 @@ std::optional<std::string> DeclaredModule(const fs::path& file) {
         return std::nullopt;
     return parser.ModuleName();
 }
-std::string Trim(const std::string& text) {
-    const auto start = text.find_first_not_of(" \t\r\n");
-    return start == std::string::npos
-               ? ""
-               : text.substr(start,
-                             text.find_last_not_of(" \t\r\n") - start + 1);
-}
-struct Manifest {
-    std::string name;
-    std::string kind = "program";
-    std::map<std::string, fs::path> dependencies;
-    std::map<std::string, fs::path> native;
-};
-Manifest ReadManifest(const fs::path& directory) {
-    std::ifstream stream(directory / "longbow.toml");
-    if (!stream)
-        throw std::runtime_error("cannot read " +
-                                 (directory / "longbow.toml").string());
-    Manifest manifest;
-    std::string section, line;
-    std::set<std::string> keys, sections;
-    unsigned number = 0;
-    const std::regex stringValue(
-        R"re((name|version|kind)\s*=\s*"([^"\\]*)"\s*)re");
-    const std::regex dependency(
-        R"re(([a-z][a-z0-9_]*)\s*=\s*\{\s*path\s*=\s*"([^"\\]+)"\s*\}\s*)re");
-    while (std::getline(stream, line)) {
-        ++number;
-        // Comments are recognized only outside quoted strings.
-        bool quoted = false;
-        for (std::size_t index = 0; index < line.size(); ++index) {
-            if (line[index] == '"') quoted = !quoted;
-            if (line[index] == '#' && !quoted) {
-                line.resize(index);
-                break;
-            }
-        }
-        line = Trim(line);
-        if (line.empty()) continue;
-        if (line == "[package]" || line == "[dependencies]" ||
-            line == "[native]") {
-            if (!sections.insert(line).second)
-                throw std::runtime_error("duplicate manifest section " + line);
-            section = line;
-            continue;
-        }
-        std::smatch match;
-        if (section == "[package]" &&
-            std::regex_match(line, match, stringValue)) {
-            if (!keys.insert(section + match[1].str()).second)
-                throw std::runtime_error("duplicate package key");
-            if (match[1] == "name") manifest.name = match[2];
-            if (match[1] == "kind") manifest.kind = match[2];
-        } else if (section == "[dependencies]" &&
-                   std::regex_match(line, match, dependency)) {
-            const std::string name = match[1];
-            if (!ValidIdentifier(name) ||
-                !manifest.dependencies
-                     .emplace(name, directory / match[2].str() / "src")
-                     .second)
-                throw std::runtime_error("invalid or duplicate dependency '" +
-                                         name + "'");
-        } else if (section == "[native]" &&
-                   std::regex_match(line, match, dependency)) {
-            const std::string name = match[1];
-            if (!ValidIdentifier(name) ||
-                !manifest.native.emplace(name, directory / match[2].str())
-                     .second)
-                throw std::runtime_error("invalid or duplicate native input '" +
-                                         name + "'");
-        } else
-            throw std::runtime_error("unsupported manifest syntax at line " +
-                                     std::to_string(number));
-    }
-    if (!ValidProjectName(manifest.name))
-        throw std::runtime_error(
-            "package.name must start with a letter or digit and contain only "
-            "letters, digits, spaces, hyphens, underscores, or dots");
-    if (manifest.kind != "program" && manifest.kind != "library")
-        throw std::runtime_error("package.kind must be program or library");
-    return manifest;
-}
 void Write(const fs::path& file, const std::string& text) {
     std::ofstream stream(file);
     if (!stream || !(stream << text))
@@ -167,7 +55,7 @@ void Write(const fs::path& file, const std::string& text) {
 void Create(const fs::path& directory, bool library, bool initialize) {
     const fs::path absolute = fs::absolute(directory).lexically_normal();
     const std::string name = absolute.filename().string();
-    if (!ValidProjectName(name))
+    if (!flecha::longbow::ValidProjectName(name))
         throw std::runtime_error(
             "project directory name must start with a letter or digit and "
             "contain only letters, digits, spaces, hyphens, underscores, or "
@@ -186,7 +74,7 @@ void Create(const fs::path& directory, bool library, bool initialize) {
     Write(absolute / "longbow.toml",
           "[package]\nname = \"" + name + "\"\nversion = \"0.1.0\"\nkind = \"" +
               (library ? "library" : "program") + "\"\n\n[dependencies]\n");
-    const std::string module = ModuleName(name);
+    const std::string module = flecha::longbow::ModuleName(name);
     Write(absolute / "src" / (library ? module + ".fl" : "main.fl"),
           library ? "module " + module +
                         ";\n\nexport i32 answer() {\n    return 42;\n}\n"
@@ -265,6 +153,36 @@ std::optional<fs::path> StandardLibrary(const char* executable) {
     if (fs::is_directory(source)) return source;
     return std::nullopt;
 }
+class CompilerGraph final {
+   public:
+    CompilerGraph(const flecha::longbow::ResolvedGraph& graph,
+                  const fs::path& target, bool persistent) {
+        if (persistent)
+            _file = target / "package-graph.json";
+        else {
+            _temporary = true;
+            _file = fs::temp_directory_path() /
+                    ("longbow-package-graph-" +
+                     std::to_string(std::chrono::high_resolution_clock::now()
+                                        .time_since_epoch()
+                                        .count()) +
+                     ".json");
+        }
+        graph.WriteCompilerGraph(_file);
+    }
+    ~CompilerGraph() {
+        if (!_temporary) return;
+        std::error_code error;
+        fs::remove(_file, error);
+    }
+    CompilerGraph(const CompilerGraph&) = delete;
+    CompilerGraph& operator=(const CompilerGraph&) = delete;
+    [[nodiscard]] const fs::path& File() const { return _file; }
+
+   private:
+    fs::path _file;
+    bool _temporary = false;
+};
 void Usage() {
     std::cout << "usage: longbow new NAME [--lib]\n"
                  "       longbow init [--lib]\n"
@@ -329,7 +247,8 @@ int Run(int argc, char** argv) {
         return 1;
     }
     const fs::path root = ProjectRoot(project);
-    const Manifest manifest = ReadManifest(root);
+    const flecha::longbow::Manifest manifest =
+        flecha::longbow::ReadManifest(root);
     const fs::path target = root / "target";
     if (fs::is_symlink(target))
         throw std::runtime_error("target must not be a symbolic link");
@@ -337,6 +256,10 @@ int Run(int argc, char** argv) {
         fs::remove_all(target);
         return 0;
     }
+    const auto packages = flecha::longbow::ResolveLocalPackages(
+        manifest, StandardLibrary(argv[0]));
+    const CompilerGraph compilerGraph(packages, target,
+                                      command == "build" || command == "run");
     if (command == "test") {
         std::vector<fs::path> tests;
         const fs::path sourceRoot = root / "src";
@@ -355,19 +278,9 @@ int Run(int argc, char** argv) {
         std::size_t failed = 0;
         for (const fs::path& test : tests) {
             std::vector<std::string> compile{Compiler(argv[0]), "test",
-                                             test.string(), "--root",
-                                             sourceRoot.string()};
+                                             test.string(), "--package-graph",
+                                             compilerGraph.File().string()};
             if (verboseTests) compile.push_back("--verbose");
-            if (!manifest.dependencies.contains("std")) {
-                if (const auto standardLibrary = StandardLibrary(argv[0])) {
-                    compile.push_back("--lib");
-                    compile.push_back("std=" + standardLibrary->string());
-                }
-            }
-            for (const auto& [name, source] : manifest.dependencies) {
-                compile.push_back("--lib");
-                compile.push_back(name + "=" + source.string());
-            }
             for (const auto& [name, input] : manifest.native) {
                 (void)name;
                 compile.push_back("--link");
@@ -391,10 +304,11 @@ int Run(int argc, char** argv) {
             std::cout << "no test files found\n";
         return failed == 0 ? 0 : 1;
     }
-    const bool binary = manifest.kind == "program";
-    const fs::path entry = root / "src" /
-                           (binary ? "main.fl"
-                                   : ModuleName(manifest.name) + ".fl");
+    const bool binary = manifest.kind == flecha::longbow::PackageKind::Program;
+    const fs::path entry =
+        root / "src" /
+        (binary ? "main.fl"
+                : flecha::longbow::ModuleName(manifest.name) + ".fl");
     if (!fs::is_regular_file(entry))
         throw std::runtime_error("missing entry module " + entry.string());
     if (command == "run" && !binary)
@@ -406,18 +320,8 @@ int Run(int argc, char** argv) {
                                      command == "check" ? "check"
                                      : binary           ? "build"
                                                         : "--emit-object",
-                                     entry.string(), "--root",
-                                     (root / "src").string()};
-    if (!manifest.dependencies.contains("std")) {
-        if (const auto standardLibrary = StandardLibrary(argv[0])) {
-            compile.push_back("--lib");
-            compile.push_back("std=" + standardLibrary->string());
-        }
-    }
-    for (const auto& [name, source] : manifest.dependencies) {
-        compile.push_back("--lib");
-        compile.push_back(name + "=" + source.string());
-    }
+                                     entry.string(), "--package-graph",
+                                     compilerGraph.File().string()};
     if (command != "check") {
         fs::create_directories(target);
         compile.push_back("-o");

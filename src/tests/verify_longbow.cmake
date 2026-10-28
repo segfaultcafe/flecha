@@ -7,6 +7,7 @@ function(run expected directory)
         message(FATAL_ERROR "longbow ${ARGN} returned ${result}, expected ${expected}: ${output} ${errors}")
     endif()
     set(last_output "${output}" PARENT_SCOPE)
+    set(last_errors "${errors}" PARENT_SCOPE)
 endfunction()
 function(run_with_standard_library expected directory)
     execute_process(
@@ -19,6 +20,7 @@ function(run_with_standard_library expected directory)
             "longbow ${ARGN} returned ${result}, expected ${expected}: ${output} ${errors}")
     endif()
     set(last_output "${output}" PARENT_SCOPE)
+    set(last_errors "${errors}" PARENT_SCOPE)
 endfunction()
 run(0 "${TEST_ROOT}" new hello)
 if(NOT EXISTS "${TEST_ROOT}/hello/longbow.toml" OR NOT EXISTS "${TEST_ROOT}/hello/.gitignore")
@@ -76,6 +78,31 @@ run(1 "${TEST_ROOT}/numbers" run)
 file(APPEND "${TEST_ROOT}/hello/longbow.toml" "numbers = { path = \"../numbers\" }\n")
 file(WRITE "${TEST_ROOT}/hello/src/main.fl" "module main; @imports :: lib::numbers::numbers; i32 main() { return numbers::answer(); }\n")
 run(42 "${TEST_ROOT}/hello" run)
+# Recursive path dependencies are resolved into a package-local alias graph.
+run(0 "${TEST_ROOT}" new leaf --lib)
+run(0 "${TEST_ROOT}" new middle --lib)
+file(APPEND "${TEST_ROOT}/middle/longbow.toml"
+    "leaf = { path = \"../leaf\" }\n")
+file(WRITE "${TEST_ROOT}/middle/src/middle.fl"
+    "module middle; @imports :: lib::leaf::leaf; "
+    "export i32 answer() { return leaf::answer(); }\n")
+run(0 "${TEST_ROOT}" new recursive)
+file(APPEND "${TEST_ROOT}/recursive/longbow.toml"
+    "middle = { path = \"../middle\" }\n")
+file(WRITE "${TEST_ROOT}/recursive/src/main.fl"
+    "module main; @imports :: lib::middle::middle; "
+    "i32 main() { return middle::answer(); }\n")
+run(42 "${TEST_ROOT}/recursive" run)
+if(NOT EXISTS "${TEST_ROOT}/recursive/target/package-graph.json")
+    message(FATAL_ERROR "Longbow did not generate the compiler package graph")
+endif()
+# Resolver cycles are diagnosed before invoking the compiler.
+file(APPEND "${TEST_ROOT}/leaf/longbow.toml"
+    "middle = { path = \"../middle\" }\n")
+run(1 "${TEST_ROOT}/recursive" check)
+if(NOT last_errors MATCHES "package dependency cycle")
+    message(FATAL_ERROR "path dependency cycle was not diagnosed: ${last_errors}")
+endif()
 # Build errors must stop run, rather than execute the previous artifact.
 file(WRITE "${TEST_ROOT}/hello/src/main.fl" "module main; i32 main() { return missing; }\n")
 run(1 "${TEST_ROOT}/hello" run)

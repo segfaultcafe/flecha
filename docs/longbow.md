@@ -92,8 +92,10 @@ numbers = { path = "../numbers" }
 ```
 
 Paths are relative to the application's manifest and identify the dependency
-project directory. Longbow maps its `src` directory into the compiler's library
-search map. Source code imports a particular module:
+project directory. Longbow reads path dependency manifests recursively and
+generates `target/package-graph.json`. Each package receives its own dependency
+alias map, so two packages can reuse the same alias for different dependencies.
+Source code imports a particular module:
 
 ```flecha
 @imports
@@ -102,20 +104,22 @@ search map. Source code imports a particular module:
 
 The call is `numbers::answer()`. An alias can shorten or distinguish this local
 namespace. The standard library bundled beside an installed Longbow executable
-is available automatically as `lib::std`. A `std` entry in `[dependencies]`
-overrides that bundled copy, which is useful while developing the standard
-library. `FLECHA_STANDARD_LIBRARY` can also name a standard-library source
-directory for build-tree and custom-toolchain use; an explicit manifest entry
-still takes precedence.
+is injected into every package as `lib::std`. A root `std` entry in
+`[dependencies]` overrides that bundled copy for the entire graph, which is
+useful while developing the standard library. Nested packages cannot replace
+it. `FLECHA_STANDARD_LIBRARY` can also name a standard-library source directory
+for build-tree and custom-toolchain use; an explicit root manifest entry still
+takes precedence.
 
-The first manifest reader supports only the shown package string keys and local
-path dependency entries, with blank lines and comments. Unsupported TOML forms,
-unknown keys, duplicate entries, and malformed values are diagnosed. Dependency
-versions, recursive manifest resolution, registries, downloads, lockfiles,
-workspaces, release profiles, test filtering, and formatting commands are
-future work.
-Nonstandard library imports currently use the source map explicitly configured
-by the root project. Prebuilt library objects are not used to resolve imports.
+The manifest reader validates SemVer package versions, Flecha toolchain ranges,
+path dependencies, pinned Git dependency declarations, registry owner/package
+requirements, and registry dependencies with development path overrides.
+Unsupported TOML forms, unknown keys, duplicate entries, invalid source
+combinations, malformed versions, registry attempts to replace `std`, and path
+dependency cycles are diagnosed. Recursive local paths and registry
+dependencies with path overrides build now; Git and registry declarations are
+acquired by later resolver layers. Prebuilt library objects are not used to
+resolve imports.
 
 A runnable multi-module example is in `examples/modules`. From that directory,
 run `../../build/longbow run` after building the tools.

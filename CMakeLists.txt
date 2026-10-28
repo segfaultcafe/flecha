@@ -42,6 +42,7 @@ endif()
 
 add_subdirectory(src/diagnostics)
 add_subdirectory(src/core)
+add_subdirectory(src/longbow)
 add_subdirectory(src/semantic)
 add_subdirectory(src/lowering)
 add_subdirectory(src/runtime)
@@ -68,7 +69,12 @@ target_link_libraries(flecha
 
 add_executable(longbow src/longbow/main.cpp)
 target_include_directories(longbow PRIVATE ${PROJECT_BINARY_DIR}/generated)
-target_link_libraries(longbow PRIVATE flecha_project_options llvm_codegen)
+target_link_libraries(longbow
+    PRIVATE
+        flecha_project_options
+        longbow_model
+        llvm_codegen
+)
 target_compile_definitions(longbow PRIVATE
     FLECHA_EXECUTABLE_SUFFIX="${CMAKE_EXECUTABLE_SUFFIX}"
     FLECHA_OBJECT_SUFFIX="${CMAKE_CXX_OUTPUT_EXTENSION}"

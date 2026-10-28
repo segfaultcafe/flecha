@@ -3,6 +3,7 @@ add_executable(test_flecha
     test_codegen.cpp
     test_diagnostics.cpp
     test_lowering.cpp
+    test_longbow.cpp
     test_modules.cpp
     test_main.cpp
     test_parser.cpp
@@ -18,6 +19,7 @@ target_link_libraries(test_flecha
         core
         semantic
         lowering
+        longbow_model
         llvm_codegen
         memory
         runtime
