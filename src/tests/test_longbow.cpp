@@ -7,6 +7,7 @@
 #include "core/package_graph.hpp"
 #include "longbow/manifest.hpp"
 #include "longbow/resolver.hpp"
+#include "longbow/sha256.hpp"
 
 namespace {
 namespace fs = std::filesystem;
@@ -46,6 +47,15 @@ TEST(LongbowVersionTests, ParsesAndOrdersSemanticVersions) {
         EXPECT_FALSE(SemanticVersion::Parse(invalid, error)) << invalid;
         EXPECT_FALSE(error.empty()) << invalid;
     }
+}
+
+TEST(LongbowHashTests, MatchesPublishedSha256Vectors) {
+    EXPECT_EQ(
+        flecha::longbow::Sha256(""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    EXPECT_EQ(
+        flecha::longbow::Sha256("abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
 
 TEST(LongbowVersionTests, MatchesCaretTildePartialAndComparatorRequirements) {
@@ -238,6 +248,17 @@ TEST_F(LongbowResolverTests, ResolvesRecursivePathsAndPackageLocalAliases) {
         flecha::core::PackageGraph::Load(graphFile, error);
     ASSERT_TRUE(compilerGraph) << error;
     EXPECT_EQ(compilerGraph->Nodes().size(), graph.Packages().size());
+
+    const fs::path lock = root / "app/longbow.lock";
+    graph.WriteLock(lock, root / "app");
+    const std::string firstLockHash = flecha::longbow::Sha256File(lock);
+    graph.WriteLock(lock, root / "app");
+    EXPECT_EQ(flecha::longbow::Sha256File(lock), firstLockHash);
+    std::ifstream lockStream(lock);
+    const std::string contents((std::istreambuf_iterator<char>(lockStream)),
+                               std::istreambuf_iterator<char>());
+    EXPECT_NE(contents.find("\"checksum\": \"sha256:"), std::string::npos);
+    EXPECT_NE(contents.find("\"kind\": \"toolchain\""), std::string::npos);
 }
 
 TEST_F(LongbowResolverTests, DiagnosesPathCyclesAndOverrideVersionMismatch) {

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/package_graph.hpp"
+#include "longbow/sha256.hpp"
 
 namespace flecha::longbow {
 namespace fs = std::filesystem;
@@ -68,6 +69,30 @@ std::string SourcePath(const fs::path& source, const fs::path& graphFile) {
     return (error || relative.empty() ? source : relative).generic_string();
 }
 
+std::string SourceKind(ResolvedSourceKind kind) {
+    switch (kind) {
+        case ResolvedSourceKind::Workspace:
+            return "workspace";
+        case ResolvedSourceKind::Path:
+            return "path";
+        case ResolvedSourceKind::Toolchain:
+            return "toolchain";
+    }
+    return {};
+}
+
+void WriteIfChanged(const fs::path& file, const std::string& contents) {
+    std::ifstream existing(file, std::ios::binary);
+    if (existing) {
+        std::ostringstream current;
+        current << existing.rdbuf();
+        if (current.str() == contents) return;
+    }
+    std::ofstream stream(file, std::ios::binary | std::ios::trunc);
+    if (!stream || !(stream << contents))
+        throw std::runtime_error("cannot write " + file.string());
+}
+
 }  // namespace
 
 class LocalResolver final {
@@ -78,7 +103,8 @@ class LocalResolver final {
 
     ResolvedGraph Resolve() {
         _graph._packages.emplace(
-            "root", Package(_root, "root", "local/" + ModuleName(_root.name)));
+            "root", Package(_root, "root", "local/" + ModuleName(_root.name),
+                            ResolvedSourceKind::Workspace));
         _paths.emplace(CanonicalDirectory(_root.directory, "project root"),
                        "root");
         _active.push_back("root");
@@ -90,14 +116,21 @@ class LocalResolver final {
 
    private:
     ResolvedPackage Package(const Manifest& manifest, std::string id,
-                            std::string identity) {
+                            std::string identity, ResolvedSourceKind kind) {
         const fs::path directory =
             CanonicalDirectory(manifest.directory, "package directory");
         const fs::path source =
             CanonicalDirectory(directory / "src", "package source");
-        return {std::move(id),    std::move(identity),
-                manifest.version, directory,
-                source,           {}};
+        ResolvedPackage package;
+        package.id = std::move(id);
+        package.identity = std::move(identity);
+        package.version = manifest.version;
+        package.directory = directory;
+        package.source = source;
+        package.sourceKind = kind;
+        if (kind == ResolvedSourceKind::Path)
+            package.checksum = "sha256:" + Sha256Tree(source);
+        return package;
     }
 
     void ResolveDependencies(const Manifest& manifest, ResolvedPackage& node) {
@@ -151,7 +184,8 @@ class LocalResolver final {
                 "path-" + std::to_string(_graph._packages.size());
             const std::string identity =
                 dependency.package.value_or("local/" + ModuleName(child.name));
-            _graph._packages.emplace(id, Package(child, id, identity));
+            _graph._packages.emplace(
+                id, Package(child, id, identity, ResolvedSourceKind::Path));
             _paths.emplace(directory, id);
             node.dependencies.emplace(alias, id);
             _active.push_back(id);
@@ -161,6 +195,7 @@ class LocalResolver final {
     }
 
     void AddStandardLibrary() {
+        const bool overridden = _standardLibrary.has_value();
         const std::optional<fs::path> source =
             _standardLibrary ? _standardLibrary : _bundledStandardLibrary;
         if (!source) return;
@@ -171,6 +206,10 @@ class LocalResolver final {
         standard.identity = "flecha/std";
         standard.source = canonical;
         standard.directory = canonical.parent_path();
+        standard.sourceKind = overridden ? ResolvedSourceKind::Path
+                                         : ResolvedSourceKind::Toolchain;
+        if (overridden)
+            standard.checksum = "sha256:" + Sha256Tree(canonical);
         _graph._packages.emplace(standard.id, std::move(standard));
         for (auto& [id, package] : _graph._packages)
             if (id != "toolchain-std")
@@ -206,11 +245,14 @@ void ResolvedGraph::WriteCompilerGraph(const fs::path& file) const {
     for (const auto& [id, package] : _packages) {
         stream << "    {\n      \"id\": " << JsonString(id)
                << ",\n      \"identity\": " << JsonString(package.identity)
-               << ",\n      \"version\": "
-               << JsonString(package.version.String())
                << ",\n      \"source\": "
-               << JsonString(SourcePath(package.source, file))
-               << ",\n      \"dependencies\": {";
+               << JsonString(SourcePath(package.source, file));
+        if (package.id != "toolchain-std")
+            stream << ",\n      \"version\": "
+                   << JsonString(package.version.String());
+        if (!package.checksum.empty())
+            stream << ",\n      \"checksum\": " << JsonString(package.checksum);
+        stream << ",\n      \"dependencies\": {";
         std::size_t dependencyIndex = 0;
         for (const auto& [alias, target] : package.dependencies) {
             if (dependencyIndex++) stream << ",";
@@ -225,6 +267,47 @@ void ResolvedGraph::WriteCompilerGraph(const fs::path& file) const {
     stream << "  ]\n}\n";
     if (!stream)
         throw std::runtime_error("cannot write package graph " + file.string());
+}
+
+void ResolvedGraph::WriteLock(const fs::path& file,
+                              const fs::path& projectRoot) const {
+    std::ostringstream stream;
+    stream << "{\n  \"schema\": 1,\n  \"root\": " << JsonString(_root)
+           << ",\n  \"packages\": [\n";
+    std::size_t packageIndex = 0;
+    for (const auto& [id, package] : _packages) {
+        stream << "    {\n      \"id\": " << JsonString(id)
+               << ",\n      \"identity\": " << JsonString(package.identity)
+               << ",\n      \"source\": {\n        \"kind\": "
+               << JsonString(SourceKind(package.sourceKind));
+        if (package.sourceKind != ResolvedSourceKind::Toolchain) {
+            std::error_code error;
+            fs::path relative =
+                fs::relative(package.directory, projectRoot, error);
+            if (error || relative.empty()) relative = package.directory;
+            stream << ",\n        \"path\": "
+                   << JsonString(relative.generic_string());
+        }
+        stream << "\n      }";
+        if (package.id != "toolchain-std")
+            stream << ",\n      \"version\": "
+                   << JsonString(package.version.String());
+        if (!package.checksum.empty())
+            stream << ",\n      \"checksum\": " << JsonString(package.checksum);
+        stream << ",\n      \"dependencies\": {";
+        std::size_t dependencyIndex = 0;
+        for (const auto& [alias, target] : package.dependencies) {
+            if (dependencyIndex++) stream << ",";
+            stream << "\n        " << JsonString(alias) << ": "
+                   << JsonString(target);
+        }
+        if (!package.dependencies.empty()) stream << "\n      ";
+        stream << "}\n    }";
+        if (++packageIndex != _packages.size()) stream << ",";
+        stream << "\n";
+    }
+    stream << "  ]\n}\n";
+    WriteIfChanged(file, stream.str());
 }
 
 }  // namespace flecha::longbow

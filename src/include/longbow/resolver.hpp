@@ -11,6 +11,7 @@
 namespace flecha::longbow {
 
 class LocalResolver;
+enum class ResolvedSourceKind { Workspace, Path, Toolchain };
 
 struct ResolvedPackage final {
     std::string id;
@@ -18,6 +19,8 @@ struct ResolvedPackage final {
     SemanticVersion version;
     std::filesystem::path directory;
     std::filesystem::path source;
+    ResolvedSourceKind sourceKind = ResolvedSourceKind::Path;
+    std::string checksum;
     std::map<std::string, std::string> dependencies;
 };
 
@@ -29,6 +32,8 @@ class ResolvedGraph final {
         return _packages;
     }
     void WriteCompilerGraph(const std::filesystem::path& file) const;
+    void WriteLock(const std::filesystem::path& file,
+                   const std::filesystem::path& projectRoot) const;
 
    private:
     friend class LocalResolver;

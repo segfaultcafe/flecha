@@ -121,6 +121,14 @@ dependencies with path overrides build now; Git and registry declarations are
 acquired by later resolver layers. Prebuilt library objects are not used to
 resolve imports.
 
+Resolution writes a deterministic `longbow.lock` beside the manifest. It
+records graph node identities, exact package versions, source kinds and paths,
+package-local dependency edges, and SHA-256 source-tree checksums for local
+dependencies. The root workspace is intentionally not content-locked so normal
+application edits do not invalidate dependency state. Toolchain `std` is
+recorded by source kind rather than a host-specific installation path, keeping
+the lock portable across installed toolchains.
+
 A runnable multi-module example is in `examples/modules`. From that directory,
 run `../../build/longbow run` after building the tools.
 

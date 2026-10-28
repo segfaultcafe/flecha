@@ -258,6 +258,7 @@ int Run(int argc, char** argv) {
     }
     const auto packages = flecha::longbow::ResolveLocalPackages(
         manifest, StandardLibrary(argv[0]));
+    if (command != "test") packages.WriteLock(root / "longbow.lock", root);
     const CompilerGraph compilerGraph(packages, target,
                                       command == "build" || command == "run");
     if (command == "test") {

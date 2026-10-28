@@ -1,6 +1,7 @@
 add_library(longbow_model STATIC
     manifest.cpp
     resolver.cpp
+    sha256.cpp
 )
 
 target_include_directories(longbow_model
