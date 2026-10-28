@@ -6,3 +6,10 @@ export error ParseError {
     InvalidBase,
     Overflow,
 }
+
+export error Utf8Error {
+    InvalidEncoding,
+    Truncated,
+    InvalidOffset,
+    InvalidCodePoint,
+}

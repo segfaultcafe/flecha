@@ -21,6 +21,7 @@ module std;
     :: root::memory::slices
     :: root::memory::errors as memory_errors
     :: root::text::ascii
+    :: root::text::utf8
     :: root::text::strings
     :: root::text::errors as text_errors
     :: root::tests::testing
