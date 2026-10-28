@@ -187,24 +187,40 @@ kind = "program"
 [dependencies]
 ```
 
-Dependencies are local library paths and are resolved from the package's `src` directory:
+Dependencies may be recursive local paths, exact Git commits, or owner-scoped
+public registry packages. Imports use the local alias on the left, never the
+canonical registry identity:
 
 ```toml
 [dependencies]
 math = { path = "../math" }
+codec = { git = "https://example.com/team/codec.git", rev = "0123456789abcdef0123456789abcdef01234567" }
+json = { package = "flecha/json", version = "^1.2" }
 ```
+
+Longbow resolves these sources into a package-local alias graph, writes
+`longbow.lock`, and verifies shared cache entries before reuse. The compiler
+receives the resolved graph and never performs network access.
 
 Longbow's available commands are:
 
 ```text
 longbow new NAME [--lib]
 longbow init [--lib]
-longbow check|build|run|clean
-longbow test [--verbose]
+longbow add OWNER/PACKAGE@REQUIREMENT [--as ALIAS]
+longbow remove ALIAS
+longbow fetch [PROJECT]
+longbow update [ALIAS]
+longbow publish [PROJECT] [--dry-run]
+longbow yank VERSION
+longbow check|build|run|clean [PROJECT]
+longbow test [PROJECT] [--verbose]
 longbow run -- [program arguments]
 ```
 
-See [`docs/modules.md`](docs/modules.md) for module layout, imports, aliases, and library resolution.
+See [`docs/longbow.md`](docs/longbow.md) for the complete project workflow and
+[`docs/package_ecosystem.md`](docs/package_ecosystem.md) for identities, locks,
+cache behavior, archives, and the registry protocol.
 
 ## Testing
 
