@@ -405,6 +405,9 @@ void Usage() {
                  "       longbow remove ALIAS\n"
                  "       longbow fetch [PROJECT]\n"
                  "       longbow update [ALIAS]\n"
+                 "       longbow login\n"
+                 "       longbow logout\n"
+                 "       longbow whoami\n"
                  "       longbow publish [PROJECT] [--dry-run]\n"
                  "       longbow yank VERSION\n"
                  "       longbow check|build|clean [PROJECT]\n"
@@ -427,6 +430,23 @@ int Run(int argc, char** argv) {
     }
     if (command == "--help" || command == "help") {
         Usage();
+        return 0;
+    }
+    if (command == "login" || command == "logout" || command == "whoami") {
+        if (argc != 2) {
+            Usage();
+            return 1;
+        }
+        const flecha::longbow::RegistryTransport transport;
+        if (command == "login") {
+            const std::string handle = transport.Login();
+            std::cout << "Logged in as " << handle << "\n";
+        } else if (command == "logout") {
+            transport.Logout();
+            std::cout << "Logged out\n";
+        } else {
+            std::cout << transport.WhoAmI() << "\n";
+        }
         return 0;
     }
     if (command == "new" || command == "init") {

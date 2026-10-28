@@ -11,6 +11,9 @@ class RegistryTransport final {
 
     [[nodiscard]] const std::string& Base() const { return _base; }
     [[nodiscard]] std::string Read(const std::string& resource) const;
+    [[nodiscard]] std::string Login() const;
+    [[nodiscard]] std::string WhoAmI() const;
+    void Logout() const;
     void Publish(const std::string& identity, const std::string& version,
                  const std::string& checksum, const std::string& archive) const;
     void Yank(const std::string& identity, const std::string& version) const;
