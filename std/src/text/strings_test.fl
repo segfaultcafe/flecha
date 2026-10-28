@@ -2,6 +2,8 @@ module strings_test;
 
 @imports
     :: root::text::strings
+    :: root::text::utf8
+    :: root::text::errors as text_errors
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
@@ -110,6 +112,59 @@ test string_builder_compound_appends_handle_empty_inputs(
         t,
         bytes.len() == 1 and bytes[0] == 10,
         "an empty line appends only a newline"
+    );
+}
+
+test string_builder_appends_unicode_code_points(&testing::UnitTest t) {
+    value := strings::StringBuilder::init();
+    asciiError := value.appendCodePoint(65);
+    twoByteError := value.appendCodePoint(162);
+    threeByteError := value.appendCodePoint(8364);
+    fourByteError := value.appendCodePoint(128512);
+
+    asserts::is_true(
+        t,
+        asciiError == none and twoByteError == none and
+            threeByteError == none and fourByteError == none,
+        "every Unicode scalar appends successfully"
+    );
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes.len() == 10 and
+            bytes[0] == 65 and bytes[1] == 194 and bytes[2] == 162 and
+            bytes[3] == 226 and bytes[4] == 130 and bytes[5] == 172 and
+            bytes[6] == 240 and bytes[7] == 159 and
+            bytes[8] == 152 and bytes[9] == 128,
+        "code points append their canonical UTF-8 bytes"
+    );
+    asserts::is_true(
+        t,
+        utf8::validate(value.view()) == none,
+        "appended code points form valid UTF-8"
+    );
+}
+
+test string_builder_rejects_invalid_code_points_without_mutation(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    setupError := value.append("kept");
+    const usize ORIGINAL_CAPACITY = value.capacity();
+    surrogateError := value.appendCodePoint(55296);
+    oversizedError := value.appendCodePoint(1114112);
+
+    asserts::is_true(t, setupError == none, "the setup append succeeds");
+    asserts::is_true(
+        t,
+        surrogateError == text_errors::Utf8Error.InvalidCodePoint and
+            oversizedError == text_errors::Utf8Error.InvalidCodePoint,
+        "appendCodePoint rejects values that are not Unicode scalars"
+    );
+    asserts::is_true(
+        t,
+        value.view() == "kept" and value.capacity() == ORIGINAL_CAPACITY,
+        "invalid code points preserve contents and allocation"
     );
 }
 
