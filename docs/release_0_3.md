@@ -1,11 +1,12 @@
-# Flecha 0.3.0 standard-library milestone
+# Flecha 0.3.0 application and library ecosystem milestone
 
-Flecha 0.3.0 is the application-capable standard-library milestone. Its goal
-is to make substantial systems programs practical without turning the release
-into another broad language-feature wave. The milestone expands the standard
-library from its initial arrays, algorithms, files, and testing support into a
-coherent foundation for command-line programs, structured data, persistent
-services, networking, and deterministic ledger applications.
+Flecha 0.3.0 is the application-capable standard-library and package-ecosystem
+milestone. Its goal is to make substantial systems programs and independently
+distributed libraries practical without turning the release into another
+broad language-feature wave. The milestone expands the standard library from
+its initial arrays, algorithms, files, and testing support into a coherent
+foundation for command-line programs, structured data, persistent services,
+networking, and deterministic ledger applications.
 
 This is one concrete step in Flecha's broader
 [direction toward 1.0 and beyond](vision.md). That direction is intentionally
@@ -18,7 +19,9 @@ The north-star programs for this release are:
 - a nontrivial command-line application;
 - a persistent, deterministic blockchain or append-only ledger prototype;
 - a structured-data reader and writer;
-- a blocking TCP client and server; and
+- a blocking TCP client and server;
+- a separately versioned library published, resolved, and consumed through the
+  public Flecha package registry; and
 - a concurrent worker application if the required memory-model rules can be
   specified without delaying the rest of the milestone.
 
@@ -42,6 +45,7 @@ The milestone follows these rules:
   aggregate layout;
 - allocation, copying, blocking, and platform-dependent behavior stay visible;
 - deterministic APIs behave identically on every supported target;
+- Longbow owns dependency acquisition and the compiler remains network-free;
 - cryptographic implementations use published test vectors and established
   implementations rather than novel algorithms; and
 - higher-level protocols enter the standard library only after their lower
@@ -217,7 +221,47 @@ must not silently change their indexing or length semantics. CSV, TOML, YAML,
 compression formats, schema frameworks, and general reflection remain
 companion-library candidates rather than requirements for this milestone.
 
-### 4. I/O and operating-system services
+### 4. Package graph and community library distribution
+
+Deliver the package model defined in
+[`package_ecosystem.md`](package_ecosystem.md):
+
+- package-scoped dependency aliases in the compiler rather than one global
+  `--lib` namespace;
+- recursive local, Git, and public-registry dependency resolution in Longbow;
+- a deterministic `longbow.lock` containing exact sources, versions, and
+  checksums;
+- a shared local source cache with verified offline reuse;
+- scoped registry identities such as `flecha/json` and
+  `alexbsec/blockchain`, while source imports continue to use local aliases
+  such as `lib::json` and `lib::blockchain`;
+- immutable source archives, ownership, publishing, and yanking through the
+  public Flecha registry; and
+- `longbow add`, `fetch`, `update`, `publish --dry-run`, `publish`, and `yank`
+  workflows.
+
+The bundled standard library remains a toolchain component available as
+`lib::std`; it does not participate in ordinary registry resolution. Public
+registry packages are source-only in 0.3.0. Precompiled Flecha objects, native
+artifacts, build scripts, and registry-supplied `std` replacements are outside
+the initial package contract.
+
+#### Stage 4 package-distribution contract and test gate
+
+Stage 4 is complete only when:
+
+| Area | Required cases |
+| --- | --- |
+| Package graph | Each package resolves `lib::<alias>` through its own dependency map; repeated aliases in different packages can identify different dependencies without creating one global alias namespace. |
+| Resolution | Recursive path, pinned Git, and registry dependencies resolve deterministically; 0.3 selects one version per canonical owner/package identity, and diagnoses dependency cycles, incompatible version requirements, missing packages, and incompatible Flecha versions before compilation. |
+| Locking | A clean resolution writes exact package identities, versions, sources, revisions, and SHA-256 checksums; subsequent builds honor the lock and reject changed content. |
+| Cache | A first online build populates the cache; a second offline build succeeds from verified cached sources; corrupt or incomplete cache entries are rejected and reacquired when online. |
+| Registry identity | Official and community packages share one registry under distinct owner namespaces; dependency aliases control imports and canonical owner/package identities never leak into Flecha module paths. |
+| Publishing | `publish --dry-run` shows the normalized source archive and checksum without uploading; published versions are immutable; yanking prevents new selection without breaking an existing lock. |
+| Standard library | Bundled `lib::std` is selected from the installed toolchain, remains path-overridable for toolchain development, and cannot be replaced by a public-registry package. |
+| Portability and safety | Archives reject traversal, absolute paths, symlinks, case-colliding paths, unsupported native inputs, and platform-specific generated output. The same locked graph builds on every supported host. |
+
+### 5. I/O and operating-system services
 
 Expand the current file and filesystem modules with:
 
@@ -237,7 +281,7 @@ existing `File` model. Blocking operations must be identified in their API
 documentation. Platform errors map to stable Flecha error families without
 discarding partial byte counts or child-process status.
 
-### 5. Blocking networking
+### 6. Blocking networking
 
 Add an initial `net` layer containing:
 
@@ -254,7 +298,7 @@ The first networking APIs are blocking. Async I/O, HTTP, WebSockets, TLS, and
 service frameworks are not release gates for 0.3.0. They should begin as
 companion libraries after the socket and buffered-I/O contracts are proven.
 
-### 6. Hashing and security primitives
+### 7. Hashing and security primitives
 
 Provide the primitives required for deterministic integrity checks and the
 ledger north-star program:
@@ -272,7 +316,7 @@ incubate as companion libraries before any later standard-library proposal.
 Noncryptographic checksums and hashes should be clearly separated from the
 security modules so callers cannot mistake them for cryptographic primitives.
 
-### 7. Testing and performance support
+### 8. Testing and performance support
 
 Extend the testing library with:
 
@@ -347,6 +391,9 @@ itself:
    remains in the 0.3.0 release gate.
 6. Improve allocation-failure injection and lifecycle diagnostics needed to
    verify the new containers.
+7. Accept a package graph whose dependency aliases are scoped to the importing
+   source identity, while keeping all network and registry operations in
+   Longbow.
 
 This work should be delivered as focused compiler or runtime changes in support
 of a concrete standard-library API. It must not become an unrelated language
@@ -374,7 +421,7 @@ and production key management are outside this example's scope.
 
 Flecha 0.3.0 is ready when:
 
-1. Stages 1 through 6 are implemented, documented, and tested. Stage 7's test
+1. Stages 1 through 7 are implemented, documented, and tested. Stage 8's test
    helpers required by those modules are also complete.
 2. The CLI, structured-data, ledger, and blocking-network north-star programs
    build and run from clean, relocated release packages.
@@ -390,6 +437,9 @@ Flecha 0.3.0 is ready when:
    example or north-star use.
 8. Packaged Longbow discovers the bundled standard library and all required
    runtime symbols without referring to the source checkout.
+9. A community-package fixture can be published, resolved into a locked graph,
+   built from a clean cache, rebuilt offline, yanked without invalidating the
+   existing lock, and consumed under a caller-selected `lib` alias.
 
 Concurrency is a stretch gate until its memory-model design is accepted. Its
 absence must not block the remaining application-capable standard library.
@@ -401,7 +451,10 @@ Flecha 0.3.0 does not require:
 - a trait, interface, or protocol system;
 - variadic generics or partial explicit/inferred type-argument lists;
 - exceptions, garbage collection, reflection, or async language syntax;
-- a package registry or remote dependency resolver;
+- private registries, private packages, registry federation, or registry
+  mirrors;
+- precompiled Flecha packages, native package artifacts, or package build
+  scripts;
 - HTTP, TLS, WebSockets, or an async executor in the standard library;
 - novel cryptographic algorithms;
 - a production public-blockchain consensus system; or

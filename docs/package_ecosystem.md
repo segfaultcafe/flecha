@@ -1,0 +1,225 @@
+# Flecha package ecosystem
+
+Flecha 0.3.0 distributes independently versioned libraries as source packages.
+Longbow resolves, downloads, verifies, caches, and publishes those packages.
+The Flecha compiler consumes a resolved package graph and never performs
+network access.
+
+## Package locations
+
+A published library exists in three places with different responsibilities:
+
+1. The author's Git repository is the development origin for commits, issues,
+   and contributions.
+2. The public Flecha registry stores package metadata and an immutable snapshot
+   of every published source version.
+3. Longbow's local cache stores verified archives and extracted source trees
+   for builds and offline reuse.
+
+Deleting a repository or moving a Git tag must not break an existing package
+version. The registry therefore owns the published snapshot rather than
+redirecting downloads to the repository.
+
+The public service uses `packages.flecha-lang.org` for human-facing package
+pages and `registry.flecha-lang.org` for Longbow's API. Archive storage is
+content-addressed by SHA-256 and may be served through an object store and CDN;
+the public URL does not define the physical storage provider.
+
+## Identity and imports
+
+Registry identities are scoped by an owner:
+
+```text
+flecha/json
+flecha/http
+alexbsec/blockchain
+acme/database
+```
+
+The `flecha` owner is reserved for official project packages. User and
+organization owners publish community packages through the same registry and
+protocol. Official status is registry metadata, not a separate resolver.
+
+A dependency key is a local Flecha identifier and becomes the import alias:
+
+```toml
+[dependencies]
+json = { package = "flecha/json", version = "^1.2.0" }
+chain = { package = "alexbsec/blockchain", version = "^0.1.0" }
+```
+
+```flecha
+@imports
+    :: lib::json::parser
+    :: lib::chain::blockchain;
+```
+
+Canonical owner/package identities never appear in Flecha import paths. This
+lets callers choose concise aliases and consume same-named packages together:
+
+```toml
+[dependencies]
+json = { package = "flecha/json", version = "^1" }
+experimental_json = { package = "another_owner/json", version = "^0.2" }
+```
+
+## Standard library
+
+`std` remains a version-matched component of the installed Flecha toolchain and
+is injected automatically by Longbow as `lib::std`. It is not an ordinary
+registry dependency. A public registry package cannot replace `std`.
+
+An explicit local path override remains supported for compiler and standard
+library development:
+
+```toml
+[dependencies]
+std = { path = "../flecha/std" }
+```
+
+Registry packages declare the Flecha toolchain range they support and receive
+the compatible bundled standard library automatically:
+
+```toml
+[package]
+name = "json"
+version = "1.2.0"
+kind = "library"
+flecha = ">=0.3.0, <0.4.0"
+```
+
+The registry may mirror standard-library sources for browsing and archival
+purposes later, but ordinary dependency resolution never selects `std` from
+that mirror.
+
+## Dependency sources
+
+Longbow supports three dependency sources in 0.3.0:
+
+```toml
+[dependencies]
+local = { path = "../local" }
+git_package = {
+    git = "https://example.com/team/package.git",
+    rev = "0123456789abcdef"
+}
+json = { package = "flecha/json", version = "^1.2.0" }
+```
+
+Path dependencies support local development. Git dependencies bridge the
+period before a package is published and are pinned to an exact commit in the
+lockfile. Registry dependencies use semantic version requirements and resolve
+to an immutable published version.
+
+A publishable dependency may combine a registry identity and version with a
+development path override. Publishing records the registry requirement and
+never embeds the local path.
+
+## Package graph
+
+The current global `--lib name=path` map cannot represent recursive package
+dependencies. Two packages may use the same alias for different dependencies,
+so dependency aliases must be interpreted relative to the importing package.
+
+Longbow therefore produces a package graph. Each node records:
+
+- its canonical package identity and exact version or revision;
+- its source root and content checksum;
+- its compatible Flecha version range; and
+- a map from that package's dependency aliases to other graph nodes.
+
+The compiler resolves `lib::<alias>` through the map belonging to the source
+identity of the importing unit. It must not flatten aliases across the graph.
+`root` continues to resolve inside the importing package's own source root.
+
+The 0.3 resolver selects one exact version of each canonical owner/package
+identity for the complete graph. Conflicting requirements are diagnosed rather
+than resolved as parallel versions. Node identity and the versioned graph
+schema must not assume a global alias map, leaving parallel-version resolution
+as a compatible future extension.
+
+The graph is a generated compiler input under `target`; it is not a handwritten
+public configuration format. Its schema is versioned so Longbow and Flecha can
+diagnose incompatible toolchain components.
+
+## Lockfile and cache
+
+`longbow.lock` records the complete selected graph, including exact versions,
+Git revisions, sources, dependency edges, and archive checksums. Applications
+commit it. Libraries may commit it for reproducible development and tests, but
+their consumers resolve from published version requirements rather than the
+library's development lock.
+
+The lockfile is authoritative after resolution. A package whose downloaded or
+cached contents do not match its checksum is rejected rather than silently
+accepted.
+
+Longbow uses the platform's native user-cache location and supports an explicit
+environment override for CI and managed installations. Cache entries are
+content-addressed, shared across projects, and safe to remove. A verified cache
+must support offline builds without contacting the registry or source origin.
+
+## Publication
+
+`longbow publish --dry-run` creates the normalized archive, validates it, and
+prints its included files and checksum without uploading. `longbow publish`
+uploads that exact archive after authenticating an owner or maintainer.
+
+The initial archive contains source and package documentation such as:
+
+```text
+longbow.toml
+src/**/*.fl
+README.md
+LICENSE*
+```
+
+It excludes version-control data, `target`, local lock state, editor state,
+temporary files, and secrets. Archive validation rejects absolute paths,
+parent traversal, symbolic links, case-colliding paths, excessive sizes, and
+unsupported file types.
+
+Published owner/package/version tuples are immutable. A maintainer may yank a
+version so new resolutions avoid it, but an existing lock can continue using
+and downloading the archived content. Deleting or replacing published bytes is
+not an ordinary maintainer operation.
+
+Public packages are pure Flecha source in 0.3.0. Precompiled objects, native
+archives, build scripts, and target-specific package payloads require separate
+ABI, security, licensing, and reproducibility designs and are not accepted by
+the first registry.
+
+## Longbow commands
+
+The initial user workflow is:
+
+```text
+longbow add OWNER/PACKAGE@REQUIREMENT [--as ALIAS]
+longbow remove ALIAS
+longbow fetch
+longbow update [ALIAS]
+longbow publish --dry-run
+longbow publish
+longbow yank VERSION
+```
+
+Resolution and fetch are separate internally even when `build`, `check`,
+`test`, or `run` invokes both. Diagnostics identify whether failure came from
+manifest validation, version selection, network acquisition, checksum
+verification, cache extraction, or compilation.
+
+## Registry ownership and trust
+
+The registry supports user and organization owners, multiple package
+maintainers, scoped publishing tokens, ownership audit history, and a reserved
+official `flecha` owner. Initial login may use GitHub identity, but registry
+ownership is stored by Flecha rather than inferred permanently from a mutable
+repository URL.
+
+Later trusted publishing may exchange GitHub Actions or another CI identity for
+a short-lived package-scoped credential. That does not change package identity,
+archive immutability, or checksum verification.
+
+Private registries, private packages, registry federation, mirrors, native
+package artifacts, and precompiled Flecha packages are outside the 0.3.0
+contract.
