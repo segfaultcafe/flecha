@@ -258,6 +258,9 @@ longbow add OWNER/PACKAGE@REQUIREMENT [--as ALIAS]
 longbow remove ALIAS
 longbow fetch
 longbow update [ALIAS]
+longbow login
+longbow whoami
+longbow logout
 longbow publish --dry-run
 longbow publish
 longbow yank VERSION
@@ -266,6 +269,14 @@ longbow yank VERSION
 `latest` is accepted as a command-line convenience for `add` and is normalized
 to the stable-version `*` requirement in `longbow.toml`. Resolution still
 records one exact immutable version and checksum in `longbow.lock`.
+
+`longbow login` starts the registry's device authorization flow. The developer
+signs in or registers with GitHub or Google in a browser, approves the displayed
+code, and receives a separate revocable Flecha registry token. Provider access
+tokens are never used as package credentials. Owner membership is evaluated by
+the registry on each mutation, so claiming an owner or changing a role takes
+effect without issuing another CLI token. CI may continue supplying
+`LONGBOW_TOKEN` directly.
 
 Resolution and fetch are separate internally even when `build`, `check`,
 `test`, or `run` invokes both. Diagnostics identify whether failure came from

@@ -211,6 +211,9 @@ longbow add OWNER/PACKAGE@REQUIREMENT [--as ALIAS]
 longbow remove ALIAS
 longbow fetch [PROJECT]
 longbow update [ALIAS]
+longbow login
+longbow logout
+longbow whoami
 longbow publish [PROJECT] [--dry-run]
 longbow yank VERSION
 longbow check|build|run|clean [PROJECT]

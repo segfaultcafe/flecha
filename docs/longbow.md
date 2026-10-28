@@ -66,8 +66,11 @@ module declaration, so `math-tools` uses `src/math_tools.fl` and declares
 | `longbow remove ALIAS` | Remove one dependency from the manifest |
 | `longbow fetch [PROJECT]` | Resolve, verify, cache, and lock dependencies without compiling |
 | `longbow update [ALIAS]` | Re-resolve all registry dependencies, or one selected alias, outside its previous lock |
+| `longbow login` | Authorize this machine through GitHub or Google in the browser and store a revocable registry credential |
+| `longbow whoami` | Show the account associated with the active registry credential |
+| `longbow logout` | Revoke the active registry credential and remove it locally |
 | `longbow publish [PROJECT] --dry-run` | Validate and list the normalized source archive without uploading |
-| `longbow publish [PROJECT]` | Publish the immutable version using `LONGBOW_TOKEN` |
+| `longbow publish [PROJECT]` | Publish the immutable version using the logged-in account or `LONGBOW_TOKEN` |
 | `longbow yank VERSION` | Prevent new selection of a published version while preserving locked builds |
 | `longbow check [PROJECT]` | Load and check source and its reachable imports without emitting artifacts |
 | `longbow build [PROJECT]` | Compile a program, or emit a host-native object for a library |
@@ -83,8 +86,14 @@ language entry-point signatures do not yet expose command-line arguments to
 Flecha code. Existing `.gitignore` files are preserved by `init`.
 
 Registry traffic uses `https://registry.flecha-lang.org/v1` by default. Set
-`LONGBOW_REGISTRY` to select a development endpoint and `LONGBOW_TOKEN` for
-publish/yank authorization. HTTPS requests use the platform `curl` executable;
+`LONGBOW_REGISTRY` to select a development endpoint. `longbow login` uses a
+short-lived device code: approve it at `packages.flecha-lang.org` with GitHub
+or Google, then Longbow stores the resulting Flecha registry token in the
+user's configuration directory with owner-only permissions. `LONGBOW_TOKEN`
+overrides the stored token for CI and release automation; `LONGBOW_TOKEN_FILE`
+overrides the credential path for managed installations and tests.
+
+HTTPS requests use the platform `curl` executable;
 bearer tokens are passed through an owner-only temporary header file rather
 than command-line arguments. Registry access remains entirely in Longbow.
 
