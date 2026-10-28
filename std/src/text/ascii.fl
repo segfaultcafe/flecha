@@ -1,0 +1,60 @@
+module ascii;
+
+export bool is_ascii(char value) {
+    u8 byte = value;
+    return byte <= 127;
+}
+
+export bool is_ascii_alphabetic(char value) {
+    u8 byte = value;
+    return (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122);
+}
+
+export bool is_ascii_alphanumeric(char value) {
+    return is_ascii_alphabetic(value) or is_ascii_digit(value);
+}
+
+export bool is_ascii_digit(char value) {
+    u8 byte = value;
+    return byte >= 48 and byte <= 57;
+}
+
+export bool is_ascii_hex_digit(char value) {
+    u8 byte = value;
+    return is_ascii_digit(value) or
+        (byte >= 65 and byte <= 70) or
+        (byte >= 97 and byte <= 102);
+}
+
+export bool is_ascii_whitespace(char value) {
+    u8 byte = value;
+    return byte == 32 or (byte >= 9 and byte <= 13);
+}
+
+export bool is_ascii_control(char value) {
+    u8 byte = value;
+    return byte <= 31 or byte == 127;
+}
+
+export bool is_ascii_printable(char value) {
+    u8 byte = value;
+    return byte >= 32 and byte <= 126;
+}
+
+export char to_ascii_lowercase(char value) {
+    u8 byte = value;
+    if byte >= 65 and byte <= 90 {
+        return (byte + 32).cast<char>;
+    }
+
+    return value;
+}
+
+export char to_ascii_uppercase(char value) {
+    u8 byte = value;
+    if byte >= 97 and byte <= 122 {
+        return (byte - 32).cast<char>;
+    }
+
+    return value;
+}

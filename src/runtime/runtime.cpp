@@ -99,6 +99,22 @@ void flecha_runtime_v1_string_view_check_substr(size_t length, uint32_t start,
     }
 }
 
+int32_t flecha_runtime_v1_string_try_from_bytes(FlechaRuntimeString* output,
+                                                const uint8_t* data,
+                                                size_t length) {
+    *output = {nullptr, 0, 0};
+    if (length == 0) return FLECHA_RUNTIME_STRING_OK;
+    if (length == SIZE_MAX) return FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;
+
+    char* owned = static_cast<char*>(std::malloc(length + 1));
+    if (owned == nullptr) return FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;
+
+    std::memcpy(owned, data, length);
+    owned[length] = '\0';
+    *output = {owned, length, length};
+    return FLECHA_RUNTIME_STRING_OK;
+}
+
 void flecha_runtime_v1_string_from_view(FlechaRuntimeString* output,
                                         const char* data, size_t length) {
     if (length == 0) {

@@ -6,6 +6,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 
 #include "runtime/runtime_abi.h"
@@ -63,6 +64,44 @@ TEST(RuntimeStringTests, EmptyStringNeedsNoAllocation) {
     EXPECT_EQ(empty.length, 0);
     EXPECT_EQ(empty.capacity, 0);
     flecha_runtime_v1_string_destroy(empty.data);
+}
+
+TEST(RuntimeStringTests, TryFromBytesCopiesEmbeddedNulls) {
+    const std::array<std::uint8_t, 4> bytes{'A', 0, 'B', '\n'};
+    FlechaRuntimeString output{};
+
+    EXPECT_EQ(flecha_runtime_v1_string_try_from_bytes(
+                  &output, bytes.data(), bytes.size()),
+              FLECHA_RUNTIME_STRING_OK);
+    ASSERT_NE(output.data, nullptr);
+    EXPECT_EQ(output.length, bytes.size());
+    EXPECT_EQ(output.capacity, bytes.size());
+    EXPECT_EQ(std::memcmp(output.data, bytes.data(), bytes.size()), 0);
+    EXPECT_EQ(output.data[output.length], '\0');
+
+    flecha_runtime_v1_string_destroy(output.data);
+}
+
+TEST(RuntimeStringTests, TryFromBytesAcceptsEmptyNullStorage) {
+    FlechaRuntimeString output{reinterpret_cast<char*>(1), 1, 1};
+
+    EXPECT_EQ(flecha_runtime_v1_string_try_from_bytes(&output, nullptr, 0),
+              FLECHA_RUNTIME_STRING_OK);
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.length, 0);
+    EXPECT_EQ(output.capacity, 0);
+}
+
+TEST(RuntimeStringTests, TryFromBytesRejectsSizeOverflowTransactionally) {
+    const std::uint8_t byte = 'x';
+    FlechaRuntimeString output{reinterpret_cast<char*>(1), 1, 1};
+
+    EXPECT_EQ(flecha_runtime_v1_string_try_from_bytes(
+                  &output, &byte, std::numeric_limits<std::size_t>::max()),
+              FLECHA_RUNTIME_STRING_OUT_OF_MEMORY);
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.length, 0);
+    EXPECT_EQ(output.capacity, 0);
 }
 
 TEST(RuntimeStringTests, ConcatenatesIndependentOwnedStorage) {

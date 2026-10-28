@@ -1,0 +1,157 @@
+module utf8;
+
+@imports :: root::text::errors;
+
+// Returns none when every byte belongs to a valid UTF-8 sequence.
+export error validate(stringv value) {
+    usize offset = 0;
+    const usize LENGTH = value.len().cast<usize>;
+
+    while offset < LENGTH {
+        _, nextOffset, err := decode(value, offset);
+        if err != none {
+            return err;
+        }
+
+        offset = nextOffset;
+    }
+
+    return none;
+}
+
+// Decodes the code point beginning at offset.
+// On success, nextOffset points immediately after the decoded sequence.
+export (u32, usize, error) decode(stringv value, usize offset) {
+    const usize LENGTH = value.len().cast<usize>;
+    if offset >= LENGTH {
+        return (none, none, errors::Utf8Error.InvalidOffset);
+    }
+
+    const u8 FIRST = value[offset.cast<u32>];
+    if FIRST <= 127 {
+        return (FIRST.cast<u32>, offset + 1, none);
+    }
+
+    if FIRST >= 194 and FIRST <= 223 {
+        if LENGTH - offset < 2 {
+            return (none, none, errors::Utf8Error.Truncated);
+        }
+
+        const u8 SECOND = value[(offset + 1).cast<u32>];
+        if !is_continuation(SECOND) {
+            return (none, none, errors::Utf8Error.InvalidEncoding);
+        }
+
+        u32 codePoint = (FIRST & 31).cast<u32> << 6;
+        codePoint = codePoint | (SECOND & 63).cast<u32>;
+        return (codePoint, offset + 2, none);
+    }
+
+    if FIRST >= 224 and FIRST <= 239 {
+        if LENGTH - offset < 3 {
+            return (none, none, errors::Utf8Error.Truncated);
+        }
+
+        const u8 SECOND = value[(offset + 1).cast<u32>];
+        const u8 THIRD = value[(offset + 2).cast<u32>];
+        if !is_continuation(SECOND) or !is_continuation(THIRD) {
+            return (none, none, errors::Utf8Error.InvalidEncoding);
+        }
+        if (FIRST == 224 and SECOND < 160) or
+            (FIRST == 237 and SECOND > 159) {
+            return (none, none, errors::Utf8Error.InvalidEncoding);
+        }
+
+        u32 codePoint = (FIRST & 15).cast<u32> << 12;
+        codePoint = codePoint | ((SECOND & 63).cast<u32> << 6);
+        codePoint = codePoint | (THIRD & 63).cast<u32>;
+        return (codePoint, offset + 3, none);
+    }
+
+    if FIRST >= 240 and FIRST <= 244 {
+        if LENGTH - offset < 4 {
+            return (none, none, errors::Utf8Error.Truncated);
+        }
+
+        const u8 SECOND = value[(offset + 1).cast<u32>];
+        const u8 THIRD = value[(offset + 2).cast<u32>];
+        const u8 FOURTH = value[(offset + 3).cast<u32>];
+        if !is_continuation(SECOND) or !is_continuation(THIRD) or
+            !is_continuation(FOURTH) {
+            return (none, none, errors::Utf8Error.InvalidEncoding);
+        }
+        if (FIRST == 240 and SECOND < 144) or
+            (FIRST == 244 and SECOND > 143) {
+            return (none, none, errors::Utf8Error.InvalidEncoding);
+        }
+
+        u32 codePoint = (FIRST & 7).cast<u32> << 18;
+        codePoint = codePoint | ((SECOND & 63).cast<u32> << 12);
+        codePoint = codePoint | ((THIRD & 63).cast<u32> << 6);
+        codePoint = codePoint | (FOURTH & 63).cast<u32>;
+        return (codePoint, offset + 4, none);
+    }
+
+    return (none, none, errors::Utf8Error.InvalidEncoding);
+}
+
+// Counts Unicode code points after validating the complete input.
+export (usize, error) count_code_points(stringv value) {
+    usize count = 0;
+    usize offset = 0;
+    const usize LENGTH = value.len().cast<usize>;
+
+    while offset < LENGTH {
+        _, nextOffset, err := decode(value, offset);
+        if err != none {
+            return (none, err);
+        }
+
+        count++;
+        offset = nextOffset;
+    }
+
+    return (count, none);
+}
+
+// Encodes one Unicode scalar value into the first length bytes.
+// Rejects surrogates and values above U+10FFFF.
+export ([4]u8, usize, error) encode(u32 codePoint) {
+    [4]u8 encoded = none;
+
+    if codePoint <= 127 {
+        encoded[0] = codePoint.cast<u8>;
+        return (encoded, 1, none);
+    }
+
+    if codePoint <= 2047 {
+        encoded[0] = ((codePoint >> 6) | 192).cast<u8>;
+        encoded[1] = ((codePoint & 63) | 128).cast<u8>;
+        return (encoded, 2, none);
+    }
+
+    if codePoint >= 55296 and codePoint <= 57343 {
+        return (none, none, errors::Utf8Error.InvalidCodePoint);
+    }
+
+    if codePoint <= 65535 {
+        encoded[0] = ((codePoint >> 12) | 224).cast<u8>;
+        encoded[1] = (((codePoint >> 6) & 63) | 128).cast<u8>;
+        encoded[2] = ((codePoint & 63) | 128).cast<u8>;
+        return (encoded, 3, none);
+    }
+
+    if codePoint <= 1114111 {
+        encoded[0] = ((codePoint >> 18) | 240).cast<u8>;
+        encoded[1] = (((codePoint >> 12) & 63) | 128).cast<u8>;
+        encoded[2] = (((codePoint >> 6) & 63) | 128).cast<u8>;
+        encoded[3] = ((codePoint & 63) | 128).cast<u8>;
+        return (encoded, 4, none);
+    }
+
+    return (none, none, errors::Utf8Error.InvalidCodePoint);
+}
+
+bool is_continuation(u8 value) {
+    return value >= 128 and value <= 191;
+}

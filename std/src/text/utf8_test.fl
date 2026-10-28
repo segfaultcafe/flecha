@@ -1,0 +1,278 @@
+module utf8_test;
+
+@imports
+    :: root::text::utf8
+    :: root::text::strings
+    :: root::text::errors as text_errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test utf8_decodes_every_sequence_length(&testing::UnitTest t) {
+    [10]u8 bytes = [
+        65,
+        194, 162,
+        226, 130, 172,
+        240, 159, 152, 128,
+    ];
+    text := strings::stringv_from_bytes(bytes[:]);
+
+    ascii, afterAscii, asciiError := utf8::decode(text, 0);
+    twoByte, afterTwoByte, twoByteError := utf8::decode(text, afterAscii);
+    threeByte, afterThreeByte, threeByteError :=
+        utf8::decode(text, afterTwoByte);
+    fourByte, afterFourByte, fourByteError :=
+        utf8::decode(text, afterThreeByte);
+
+    asserts::is_true(
+        t,
+        asciiError == none and ascii == 65 and afterAscii == 1,
+        "decode reads a one-byte code point"
+    );
+    asserts::is_true(
+        t,
+        twoByteError == none and twoByte == 162 and afterTwoByte == 3,
+        "decode reads a two-byte code point"
+    );
+    asserts::is_true(
+        t,
+        threeByteError == none and threeByte == 8364 and afterThreeByte == 6,
+        "decode reads a three-byte code point"
+    );
+    asserts::is_true(
+        t,
+        fourByteError == none and fourByte == 128512 and afterFourByte == 10,
+        "decode reads a four-byte code point"
+    );
+}
+
+test utf8_validates_and_counts_complete_text(&testing::UnitTest t) {
+    [10]u8 bytes = [
+        65,
+        194, 162,
+        226, 130, 172,
+        240, 159, 152, 128,
+    ];
+    text := strings::stringv_from_bytes(bytes[:]);
+    count, countError := utf8::count_code_points(text);
+    emptyCount, emptyError := utf8::count_code_points("");
+
+    asserts::is_true(t, utf8::validate(text) == none, "valid UTF-8 passes");
+    asserts::is_true(t, utf8::validate("") == none, "empty text is valid");
+    asserts::is_true(
+        t,
+        countError == none and count == 4,
+        "count_code_points counts decoded values rather than bytes"
+    );
+    asserts::is_true(
+        t,
+        emptyError == none and emptyCount == 0,
+        "empty text contains no code points"
+    );
+}
+
+test utf8_rejects_invalid_leads_continuations_and_overlongs(
+    &testing::UnitTest t
+) {
+    [1]u8 continuation = [128];
+    [2]u8 overlongTwo = [192, 128];
+    [3]u8 badContinuation = [226, 40, 161];
+    [3]u8 overlongThree = [224, 128, 128];
+    [4]u8 overlongFour = [240, 128, 128, 128];
+
+    continuationError := utf8::validate(
+        strings::stringv_from_bytes(continuation[:])
+    );
+    overlongTwoError := utf8::validate(
+        strings::stringv_from_bytes(overlongTwo[:])
+    );
+    badContinuationError := utf8::validate(
+        strings::stringv_from_bytes(badContinuation[:])
+    );
+    overlongThreeError := utf8::validate(
+        strings::stringv_from_bytes(overlongThree[:])
+    );
+    overlongFourError := utf8::validate(
+        strings::stringv_from_bytes(overlongFour[:])
+    );
+
+    asserts::is_true(
+        t,
+        continuationError == text_errors::Utf8Error.InvalidEncoding,
+        "a continuation byte cannot begin a code point"
+    );
+    asserts::is_true(
+        t,
+        overlongTwoError == text_errors::Utf8Error.InvalidEncoding,
+        "two-byte overlong encodings are rejected"
+    );
+    asserts::is_true(
+        t,
+        badContinuationError == text_errors::Utf8Error.InvalidEncoding,
+        "non-continuation bytes are rejected"
+    );
+    asserts::is_true(
+        t,
+        overlongThreeError == text_errors::Utf8Error.InvalidEncoding,
+        "three-byte overlong encodings are rejected"
+    );
+    asserts::is_true(
+        t,
+        overlongFourError == text_errors::Utf8Error.InvalidEncoding,
+        "four-byte overlong encodings are rejected"
+    );
+}
+
+test utf8_rejects_surrogates_and_values_above_unicode(
+    &testing::UnitTest t
+) {
+    [3]u8 surrogate = [237, 160, 128];
+    [4]u8 aboveUnicode = [244, 144, 128, 128];
+
+    surrogateError := utf8::validate(
+        strings::stringv_from_bytes(surrogate[:])
+    );
+    aboveUnicodeError := utf8::validate(
+        strings::stringv_from_bytes(aboveUnicode[:])
+    );
+
+    asserts::is_true(
+        t,
+        surrogateError == text_errors::Utf8Error.InvalidEncoding,
+        "UTF-8 encodings of surrogate values are rejected"
+    );
+    asserts::is_true(
+        t,
+        aboveUnicodeError == text_errors::Utf8Error.InvalidEncoding,
+        "UTF-8 values above U+10FFFF are rejected"
+    );
+}
+
+test utf8_distinguishes_truncation_and_invalid_offsets(
+    &testing::UnitTest t
+) {
+    [2]u8 truncatedThree = [226, 130];
+    [3]u8 truncatedFour = [240, 159, 152];
+    threeText := strings::stringv_from_bytes(truncatedThree[:]);
+    fourText := strings::stringv_from_bytes(truncatedFour[:]);
+
+    _, _, threeError := utf8::decode(threeText, 0);
+    _, _, fourError := utf8::decode(fourText, 0);
+    _, _, endError := utf8::decode(threeText, 2);
+    _, _, beyondError := utf8::decode(threeText, 3);
+
+    asserts::is_true(
+        t,
+        threeError == text_errors::Utf8Error.Truncated,
+        "a missing third byte reports truncation"
+    );
+    asserts::is_true(
+        t,
+        fourError == text_errors::Utf8Error.Truncated,
+        "a missing fourth byte reports truncation"
+    );
+    asserts::is_true(
+        t,
+        endError == text_errors::Utf8Error.InvalidOffset,
+        "the end offset does not begin a code point"
+    );
+    asserts::is_true(
+        t,
+        beyondError == text_errors::Utf8Error.InvalidOffset,
+        "an offset beyond the input is rejected"
+    );
+}
+
+test utf8_count_propagates_validation_errors(&testing::UnitTest t) {
+    [3]u8 bytes = [65, 226, 130];
+    count, err := utf8::count_code_points(
+        strings::stringv_from_bytes(bytes[:])
+    );
+
+    asserts::is_true(t, count == 0, "a failed count returns the zero value");
+    asserts::is_true(
+        t,
+        err == text_errors::Utf8Error.Truncated,
+        "count_code_points propagates the decoding failure"
+    );
+}
+
+test utf8_encodes_each_sequence_length(&testing::UnitTest t) {
+    one, oneLength, oneError := utf8::encode(65);
+    two, twoLength, twoError := utf8::encode(162);
+    three, threeLength, threeError := utf8::encode(8364);
+    four, fourLength, fourError := utf8::encode(128512);
+
+    asserts::is_true(
+        t,
+        oneError == none and oneLength == 1 and one[0] == 65,
+        "encode writes a one-byte code point"
+    );
+    asserts::is_true(
+        t,
+        twoError == none and twoLength == 2 and
+            two[0] == 194 and two[1] == 162,
+        "encode writes a two-byte code point"
+    );
+    asserts::is_true(
+        t,
+        threeError == none and threeLength == 3 and
+            three[0] == 226 and three[1] == 130 and three[2] == 172,
+        "encode writes a three-byte code point"
+    );
+    asserts::is_true(
+        t,
+        fourError == none and fourLength == 4 and
+            four[0] == 240 and four[1] == 159 and
+            four[2] == 152 and four[3] == 128,
+        "encode writes a four-byte code point"
+    );
+}
+
+test utf8_round_trips_scalar_boundaries(&testing::UnitTest t) {
+    [10]u32 codePoints = [
+        0, 127, 128, 2047, 2048,
+        55295, 57344, 65535, 65536, 1114111,
+    ];
+    bool allMatch = true;
+
+    loop usize index = 0; index < codePoints.len(); index++ {
+        encoded, length, encodeError := utf8::encode(codePoints[index]);
+        if encodeError != none {
+            allMatch = false;
+            proceed;
+        }
+
+        text := strings::stringv_from_bytes(encoded[:length]);
+        decoded, nextOffset, decodeError := utf8::decode(text, 0);
+        allMatch = allMatch and decodeError == none and
+            decoded == codePoints[index] and nextOffset == length;
+    }
+
+    asserts::is_true(
+        t,
+        allMatch,
+        "encoding and decoding round-trip every scalar boundary"
+    );
+}
+
+test utf8_encode_rejects_non_scalar_values(&testing::UnitTest t) {
+    _, _, lowSurrogateError := utf8::encode(55296);
+    _, _, highSurrogateError := utf8::encode(57343);
+    _, _, aboveUnicodeError := utf8::encode(1114112);
+
+    asserts::is_true(
+        t,
+        lowSurrogateError == text_errors::Utf8Error.InvalidCodePoint,
+        "the first surrogate value is not a scalar"
+    );
+    asserts::is_true(
+        t,
+        highSurrogateError == text_errors::Utf8Error.InvalidCodePoint,
+        "the last surrogate value is not a scalar"
+    );
+    asserts::is_true(
+        t,
+        aboveUnicodeError == text_errors::Utf8Error.InvalidCodePoint,
+        "values above U+10FFFF are not scalars"
+    );
+}

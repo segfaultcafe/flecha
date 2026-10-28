@@ -1,0 +1,271 @@
+module strings_test;
+
+@imports
+    :: root::text::strings
+    :: root::text::utf8
+    :: root::text::errors as text_errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test string_builder_init_is_empty_and_uses_no_allocation(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+
+    asserts::is_true(t, value.len() == 0, "StringBuilder starts empty");
+    asserts::is_true(
+        t,
+        value.capacity() == 0,
+        "StringBuilder init does not allocate"
+    );
+}
+
+test string_builder_with_capacity_reserves_storage(&testing::UnitTest t) {
+    value, err := strings::StringBuilder::withCapacity(12);
+
+    asserts::is_true(t, err == none, "StringBuilder allocation succeeds");
+    if err != none {
+        return;
+    }
+
+    asserts::is_true(t, value.len() == 0, "reserved builder remains empty");
+    asserts::is_true(
+        t,
+        value.capacity() == 12,
+        "StringBuilder preserves the requested capacity"
+    );
+}
+
+test string_builder_appends_text_characters_and_bytes(&testing::UnitTest t) {
+    value := strings::StringBuilder::init();
+    textError := value.append("fle");
+    charError := value.appendChar('c');
+    [3]u8 suffix = [104, 0, 97];
+    bytesError := value.appendBytes(suffix[:]);
+
+    asserts::is_true(
+        t,
+        textError == none and charError == none and bytesError == none,
+        "every append operation succeeds"
+    );
+    asserts::is_true(t, value.len() == 7, "appends advance the byte length");
+
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes[0] == 102 and bytes[1] == 108 and bytes[2] == 101 and
+            bytes[3] == 99 and bytes[4] == 104 and bytes[5] == 0 and
+            bytes[6] == 97,
+        "appends preserve byte order including embedded nulls"
+    );
+}
+
+test string_builder_appends_repeated_characters_and_lines(
+    &testing::UnitTest t
+) {
+    value, allocationError := strings::StringBuilder::withCapacity(8);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup builder is constructed");
+        return;
+    }
+
+    prefixError := value.append("ab");
+    repeatError := value.appendRepeated('x', 3);
+    lineError := value.appendLine("123");
+
+    asserts::is_true(
+        t,
+        prefixError == none and repeatError == none and lineError == none,
+        "compound appends succeed"
+    );
+    asserts::is_true(t, value.len() == 9, "compound appends include newline");
+    asserts::is_true(
+        t,
+        value.capacity() >= 9,
+        "appendLine reserves text and newline together"
+    );
+
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes[0] == 97 and bytes[1] == 98 and bytes[2] == 120 and
+            bytes[3] == 120 and bytes[4] == 120 and bytes[5] == 49 and
+            bytes[6] == 50 and bytes[7] == 51 and bytes[8] == 10,
+        "repetition and line appending preserve exact contents"
+    );
+}
+
+test string_builder_compound_appends_handle_empty_inputs(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    repeatError := value.appendRepeated('x', 0);
+    lineError := value.appendLine("");
+
+    asserts::is_true(
+        t,
+        repeatError == none and lineError == none,
+        "empty compound appends succeed"
+    );
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes.len() == 1 and bytes[0] == 10,
+        "an empty line appends only a newline"
+    );
+}
+
+test string_builder_appends_unicode_code_points(&testing::UnitTest t) {
+    value := strings::StringBuilder::init();
+    asciiError := value.appendCodePoint(65);
+    twoByteError := value.appendCodePoint(162);
+    threeByteError := value.appendCodePoint(8364);
+    fourByteError := value.appendCodePoint(128512);
+
+    asserts::is_true(
+        t,
+        asciiError == none and twoByteError == none and
+            threeByteError == none and fourByteError == none,
+        "every Unicode scalar appends successfully"
+    );
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes.len() == 10 and
+            bytes[0] == 65 and bytes[1] == 194 and bytes[2] == 162 and
+            bytes[3] == 226 and bytes[4] == 130 and bytes[5] == 172 and
+            bytes[6] == 240 and bytes[7] == 159 and
+            bytes[8] == 152 and bytes[9] == 128,
+        "code points append their canonical UTF-8 bytes"
+    );
+    asserts::is_true(
+        t,
+        utf8::validate(value.view()) == none,
+        "appended code points form valid UTF-8"
+    );
+}
+
+test string_builder_rejects_invalid_code_points_without_mutation(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    setupError := value.append("kept");
+    const usize ORIGINAL_CAPACITY = value.capacity();
+    surrogateError := value.appendCodePoint(55296);
+    oversizedError := value.appendCodePoint(1114112);
+
+    asserts::is_true(t, setupError == none, "the setup append succeeds");
+    asserts::is_true(
+        t,
+        surrogateError == text_errors::Utf8Error.InvalidCodePoint and
+            oversizedError == text_errors::Utf8Error.InvalidCodePoint,
+        "appendCodePoint rejects values that are not Unicode scalars"
+    );
+    asserts::is_true(
+        t,
+        value.view() == "kept" and value.capacity() == ORIGINAL_CAPACITY,
+        "invalid code points preserve contents and allocation"
+    );
+}
+
+test string_builder_repetition_overflow_preserves_contents(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    setupError := value.appendChar('a');
+    const usize ORIGINAL_CAPACITY = value.capacity();
+    overflowError := value.appendRepeated('x', usize.max_value);
+
+    asserts::is_true(t, setupError == none, "the setup append succeeds");
+    asserts::is_true(
+        t,
+        overflowError == AllocationError.OutOfMemory,
+        "capacity overflow reports allocation failure"
+    );
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        value.len() == 1 and value.capacity() == ORIGINAL_CAPACITY and
+            bytes[0] == 97,
+        "overflow preserves length capacity and contents"
+    );
+}
+
+test string_builder_reserve_and_clear_preserve_allocation(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    appendError := value.append("flecha");
+    reserveError := value.reserve(32);
+
+    asserts::is_true(
+        t,
+        appendError == none and reserveError == none,
+        "append and reserve succeed"
+    );
+    asserts::is_true(
+        t,
+        value.len() == 6 and value.capacity() == 32,
+        "reserve retains accumulated bytes"
+    );
+
+    value.clear();
+    asserts::is_true(t, value.empty(), "clear makes the builder empty");
+    asserts::is_true(t, value.len() == 0, "clear resets the byte length");
+    asserts::is_true(t, value.capacity() == 32, "clear retains allocation");
+}
+
+test string_builder_borrows_accumulated_text(&testing::UnitTest t) {
+    value := strings::StringBuilder::init();
+    appendError := value.append("flecha");
+
+    asserts::is_true(t, appendError == none, "the setup append succeeds");
+    text := value.view();
+    asserts::is_true(t, text == "flecha", "view borrows the accumulated text");
+    asserts::is_true(t, text.len() == 6, "view preserves the byte length");
+}
+
+test string_builder_copies_an_independent_owning_string(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    appendError := value.append("flecha");
+    text, copyError := value.asString();
+
+    asserts::is_true(
+        t,
+        appendError == none and copyError == none,
+        "builder text copy succeeds"
+    );
+    if copyError != none {
+        return;
+    }
+
+    value.clear();
+    replacementError := value.append("arrow");
+    asserts::is_true(t, replacementError == none, "builder remains reusable");
+    asserts::is_true(
+        t,
+        text == "flecha",
+        "owned copy is independent of builder"
+    );
+    asserts::is_true(
+        t,
+        value.view() == "arrow",
+        "builder stores replacement text"
+    );
+}
+
+test string_builder_copies_empty_text_without_allocation(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    text, err := value.asString();
+
+    asserts::is_true(t, err == none, "empty string copy succeeds");
+    asserts::is_true(
+        t,
+        text.len() == 0,
+        "empty builder produces an empty string"
+    );
+}

@@ -1719,6 +1719,28 @@ TEST(SemanticStringTests, SupportsOwningConversionsAndLiteralMembers) {
         SemanticTypeKind::StringView);
 }
 
+TEST(SemanticStringTests, CastsBorrowedByteSlicesToStringViews) {
+    Analysis valid = Analyze(
+        "stringv view([]const u8 bytes) <-bytes { "
+        "return bytes.cast<stringv>; }");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis mutableSlice = Analyze(
+        "stringv view([]u8 bytes) <-bytes { return bytes.cast<stringv>; }");
+    EXPECT_FALSE(mutableSlice.diagnostics.HasErrors());
+
+    Analysis wrongElement =
+        Analyze("void bad([]const i8 bytes) { bytes.cast<stringv>; }");
+    EXPECT_NE(FindDiagnostic(wrongElement, DiagnosticCode::InvalidCast),
+              nullptr);
+
+    Analysis missingContract = Analyze(
+        "stringv bad([]const u8 bytes) { return bytes.cast<stringv>; }");
+    EXPECT_NE(
+        FindDiagnostic(missingContract, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+}
+
 TEST(SemanticStringTests, FormatsScalarsOnlyAsOwningStrings) {
     Analysis valid = Analyze(
         "void Main() { integer := 42.string(); decimal := 1.5.string(); "
@@ -2027,6 +2049,32 @@ TEST(SemanticCastTests, AllowsSameTypeCastsInBothForms) {
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
+TEST(SemanticCastTests, AllowsExplicitCastsBetweenBytesAndCharacters) {
+    Analysis analysis = Analyze(
+        "i32 main() { u8 byte = 65; character := byte.cast<char>; "
+        "roundTrip := character.cast<u8>; return roundTrip as i32; }");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    const FunctionDeclaration& function = FunctionAt(analysis, 0);
+    EXPECT_EQ(
+        analysis.model.DeclaredSymbol(VariableAt(function, 1))->Type().Kind(),
+        SemanticTypeKind::Char);
+    EXPECT_EQ(
+        analysis.model.DeclaredSymbol(VariableAt(function, 2))->Type().Kind(),
+        SemanticTypeKind::U8);
+}
+
+TEST(SemanticCastTests, RestrictsCharacterCastsToBytes) {
+    Analysis fromSignedByte =
+        Analyze("void Test() { i8 byte = 65; value := byte.cast<char>; }");
+    Analysis toSignedByte = Analyze("void Test() { value := 'A'.cast<i8>; }");
+
+    EXPECT_NE(FindDiagnostic(fromSignedByte, DiagnosticCode::InvalidCast),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(toSignedByte, DiagnosticCode::InvalidCast),
+              nullptr);
+}
+
 TEST(SemanticCastTests, RejectsNonNumericCasts) {
     Analysis analysis =
         Analyze("i32 main() { value := true.cast<i32>; return 0; }");
@@ -2037,6 +2085,12 @@ TEST(SemanticCastTests, RejectsNonNumericCasts) {
 TEST(SemanticCastTests, CentralizesExtensibleExplicitCastPolicy) {
     EXPECT_TRUE(CanExplicitlyCast(SemanticType(SemanticTypeKind::I32),
                                   SemanticType(SemanticTypeKind::F64)));
+    EXPECT_TRUE(CanExplicitlyCast(SemanticType(SemanticTypeKind::U8),
+                                  SemanticType(SemanticTypeKind::Char)));
+    EXPECT_TRUE(CanExplicitlyCast(SemanticType(SemanticTypeKind::Char),
+                                  SemanticType(SemanticTypeKind::U8)));
+    EXPECT_FALSE(CanExplicitlyCast(SemanticType(SemanticTypeKind::I8),
+                                   SemanticType(SemanticTypeKind::Char)));
     EXPECT_FALSE(CanExplicitlyCast(SemanticType(SemanticTypeKind::StringView),
                                    SemanticType(SemanticTypeKind::I32)));
 }

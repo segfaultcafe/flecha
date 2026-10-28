@@ -482,8 +482,17 @@ bool CanReborrow(SemanticType destination, SemanticType source) {
 
 bool CanExplicitlyCast(SemanticType source, SemanticType destination) {
     if (source.IsError() || destination.IsError()) return true;
+    if (source.Kind() == SemanticTypeKind::Slice &&
+        source.Target()->WithoutConst().Kind() == SemanticTypeKind::U8 &&
+        destination.Kind() == SemanticTypeKind::StringView)
+        return true;
     if (source.IsCompound() || destination.IsCompound()) return false;
     if (source.WithoutConst() == destination.WithoutConst()) return true;
+    if ((source.Kind() == SemanticTypeKind::U8 &&
+         destination.Kind() == SemanticTypeKind::Char) ||
+        (source.Kind() == SemanticTypeKind::Char &&
+         destination.Kind() == SemanticTypeKind::U8))
+        return true;
     if ((source.Kind() == SemanticTypeKind::StringView &&
          destination.Kind() == SemanticTypeKind::String) ||
         (source.Kind() == SemanticTypeKind::String &&
