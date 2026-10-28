@@ -60,6 +60,132 @@ test string_builder_appends_text_characters_and_bytes(&testing::UnitTest t) {
     );
 }
 
+test string_builder_appends_integers_and_booleans(&testing::UnitTest t) {
+    value := strings::StringBuilder::init();
+
+    prefixError := value.append("values=");
+    decimalError := value.appendInteger<i32>(-42);
+    firstSeparatorError := value.appendChar(',');
+    hexError := value.appendInteger<u16>(255, 16);
+    secondSeparatorError := value.appendChar(',');
+    trueError := value.appendBool(true);
+    thirdSeparatorError := value.appendChar(',');
+    falseError := value.appendBool(false);
+
+    asserts::is_true(
+        t,
+        prefixError == none and decimalError == none and
+            firstSeparatorError == none and hexError == none and
+            secondSeparatorError == none and trueError == none and
+            thirdSeparatorError == none and falseError == none,
+        "integer and boolean appends succeed"
+    );
+    asserts::is_true(
+        t,
+        value.view() == "values=-42,ff,true,false",
+        "integer bases and boolean spellings append exactly"
+    );
+}
+
+test string_builder_appends_integer_boundaries(&testing::UnitTest t) {
+    value := strings::StringBuilder::init();
+
+    minimumError := value.appendInteger<i64>(i64.min_value);
+    separatorError := value.appendChar('|');
+    maximumError := value.appendInteger<u64>(u64.max_value, 2);
+
+    asserts::is_true(
+        t,
+        minimumError == none and separatorError == none and
+            maximumError == none,
+        "integer boundary appends succeed"
+    );
+    asserts::is_true(
+        t,
+        value.view() ==
+            "-9223372036854775808|1111111111111111111111111111111111111111111111111111111111111111",
+        "integer boundaries retain every digit"
+    );
+}
+
+test string_builder_invalid_integer_base_preserves_contents(
+    &testing::UnitTest t
+) {
+    value := strings::StringBuilder::init();
+    setupError := value.append("kept");
+    formatError := value.appendInteger<i32>(42, 1);
+
+    asserts::is_true(t, setupError == none, "the setup append succeeds");
+    asserts::is_true(
+        t,
+        formatError == text_errors::FormatError.InvalidBase,
+        "invalid integer bases report the formatting error"
+    );
+    asserts::is_true(
+        t,
+        value.view() == "kept",
+        "invalid integer bases preserve builder contents"
+    );
+}
+
+test integer_text_conversion_handles_bases_and_boundaries(
+    &testing::UnitTest t
+) {
+    hexadecimal, formatError := strings::int_to_string(-255, 16);
+    minimum, minimumError :=
+        strings::stringv_to_int<i64>("-9223372036854775808");
+    maximum, maximumError :=
+        strings::stringv_to_int<u64>("18446744073709551615");
+
+    asserts::is_true(
+        t,
+        formatError == none and hexadecimal == "-ff",
+        "integer formatting supports signed non-decimal values"
+    );
+    asserts::is_true(
+        t,
+        minimumError == none and minimum == i64.min_value,
+        "integer parsing accepts the signed minimum"
+    );
+    asserts::is_true(
+        t,
+        maximumError == none and maximum == u64.max_value,
+        "integer parsing accepts the unsigned maximum"
+    );
+}
+
+test integer_text_conversion_reports_invalid_input(
+    &testing::UnitTest t
+) {
+    _, baseError := strings::int_to_string(42, 1);
+    _, emptyError := strings::stringv_to_int<i32>("");
+    _, syntaxError := strings::stringv_to_int<i32>("12x");
+    _, signError := strings::stringv_to_int<u32>("-1");
+    _, overflowError := strings::stringv_to_int<i8>("128");
+
+    asserts::is_true(
+        t,
+        baseError == text_errors::FormatError.InvalidBase,
+        "invalid formatting bases are rejected"
+    );
+    asserts::is_true(
+        t,
+        emptyError == text_errors::ParseError.Empty,
+        "empty integer text is rejected"
+    );
+    asserts::is_true(
+        t,
+        syntaxError == text_errors::ParseError.InvalidSyntax and
+            signError == text_errors::ParseError.InvalidSyntax,
+        "invalid digits and unsigned signs are rejected"
+    );
+    asserts::is_true(
+        t,
+        overflowError == text_errors::ParseError.Overflow,
+        "integer parsing reports target-width overflow"
+    );
+}
+
 test string_builder_appends_repeated_characters_and_lines(
     &testing::UnitTest t
 ) {

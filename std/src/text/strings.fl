@@ -57,6 +57,31 @@ error StringBuilder::appendBytes(&self, []const u8 value) {
     return self->storage.write(value);
 }
 
+// Appends value using lowercase digits in a base from 2 through 36.
+// Invalid bases and allocation failures preserve the builder contents.
+error StringBuilder::appendInteger<T: integer>(
+    &self,
+    T value,
+    u8 base = 10,
+) {
+    [65]u8 formatted = none;
+    written, formatError := format_integer(formatted[:], value, base);
+    if formatError != none {
+        return formatError;
+    }
+
+    return self->storage.write(formatted[:written]);
+}
+
+// Appends "true" or "false".
+error StringBuilder::appendBool(&self, bool value) {
+    if value {
+        return self->storage.writeString("true");
+    }
+
+    return self->storage.writeString("false");
+}
+
 // Appends value the requested number of times, preserving contents on failure.
 error StringBuilder::appendRepeated(&self, char value, usize times) {
     err := self->reserveAdditional(times);

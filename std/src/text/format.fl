@@ -1,0 +1,84 @@
+module strings;
+
+@imports :: root::text::errors;
+
+const u8 MINUS = 45;
+
+export (string, error) int_to_string<T: integer>(T value, u8 base = 10) {
+    [65]u8 storage = none;
+    written, formatErr := format_integer(storage[:], value, base);
+    if formatErr != none {
+        return (none, formatErr);
+    }
+
+    return string_from_bytes(storage[:written]);
+}
+
+// Formats value using lowercase digits in a base from 2 through 36.
+// Failure leaves destination unchanged.
+export (usize, error) format_integer<T: integer>(
+    []u8 destination,
+    T value,
+    u8 base = 10,
+) {
+    if base < 2 or base > 36 {
+        return (none, errors::FormatError.InvalidBase);
+    }
+
+    bool negative = false;
+    u64 magnitude = value.cast<u64>;
+    i64 signedValue = none;
+
+    if T.isof<signed_integer> {
+        signedValue = value.cast<i64>;
+    } also signedValue < 0 {
+        negative = true;
+
+        // Avoid overflowing when signedValue == i64.min_value.
+        magnitude = (-(signedValue + 1)).cast<u64> + 1;
+    }
+
+    const u64 RADIX = base.cast<u64>;
+    u64 remaining = magnitude;
+    usize digitCount = 1;
+
+    while remaining >= RADIX {
+        remaining /= RADIX;
+        digitCount++;
+    }
+
+    usize required = digitCount;
+    if negative {
+        required++;
+    }
+
+    if destination.len() < required {
+        return (none, errors::FormatError.InsufficientSpace);
+    }
+
+    remaining = magnitude;
+    usize position = required;
+    usize digitsRemaining = digitCount;
+
+    while digitsRemaining > 0 {
+        position--;
+        const u8 DIGIT = (remaining % RADIX).cast<u8>;
+        destination[position] = digit_byte(DIGIT);
+        remaining /= RADIX;
+        digitsRemaining--;
+    }
+
+    if negative {
+        destination[0] = MINUS;
+    }
+
+    return (required, none);
+}
+
+u8 digit_byte(u8 digit) {
+    if digit < 10 {
+        return digit + 48;
+    }
+
+    return digit + 87;
+}
