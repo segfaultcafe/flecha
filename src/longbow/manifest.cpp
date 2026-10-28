@@ -667,6 +667,17 @@ Manifest ReadManifest(const fs::path& directory) {
                     throw std::runtime_error(
                         "Git dependency '" + key +
                         "' requires only nonempty git and rev fields");
+                if ((dependency.revision->size() != 40 &&
+                     dependency.revision->size() != 64) ||
+                    !std::all_of(dependency.revision->begin(),
+                                 dependency.revision->end(), [](char value) {
+                                     return (value >= '0' && value <= '9') ||
+                                            (value >= 'a' && value <= 'f') ||
+                                            (value >= 'A' && value <= 'F');
+                                 }))
+                    throw std::runtime_error(
+                        "Git dependency '" + key +
+                        "' rev must be a full 40- or 64-digit commit hash");
                 dependency.kind = DependencyKind::Git;
             } else if (dependency.package || dependency.version) {
                 if (!dependency.package || !dependency.version ||

@@ -1,6 +1,8 @@
 #include <llvm/Support/Program.h>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -8,16 +10,20 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/parser.hpp"
 #include "core/tokenizer.hpp"
 #include "flecha/version.hpp"
+#include "longbow/cache.hpp"
 #include "longbow/manifest.hpp"
 #include "longbow/resolver.hpp"
+#include "longbow/sha256.hpp"
 
 #ifndef FLECHA_EXECUTABLE_SUFFIX
 #define FLECHA_EXECUTABLE_SUFFIX ""
@@ -101,17 +107,225 @@ fs::path ProjectRoot(const std::optional<fs::path>& requested) {
     throw std::runtime_error(
         "no longbow.toml found in this directory or its parents");
 }
-int Execute(const std::vector<std::string>& arguments) {
+int Execute(const std::vector<std::string>& arguments,
+            const std::optional<fs::path>& output = std::nullopt) {
     std::vector<llvm::StringRef> refs;
     for (const auto& argument : arguments) refs.emplace_back(argument);
     std::string error;
     bool failed = false;
+    std::string outputName;
+    std::array<std::optional<llvm::StringRef>, 3> redirects;
+    llvm::ArrayRef<std::optional<llvm::StringRef>> redirectView;
+    if (output) {
+        outputName = output->string();
+        redirects = {std::nullopt, llvm::StringRef(outputName), std::nullopt};
+        redirectView = redirects;
+    }
     const int status = llvm::sys::ExecuteAndWait(
-        arguments[0], refs, std::nullopt, {}, 0, 0, &error, &failed);
+        arguments[0], refs, std::nullopt, redirectView, 0, 0, &error, &failed);
     if (failed)
         throw std::runtime_error("cannot execute " + arguments[0] + ": " +
                                  error);
     return status < 0 ? 1 : status;
+}
+std::string ReadFile(const fs::path& file) {
+    std::ifstream stream(file, std::ios::binary);
+    if (!stream) throw std::runtime_error("cannot read " + file.string());
+    return {std::istreambuf_iterator<char>(stream),
+            std::istreambuf_iterator<char>()};
+}
+class TemporaryDirectory final {
+   public:
+    explicit TemporaryDirectory(const fs::path& parent) {
+        fs::create_directories(parent);
+        for (unsigned attempt = 0; attempt != 100; ++attempt) {
+            _path = parent /
+                    ("git-" +
+                     std::to_string(std::chrono::high_resolution_clock::now()
+                                        .time_since_epoch()
+                                        .count()) +
+                     "-" + std::to_string(attempt));
+            std::error_code error;
+            if (fs::create_directory(_path, error)) return;
+            if (error && error != std::errc::file_exists)
+                throw std::runtime_error("cannot create Git staging directory: " +
+                                         error.message());
+        }
+        throw std::runtime_error("cannot allocate Git staging directory");
+    }
+    ~TemporaryDirectory() {
+        std::error_code ignored;
+        fs::remove_all(_path, ignored);
+    }
+    TemporaryDirectory(const TemporaryDirectory&) = delete;
+    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
+    [[nodiscard]] const fs::path& Path() const { return _path; }
+
+   private:
+    fs::path _path;
+};
+std::string GitExecutable() {
+    const auto git = llvm::sys::findProgramByName("git");
+    if (!git)
+        throw std::runtime_error(
+            "cannot fetch Git dependency because git is not installed");
+    return *git;
+}
+void RequireGit(const std::vector<std::string>& arguments,
+                const std::optional<fs::path>& output = std::nullopt) {
+    if (Execute(arguments, output) != 0)
+        throw std::runtime_error("Git dependency command failed: " +
+                                 arguments.at(1));
+}
+std::vector<std::string> GitTreeFiles(const std::string& listing) {
+    std::vector<std::string> files;
+    std::set<std::string> portableNames;
+    std::size_t offset = 0;
+    while (offset < listing.size()) {
+        const std::size_t end = listing.find('\0', offset);
+        if (end == std::string::npos)
+            throw std::runtime_error("Git produced a malformed tree listing");
+        const std::string_view entry(listing.data() + offset, end - offset);
+        const std::size_t first = entry.find(' ');
+        if (first == std::string_view::npos)
+            throw std::runtime_error("Git produced a malformed tree listing");
+        const std::size_t second = entry.find(' ', first + 1);
+        if (second == std::string_view::npos)
+            throw std::runtime_error("Git produced a malformed tree listing");
+        const std::size_t tab = entry.find('\t', second + 1);
+        const std::string_view mode = entry.substr(0, first);
+        if (tab == std::string_view::npos ||
+            entry.substr(first + 1, second - first - 1) != "blob" ||
+            (mode != "100644" && mode != "100755"))
+            throw std::runtime_error(
+                "Git package contains a submodule, symbolic link, or "
+                "unsupported tree entry");
+        const std::string path(entry.substr(tab + 1));
+        if (path.empty() || path.front() == '/' || path.contains('\\'))
+            throw std::runtime_error("Git package contains an unsafe path");
+        const fs::path parsed(path);
+        if (parsed.is_absolute() || parsed.has_root_name() ||
+            parsed.has_root_directory())
+            throw std::runtime_error("Git package contains an unsafe path");
+        for (const auto& component : parsed) {
+            std::string name = component.string();
+            std::transform(name.begin(), name.end(), name.begin(),
+                           [](unsigned char character) {
+                               return static_cast<char>(std::tolower(character));
+                           });
+            if (component.empty() || component == "." || component == ".." ||
+                name == ".git")
+                throw std::runtime_error(
+                    "Git package contains an unsafe path");
+        }
+        std::string portable = path;
+        std::transform(portable.begin(), portable.end(), portable.begin(),
+                       [](unsigned char character) {
+                           return static_cast<char>(std::tolower(character));
+                       });
+        if (!portableNames.insert(portable).second)
+            throw std::runtime_error(
+                "Git package contains case-colliding paths");
+        files.push_back(path);
+        offset = end + 1;
+    }
+    return files;
+}
+flecha::longbow::AcquiredDependency AcquireGit(
+    const flecha::longbow::Manifest& importer,
+    const flecha::longbow::Dependency& dependency,
+    const flecha::longbow::PackageCache& cache) {
+    const std::string& declaredUrl = *dependency.git;
+    std::string url = declaredUrl;
+    if (declaredUrl.contains("::"))
+        throw std::runtime_error(
+            "Git remote-helper transports are not allowed in dependencies");
+    bool remote = false;
+    if (const std::size_t scheme = declaredUrl.find("://");
+        scheme != std::string::npos) {
+        const std::string protocol = declaredUrl.substr(0, scheme);
+        if (protocol != "https" && protocol != "ssh" && protocol != "git" &&
+            protocol != "file")
+            throw std::runtime_error("unsupported Git dependency protocol '" +
+                                     protocol + "'");
+        remote = true;
+    } else if (const std::size_t colon = declaredUrl.find(':');
+               colon != std::string::npos &&
+               !declaredUrl.starts_with("./") &&
+               !declaredUrl.starts_with("../")) {
+        if (colon == 0 || declaredUrl.substr(0, colon).contains('/'))
+            throw std::runtime_error("invalid Git dependency location");
+        remote = true;
+    }
+    if (!remote && fs::path(declaredUrl).is_relative())
+        url = fs::absolute(importer.directory / declaredUrl)
+                  .lexically_normal()
+                  .string();
+    const std::string& requested = *dependency.revision;
+    try {
+        if (const auto cached = cache.FindGit(url, requested))
+            return {cached->directory,
+                    flecha::longbow::ResolvedSourceKind::Git,
+                    "git/" + flecha::longbow::Sha256(url).substr(0, 16),
+                    declaredUrl,
+                    cached->revision,
+                    cached->checksum};
+    } catch (const std::runtime_error&) {
+        // A reachable origin can repair an incomplete reference or corrupt
+        // content entry. The fetch below still has to pass full verification.
+    }
+
+    const std::string git = GitExecutable();
+    TemporaryDirectory staging(cache.Root() / "staging");
+    const fs::path repository = staging.Path() / "repository.git";
+    const fs::path exported = staging.Path() / "source";
+    RequireGit({git, "clone", "--bare", "--quiet", "--", url,
+                repository.string()});
+
+    const fs::path revisionOutput = staging.Path() / "revision";
+    RequireGit({git, "-C", repository.string(), "rev-parse", "--verify",
+                requested + "^{commit}"},
+               revisionOutput);
+    std::string revision = ReadFile(revisionOutput);
+    while (!revision.empty() &&
+           (revision.back() == '\n' || revision.back() == '\r'))
+        revision.pop_back();
+    if ((revision.size() != 40 && revision.size() != 64) ||
+        !std::all_of(revision.begin(), revision.end(), [](char value) {
+            return (value >= '0' && value <= '9') ||
+                   (value >= 'a' && value <= 'f');
+        }))
+        throw std::runtime_error("Git did not resolve an exact commit hash");
+
+    const fs::path treeOutput = staging.Path() / "tree";
+    RequireGit({git, "-C", repository.string(), "ls-tree", "-r", "-z",
+                "--full-tree", revision},
+               treeOutput);
+    fs::create_directories(exported);
+    const std::string listing = ReadFile(treeOutput);
+    for (const std::string& path : GitTreeFiles(listing)) {
+        // Resolve the blob by commit and path. No checkout means repository
+        // hooks, submodules, and clean/smudge filters are never executed.
+        const fs::path destination = exported / fs::path(path);
+        fs::create_directories(destination.parent_path());
+        RequireGit({git, "-C", repository.string(), "show",
+                    revision + ":" + path},
+                   destination);
+    }
+    if (!fs::is_regular_file(exported / "longbow.toml") ||
+        !fs::is_directory(exported / "src"))
+        throw std::runtime_error(
+            "Git dependency commit is not a Longbow package");
+    const std::string checksum =
+        "sha256:" + flecha::longbow::Sha256Tree(exported);
+    const fs::path stored = cache.Store(exported, checksum);
+    cache.StoreGit(url, requested, revision, checksum);
+    return {stored,
+            flecha::longbow::ResolvedSourceKind::Git,
+            "git/" + flecha::longbow::Sha256(url).substr(0, 16),
+            declaredUrl,
+            revision,
+            checksum};
 }
 std::string Compiler(const char* executable) {
     if (const char* configured = std::getenv("FLECHA_COMPILER"))
@@ -256,8 +470,35 @@ int Run(int argc, char** argv) {
         fs::remove_all(target);
         return 0;
     }
+    const flecha::longbow::PackageCache cache;
     const auto packages = flecha::longbow::ResolveLocalPackages(
-        manifest, StandardLibrary(argv[0]));
+        manifest, StandardLibrary(argv[0]),
+        [&](const flecha::longbow::Manifest& importer,
+            const flecha::longbow::Dependency& dependency) {
+            if (dependency.kind == flecha::longbow::DependencyKind::Git)
+                return AcquireGit(importer, dependency, cache);
+            throw std::runtime_error("registry dependency '" +
+                                     dependency.alias +
+                                     "' has not been fetched");
+        });
+    std::string toolchainVersionError;
+    const auto toolchainVersion = flecha::longbow::SemanticVersion::Parse(
+        flecha::VERSION, toolchainVersionError);
+    if (!toolchainVersion)
+        throw std::runtime_error("invalid Flecha toolchain version '" +
+                                 std::string(flecha::VERSION) + "': " +
+                                 toolchainVersionError);
+    for (const auto& [id, package] : packages.Packages()) {
+        (void)id;
+        if (package.flecha.empty()) continue;
+        std::string requirementError;
+        const auto requirement = flecha::longbow::VersionRequirement::Parse(
+            package.flecha, requirementError);
+        if (!requirement || !requirement->Matches(*toolchainVersion))
+            throw std::runtime_error(
+                "package '" + package.identity + "' requires Flecha " +
+                package.flecha + ", but the toolchain is " + flecha::VERSION);
+    }
     if (command != "test") packages.WriteLock(root / "longbow.lock", root);
     const CompilerGraph compilerGraph(packages, target,
                                       command == "build" || command == "run");

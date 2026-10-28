@@ -156,7 +156,7 @@ flecha = ">=0.3.0, <0.4.0"
 
 [dependencies]
 local = { path = "../local" }
-source = { git = "https://example.com/source.git", rev = "0123456789abcdef" }
+source = { git = "https://example.com/source.git", rev = "0123456789abcdef0123456789abcdef01234567" }
 json = { package = "flecha/json", version = "^1.2.0" }
 chain = { package = "alexbsec/blockchain", version = "~0.2", path = "../chain" }
 
@@ -173,7 +173,8 @@ bridge = { path = "native/bridge.o" }
     EXPECT_EQ(manifest.dependencies.at("local").kind, DependencyKind::Path);
     EXPECT_EQ(manifest.dependencies.at("local").path, root / "../local");
     EXPECT_EQ(manifest.dependencies.at("source").kind, DependencyKind::Git);
-    EXPECT_EQ(manifest.dependencies.at("source").revision, "0123456789abcdef");
+    EXPECT_EQ(manifest.dependencies.at("source").revision,
+              "0123456789abcdef0123456789abcdef01234567");
     EXPECT_EQ(manifest.dependencies.at("json").kind, DependencyKind::Registry);
     EXPECT_EQ(manifest.dependencies.at("json").package, "flecha/json");
     EXPECT_FALSE(manifest.dependencies.at("json").path);
@@ -206,6 +207,11 @@ kind = "library"
         Error(package + "broken = { git = \"https://example.com/repo.git\" }\n")
             .find("requires only nonempty git and rev"),
         std::string::npos);
+    EXPECT_NE(Error(package +
+                    "floating = { git = \"https://example.com/repo.git\", "
+                    "rev = \"main\" }\n")
+                  .find("must be a full 40- or 64-digit commit hash"),
+              std::string::npos);
     EXPECT_NE(Error(package +
                     "std = { package = \"flecha/json\", version = \"^1\" }\n")
                   .find("std may only be"),

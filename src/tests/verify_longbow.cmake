@@ -22,6 +22,19 @@ function(run_with_standard_library expected directory)
     set(last_output "${output}" PARENT_SCOPE)
     set(last_errors "${errors}" PARENT_SCOPE)
 endfunction()
+function(run_cached expected directory)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "LONGBOW_CACHE_DIR=${TEST_ROOT}/cache" "${LONGBOW}" ${ARGN}
+        WORKING_DIRECTORY "${directory}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+    if(NOT result EQUAL expected)
+        message(FATAL_ERROR
+            "cached longbow ${ARGN} returned ${result}, expected ${expected}: ${output} ${errors}")
+    endif()
+    set(last_output "${output}" PARENT_SCOPE)
+    set(last_errors "${errors}" PARENT_SCOPE)
+endfunction()
 run(0 "${TEST_ROOT}" new hello)
 if(NOT EXISTS "${TEST_ROOT}/hello/longbow.toml" OR NOT EXISTS "${TEST_ROOT}/hello/.gitignore")
     message(FATAL_ERROR "missing scaffold files")
@@ -104,6 +117,59 @@ run(42 "${TEST_ROOT}/recursive" run)
 file(SHA256 "${TEST_ROOT}/recursive/longbow.lock" lock_after)
 if(NOT lock_before STREQUAL lock_after)
     message(FATAL_ERROR "unchanged resolution produced a nondeterministic lockfile")
+endif()
+# Pinned Git dependencies are exported without checkout, verified into the
+# content-addressed cache, and remain buildable after the origin disappears.
+find_program(GIT_EXECUTABLE git REQUIRED)
+run(0 "${TEST_ROOT}" new git-leaf --lib)
+execute_process(COMMAND "${GIT_EXECUTABLE}" init -q
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" config user.name "Flecha Tests"
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" config user.email "tests@flecha.invalid"
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" add longbow.toml src/git_leaf.fl
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" commit -q -m "fixture"
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" OUTPUT_VARIABLE git_revision
+    OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+run(0 "${TEST_ROOT}" new git-app)
+file(APPEND "${TEST_ROOT}/git-app/longbow.toml"
+    "leaf = { git = \"../git-leaf\", rev = \"${git_revision}\" }\n")
+file(WRITE "${TEST_ROOT}/git-app/src/main.fl"
+    "module main; @imports :: lib::leaf::git_leaf; "
+    "i32 main() { return git_leaf::answer(); }\n")
+run_cached(42 "${TEST_ROOT}/git-app" run)
+file(READ "${TEST_ROOT}/git-app/longbow.lock" git_lock)
+if(NOT git_lock MATCHES "\"kind\": \"git\"" OR
+   NOT git_lock MATCHES "\"revision\": \"${git_revision}\"" OR
+   NOT git_lock MATCHES "\"checksum\": \"sha256:[0-9a-f]+\"")
+    message(FATAL_ERROR "Git resolution metadata is missing from the lock: ${git_lock}")
+endif()
+# Corrupt content is never reused. With the origin online, Longbow reacquires
+# and repairs the entry before the offline proof below.
+file(GLOB cached_git_sources "${TEST_ROOT}/cache/sources/sha256/*/source")
+list(LENGTH cached_git_sources cached_git_source_count)
+if(NOT cached_git_source_count EQUAL 1)
+    message(FATAL_ERROR "expected one cached Git source, found ${cached_git_source_count}")
+endif()
+list(GET cached_git_sources 0 cached_git_source)
+file(WRITE "${cached_git_source}/src/git_leaf.fl" "corrupt\n")
+run_cached(42 "${TEST_ROOT}/git-app" run)
+file(REMOVE_RECURSE "${TEST_ROOT}/git-leaf")
+run_cached(42 "${TEST_ROOT}/git-app" run)
+# Package compatibility is diagnosed during resolution, before compiler work.
+run(0 "${TEST_ROOT}" new incompatible)
+file(READ "${TEST_ROOT}/incompatible/longbow.toml" incompatible_manifest)
+string(REPLACE "kind = \"program\""
+    "kind = \"program\"\nflecha = \">=99.0.0\""
+    incompatible_manifest "${incompatible_manifest}")
+file(WRITE "${TEST_ROOT}/incompatible/longbow.toml" "${incompatible_manifest}")
+run(1 "${TEST_ROOT}/incompatible" check)
+if(NOT last_errors MATCHES "requires Flecha >=99.0.0")
+    message(FATAL_ERROR "incompatible Flecha requirement was not diagnosed: ${last_errors}")
 endif()
 # Resolver cycles are diagnosed before invoking the compiler.
 file(APPEND "${TEST_ROOT}/leaf/longbow.toml"

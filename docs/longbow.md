@@ -116,18 +116,20 @@ path dependencies, pinned Git dependency declarations, registry owner/package
 requirements, and registry dependencies with development path overrides.
 Unsupported TOML forms, unknown keys, duplicate entries, invalid source
 combinations, malformed versions, registry attempts to replace `std`, and path
-dependency cycles are diagnosed. Recursive local paths and registry
-dependencies with path overrides build now; Git and registry declarations are
-acquired by later resolver layers. Prebuilt library objects are not used to
-resolve imports.
+dependency cycles are diagnosed. Recursive local paths, pinned Git commits, and
+registry dependencies with path overrides build now. Git packages are exported
+as source blobs without executing checkout hooks, filters, submodules, or
+package code. Floating Git branches and tags are rejected. Registry
+declarations without an override are acquired by the registry resolver layer.
+Prebuilt library objects are not used to resolve imports.
 
 Resolution writes a deterministic `longbow.lock` beside the manifest. It
 records graph node identities, exact package versions, source kinds and paths,
-package-local dependency edges, and SHA-256 source-tree checksums for local
-dependencies. The root workspace is intentionally not content-locked so normal
-application edits do not invalidate dependency state. Toolchain `std` is
-recorded by source kind rather than a host-specific installation path, keeping
-the lock portable across installed toolchains.
+full Git revisions, package-local dependency edges, Flecha compatibility
+ranges, and SHA-256 content checksums. The root workspace is intentionally not
+content-locked so normal application edits do not invalidate dependency state.
+Toolchain `std` is recorded by source kind rather than a host-specific
+installation path, keeping the lock portable across installed toolchains.
 
 Verified source trees are stored by SHA-256 under the platform-native user
 cache directory. Set `LONGBOW_CACHE_DIR` to use an explicit cache root in CI or

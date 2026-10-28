@@ -75,6 +75,10 @@ std::string SourceKind(ResolvedSourceKind kind) {
             return "workspace";
         case ResolvedSourceKind::Path:
             return "path";
+        case ResolvedSourceKind::Git:
+            return "git";
+        case ResolvedSourceKind::Registry:
+            return "registry";
         case ResolvedSourceKind::Toolchain:
             return "toolchain";
     }
@@ -98,8 +102,11 @@ void WriteIfChanged(const fs::path& file, const std::string& contents) {
 class LocalResolver final {
    public:
     LocalResolver(const Manifest& root,
-                  const std::optional<fs::path>& bundledStandardLibrary)
-        : _root(root), _bundledStandardLibrary(bundledStandardLibrary) {}
+                  const std::optional<fs::path>& bundledStandardLibrary,
+                  const DependencyAcquirer& acquirer)
+        : _root(root),
+          _bundledStandardLibrary(bundledStandardLibrary),
+          _acquirer(acquirer) {}
 
     ResolvedGraph Resolve() {
         _graph._packages.emplace(
@@ -116,7 +123,8 @@ class LocalResolver final {
 
    private:
     ResolvedPackage Package(const Manifest& manifest, std::string id,
-                            std::string identity, ResolvedSourceKind kind) {
+                            std::string identity, ResolvedSourceKind kind,
+                            const AcquiredDependency* acquired = nullptr) {
         const fs::path directory =
             CanonicalDirectory(manifest.directory, "package directory");
         const fs::path source =
@@ -128,7 +136,12 @@ class LocalResolver final {
         package.directory = directory;
         package.source = source;
         package.sourceKind = kind;
-        if (kind == ResolvedSourceKind::Path)
+        if (manifest.flecha) package.flecha = manifest.flecha->String();
+        if (acquired) {
+            package.location = acquired->location;
+            package.revision = acquired->revision;
+            package.checksum = acquired->checksum;
+        } else if (kind == ResolvedSourceKind::Path)
             package.checksum = "sha256:" + Sha256Tree(source);
         return package;
     }
@@ -144,14 +157,18 @@ class LocalResolver final {
                     *dependency.path / "src", "standard-library source");
                 continue;
             }
-            if (!dependency.path) {
+            std::optional<AcquiredDependency> acquired;
+            if (!dependency.path && _acquirer)
+                acquired = _acquirer(manifest, dependency);
+            if (!dependency.path && !acquired) {
                 const std::string source =
                     dependency.kind == DependencyKind::Git ? "Git" : "registry";
                 throw std::runtime_error(source + " dependency '" + alias +
                                          "' has not been fetched");
             }
             const fs::path directory = CanonicalDirectory(
-                *dependency.path, "dependency '" + alias + "'");
+                acquired ? acquired->directory : *dependency.path,
+                "dependency '" + alias + "'");
             const auto existing = _paths.find(directory);
             if (existing != _paths.end()) {
                 if (std::find(_active.begin(), _active.end(),
@@ -180,12 +197,21 @@ class LocalResolver final {
                     "path override for '" + alias + "' has version " +
                     child.version.String() + ", which does not match " +
                     dependency.version->String());
+            const ResolvedSourceKind sourceKind =
+                acquired ? acquired->sourceKind : ResolvedSourceKind::Path;
+            const std::string prefix =
+                sourceKind == ResolvedSourceKind::Git       ? "git-"
+                : sourceKind == ResolvedSourceKind::Registry ? "registry-"
+                                                            : "path-";
             const std::string id =
-                "path-" + std::to_string(_graph._packages.size());
-            const std::string identity =
-                dependency.package.value_or("local/" + ModuleName(child.name));
+                prefix + std::to_string(_graph._packages.size());
+            const std::string identity = acquired
+                                             ? acquired->identity
+                                             : dependency.package.value_or(
+                                                   "local/" + ModuleName(child.name));
             _graph._packages.emplace(
-                id, Package(child, id, identity, ResolvedSourceKind::Path));
+                id, Package(child, id, identity, sourceKind,
+                            acquired ? &*acquired : nullptr));
             _paths.emplace(directory, id);
             node.dependencies.emplace(alias, id);
             _active.push_back(id);
@@ -218,6 +244,7 @@ class LocalResolver final {
 
     const Manifest& _root;
     std::optional<fs::path> _bundledStandardLibrary;
+    const DependencyAcquirer& _acquirer;
     std::optional<fs::path> _standardLibrary;
     ResolvedGraph _graph;
     std::map<fs::path, std::string> _paths;
@@ -226,8 +253,9 @@ class LocalResolver final {
 
 ResolvedGraph ResolveLocalPackages(
     const Manifest& root,
-    const std::optional<fs::path>& bundledStandardLibrary) {
-    return LocalResolver(root, bundledStandardLibrary).Resolve();
+    const std::optional<fs::path>& bundledStandardLibrary,
+    const DependencyAcquirer& acquirer) {
+    return LocalResolver(root, bundledStandardLibrary, acquirer).Resolve();
 }
 
 void ResolvedGraph::WriteCompilerGraph(const fs::path& file) const {
@@ -252,6 +280,10 @@ void ResolvedGraph::WriteCompilerGraph(const fs::path& file) const {
                    << JsonString(package.version.String());
         if (!package.checksum.empty())
             stream << ",\n      \"checksum\": " << JsonString(package.checksum);
+        if (!package.revision.empty())
+            stream << ",\n      \"revision\": " << JsonString(package.revision);
+        if (!package.flecha.empty())
+            stream << ",\n      \"flecha\": " << JsonString(package.flecha);
         stream << ",\n      \"dependencies\": {";
         std::size_t dependencyIndex = 0;
         for (const auto& [alias, target] : package.dependencies) {
@@ -281,12 +313,21 @@ void ResolvedGraph::WriteLock(const fs::path& file,
                << ",\n      \"source\": {\n        \"kind\": "
                << JsonString(SourceKind(package.sourceKind));
         if (package.sourceKind != ResolvedSourceKind::Toolchain) {
-            std::error_code error;
-            fs::path relative =
-                fs::relative(package.directory, projectRoot, error);
-            if (error || relative.empty()) relative = package.directory;
-            stream << ",\n        \"path\": "
-                   << JsonString(relative.generic_string());
+            if (package.sourceKind == ResolvedSourceKind::Git ||
+                package.sourceKind == ResolvedSourceKind::Registry) {
+                stream << ",\n        \"location\": "
+                       << JsonString(package.location);
+                if (!package.revision.empty())
+                    stream << ",\n        \"revision\": "
+                           << JsonString(package.revision);
+            } else {
+                std::error_code error;
+                fs::path relative =
+                    fs::relative(package.directory, projectRoot, error);
+                if (error || relative.empty()) relative = package.directory;
+                stream << ",\n        \"path\": "
+                       << JsonString(relative.generic_string());
+            }
         }
         stream << "\n      }";
         if (package.id != "toolchain-std")
@@ -294,6 +335,8 @@ void ResolvedGraph::WriteLock(const fs::path& file,
                    << JsonString(package.version.String());
         if (!package.checksum.empty())
             stream << ",\n      \"checksum\": " << JsonString(package.checksum);
+        if (!package.flecha.empty())
+            stream << ",\n      \"flecha\": " << JsonString(package.flecha);
         stream << ",\n      \"dependencies\": {";
         std::size_t dependencyIndex = 0;
         for (const auto& [alias, target] : package.dependencies) {

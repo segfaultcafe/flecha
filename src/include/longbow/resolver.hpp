@@ -2,6 +2,7 @@
 #define FLECHA_LONGBOW_RESOLVER_HPP
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -11,7 +12,19 @@
 namespace flecha::longbow {
 
 class LocalResolver;
-enum class ResolvedSourceKind { Workspace, Path, Toolchain };
+enum class ResolvedSourceKind { Workspace, Path, Git, Registry, Toolchain };
+
+struct AcquiredDependency final {
+    std::filesystem::path directory;
+    ResolvedSourceKind sourceKind = ResolvedSourceKind::Path;
+    std::string identity;
+    std::string location;
+    std::string revision;
+    std::string checksum;
+};
+
+using DependencyAcquirer = std::function<AcquiredDependency(
+    const Manifest& importer, const Dependency& dependency)>;
 
 struct ResolvedPackage final {
     std::string id;
@@ -20,7 +33,10 @@ struct ResolvedPackage final {
     std::filesystem::path directory;
     std::filesystem::path source;
     ResolvedSourceKind sourceKind = ResolvedSourceKind::Path;
+    std::string location;
+    std::string revision;
     std::string checksum;
+    std::string flecha;
     std::map<std::string, std::string> dependencies;
 };
 
@@ -38,17 +54,19 @@ class ResolvedGraph final {
    private:
     friend class LocalResolver;
     friend ResolvedGraph ResolveLocalPackages(
-        const Manifest&, const std::optional<std::filesystem::path>&);
+        const Manifest&, const std::optional<std::filesystem::path>&,
+        const DependencyAcquirer&);
     std::string _root = "root";
     std::map<std::string, ResolvedPackage> _packages;
 };
 
-// Resolves path dependencies recursively. Registry dependencies with a path
-// override participate through that path; unresolved registry and Git sources
-// are rejected until their acquisition layers supply verified local trees.
+// Resolves dependencies recursively. Registry dependencies with a path
+// override participate through that path; other external sources are supplied
+// as verified local trees by Longbow's acquisition layer.
 ResolvedGraph ResolveLocalPackages(
     const Manifest& root,
-    const std::optional<std::filesystem::path>& bundledStandardLibrary);
+    const std::optional<std::filesystem::path>& bundledStandardLibrary,
+    const DependencyAcquirer& acquirer = {});
 
 }  // namespace flecha::longbow
 

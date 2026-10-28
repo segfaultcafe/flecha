@@ -79,6 +79,11 @@ fs::path PackageCache::Entry(const std::string& checksum) const {
     return _root / "sources" / "sha256" / Digest(checksum);
 }
 
+fs::path PackageCache::GitReference(
+    const std::string& url, const std::string& requestedRevision) const {
+    return _root / "refs" / "git" / Sha256(url) / Sha256(requestedRevision);
+}
+
 void PackageCache::Validate(const fs::path& entry,
                             const std::string& checksum) const {
     std::ifstream marker(entry / "complete", std::ios::binary);
@@ -144,6 +149,56 @@ fs::path PackageCache::Store(const fs::path& source,
     }
     Validate(entry, checksum);
     return entry / "source";
+}
+
+std::optional<CachedGitSource> PackageCache::FindGit(
+    const std::string& url, const std::string& requestedRevision) const {
+    std::ifstream stream(GitReference(url, requestedRevision),
+                         std::ios::binary);
+    if (!stream) return std::nullopt;
+    CachedGitSource result;
+    std::getline(stream, result.revision);
+    std::getline(stream, result.checksum);
+    std::string extra;
+    if (!stream || std::getline(stream, extra) || result.revision.empty() ||
+        result.checksum.empty())
+        throw std::runtime_error("corrupt cached Git reference");
+    const auto source = Find(result.checksum);
+    if (!source)
+        throw std::runtime_error("cached Git reference has no source entry");
+    result.directory = *source;
+    return result;
+}
+
+void PackageCache::StoreGit(const std::string& url,
+                            const std::string& requestedRevision,
+                            const std::string& resolvedRevision,
+                            const std::string& checksum) const {
+    (void)Digest(checksum);
+    const fs::path reference = GitReference(url, requestedRevision);
+    fs::create_directories(reference.parent_path());
+    const fs::path temporary =
+        reference.string() + ".tmp-" +
+        std::to_string(std::chrono::high_resolution_clock::now()
+                           .time_since_epoch()
+                           .count());
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        if (!stream || !(stream << resolvedRevision << "\n" << checksum << "\n"))
+            throw std::runtime_error("cannot write cached Git reference");
+    }
+    std::error_code error;
+    fs::rename(temporary, reference, error);
+    if (error) {
+        fs::remove(reference, error);
+        error.clear();
+        fs::rename(temporary, reference, error);
+    }
+    if (error) {
+        fs::remove(temporary);
+        throw std::runtime_error("cannot install cached Git reference: " +
+                                 error.message());
+    }
 }
 
 }  // namespace flecha::longbow

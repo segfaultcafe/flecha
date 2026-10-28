@@ -101,7 +101,7 @@ Longbow supports three dependency sources in 0.3.0:
 local = { path = "../local" }
 git_package = {
     git = "https://example.com/team/package.git",
-    rev = "0123456789abcdef"
+    rev = "0123456789abcdef0123456789abcdef01234567"
 }
 json = { package = "flecha/json", version = "^1.2.0" }
 ```
