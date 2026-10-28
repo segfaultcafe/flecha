@@ -1,5 +1,6 @@
 add_library(core STATIC
     module_loader.cpp
+    package_graph.cpp
     parser.cpp
     tokenizer.cpp
     core.cpp

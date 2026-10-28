@@ -7,6 +7,7 @@ function(run expected directory)
         message(FATAL_ERROR "longbow ${ARGN} returned ${result}, expected ${expected}: ${output} ${errors}")
     endif()
     set(last_output "${output}" PARENT_SCOPE)
+    set(last_errors "${errors}" PARENT_SCOPE)
 endfunction()
 function(run_with_standard_library expected directory)
     execute_process(
@@ -19,6 +20,36 @@ function(run_with_standard_library expected directory)
             "longbow ${ARGN} returned ${result}, expected ${expected}: ${output} ${errors}")
     endif()
     set(last_output "${output}" PARENT_SCOPE)
+    set(last_errors "${errors}" PARENT_SCOPE)
+endfunction()
+function(run_cached expected directory)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "LONGBOW_CACHE_DIR=${TEST_ROOT}/cache" "${LONGBOW}" ${ARGN}
+        WORKING_DIRECTORY "${directory}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+    if(NOT result EQUAL expected)
+        message(FATAL_ERROR
+            "cached longbow ${ARGN} returned ${result}, expected ${expected}: ${output} ${errors}")
+    endif()
+    set(last_output "${output}" PARENT_SCOPE)
+    set(last_errors "${errors}" PARENT_SCOPE)
+endfunction()
+function(run_registry expected directory)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "LONGBOW_CACHE_DIR=${TEST_ROOT}/registry-cache"
+            "LONGBOW_REGISTRY=file://${TEST_ROOT}/registry"
+            "LONGBOW_TOKEN=test-token"
+            "${LONGBOW}" ${ARGN}
+        WORKING_DIRECTORY "${directory}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+    if(NOT result EQUAL expected)
+        message(FATAL_ERROR
+            "registry longbow ${ARGN} returned ${result}, expected ${expected}: ${output} ${errors}")
+    endif()
+    set(last_output "${output}" PARENT_SCOPE)
+    set(last_errors "${errors}" PARENT_SCOPE)
 endfunction()
 run(0 "${TEST_ROOT}" new hello)
 if(NOT EXISTS "${TEST_ROOT}/hello/longbow.toml" OR NOT EXISTS "${TEST_ROOT}/hello/.gitignore")
@@ -76,6 +107,144 @@ run(1 "${TEST_ROOT}/numbers" run)
 file(APPEND "${TEST_ROOT}/hello/longbow.toml" "numbers = { path = \"../numbers\" }\n")
 file(WRITE "${TEST_ROOT}/hello/src/main.fl" "module main; @imports :: lib::numbers::numbers; i32 main() { return numbers::answer(); }\n")
 run(42 "${TEST_ROOT}/hello" run)
+# Recursive path dependencies are resolved into a package-local alias graph.
+run(0 "${TEST_ROOT}" new leaf --lib)
+run(0 "${TEST_ROOT}" new middle --lib)
+file(APPEND "${TEST_ROOT}/middle/longbow.toml"
+    "leaf = { path = \"../leaf\" }\n")
+file(WRITE "${TEST_ROOT}/middle/src/middle.fl"
+    "module middle; @imports :: lib::leaf::leaf; "
+    "export i32 answer() { return leaf::answer(); }\n")
+run(0 "${TEST_ROOT}" new recursive)
+file(APPEND "${TEST_ROOT}/recursive/longbow.toml"
+    "middle = { path = \"../middle\" }\n")
+file(WRITE "${TEST_ROOT}/recursive/src/main.fl"
+    "module main; @imports :: lib::middle::middle; "
+    "i32 main() { return middle::answer(); }\n")
+run(42 "${TEST_ROOT}/recursive" run)
+if(NOT EXISTS "${TEST_ROOT}/recursive/target/package-graph.json")
+    message(FATAL_ERROR "Longbow did not generate the compiler package graph")
+endif()
+if(NOT EXISTS "${TEST_ROOT}/recursive/longbow.lock")
+    message(FATAL_ERROR "Longbow did not generate longbow.lock")
+endif()
+file(SHA256 "${TEST_ROOT}/recursive/longbow.lock" lock_before)
+run(42 "${TEST_ROOT}/recursive" run)
+file(SHA256 "${TEST_ROOT}/recursive/longbow.lock" lock_after)
+if(NOT lock_before STREQUAL lock_after)
+    message(FATAL_ERROR "unchanged resolution produced a nondeterministic lockfile")
+endif()
+# Pinned Git dependencies are exported without checkout, verified into the
+# content-addressed cache, and remain buildable after the origin disappears.
+find_program(GIT_EXECUTABLE git REQUIRED)
+run(0 "${TEST_ROOT}" new git-leaf --lib)
+execute_process(COMMAND "${GIT_EXECUTABLE}" init -q
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" config user.name "Flecha Tests"
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" config user.email "tests@flecha.invalid"
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" add longbow.toml src/git_leaf.fl
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" commit -q -m "fixture"
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+    WORKING_DIRECTORY "${TEST_ROOT}/git-leaf" OUTPUT_VARIABLE git_revision
+    OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+run(0 "${TEST_ROOT}" new git-app)
+file(APPEND "${TEST_ROOT}/git-app/longbow.toml"
+    "leaf = { git = \"../git-leaf\", rev = \"${git_revision}\" }\n")
+file(WRITE "${TEST_ROOT}/git-app/src/main.fl"
+    "module main; @imports :: lib::leaf::git_leaf; "
+    "i32 main() { return git_leaf::answer(); }\n")
+run_cached(42 "${TEST_ROOT}/git-app" run)
+file(READ "${TEST_ROOT}/git-app/longbow.lock" git_lock)
+if(NOT git_lock MATCHES "\"kind\": \"git\"" OR
+   NOT git_lock MATCHES "\"revision\": \"${git_revision}\"" OR
+   NOT git_lock MATCHES "\"checksum\": \"sha256:[0-9a-f]+\"")
+    message(FATAL_ERROR "Git resolution metadata is missing from the lock: ${git_lock}")
+endif()
+# Corrupt content is never reused. With the origin online, Longbow reacquires
+# and repairs the entry before the offline proof below.
+file(GLOB cached_git_sources "${TEST_ROOT}/cache/sources/sha256/*/source")
+list(LENGTH cached_git_sources cached_git_source_count)
+if(NOT cached_git_source_count EQUAL 1)
+    message(FATAL_ERROR "expected one cached Git source, found ${cached_git_source_count}")
+endif()
+list(GET cached_git_sources 0 cached_git_source)
+file(WRITE "${cached_git_source}/src/git_leaf.fl" "corrupt\n")
+run_cached(42 "${TEST_ROOT}/git-app" run)
+file(REMOVE_RECURSE "${TEST_ROOT}/git-leaf")
+run_cached(42 "${TEST_ROOT}/git-app" run)
+# Package compatibility is diagnosed during resolution, before compiler work.
+run(0 "${TEST_ROOT}" new incompatible)
+file(READ "${TEST_ROOT}/incompatible/longbow.toml" incompatible_manifest)
+string(REPLACE "kind = \"program\""
+    "kind = \"program\"\nflecha = \">=99.0.0\""
+    incompatible_manifest "${incompatible_manifest}")
+file(WRITE "${TEST_ROOT}/incompatible/longbow.toml" "${incompatible_manifest}")
+run(1 "${TEST_ROOT}/incompatible" check)
+if(NOT last_errors MATCHES "requires Flecha >=99.0.0")
+    message(FATAL_ERROR "incompatible Flecha requirement was not diagnosed: ${last_errors}")
+endif()
+# The local protocol fixture exercises the same immutable index/archive client
+# contract as HTTPS without requiring a registry backend in compiler tests.
+run(0 "${TEST_ROOT}" new registry-leaf --lib)
+file(READ "${TEST_ROOT}/registry-leaf/longbow.toml" registry_manifest)
+string(REPLACE "name = \"registry-leaf\""
+    "name = \"registry-leaf\"\nregistry = \"owner/registry-leaf\""
+    registry_manifest "${registry_manifest}")
+file(WRITE "${TEST_ROOT}/registry-leaf/longbow.toml" "${registry_manifest}")
+run_registry(0 "${TEST_ROOT}/registry-leaf" publish --dry-run)
+if(EXISTS "${TEST_ROOT}/registry")
+    message(FATAL_ERROR "publish --dry-run mutated the registry")
+endif()
+run_registry(0 "${TEST_ROOT}/registry-leaf" publish)
+run(0 "${TEST_ROOT}" new registry-app)
+run(0 "${TEST_ROOT}/registry-app" add owner/registry-leaf@>=0.1,<1 --as leaf)
+file(WRITE "${TEST_ROOT}/registry-app/src/main.fl"
+    "module main; @imports :: lib::leaf::registry_leaf; "
+    "i32 main() { return registry_leaf::answer(); }\n")
+run_registry(0 "${TEST_ROOT}/registry-app" fetch)
+run_registry(42 "${TEST_ROOT}/registry-app" run)
+file(READ "${TEST_ROOT}/registry-app/longbow.lock" registry_lock)
+if(NOT registry_lock MATCHES "\"kind\": \"registry\"" OR
+   NOT registry_lock MATCHES "\"identity\": \"owner/registry-leaf\"")
+    message(FATAL_ERROR "registry resolution is missing from the lock: ${registry_lock}")
+endif()
+# A newer compatible release is ignored by the lock until update selects it.
+file(READ "${TEST_ROOT}/registry-leaf/longbow.toml" registry_manifest)
+string(REPLACE "version = \"0.1.0\"" "version = \"0.2.0\""
+    registry_manifest "${registry_manifest}")
+file(WRITE "${TEST_ROOT}/registry-leaf/longbow.toml" "${registry_manifest}")
+file(WRITE "${TEST_ROOT}/registry-leaf/src/registry_leaf.fl"
+    "module registry_leaf; export i32 answer() { return 43; }\n")
+run_registry(0 "${TEST_ROOT}/registry-leaf" publish)
+run_registry(42 "${TEST_ROOT}/registry-app" run)
+run_registry(0 "${TEST_ROOT}/registry-app" update leaf)
+run_registry(43 "${TEST_ROOT}/registry-app" run)
+run_registry(0 "${TEST_ROOT}/registry-leaf" yank 0.1.0)
+run_registry(0 "${TEST_ROOT}/registry-leaf" yank 0.2.0)
+# Existing locks retain a yanked version, while a new selection cannot choose it.
+run_registry(43 "${TEST_ROOT}/registry-app" run)
+run(0 "${TEST_ROOT}" new registry-new)
+run(0 "${TEST_ROOT}/registry-new" add owner/registry-leaf@>=0.1,<1 --as leaf)
+run_registry(1 "${TEST_ROOT}/registry-new" check)
+if(NOT last_errors MATCHES "no active version")
+    message(FATAL_ERROR "new resolution selected a yanked version: ${last_errors}")
+endif()
+run(0 "${TEST_ROOT}/registry-new" remove leaf)
+run_registry(0 "${TEST_ROOT}/registry-new" check)
+# Cached index and archive content preserve the locked build offline.
+file(REMOVE_RECURSE "${TEST_ROOT}/registry")
+run_registry(43 "${TEST_ROOT}/registry-app" run)
+# Resolver cycles are diagnosed before invoking the compiler.
+file(APPEND "${TEST_ROOT}/leaf/longbow.toml"
+    "middle = { path = \"../middle\" }\n")
+run(1 "${TEST_ROOT}/recursive" check)
+if(NOT last_errors MATCHES "package dependency cycle")
+    message(FATAL_ERROR "path dependency cycle was not diagnosed: ${last_errors}")
+endif()
 # Build errors must stop run, rather than execute the previous artifact.
 file(WRITE "${TEST_ROOT}/hello/src/main.fl" "module main; i32 main() { return missing; }\n")
 run(1 "${TEST_ROOT}/hello" run)

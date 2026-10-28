@@ -157,16 +157,6 @@ std::unique_ptr<CompilationUnit> ModuleLoader::Load(
     const fs::path& entry, fs::path root,
     std::map<std::string, fs::path> libraries, ModuleLoadMode mode,
     bool verboseTests) {
-    _loaded.clear();
-    _privateModules.clear();
-    _roots.clear();
-    _active.clear();
-    _modules.clear();
-    _declarations.clear();
-    _mode = mode;
-    _verboseTests = verboseTests;
-    _testingModule.clear();
-    _libraries = std::move(libraries);
     if (root.empty()) {
         root = fs::absolute(entry).parent_path();
         for (fs::path directory = root; !directory.empty();
@@ -178,13 +168,49 @@ std::unique_ptr<CompilationUnit> ModuleLoader::Load(
             if (directory == directory.parent_path()) break;
         }
     }
+    return LoadConfigured(entry, std::move(root), std::move(libraries), nullptr,
+                          "root", mode, verboseTests);
+}
+
+std::unique_ptr<CompilationUnit> ModuleLoader::Load(const fs::path& entry,
+                                                    const PackageGraph& graph,
+                                                    ModuleLoadMode mode,
+                                                    bool verboseTests) {
+    return LoadConfigured(entry, graph.Root().source, {}, &graph,
+                          graph.Root().id, mode, verboseTests);
+}
+
+std::unique_ptr<CompilationUnit> ModuleLoader::LoadConfigured(
+    const fs::path& entry, fs::path root,
+    std::map<std::string, fs::path> libraries, const PackageGraph* graph,
+    std::string rootIdentity, ModuleLoadMode mode, bool verboseTests) {
+    _loaded.clear();
+    _privateModules.clear();
+    _roots.clear();
+    _active.clear();
+    _modules.clear();
+    _declarations.clear();
+    _mode = mode;
+    _verboseTests = verboseTests;
+    _testingModule.clear();
+    _libraries = std::move(libraries);
+    _packageGraph = graph;
     root = fs::weakly_canonical(root);
     const fs::path file = fs::weakly_canonical(entry);
+    const fs::path relativeEntry = file.lexically_relative(root);
+    if (relativeEntry.empty() || *relativeEntry.begin() == "..") {
+        const source::SourceLocation origin{0, 1, 1, file.string()};
+        Report({origin, origin},
+               "entry source escapes the root package source");
+        return std::make_unique<CompilationUnit>(
+            source::SourceRange{}, std::vector<std::unique_ptr<Declaration>>{});
+    }
     const ModuleHeader header = ReadHeader(file);
     if (header.name.empty())
-        LoadLegacyEntry(file, root);
+        LoadLegacyEntry(file, root, rootIdentity);
     else
-        VisitModule(file.parent_path(), header.name, root, true, file);
+        VisitModule(file.parent_path(), header.name, root, true, file, {},
+                    std::move(rootIdentity));
 
     auto unit = std::make_unique<CompilationUnit>(source::SourceRange{},
                                                   std::move(_declarations));
@@ -193,7 +219,52 @@ std::unique_ptr<CompilationUnit> ModuleLoader::Load(
     return unit;
 }
 
-void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root) {
+std::optional<ModuleLoader::LibrarySource> ModuleLoader::ResolveLibrary(
+    const std::string& sourceIdentity, const std::string& alias,
+    source::SourceRange range, bool includeLegacyHint) {
+    if (_packageGraph) {
+        const PackageGraphNode* source = _packageGraph->Find(sourceIdentity);
+        if (!source) {
+            Report(range, "package graph has no source identity '" +
+                              sourceIdentity + "'");
+            return std::nullopt;
+        }
+        const auto dependency = source->dependencies.find(alias);
+        if (dependency == source->dependencies.end()) {
+            Report(range, "package '" + source->identity +
+                              "' has no dependency alias '" + alias + "'");
+            return std::nullopt;
+        }
+        const PackageGraphNode* target =
+            _packageGraph->Find(dependency->second);
+        if (!target) {
+            Report(range, "package graph dependency '" + alias +
+                              "' references missing node '" +
+                              dependency->second + "'");
+            return std::nullopt;
+        }
+        return LibrarySource{target->id, target->source};
+    }
+    const auto library = _libraries.find(alias);
+    if (library == _libraries.end()) {
+        Report(range, "library '" + alias + "' is not configured" +
+                          (includeLegacyHint ? "; supply --lib name=source-root"
+                                             : ""));
+        return std::nullopt;
+    }
+    return LibrarySource{"lib::" + alias,
+                         fs::weakly_canonical(library->second)};
+}
+
+std::string ModuleLoader::SourceName(const std::string& sourceIdentity) const {
+    if (!_packageGraph) return sourceIdentity;
+    const PackageGraphNode* node = _packageGraph->Find(sourceIdentity);
+    if (!node) return sourceIdentity;
+    return node->identity + (node->version.empty() ? "" : "@" + node->version);
+}
+
+void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root,
+                                   const std::string& sourceIdentity) {
     const auto source = ReadSource(file);
     const source::SourceLocation origin{0, 1, 1, file.string()};
     const source::SourceRange fileRange{origin, origin};
@@ -217,9 +288,18 @@ void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root) {
     if (_mode == ModuleLoadMode::Test)
         Report(fileRange, "'flecha test' requires a declared '<name>_test' module");
     const std::string sourceId = "$legacy$";
-    _modules.push_back(Module{"", sourceId, "", file.string(), "root\n" +
-                                  root.generic_string() + "\n.",
-                              "root", false, true, false, {}, {}});
+    _modules.push_back(
+        Module{"",
+               sourceId,
+               "",
+               file.string(),
+               sourceIdentity + "\n" + root.generic_string() + "\n.",
+               SourceName(sourceIdentity),
+               false,
+               true,
+               false,
+               {},
+               {}});
     for (auto& declaration : unit->TakeDeclarations()) {
         declaration->sourceId = sourceId;
         _declarations.push_back(std::move(declaration));
@@ -235,7 +315,7 @@ std::string ModuleLoader::VisitModule(
     const fs::path relativeDirectory = directory.lexically_relative(root);
     const std::string quiverId = sourceIdentity + "\n" + root.generic_string() +
                                  "\n" + relativeDirectory.generic_string();
-    std::string quiverName = sourceIdentity;
+    std::string quiverName = SourceName(sourceIdentity);
     for (const auto& segment : relativeDirectory)
         if (segment != ".") quiverName += "::" + segment.string();
     const std::string key = LogicalKey(sourceIdentity, root, directory, name);
@@ -348,13 +428,10 @@ std::string ModuleLoader::VisitModule(
             std::size_t start = 1;
             if (import.path[0] == "lib") {
                 if (import.path.size() < 2) continue;
-                const auto library = _libraries.find(import.path[1]);
-                if (library == _libraries.end()) {
-                    Report(import.range,
-                           "library '" + import.path[1] + "' is not configured");
-                    continue;
-                }
-                sourceRoot = fs::weakly_canonical(library->second);
+                const auto library = ResolveLibrary(
+                    sourceIdentity, import.path[1], import.range);
+                if (!library) continue;
+                sourceRoot = library->root;
                 start = 2;
             }
             fs::path selectedDirectory = sourceRoot;
@@ -435,16 +512,11 @@ std::string ModuleLoader::VisitModule(
             std::size_t start = 1;
             if (import.path[0] == "lib") {
                 if (import.path.size() < 3) continue;
-                const auto library = _libraries.find(import.path[1]);
-                if (library == _libraries.end()) {
-                    Report(import.range,
-                           "library '" + import.path[1] +
-                               "' is not configured; supply --lib "
-                               "name=source-root");
-                    continue;
-                }
-                sourceRoot = fs::weakly_canonical(library->second);
-                targetIdentity = "lib::" + import.path[1];
+                const auto library = ResolveLibrary(
+                    sourceIdentity, import.path[1], import.range, true);
+                if (!library) continue;
+                sourceRoot = library->root;
+                targetIdentity = library->identity;
                 start = 2;
             } else if (import.path[0] != "root" || import.path.size() < 2)
                 continue;

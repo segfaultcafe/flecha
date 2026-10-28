@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- Flecha now accepts a versioned package graph whose dependency aliases are
+  resolved relative to each importing package, preserving source and nominal
+  identity across recursive graphs while keeping compatibility with `--lib`.
+- Longbow now resolves recursive path, exact-revision Git, and owner-scoped
+  registry dependencies; writes deterministic locks; verifies a shared
+  content-addressed cache; and supports locked offline builds.
+- Longbow now provides `add`, `remove`, `fetch`, `update`, `publish --dry-run`,
+  `publish`, and `yank`, with deterministic source-only archives and the
+  versioned public registry client protocol.
+
+### Security
+
+- Package archives reject traversal, symbolic links, case collisions,
+  unsupported payloads, and checksum mismatches. Git dependencies are exported
+  as blobs without running checkout hooks, filters, submodules, or package code,
+  and floating revisions and remote-helper transports are rejected.
+
 ## 0.2.5 - 2026-10-27
 
 Flecha 0.2.5 allows Longbow to create and operate on projects whose names are
