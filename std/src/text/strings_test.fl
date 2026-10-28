@@ -395,3 +395,229 @@ test string_builder_copies_empty_text_without_allocation(
         "empty builder produces an empty string"
     );
 }
+
+test string_search_handles_boundaries(&testing::UnitTest t) {
+    asserts::is_true(
+        t,
+        strings::starts_with("flecha", "fle") and
+            strings::ends_with("flecha", "cha"),
+        "prefix and suffix matches are detected"
+    );
+    asserts::is_true(
+        t,
+        strings::starts_with("flecha", "") and
+            strings::ends_with("flecha", "") and
+            strings::starts_with("", "") and strings::ends_with("", ""),
+        "empty prefixes and suffixes match every value"
+    );
+    asserts::is_false(
+        t,
+        strings::starts_with("flecha", "flechas") or
+            strings::ends_with("flecha", "flechas") or
+            strings::starts_with("flecha", "cha") or
+            strings::ends_with("flecha", "fle"),
+        "oversized and misplaced boundaries do not match"
+    );
+}
+
+test string_find_returns_first_byte_offset(&testing::UnitTest t) {
+    first, firstFound := strings::find("bananana", "nana");
+    empty, emptyFound := strings::find("bananana", "");
+    absent, absentFound := strings::find("bananana", "arrow");
+    character, characterFound := strings::find_char("bananana", 'n');
+    missingCharacter, missingCharacterFound :=
+        strings::find_char("bananana", 'z');
+
+    asserts::is_true(
+        t,
+        firstFound and first == 2 and strings::contains("bananana", "nana"),
+        "find and contains detect the first candidate"
+    );
+    asserts::is_true(
+        t,
+        emptyFound and empty == 0 and strings::contains("", ""),
+        "an empty needle is found at byte offset zero"
+    );
+    asserts::is_true(
+        t,
+        !absentFound and absent == 0 and
+            !strings::contains("bananana", "arrow"),
+        "an absent substring reports false and the zero value"
+    );
+    asserts::is_true(
+        t,
+        characterFound and character == 2 and
+            !missingCharacterFound and missingCharacter == 0,
+        "character search returns the first byte offset"
+    );
+}
+
+test string_find_uses_byte_offsets(&testing::UnitTest t) {
+    [5]u8 valueBytes = [195, 169, 120, 195, 169];
+    [2]u8 needleBytes = [195, 169];
+    value := strings::stringv_from_bytes(valueBytes[:]);
+    needle := strings::stringv_from_bytes(needleBytes[:]);
+
+    first, firstFound := strings::find(value, needle);
+    const u8 CONTINUATION = 169;
+    secondByte, byteFound :=
+        strings::find_char(value, CONTINUATION.cast<char>);
+
+    asserts::is_true(
+        t,
+        firstFound and first == 0 and byteFound and secondByte == 1,
+        "text search reports byte offsets rather than code-point offsets"
+    );
+}
+
+test ascii_trim_removes_only_edge_whitespace(&testing::UnitTest t) {
+    stringv value = " \t\n  flecha text\r\n ";
+
+    asserts::is_true(
+        t,
+        strings::trim_ascii(value) == "flecha text",
+        "trim removes ASCII whitespace from both edges"
+    );
+    asserts::is_true(
+        t,
+        strings::trim_ascii_start(value) == "flecha text\r\n ",
+        "trim start preserves trailing whitespace"
+    );
+    asserts::is_true(
+        t,
+        strings::trim_ascii_end(value) == " \t\n  flecha text",
+        "trim end preserves leading whitespace"
+    );
+    asserts::is_true(
+        t,
+        strings::trim_ascii("\t\r\n ").len() == 0 and
+            strings::trim_ascii("").len() == 0,
+        "all-whitespace and empty values trim to an empty view"
+    );
+}
+
+test ascii_trim_preserves_non_ascii_bytes(&testing::UnitTest t) {
+    [7]u8 valueBytes = [194, 160, 32, 120, 32, 194, 160];
+    value := strings::stringv_from_bytes(valueBytes[:]);
+
+    asserts::is_true(
+        t,
+        strings::trim_ascii(value) == value,
+        "non-ASCII whitespace bytes stop ASCII trimming"
+    );
+}
+
+test ascii_case_conversion_maps_only_ascii_letters(&testing::UnitTest t) {
+    [6]u8 sourceBytes = [195, 137, 65, 122, 45, 57];
+    [6]u8 lowerBytes = [195, 137, 97, 122, 45, 57];
+    [6]u8 upperBytes = [195, 137, 65, 90, 45, 57];
+    source := strings::stringv_from_bytes(sourceBytes[:]);
+    expectedLower := strings::stringv_from_bytes(lowerBytes[:]);
+    expectedUpper := strings::stringv_from_bytes(upperBytes[:]);
+
+    lower, lowerError := strings::to_ascii_lowercase(source);
+    upper, upperError := strings::to_ascii_uppercase(source);
+
+    asserts::is_true(
+        t,
+        lowerError == none and lower.view() == expectedLower,
+        "lowercase maps ASCII uppercase and preserves other bytes"
+    );
+    asserts::is_true(
+        t,
+        upperError == none and upper.view() == expectedUpper,
+        "uppercase maps ASCII lowercase and preserves other bytes"
+    );
+}
+
+test ascii_case_conversion_handles_empty_text(&testing::UnitTest t) {
+    lower, lowerError := strings::to_ascii_lowercase("");
+    upper, upperError := strings::to_ascii_uppercase("");
+
+    asserts::is_true(
+        t,
+        lowerError == none and upperError == none and
+            lower.len() == 0 and upper.len() == 0,
+        "case conversion returns owning empty strings"
+    );
+}
+
+test replace_handles_growth_shrinkage_and_removal(&testing::UnitTest t) {
+    grown, grownError := strings::replace("a-b-a", "a", "arrow");
+    shrunk, shrunkError := strings::replace("one::two::", "::", ":");
+    removed, removedError := strings::replace("banana", "na", "");
+
+    asserts::is_true(
+        t,
+        grownError == none and grown == "arrow-b-arrow",
+        "replacement grows output for every match"
+    );
+    asserts::is_true(
+        t,
+        shrunkError == none and shrunk == "one:two:",
+        "replacement shrinks output for every match"
+    );
+    asserts::is_true(
+        t,
+        removedError == none and removed == "ba",
+        "an empty replacement removes every match"
+    );
+}
+
+test replace_uses_non_overlapping_matches(&testing::UnitTest t) {
+    replaced, replacementError := strings::replace("aaaaa", "aa", "b");
+    unchanged, unchangedError := strings::replace("flecha", "bow", "arrow");
+
+    asserts::is_true(
+        t,
+        replacementError == none and replaced == "bba",
+        "replacement consumes matches from left to right without overlap"
+    );
+    asserts::is_true(
+        t,
+        unchangedError == none and unchanged == "flecha",
+        "an absent target produces an equal owning copy"
+    );
+}
+
+test replace_empty_target_matches_byte_boundaries(&testing::UnitTest t) {
+    separated, separatedError := strings::replace("ab", "", "-");
+    empty, emptyError := strings::replace("", "", "-");
+    unchanged, unchangedError := strings::replace("ab", "", "");
+
+    asserts::is_true(
+        t,
+        separatedError == none and separated == "-a-b-",
+        "an empty target inserts replacement at every boundary"
+    );
+    asserts::is_true(
+        t,
+        emptyError == none and empty == "-",
+        "empty text has one byte boundary"
+    );
+    asserts::is_true(
+        t,
+        unchangedError == none and unchanged == "ab",
+        "empty target and replacement preserve the value"
+    );
+}
+
+test replace_preserves_arbitrary_bytes(&testing::UnitTest t) {
+    [5]u8 sourceBytes = [65, 0, 66, 0, 65];
+    [1]u8 targetBytes = [0];
+    [2]u8 replacementBytes = [255, 1];
+    [7]u8 expectedBytes = [65, 255, 1, 66, 255, 1, 65];
+    source := strings::stringv_from_bytes(sourceBytes[:]);
+    target := strings::stringv_from_bytes(targetBytes[:]);
+    replacement := strings::stringv_from_bytes(replacementBytes[:]);
+    expected := strings::stringv_from_bytes(expectedBytes[:]);
+
+    result, replacementError :=
+        strings::replace(source, target, replacement);
+
+    asserts::is_true(
+        t,
+        replacementError == none and result.view() == expected,
+        "replacement is byte-oriented and preserves embedded nulls"
+    );
+}
