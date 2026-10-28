@@ -1005,7 +1005,7 @@ TEST_F(ModuleTests, QuiverGenericDeclarationsRespectInstantiationBoundary) {
         i32 main() {
             box := generic::Box<i32>::init();
             generic::Mapper<i32> mapper = (value) => { return value; };
-            return generic::identity<i32>(mapper(box.value));
+            return generic::identity(mapper(box.value));
         }
     )");
     EXPECT_EQ(Check(), "");

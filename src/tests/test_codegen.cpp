@@ -1223,7 +1223,7 @@ TEST(NativeCompilerTests, RunsDefinedIntegerBitwiseAndShiftOperations) {
             if signed_shift_right(-1, 8) != (-1 as i8) { return 10; }
             if shift_left(1, usize.max_value) != (0 as u8) { return 11; }
             if signed_shift_right(1, 8) != (0 as i8) { return 12; }
-            if generic_bits<u8>(12, 10) != (247 as u8) { return 13; }
+            if generic_bits(12 as u8, 10 as u8) != (247 as u8) { return 13; }
             return 42;
         }
     )");

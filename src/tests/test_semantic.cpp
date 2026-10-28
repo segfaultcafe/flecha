@@ -6354,7 +6354,7 @@ TEST(SemanticGenericTests,
 TEST(SemanticGenericTests,
      RequiresExplicitArgumentsAndRejectsInvalidTemplates) {
     for (const auto& source :
-         {"T id<T>(T x) { return x; } void main() { id(1); }",
+         {"T make<T>() { return none; } void main() { make(); }",
           "T id<T>(T x) { return x; } void main() { id<i32, f64>(1); }",
           "i32 id(i32 x) { return x; } void main() { id<i32>(1); }",
           "structure Box<T> { T value; }; void main() { Box value; }",
@@ -6367,6 +6367,81 @@ TEST(SemanticGenericTests,
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+}
+
+TEST(SemanticGenericTests, InfersFreeFunctionArgumentsFromCallsAndResults) {
+    auto result = Analyze(R"(
+        structure Box<T> { T value; };
+        func Parser() => (i32);
+        T identity<T>(T value) { return value; }
+        T first<T>([]const T values) { return values[0]; }
+        T unbox<T>(Box<T> value) { return value.value; }
+        (T, U) pair<T, U>(T left, U right) { return (left, right); }
+        T with_default<T>(T value, T fallback = none) { return value; }
+        T parse<T: integer>(stringv value) { return none; }
+        i16 parse_i16(stringv value) { return parse(value); }
+        Parser make_parser() {
+            return []() => (i32) { return parse("42"); };
+        }
+
+        i32 main() {
+            i32 literal = identity(42);
+            u8 byte = 7;
+            u8 copied = identity(byte);
+            [2]i16 values = [20, 22];
+            i16 element = first(values[:]);
+            box := Box<i64>::init();
+            i64 boxed = unbox(box);
+            left, right := pair(byte, 9 as i64);
+            u8 defaulted = with_default(byte);
+            i32 parsed = parse("42");
+            i16 returned = parse_i16("42");
+            Parser parser = make_parser();
+            i32 callback_parsed = parser();
+            return literal + copied.cast<i32> + element.cast<i32> +
+                boxed.cast<i32> + left.cast<i32> + right.cast<i32> +
+                defaulted.cast<i32> + parsed + returned.cast<i32> +
+                callback_parsed;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests, DiagnosesMissingAndConflictingCallInference) {
+    auto missing = Analyze(R"(
+        T parse<T>(stringv value) { return none; }
+        void main() { parse("42"); }
+    )");
+    const auto* missingDiagnostic =
+        FindDiagnostic(missing, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(missingDiagnostic, nullptr);
+    EXPECT_NE(missingDiagnostic->message.find("cannot infer type argument 'T'"),
+              std::string::npos);
+
+    auto inferredDestination = Analyze(R"(
+        T parse<T>(stringv value) { return none; }
+        void main() { value := parse("42"); }
+    )");
+    EXPECT_NE(
+        FindDiagnostic(inferredDestination, DiagnosticCode::InvalidGeneric),
+        nullptr);
+
+    auto conflicting = Analyze(R"(
+        T choose<T>(T left, T right) { return left; }
+        void main() {
+            i8 small = 1;
+            i16 large = 2;
+            choose(small, large);
+        }
+    )");
+    const auto* conflictDiagnostic =
+        FindDiagnostic(conflicting, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(conflictDiagnostic, nullptr);
+    EXPECT_NE(conflictDiagnostic->message.find(
+                  "conflicting inferred type arguments for 'T'"),
+              std::string::npos);
 }
 
 TEST(SemanticGenericTests,
