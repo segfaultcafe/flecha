@@ -94,6 +94,65 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::U8)));
 }
 
+TEST(SemanticTests, AcceptsTrailingDefaultArgumentsAtDirectCallsAndMethods) {
+    Analysis analysis = Analyze(R"(
+        i32 add(i32 value, i32 amount = 2) { return value + amount; }
+        structure Counter { i32 value; };
+        i32 Counter::add(&const self, i32 amount = 2) {
+            return self->value + amount;
+        }
+        i32 main() {
+            counter := Counter::init();
+            return add(38) + counter.add() + add(0, 2);
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticTests, RejectsRequiredParametersAfterDefaults) {
+    Analysis analysis =
+        Analyze("void invalid(i32 first = 1, i32 second) {} void main() {}");
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidDefaultArgument);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_NE(diagnostic->message.find("required parameter"),
+              std::string::npos);
+}
+
+TEST(SemanticTests, TypeChecksDefaultsAndCallArity) {
+    Analysis incompatible =
+        Analyze("void invalid(i32 value = true) {} void main() {}");
+    EXPECT_NE(
+        FindDiagnostic(incompatible, DiagnosticCode::InvalidDefaultArgument),
+        nullptr);
+
+    Analysis tooFew = Analyze(
+        "void value(i32 required, i32 optional = 2) {} "
+        "void main() { value(); }");
+    EXPECT_NE(FindDiagnostic(tooFew, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+
+    Analysis tooMany = Analyze(
+        "void value(i32 optional = 2) {} "
+        "void main() { value(1, 2); }");
+    EXPECT_NE(FindDiagnostic(tooMany, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+}
+
+TEST(SemanticTests, DoesNotCarryDefaultsThroughCallableValues) {
+    Analysis analysis = Analyze(R"(
+        func Binary(i32, i32) => (i32);
+        i32 add(i32 value, i32 amount = 2) { return value + amount; }
+        i32 invoke(Binary operation) { return operation(40); }
+        i32 main() { return invoke(add); }
+    )");
+
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+}
+
 TEST(SemanticConstTests, ResolvesAndValidatesModuleConstants) {
     auto valid = Analyze(R"(
         const usize BASE = 4;

@@ -648,3 +648,23 @@ TEST(LoweringTests, PreservesTupleEvaluationAndDestructuringTargets) {
                   .find("destructure (local second: i32, err: i32)"),
               std::string::npos);
 }
+
+TEST(LoweringTests, MaterializesDefaultsForFunctionsAndMethods) {
+    LoweredSource result = Lower(R"(
+        i32 add(i32 value, i32 amount = 2) { return value + amount; }
+        structure Counter { i32 value; };
+        i32 Counter::add(&const self, i32 amount = 2) {
+            return self->value + amount;
+        }
+        i32 main() {
+            counter := Counter::init();
+            return add(38) + counter.add();
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const std::string dump = DumpBoundProgram(*result.program);
+    EXPECT_NE(dump.find("(call add 38:i32 2:i32)"), std::string::npos);
+    EXPECT_NE(dump.find("(call Counter::add"), std::string::npos);
+}
