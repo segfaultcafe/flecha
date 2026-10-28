@@ -20,8 +20,11 @@
 #include "core/parser.hpp"
 #include "core/tokenizer.hpp"
 #include "flecha/version.hpp"
+#include "longbow/archive.hpp"
 #include "longbow/cache.hpp"
 #include "longbow/manifest.hpp"
+#include "longbow/registry.hpp"
+#include "longbow/registry_transport.hpp"
 #include "longbow/resolver.hpp"
 #include "longbow/sha256.hpp"
 
@@ -98,8 +101,7 @@ fs::path ProjectRoot(const std::optional<fs::path>& requested) {
     if (requested && !fs::is_directory(start))
         throw std::runtime_error("project path is not a directory: " +
                                  start.string());
-    for (fs::path directory = start;;
-         directory = directory.parent_path()) {
+    for (fs::path directory = start;; directory = directory.parent_path()) {
         if (fs::is_regular_file(directory / "longbow.toml")) return directory;
         if (requested) break;
         if (directory == directory.parent_path()) break;
@@ -148,8 +150,8 @@ class TemporaryDirectory final {
             std::error_code error;
             if (fs::create_directory(_path, error)) return;
             if (error && error != std::errc::file_exists)
-                throw std::runtime_error("cannot create Git staging directory: " +
-                                         error.message());
+                throw std::runtime_error(
+                    "cannot create Git staging directory: " + error.message());
         }
         throw std::runtime_error("cannot allocate Git staging directory");
     }
@@ -209,14 +211,14 @@ std::vector<std::string> GitTreeFiles(const std::string& listing) {
             throw std::runtime_error("Git package contains an unsafe path");
         for (const auto& component : parsed) {
             std::string name = component.string();
-            std::transform(name.begin(), name.end(), name.begin(),
-                           [](unsigned char character) {
-                               return static_cast<char>(std::tolower(character));
-                           });
+            std::transform(
+                name.begin(), name.end(), name.begin(),
+                [](unsigned char character) {
+                    return static_cast<char>(std::tolower(character));
+                });
             if (component.empty() || component == "." || component == ".." ||
                 name == ".git")
-                throw std::runtime_error(
-                    "Git package contains an unsafe path");
+                throw std::runtime_error("Git package contains an unsafe path");
         }
         std::string portable = path;
         std::transform(portable.begin(), portable.end(), portable.begin(),
@@ -250,8 +252,7 @@ flecha::longbow::AcquiredDependency AcquireGit(
                                      protocol + "'");
         remote = true;
     } else if (const std::size_t colon = declaredUrl.find(':');
-               colon != std::string::npos &&
-               !declaredUrl.starts_with("./") &&
+               colon != std::string::npos && !declaredUrl.starts_with("./") &&
                !declaredUrl.starts_with("../")) {
         if (colon == 0 || declaredUrl.substr(0, colon).contains('/'))
             throw std::runtime_error("invalid Git dependency location");
@@ -279,8 +280,8 @@ flecha::longbow::AcquiredDependency AcquireGit(
     TemporaryDirectory staging(cache.Root() / "staging");
     const fs::path repository = staging.Path() / "repository.git";
     const fs::path exported = staging.Path() / "source";
-    RequireGit({git, "clone", "--bare", "--quiet", "--", url,
-                repository.string()});
+    RequireGit(
+        {git, "clone", "--bare", "--quiet", "--", url, repository.string()});
 
     const fs::path revisionOutput = staging.Path() / "revision";
     RequireGit({git, "-C", repository.string(), "rev-parse", "--verify",
@@ -308,9 +309,9 @@ flecha::longbow::AcquiredDependency AcquireGit(
         // hooks, submodules, and clean/smudge filters are never executed.
         const fs::path destination = exported / fs::path(path);
         fs::create_directories(destination.parent_path());
-        RequireGit({git, "-C", repository.string(), "show",
-                    revision + ":" + path},
-                   destination);
+        RequireGit(
+            {git, "-C", repository.string(), "show", revision + ":" + path},
+            destination);
     }
     if (!fs::is_regular_file(exported / "longbow.toml") ||
         !fs::is_directory(exported / "src"))
@@ -400,6 +401,12 @@ class CompilerGraph final {
 void Usage() {
     std::cout << "usage: longbow new NAME [--lib]\n"
                  "       longbow init [--lib]\n"
+                 "       longbow add OWNER/PACKAGE@REQUIREMENT [--as ALIAS]\n"
+                 "       longbow remove ALIAS\n"
+                 "       longbow fetch [PROJECT]\n"
+                 "       longbow update [ALIAS]\n"
+                 "       longbow publish [PROJECT] [--dry-run]\n"
+                 "       longbow yank VERSION\n"
                  "       longbow check|build|clean [PROJECT]\n"
                  "       longbow test [PROJECT] [--verbose]\n"
                  "       longbow run [PROJECT] [-- program arguments]\n";
@@ -434,15 +441,97 @@ int Run(int argc, char** argv) {
                argc == flag + 1, initialize);
         return 0;
     }
+    if (command == "add") {
+        if (argc != 3 && argc != 5) {
+            Usage();
+            return 1;
+        }
+        const std::string specification = argv[2];
+        const std::size_t separator = specification.rfind('@');
+        if (separator == std::string::npos || separator == 0 ||
+            separator + 1 == specification.size() ||
+            (argc == 5 && std::string(argv[3]) != "--as"))
+            throw std::runtime_error(
+                "add requires OWNER/PACKAGE@REQUIREMENT [--as ALIAS]");
+        const std::string identity = specification.substr(0, separator);
+        std::string alias =
+            argc == 5 ? argv[4] : identity.substr(identity.find('/') + 1);
+        std::replace(alias.begin(), alias.end(), '-', '_');
+        const fs::path root = ProjectRoot(std::nullopt);
+        flecha::longbow::AddRegistryDependency(
+            root, identity, specification.substr(separator + 1), alias);
+        std::cout << "Added " << alias << " -> " << identity << " "
+                  << specification.substr(separator + 1) << "\n";
+        return 0;
+    }
+    if (command == "remove") {
+        if (argc != 3) {
+            Usage();
+            return 1;
+        }
+        const fs::path root = ProjectRoot(std::nullopt);
+        flecha::longbow::RemoveDependency(root, argv[2]);
+        std::cout << "Removed " << argv[2] << "\n";
+        return 0;
+    }
+    if (command == "publish") {
+        bool dryRun = false;
+        std::optional<fs::path> project;
+        for (int index = 2; index < argc; ++index) {
+            if (std::string(argv[index]) == "--dry-run") {
+                if (dryRun) throw std::runtime_error("duplicate --dry-run");
+                dryRun = true;
+            } else if (!project)
+                project = fs::path(argv[index]);
+            else {
+                Usage();
+                return 1;
+            }
+        }
+        const fs::path root = ProjectRoot(project);
+        const auto manifest = flecha::longbow::ReadManifest(root);
+        const auto archive = flecha::longbow::BuildPackageArchive(root);
+        std::cout << *manifest.registry << "@" << manifest.version.String()
+                  << "\n";
+        for (const auto& file : archive.files)
+            std::cout << "  " << file << "\n";
+        std::cout << archive.checksum << "\n";
+        if (!dryRun) {
+            const flecha::longbow::RegistryTransport transport;
+            transport.Publish(*manifest.registry, manifest.version.String(),
+                              archive.checksum, archive.bytes);
+            std::cout << "Published\n";
+        }
+        return 0;
+    }
+    if (command == "yank") {
+        if (argc != 3) {
+            Usage();
+            return 1;
+        }
+        const fs::path root = ProjectRoot(std::nullopt);
+        const auto manifest = flecha::longbow::ReadManifest(root);
+        if (!manifest.registry)
+            throw std::runtime_error(
+                "package.registry is required for yanking");
+        const flecha::longbow::RegistryTransport transport;
+        transport.Yank(*manifest.registry, argv[2]);
+        std::cout << "Yanked " << *manifest.registry << "@" << argv[2] << "\n";
+        return 0;
+    }
     if (command != "check" && command != "build" && command != "run" &&
-        command != "test" && command != "clean") {
+        command != "test" && command != "clean" && command != "fetch" &&
+        command != "update") {
         Usage();
         return 1;
     }
     int argument = 2;
     std::optional<fs::path> project;
-    if (argument < argc && std::string(argv[argument]) != "--" &&
-        std::string(argv[argument]) != "--verbose")
+    std::optional<std::string> updateAlias;
+    if (command == "update" && argument < argc)
+        updateAlias = argv[argument++];
+    else if (argument < argc && std::string(argv[argument]) != "--" &&
+             std::string(argv[argument]) != "--verbose")
         project = fs::path(argv[argument++]);
     bool verboseTests = false;
     if (command == "test" && argument < argc &&
@@ -463,6 +552,13 @@ int Run(int argc, char** argv) {
     const fs::path root = ProjectRoot(project);
     const flecha::longbow::Manifest manifest =
         flecha::longbow::ReadManifest(root);
+    if (updateAlias) {
+        const auto found = manifest.dependencies.find(*updateAlias);
+        if (found == manifest.dependencies.end() ||
+            found->second.kind != flecha::longbow::DependencyKind::Registry)
+            throw std::runtime_error(
+                "update alias is not a registry dependency: " + *updateAlias);
+    }
     const fs::path target = root / "target";
     if (fs::is_symlink(target))
         throw std::runtime_error("target must not be a symbolic link");
@@ -471,23 +567,36 @@ int Run(int argc, char** argv) {
         return 0;
     }
     const flecha::longbow::PackageCache cache;
+    const flecha::longbow::RegistryTransport registryTransport;
+    auto registryLock =
+        flecha::longbow::ReadRegistryLock(root / "longbow.lock");
+    if (command == "update") {
+        if (updateAlias)
+            registryLock.erase(*manifest.dependencies.at(*updateAlias).package);
+        else
+            registryLock.clear();
+    }
+    flecha::longbow::RegistryResolver registryResolver(
+        registryTransport.Base(), cache,
+        [&](const std::string& resource) {
+            return registryTransport.Read(resource);
+        },
+        std::move(registryLock));
     const auto packages = flecha::longbow::ResolveLocalPackages(
         manifest, StandardLibrary(argv[0]),
         [&](const flecha::longbow::Manifest& importer,
             const flecha::longbow::Dependency& dependency) {
             if (dependency.kind == flecha::longbow::DependencyKind::Git)
                 return AcquireGit(importer, dependency, cache);
-            throw std::runtime_error("registry dependency '" +
-                                     dependency.alias +
-                                     "' has not been fetched");
+            return registryResolver.Acquire(dependency);
         });
     std::string toolchainVersionError;
     const auto toolchainVersion = flecha::longbow::SemanticVersion::Parse(
         flecha::VERSION, toolchainVersionError);
     if (!toolchainVersion)
         throw std::runtime_error("invalid Flecha toolchain version '" +
-                                 std::string(flecha::VERSION) + "': " +
-                                 toolchainVersionError);
+                                 std::string(flecha::VERSION) +
+                                 "': " + toolchainVersionError);
     for (const auto& [id, package] : packages.Packages()) {
         (void)id;
         if (package.flecha.empty()) continue;
@@ -500,6 +609,7 @@ int Run(int argc, char** argv) {
                 package.flecha + ", but the toolchain is " + flecha::VERSION);
     }
     if (command != "test") packages.WriteLock(root / "longbow.lock", root);
+    if (command == "fetch" || command == "update") return 0;
     const CompilerGraph compilerGraph(packages, target,
                                       command == "build" || command == "run");
     if (command == "test") {
@@ -508,8 +618,7 @@ int Run(int argc, char** argv) {
         if (fs::is_directory(sourceRoot))
             for (const auto& item :
                  fs::recursive_directory_iterator(sourceRoot)) {
-                if (!item.is_regular_file() ||
-                    item.path().extension() != ".fl")
+                if (!item.is_regular_file() || item.path().extension() != ".fl")
                     continue;
                 const auto module = DeclaredModule(item.path());
                 if (!module || !module->ends_with("_test")) continue;

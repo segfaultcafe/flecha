@@ -67,7 +67,10 @@ target_link_libraries(flecha
         flecha_std
 )
 
-add_executable(longbow src/longbow/main.cpp)
+add_executable(longbow
+    src/longbow/main.cpp
+    src/longbow/registry_transport.cpp
+)
 target_include_directories(longbow PRIVATE ${PROJECT_BINARY_DIR}/generated)
 target_link_libraries(longbow
     PRIVATE

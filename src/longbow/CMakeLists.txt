@@ -2,6 +2,7 @@ add_library(longbow_model STATIC
     archive.cpp
     cache.cpp
     manifest.cpp
+    registry.cpp
     resolver.cpp
     sha256.cpp
 )

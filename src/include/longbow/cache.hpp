@@ -26,18 +26,25 @@ class PackageCache final {
         const std::string& checksum) const;
     std::filesystem::path Store(const std::filesystem::path& source,
                                 const std::string& checksum) const;
+    std::filesystem::path StoreArchive(const std::string& archive,
+                                       const std::string& checksum) const;
     [[nodiscard]] std::optional<CachedGitSource> FindGit(
         const std::string& url, const std::string& requestedRevision) const;
-    void StoreGit(const std::string& url,
-                  const std::string& requestedRevision,
+    void StoreGit(const std::string& url, const std::string& requestedRevision,
                   const std::string& resolvedRevision,
                   const std::string& checksum) const;
+    [[nodiscard]] std::optional<std::string> FindRegistryIndex(
+        const std::string& registry, const std::string& identity) const;
+    void StoreRegistryIndex(const std::string& registry,
+                            const std::string& identity,
+                            const std::string& contents) const;
 
    private:
     std::filesystem::path Entry(const std::string& checksum) const;
     std::filesystem::path GitReference(
-        const std::string& url,
-        const std::string& requestedRevision) const;
+        const std::string& url, const std::string& requestedRevision) const;
+    std::filesystem::path RegistryIndex(const std::string& registry,
+                                        const std::string& identity) const;
     void Validate(const std::filesystem::path& entry,
                   const std::string& checksum) const;
     std::filesystem::path _root;

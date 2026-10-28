@@ -268,6 +268,32 @@ Resolution and fetch are separate internally even when `build`, `check`,
 manifest validation, version selection, network acquisition, checksum
 verification, cache extraction, or compilation.
 
+## Registry protocol v1
+
+Longbow uses an HTTPS base of `https://registry.flecha-lang.org/v1`. Package
+path components use the already-validated lowercase owner and package names.
+The initial client contract is:
+
+| Request | Meaning |
+| --- | --- |
+| `GET /packages/OWNER/PACKAGE/index` | Read immutable releases and yank state |
+| `GET /packages/OWNER/PACKAGE/VERSION/archive` | Download exact normalized archive bytes |
+| `PUT /packages/OWNER/PACKAGE/VERSION/archive` | Publish once, with bearer authorization and `X-Flecha-Checksum` |
+| `POST /packages/OWNER/PACKAGE/VERSION/yank` | Mark the immutable release unavailable to new selections |
+
+The versioned index media is UTF-8 text. Its first line is
+`flecha-registry-index 1`; each following line is
+`VERSION<TAB>sha256:HEX<TAB>active|yanked`. Duplicate or malformed versions,
+unknown states, and invalid checksums are rejected. Archives use
+`application/vnd.flecha.package.v1`. Clients verify the checksum before
+extraction and verify the normalized extracted tree again on every cache use.
+Yanking changes only index state: an existing lock may still fetch and build
+the recorded checksum, while an unlocked resolution skips that release.
+
+This repository implements the protocol client and a filesystem transport for
+deterministic integration tests; deployment of the public service is separate
+backend work.
+
 ## Registry ownership and trust
 
 The registry supports user and organization owners, multiple package

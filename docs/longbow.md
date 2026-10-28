@@ -62,6 +62,13 @@ module declaration, so `math-tools` uses `src/math_tools.fl` and declares
 | `longbow new NAME` | Create a new directory and program scaffold |
 | `longbow new NAME --lib` | Create a library with an exported example function |
 | `longbow init [--lib]` | Scaffold the current existing directory without overwriting source or a manifest |
+| `longbow add OWNER/PACKAGE@REQUIREMENT [--as ALIAS]` | Add an owner-scoped registry dependency to the manifest |
+| `longbow remove ALIAS` | Remove one dependency from the manifest |
+| `longbow fetch [PROJECT]` | Resolve, verify, cache, and lock dependencies without compiling |
+| `longbow update [ALIAS]` | Re-resolve all registry dependencies, or one selected alias, outside its previous lock |
+| `longbow publish [PROJECT] --dry-run` | Validate and list the normalized source archive without uploading |
+| `longbow publish [PROJECT]` | Publish the immutable version using `LONGBOW_TOKEN` |
+| `longbow yank VERSION` | Prevent new selection of a published version while preserving locked builds |
 | `longbow check [PROJECT]` | Load and check source and its reachable imports without emitting artifacts |
 | `longbow build [PROJECT]` | Compile a program, or emit a host-native object for a library |
 | `longbow run [PROJECT] -- ARGS` | Build, then run the program and propagate its exit status |
@@ -74,6 +81,12 @@ paths such as `test-me` and `"hi mom"`. Artifacts go to `target`. Failed compila
 an older binary. Arguments are passed directly without a shell. The current
 language entry-point signatures do not yet expose command-line arguments to
 Flecha code. Existing `.gitignore` files are preserved by `init`.
+
+Registry traffic uses `https://registry.flecha-lang.org/v1` by default. Set
+`LONGBOW_REGISTRY` to select a development endpoint and `LONGBOW_TOKEN` for
+publish/yank authorization. HTTPS requests use the platform `curl` executable;
+bearer tokens are passed through an owner-only temporary header file rather
+than command-line arguments. Registry access remains entirely in Longbow.
 
 Since Flecha 0.2.1, test discovery reads module declarations rather than file
 suffixes. Several arbitrarily named files may contribute to one logical test

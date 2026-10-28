@@ -736,4 +736,113 @@ Manifest ReadManifest(const fs::path& directory) {
     return manifest;
 }
 
+namespace {
+
+std::vector<std::string> ManifestLines(const fs::path& file) {
+    std::ifstream stream(file);
+    if (!stream) throw std::runtime_error("cannot read " + file.string());
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(stream, line)) lines.push_back(line);
+    return lines;
+}
+
+std::pair<std::size_t, std::size_t> DependencySection(
+    const std::vector<std::string>& lines) {
+    std::size_t begin = lines.size(), end = lines.size();
+    bool found = false;
+    for (std::size_t index = 0; index != lines.size(); ++index) {
+        const std::string line = Trim(lines[index]);
+        if (line == "[dependencies]") {
+            begin = index + 1;
+            found = true;
+            continue;
+        }
+        if (begin != lines.size() && !line.empty() && line.front() == '[') {
+            end = index;
+            break;
+        }
+    }
+    if (!found)
+        throw std::runtime_error("manifest has no [dependencies] section");
+    return {begin, end};
+}
+
+void WriteManifestLines(const fs::path& file,
+                        const std::vector<std::string>& lines) {
+    if (fs::is_symlink(file))
+        throw std::runtime_error("refusing to edit symbolic-link manifest");
+    const fs::path temporary = file.string() + ".tmp";
+    {
+        std::ofstream stream(temporary, std::ios::trunc);
+        for (const auto& line : lines) stream << line << '\n';
+        if (!stream)
+            throw std::runtime_error("cannot write " + temporary.string());
+    }
+    const fs::path backup = file.string() + ".backup";
+    std::error_code error;
+    fs::rename(file, backup, error);
+    if (error) {
+        fs::remove(temporary);
+        throw std::runtime_error("cannot preserve " + file.string() + ": " +
+                                 error.message());
+    }
+    fs::rename(temporary, file, error);
+    if (error) {
+        std::error_code restoreError;
+        fs::rename(backup, file, restoreError);
+        fs::remove(temporary);
+        throw std::runtime_error("cannot replace " + file.string() + ": " +
+                                 error.message());
+    }
+    fs::remove(backup, error);
+}
+
+}  // namespace
+
+void AddRegistryDependency(const fs::path& directory,
+                           const std::string& identity,
+                           const std::string& requirement,
+                           const std::string& alias) {
+    const Manifest manifest = ReadManifest(directory);
+    if (!CanonicalPackage(identity) || identity == "flecha/std")
+        throw std::runtime_error("invalid registry package identity");
+    if (!ValidIdentifier(alias) || manifest.dependencies.contains(alias))
+        throw std::runtime_error("invalid or duplicate dependency alias '" +
+                                 alias + "'");
+    std::string error;
+    if (!VersionRequirement::Parse(requirement, error))
+        throw std::runtime_error("invalid dependency version: " + error);
+    const fs::path file = directory / "longbow.toml";
+    auto lines = ManifestLines(file);
+    const auto [begin, end] = DependencySection(lines);
+    (void)begin;
+    lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(end),
+                 alias + " = { package = \"" + identity + "\", version = \"" +
+                     requirement + "\" }");
+    WriteManifestLines(file, lines);
+}
+
+void RemoveDependency(const fs::path& directory, const std::string& alias) {
+    const Manifest manifest = ReadManifest(directory);
+    if (!manifest.dependencies.contains(alias))
+        throw std::runtime_error("unknown dependency alias '" + alias + "'");
+    const fs::path file = directory / "longbow.toml";
+    auto lines = ManifestLines(file);
+    const auto [begin, end] = DependencySection(lines);
+    for (std::size_t index = begin; index != end; ++index) {
+        const std::string line = Trim(lines[index]);
+        if (!line.starts_with(alias)) continue;
+        const std::size_t equal = line.find('=');
+        if (equal != std::string::npos &&
+            Trim(line.substr(0, equal)) == alias) {
+            lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(index));
+            WriteManifestLines(file, lines);
+            return;
+        }
+    }
+    throw std::runtime_error("cannot locate dependency alias '" + alias +
+                             "' in manifest");
+}
+
 }  // namespace flecha::longbow

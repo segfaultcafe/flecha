@@ -35,6 +35,22 @@ function(run_cached expected directory)
     set(last_output "${output}" PARENT_SCOPE)
     set(last_errors "${errors}" PARENT_SCOPE)
 endfunction()
+function(run_registry expected directory)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "LONGBOW_CACHE_DIR=${TEST_ROOT}/registry-cache"
+            "LONGBOW_REGISTRY=file://${TEST_ROOT}/registry"
+            "LONGBOW_TOKEN=test-token"
+            "${LONGBOW}" ${ARGN}
+        WORKING_DIRECTORY "${directory}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+    if(NOT result EQUAL expected)
+        message(FATAL_ERROR
+            "registry longbow ${ARGN} returned ${result}, expected ${expected}: ${output} ${errors}")
+    endif()
+    set(last_output "${output}" PARENT_SCOPE)
+    set(last_errors "${errors}" PARENT_SCOPE)
+endfunction()
 run(0 "${TEST_ROOT}" new hello)
 if(NOT EXISTS "${TEST_ROOT}/hello/longbow.toml" OR NOT EXISTS "${TEST_ROOT}/hello/.gitignore")
     message(FATAL_ERROR "missing scaffold files")
@@ -171,6 +187,57 @@ run(1 "${TEST_ROOT}/incompatible" check)
 if(NOT last_errors MATCHES "requires Flecha >=99.0.0")
     message(FATAL_ERROR "incompatible Flecha requirement was not diagnosed: ${last_errors}")
 endif()
+# The local protocol fixture exercises the same immutable index/archive client
+# contract as HTTPS without requiring a registry backend in compiler tests.
+run(0 "${TEST_ROOT}" new registry-leaf --lib)
+file(READ "${TEST_ROOT}/registry-leaf/longbow.toml" registry_manifest)
+string(REPLACE "name = \"registry-leaf\""
+    "name = \"registry-leaf\"\nregistry = \"owner/registry-leaf\""
+    registry_manifest "${registry_manifest}")
+file(WRITE "${TEST_ROOT}/registry-leaf/longbow.toml" "${registry_manifest}")
+run_registry(0 "${TEST_ROOT}/registry-leaf" publish --dry-run)
+if(EXISTS "${TEST_ROOT}/registry")
+    message(FATAL_ERROR "publish --dry-run mutated the registry")
+endif()
+run_registry(0 "${TEST_ROOT}/registry-leaf" publish)
+run(0 "${TEST_ROOT}" new registry-app)
+run(0 "${TEST_ROOT}/registry-app" add owner/registry-leaf@>=0.1,<1 --as leaf)
+file(WRITE "${TEST_ROOT}/registry-app/src/main.fl"
+    "module main; @imports :: lib::leaf::registry_leaf; "
+    "i32 main() { return registry_leaf::answer(); }\n")
+run_registry(0 "${TEST_ROOT}/registry-app" fetch)
+run_registry(42 "${TEST_ROOT}/registry-app" run)
+file(READ "${TEST_ROOT}/registry-app/longbow.lock" registry_lock)
+if(NOT registry_lock MATCHES "\"kind\": \"registry\"" OR
+   NOT registry_lock MATCHES "\"identity\": \"owner/registry-leaf\"")
+    message(FATAL_ERROR "registry resolution is missing from the lock: ${registry_lock}")
+endif()
+# A newer compatible release is ignored by the lock until update selects it.
+file(READ "${TEST_ROOT}/registry-leaf/longbow.toml" registry_manifest)
+string(REPLACE "version = \"0.1.0\"" "version = \"0.2.0\""
+    registry_manifest "${registry_manifest}")
+file(WRITE "${TEST_ROOT}/registry-leaf/longbow.toml" "${registry_manifest}")
+file(WRITE "${TEST_ROOT}/registry-leaf/src/registry_leaf.fl"
+    "module registry_leaf; export i32 answer() { return 43; }\n")
+run_registry(0 "${TEST_ROOT}/registry-leaf" publish)
+run_registry(42 "${TEST_ROOT}/registry-app" run)
+run_registry(0 "${TEST_ROOT}/registry-app" update leaf)
+run_registry(43 "${TEST_ROOT}/registry-app" run)
+run_registry(0 "${TEST_ROOT}/registry-leaf" yank 0.1.0)
+run_registry(0 "${TEST_ROOT}/registry-leaf" yank 0.2.0)
+# Existing locks retain a yanked version, while a new selection cannot choose it.
+run_registry(43 "${TEST_ROOT}/registry-app" run)
+run(0 "${TEST_ROOT}" new registry-new)
+run(0 "${TEST_ROOT}/registry-new" add owner/registry-leaf@>=0.1,<1 --as leaf)
+run_registry(1 "${TEST_ROOT}/registry-new" check)
+if(NOT last_errors MATCHES "no active version")
+    message(FATAL_ERROR "new resolution selected a yanked version: ${last_errors}")
+endif()
+run(0 "${TEST_ROOT}/registry-new" remove leaf)
+run_registry(0 "${TEST_ROOT}/registry-new" check)
+# Cached index and archive content preserve the locked build offline.
+file(REMOVE_RECURSE "${TEST_ROOT}/registry")
+run_registry(43 "${TEST_ROOT}/registry-app" run)
 # Resolver cycles are diagnosed before invoking the compiler.
 file(APPEND "${TEST_ROOT}/leaf/longbow.toml"
     "middle = { path = \"../middle\" }\n")

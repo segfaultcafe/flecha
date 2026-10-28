@@ -8,6 +8,7 @@
 #include "longbow/archive.hpp"
 #include "longbow/cache.hpp"
 #include "longbow/manifest.hpp"
+#include "longbow/registry.hpp"
 #include "longbow/resolver.hpp"
 #include "longbow/sha256.hpp"
 
@@ -79,9 +80,7 @@ TEST(LongbowCacheTests, StoresVerifiesAndReusesContentAddressedSources) {
 
     std::ofstream(stored / "nested/data.txt") << "corrupt\n";
     EXPECT_THROW(
-        {
-            [[maybe_unused]] const auto corrupt = cache.Find(checksum);
-        },
+        { [[maybe_unused]] const auto corrupt = cache.Find(checksum); },
         std::runtime_error);
 
     fs::create_directories(root / "input/nested");
@@ -111,26 +110,76 @@ json = { package = "flecha/json", version = "^1", path = "../json" }
     std::ofstream(root / "package/README.md") << "# Sample\n";
     std::ofstream(root / "package/private.txt") << "not published\n";
 
-    const auto first =
-        flecha::longbow::BuildPackageArchive(root / "package");
-    const auto second =
-        flecha::longbow::BuildPackageArchive(root / "package");
+    const auto first = flecha::longbow::BuildPackageArchive(root / "package");
+    const auto second = flecha::longbow::BuildPackageArchive(root / "package");
     EXPECT_EQ(first.bytes, second.bytes);
     EXPECT_EQ(first.checksum, second.checksum);
-    EXPECT_EQ(first.files,
-              (std::vector<std::string>{"README.md", "longbow.toml",
-                                        "src/sample.fl"}));
+    EXPECT_EQ(first.files, (std::vector<std::string>{
+                               "README.md", "longbow.toml", "src/sample.fl"}));
 
     flecha::longbow::ExtractPackageArchive(first.bytes, root / "extracted");
-    const auto manifest =
-        flecha::longbow::ReadManifest(root / "extracted");
+    const auto manifest = flecha::longbow::ReadManifest(root / "extracted");
     EXPECT_EQ(manifest.registry, "owner/sample");
     EXPECT_FALSE(manifest.dependencies.at("json").path);
     EXPECT_EQ(flecha::longbow::Sha256(first.bytes),
               first.checksum.substr(std::string("sha256:").size()));
+    const flecha::longbow::PackageCache cache(root / "cache");
+    const fs::path cached = cache.StoreArchive(first.bytes, first.checksum);
+    EXPECT_EQ(cache.Find(first.checksum), cached);
+    std::ofstream(cached / "src/sample.fl") << "corrupt\n";
+    EXPECT_THROW(
+        { [[maybe_unused]] const auto corrupt = cache.Find(first.checksum); },
+        std::runtime_error);
     EXPECT_THROW(flecha::longbow::ExtractPackageArchive(
                      first.bytes + "trailing", root / "invalid"),
                  std::runtime_error);
+    fs::remove_all(root);
+}
+
+TEST(LongbowRegistryTests, SelectsVerifiesCachesAndReusesOffline) {
+    const fs::path root =
+        fs::temp_directory_path() / "flecha_registry_resolver_test";
+    fs::remove_all(root);
+    fs::create_directories(root / "package/src");
+    std::ofstream(root / "package/longbow.toml") << R"([package]
+name = "sample"
+registry = "owner/sample"
+version = "1.2.3"
+kind = "library"
+
+[dependencies]
+)";
+    std::ofstream(root / "package/src/sample.fl") << "module sample;\n";
+    const auto archive = flecha::longbow::BuildPackageArchive(root / "package");
+    const std::string index =
+        "flecha-registry-index 1\n"
+        "1.2.3\t" +
+        archive.checksum + "\tactive\n" +
+        "1.9.0\tsha256:" + std::string(64, 'a') + "\tyanked\n";
+    const flecha::longbow::PackageCache cache(root / "cache");
+    flecha::longbow::RegistryResolver online(
+        "https://registry.example/v1", cache, [&](const std::string& resource) {
+            if (resource.ends_with("/index")) return index;
+            if (resource.ends_with("/1.2.3/archive")) return archive.bytes;
+            throw std::runtime_error("missing fixture resource");
+        });
+    flecha::longbow::Dependency dependency;
+    dependency.alias = "sample";
+    dependency.kind = DependencyKind::Registry;
+    dependency.package = "owner/sample";
+    dependency.version = Requirement("^1");
+    const auto acquired = online.Acquire(dependency);
+    EXPECT_EQ(acquired.sourceKind,
+              flecha::longbow::ResolvedSourceKind::Registry);
+    EXPECT_EQ(acquired.checksum, archive.checksum);
+
+    flecha::longbow::RegistryResolver offline(
+        "https://registry.example/v1", cache,
+        [](const std::string&) -> std::string {
+            throw std::runtime_error("offline");
+        });
+    const auto reused = offline.Acquire(dependency);
+    EXPECT_EQ(reused.directory, acquired.directory);
     fs::remove_all(root);
 }
 
@@ -250,11 +299,11 @@ kind = "library"
         Error(package + "broken = { git = \"https://example.com/repo.git\" }\n")
             .find("requires only nonempty git and rev"),
         std::string::npos);
-    EXPECT_NE(Error(package +
-                    "floating = { git = \"https://example.com/repo.git\", "
-                    "rev = \"main\" }\n")
-                  .find("must be a full 40- or 64-digit commit hash"),
-              std::string::npos);
+    EXPECT_NE(
+        Error(package + "floating = { git = \"https://example.com/repo.git\", "
+                        "rev = \"main\" }\n")
+            .find("must be a full 40- or 64-digit commit hash"),
+        std::string::npos);
     EXPECT_NE(Error(package +
                     "std = { package = \"flecha/json\", version = \"^1\" }\n")
                   .find("std may only be"),
@@ -264,6 +313,25 @@ kind = "library"
               "replacement = { package = \"flecha/std\", version = \"^1\" }\n")
             .find("cannot be a registry dependency"),
         std::string::npos);
+}
+
+TEST_F(LongbowManifestTests, AddsAndRemovesRegistryDependencies) {
+    Write(R"([package]
+name = "sample"
+version = "0.1.0"
+kind = "program"
+
+[dependencies]
+
+[native]
+)");
+    flecha::longbow::AddRegistryDependency(root, "owner/json", "^1.2", "json");
+    auto manifest = flecha::longbow::ReadManifest(root);
+    ASSERT_TRUE(manifest.dependencies.contains("json"));
+    EXPECT_EQ(manifest.dependencies.at("json").package, "owner/json");
+    flecha::longbow::RemoveDependency(root, "json");
+    manifest = flecha::longbow::ReadManifest(root);
+    EXPECT_FALSE(manifest.dependencies.contains("json"));
 }
 
 class LongbowResolverTests : public ::testing::Test {

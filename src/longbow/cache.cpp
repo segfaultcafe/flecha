@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string_view>
 
+#include "longbow/archive.hpp"
 #include "longbow/sha256.hpp"
 
 namespace flecha::longbow {
@@ -48,8 +49,9 @@ void CopyTree(const fs::path& source, const fs::path& destination) {
             fs::create_directories(output.parent_path());
             fs::copy_file(item.path(), output, fs::copy_options::none);
         } else
-            throw std::runtime_error("cache source contains unsupported entry: " +
-                                     item.path().string());
+            throw std::runtime_error(
+                "cache source contains unsupported entry: " +
+                item.path().string());
     }
 }
 
@@ -84,15 +86,44 @@ fs::path PackageCache::GitReference(
     return _root / "refs" / "git" / Sha256(url) / Sha256(requestedRevision);
 }
 
+fs::path PackageCache::RegistryIndex(const std::string& registry,
+                                     const std::string& identity) const {
+    return _root / "indexes" / Sha256(registry) / Sha256(identity);
+}
+
 void PackageCache::Validate(const fs::path& entry,
                             const std::string& checksum) const {
     std::ifstream marker(entry / "complete", std::ios::binary);
+    std::string kind;
     std::string recorded;
+    std::string sourceChecksum;
+    std::getline(marker, kind);
     std::getline(marker, recorded);
-    if (!marker || recorded != checksum || !fs::is_directory(entry / "source"))
+    if (kind == "archive") std::getline(marker, sourceChecksum);
+    if (!marker || (kind != "tree" && kind != "archive") ||
+        recorded != checksum || !fs::is_directory(entry / "source"))
         throw std::runtime_error("incomplete package cache entry for " +
                                  checksum);
-    const std::string actual = "sha256:" + Sha256Tree(entry / "source");
+    std::string actual;
+    if (kind == "tree")
+        actual = "sha256:" + Sha256Tree(entry / "source");
+    else {
+        if (sourceChecksum != "sha256:" + Sha256Tree(entry / "source"))
+            throw std::runtime_error(
+                "corrupt extracted package cache entry for " + checksum);
+        const std::string archive = [&] {
+            std::ifstream stream(entry / "archive", std::ios::binary);
+            if (!stream)
+                throw std::runtime_error("incomplete package cache entry for " +
+                                         checksum);
+            return std::string{std::istreambuf_iterator<char>(stream),
+                               std::istreambuf_iterator<char>()};
+        }();
+        actual = "sha256:" + Sha256(archive);
+        if (actual == checksum &&
+            BuildPackageArchive(entry / "source").checksum != checksum)
+            actual = "extracted-source-mismatch";
+    }
     if (actual != checksum)
         throw std::runtime_error("corrupt package cache entry for " + checksum +
                                  "; found " + actual);
@@ -129,7 +160,7 @@ fs::path PackageCache::Store(const fs::path& source,
     try {
         CopyTree(source, temporary / "source");
         std::ofstream marker(temporary / "complete", std::ios::binary);
-        if (!marker || !(marker << checksum << "\n"))
+        if (!marker || !(marker << "tree\n" << checksum << "\n"))
             throw std::runtime_error("cannot complete package cache entry");
         marker.close();
         std::error_code renameError;
@@ -138,8 +169,62 @@ fs::path PackageCache::Store(const fs::path& source,
             // Another Longbow process may have populated the same immutable
             // content address while this one was staging it.
             if (!fs::exists(entry))
-                throw std::runtime_error("cannot install package cache entry: " +
-                                         renameError.message());
+                throw std::runtime_error(
+                    "cannot install package cache entry: " +
+                    renameError.message());
+            fs::remove_all(temporary);
+        }
+    } catch (...) {
+        std::error_code ignored;
+        fs::remove_all(temporary, ignored);
+        throw;
+    }
+    Validate(entry, checksum);
+    return entry / "source";
+}
+
+fs::path PackageCache::StoreArchive(const std::string& archive,
+                                    const std::string& checksum) const {
+    const std::string actual = "sha256:" + Sha256(archive);
+    if (actual != checksum)
+        throw std::runtime_error(
+            "package archive checksum mismatch: expected " + checksum +
+            ", found " + actual);
+    const fs::path entry = Entry(checksum);
+    if (fs::exists(entry)) {
+        try {
+            Validate(entry, checksum);
+            return entry / "source";
+        } catch (const std::runtime_error&) {
+            fs::remove_all(entry);
+        }
+    }
+    fs::create_directories(entry.parent_path());
+    const fs::path temporary =
+        entry.string() + ".tmp-" +
+        std::to_string(std::chrono::high_resolution_clock::now()
+                           .time_since_epoch()
+                           .count());
+    try {
+        ExtractPackageArchive(archive, temporary / "source");
+        {
+            std::ofstream output(temporary / "archive", std::ios::binary);
+            if (!output || !output.write(archive.data(), archive.size()))
+                throw std::runtime_error("cannot cache package archive");
+        }
+        std::ofstream marker(temporary / "complete", std::ios::binary);
+        if (!marker || !(marker << "archive\n"
+                                << checksum << "\nsha256:"
+                                << Sha256Tree(temporary / "source") << "\n"))
+            throw std::runtime_error("cannot complete package cache entry");
+        marker.close();
+        std::error_code renameError;
+        fs::rename(temporary, entry, renameError);
+        if (renameError) {
+            if (!fs::exists(entry))
+                throw std::runtime_error(
+                    "cannot install package archive cache entry: " +
+                    renameError.message());
             fs::remove_all(temporary);
         }
     } catch (...) {
@@ -184,7 +269,8 @@ void PackageCache::StoreGit(const std::string& url,
                            .count());
     {
         std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-        if (!stream || !(stream << resolvedRevision << "\n" << checksum << "\n"))
+        if (!stream || !(stream << resolvedRevision << "\n"
+                                << checksum << "\n"))
             throw std::runtime_error("cannot write cached Git reference");
     }
     std::error_code error;
@@ -197,6 +283,48 @@ void PackageCache::StoreGit(const std::string& url,
     if (error) {
         fs::remove(temporary);
         throw std::runtime_error("cannot install cached Git reference: " +
+                                 error.message());
+    }
+}
+
+std::optional<std::string> PackageCache::FindRegistryIndex(
+    const std::string& registry, const std::string& identity) const {
+    std::ifstream stream(RegistryIndex(registry, identity), std::ios::binary);
+    if (!stream) return std::nullopt;
+    std::string contents{std::istreambuf_iterator<char>(stream),
+                         std::istreambuf_iterator<char>()};
+    if (contents.empty() || contents.size() > 4 * 1024 * 1024)
+        throw std::runtime_error("cached registry index is empty or oversized");
+    return contents;
+}
+
+void PackageCache::StoreRegistryIndex(const std::string& registry,
+                                      const std::string& identity,
+                                      const std::string& contents) const {
+    if (contents.empty() || contents.size() > 4 * 1024 * 1024)
+        throw std::runtime_error("registry index is empty or oversized");
+    const fs::path file = RegistryIndex(registry, identity);
+    fs::create_directories(file.parent_path());
+    const fs::path temporary =
+        file.string() + ".tmp-" +
+        std::to_string(std::chrono::high_resolution_clock::now()
+                           .time_since_epoch()
+                           .count());
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        if (!stream || !stream.write(contents.data(), contents.size()))
+            throw std::runtime_error("cannot cache registry index");
+    }
+    std::error_code error;
+    fs::rename(temporary, file, error);
+    if (error) {
+        fs::remove(file, error);
+        error.clear();
+        fs::rename(temporary, file, error);
+    }
+    if (error) {
+        fs::remove(temporary);
+        throw std::runtime_error("cannot install cached registry index: " +
                                  error.message());
     }
 }

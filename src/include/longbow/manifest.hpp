@@ -73,6 +73,12 @@ struct Manifest final {
 [[nodiscard]] bool ValidPackageIdentity(const std::string& identity);
 [[nodiscard]] std::string ModuleName(const std::string& projectName);
 [[nodiscard]] Manifest ReadManifest(const std::filesystem::path& directory);
+void AddRegistryDependency(const std::filesystem::path& directory,
+                           const std::string& identity,
+                           const std::string& requirement,
+                           const std::string& alias);
+void RemoveDependency(const std::filesystem::path& directory,
+                      const std::string& alias);
 
 }  // namespace flecha::longbow
 
