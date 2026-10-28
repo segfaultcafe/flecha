@@ -1611,8 +1611,26 @@ void SemanticAnalyzer::RegisterFunction(
     std::vector<SemanticType> parameterTypes;
     std::vector<core::OwnershipContract> parameterContracts;
     bool receiver = false;
+    bool sawDefault = false;
     for (const auto& parameter : function.Parameters()) {
         SemanticType type = ResolveType(parameter->Type());
+        if (parameter->DefaultValue() != nullptr) {
+            sawDefault = true;
+            if (parameter->Name() == "self")
+                Report(diagnostics::DiagnosticCode::InvalidDefaultArgument,
+                       parameter->DefaultValue()->Range(),
+                       "a method receiver cannot have a default argument");
+            if (function.Name().starts_with("$anon"))
+                Report(diagnostics::DiagnosticCode::InvalidDefaultArgument,
+                       parameter->DefaultValue()->Range(),
+                       "anonymous function parameters cannot have default "
+                       "arguments");
+        } else if (sawDefault) {
+            Report(diagnostics::DiagnosticCode::InvalidDefaultArgument,
+                   parameter->NameRange(),
+                   "a required parameter cannot follow a defaulted "
+                   "parameter");
+        }
         if (parameter->Name() == "self") {
             const SemanticType receiverTarget =
                 type.Kind() == SemanticTypeKind::Reference ||
@@ -1836,14 +1854,14 @@ void SemanticAnalyzer::RegisterFunction(
                           ResultContracts(function.ReturnType()),
                           borrowSourceIndices, function.IsUnsafe(),
                           function.HasModifier(core::FunctionModifier::Once)});
-    const auto* symbol = static_cast<const FunctionSymbol*>(
-        AddSymbol(std::make_unique<FunctionSymbol>(
-                      name, std::move(signature), function.NameRange(),
-                      BuiltInFunction::None, owner,
-                      function.HasModifier(core::FunctionModifier::Private),
-                      receiver, function.IsExtern(),
-                      function.IsExtern() ? function.Name() : "", enumOwner),
-                  function));
+    const auto* symbol = static_cast<const FunctionSymbol*>(AddSymbol(
+        std::make_unique<FunctionSymbol>(
+            name, std::move(signature), function.NameRange(),
+            BuiltInFunction::None, owner,
+            function.HasModifier(core::FunctionModifier::Private), receiver,
+            function.IsExtern(), function.IsExtern() ? function.Name() : "",
+            enumOwner, &function),
+        function));
     if (symbol && function.HasModifier(core::FunctionModifier::Extern))
         _forbiddenZeroEffects.insert(symbol);
     if (owner && symbol) {
@@ -2022,6 +2040,13 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     }
     _currentFunction = nullptr;
     for (const auto& function : _model._generatedFunctions)
+        AnalyzeDefaultArguments(*function);
+    for (const std::unique_ptr<core::Declaration>& declaration :
+         unit.Declarations())
+        if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration)
+            AnalyzeDefaultArguments(
+                static_cast<const core::FunctionDeclaration&>(*declaration));
+    for (const auto& function : _model._generatedFunctions)
         AnalyzeFunction(*function);
     for (const std::unique_ptr<core::Declaration>& declaration :
          unit.Declarations()) {
@@ -2050,6 +2075,38 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     _currentScope = nullptr;
     _currentFunction = nullptr;
     return std::move(_model);
+}
+
+void SemanticAnalyzer::AnalyzeDefaultArguments(
+    const core::FunctionDeclaration& function) {
+    if (function.Name().starts_with("$anon")) return;
+    const Symbol* symbol = _model.DeclaredSymbol(function);
+    if (symbol == nullptr || symbol->Kind() != SymbolKind::Function) return;
+    const auto* functionSymbol = static_cast<const FunctionSymbol*>(symbol);
+    SetSource(function.sourceId);
+    const FunctionSymbol* previousFunction = _currentFunction;
+    const bool previousUnsafe = _inUnsafe;
+    const bool previousZero = _inZero;
+    _currentFunction = functionSymbol;
+    _inUnsafe = function.IsUnsafe();
+    _inZero =
+        functionSymbol->Owner() && functionSymbol->Name().ends_with("::zero");
+    for (std::size_t index = 0; index < function.Parameters().size(); ++index) {
+        const core::Expression* value =
+            function.Parameters()[index]->DefaultValue();
+        if (value == nullptr) continue;
+        const SemanticType expected = functionSymbol->ParameterTypes()[index];
+        const SemanticType actual = AnalyzeExpression(*value, expected);
+        CheckTransfer(*value, expected,
+                      functionSymbol->ParameterContract(index) ==
+                          core::OwnershipContract::Own);
+        if (!IsAssignable(expected, actual) && !CanReborrow(expected, actual))
+            Report(diagnostics::DiagnosticCode::InvalidDefaultArgument,
+                   value->Range(), TypeMismatch(expected, actual));
+    }
+    _currentFunction = previousFunction;
+    _inUnsafe = previousUnsafe;
+    _inZero = previousZero;
 }
 
 void SemanticAnalyzer::AnalyzeFunction(
@@ -2382,16 +2439,16 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                     calleeType.Kind() == SemanticTypeKind::Function
                         ? &calleeType.Signature()
                         : nullptr;
-                for (std::size_t index = 0; index < call.Arguments().size();
-                     ++index) {
+                const auto arguments = _model.ArgumentsFor(call);
+                for (std::size_t index = 0; index < arguments.size(); ++index) {
                     const SemanticType type =
                         signature != nullptr &&
                                 (!function || function->BuiltIn() ==
                                                   BuiltInFunction::None) &&
                                 index < signature->parameters.size()
                             ? signature->parameters[index]
-                            : _model.TypeOf(*call.Arguments()[index]);
-                    operands.emplace_back(call.Arguments()[index].get(), type);
+                            : _model.TypeOf(*arguments[index]);
+                    operands.emplace_back(arguments[index], type);
                 }
             } else {
                 const auto& call =
@@ -2407,13 +2464,13 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                 if (offset != 0 && !function->ParameterTypes().empty())
                     operands.emplace_back(&call.Receiver(),
                                           function->ParameterTypes()[0]);
-                for (std::size_t index = 0; index < call.Arguments().size();
-                     ++index) {
+                const auto arguments = _model.ArgumentsFor(call);
+                for (std::size_t index = 0; index < arguments.size(); ++index) {
                     const SemanticType type =
                         index + offset < function->ParameterTypes().size()
                             ? function->ParameterTypes()[index + offset]
-                            : _model.TypeOf(*call.Arguments()[index]);
-                    operands.emplace_back(call.Arguments()[index].get(), type);
+                            : _model.TypeOf(*arguments[index]);
+                    operands.emplace_back(arguments[index], type);
                 }
             }
 
@@ -2775,8 +2832,7 @@ std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
     };
     const auto visibleName = [&](SymbolKind kind) {
         for (const auto& symbol : _model._symbols)
-            if (symbol->Kind() == kind &&
-                symbol->Type() == type.WithoutConst())
+            if (symbol->Kind() == kind && symbol->Type() == type.WithoutConst())
                 if (const auto name = _currentScope->NameFor(*symbol))
                     return *name;
         return type.Name();
@@ -4880,9 +4936,32 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
             : nullptr;
     if (signature != nullptr && signature->isOnce)
         CheckTransfer(expression.Callee(), calleeType);
+    std::vector<const core::Expression*> arguments;
+    arguments.reserve(expression.Arguments().size());
+    for (const auto& argument : expression.Arguments())
+        arguments.push_back(argument.get());
+    std::optional<std::size_t> minimumArguments;
+    if (function && function->BuiltIn() == BuiltInFunction::None &&
+        function->Declaration() && signature) {
+        const auto& parameters = function->Declaration()->Parameters();
+        std::size_t required = parameters.size();
+        for (std::size_t index = 0; index < parameters.size(); ++index)
+            if (parameters[index]->DefaultValue() != nullptr) {
+                required = index;
+                break;
+            }
+        minimumArguments = required;
+        if (arguments.size() >= required &&
+            arguments.size() <= parameters.size()) {
+            for (std::size_t index = arguments.size();
+                 index < parameters.size(); ++index)
+                arguments.push_back(parameters[index]->DefaultValue());
+            if (arguments.size() != expression.Arguments().size())
+                _model._callArguments[&expression] = arguments;
+        }
+    }
     std::vector<SemanticType> argumentTypes;
-    for (std::size_t index = 0; index < expression.Arguments().size();
-         ++index) {
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
         const SemanticType expected =
             signature != nullptr &&
                     (!function ||
@@ -4890,13 +4969,15 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                     index < signature->parameters.size()
                 ? signature->parameters[index]
                 : SemanticType::Error();
+        const bool provided = index < expression.Arguments().size();
         argumentTypes.push_back(
-            AnalyzeExpression(*expression.Arguments()[index], expected));
+            provided ? AnalyzeExpression(*arguments[index], expected)
+                     : _model.TypeOf(*arguments[index]));
         const bool consuming = signature != nullptr &&
                                index < signature->parameterContracts.size() &&
                                signature->parameterContracts[index] ==
                                    core::OwnershipContract::Own;
-        CheckTransfer(*expression.Arguments()[index], expected, consuming);
+        if (provided) CheckTransfer(*arguments[index], expected, consuming);
     }
     if (calleeType.IsError()) return SemanticType::Error();
     if (signature == nullptr) {
@@ -5013,12 +5094,19 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         return function->ReturnType().WithoutConst();
     }
     if (argumentTypes.size() != signature->parameters.size()) {
-        Report(
-            diagnostics::DiagnosticCode::WrongArgumentCount, expression.Range(),
-            std::string(function ? "function '" + function->Name() + "'"
-                                 : "callable") +
-                " expects " + std::to_string(signature->parameters.size()) +
-                " argument(s), found " + std::to_string(argumentTypes.size()));
+        Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+               expression.Range(),
+               std::string(function ? "function '" + function->Name() + "'"
+                                    : "callable") +
+                   (minimumArguments &&
+                            *minimumArguments != signature->parameters.size()
+                        ? " expects between " +
+                              std::to_string(*minimumArguments) + " and " +
+                              std::to_string(signature->parameters.size())
+                        : " expects " +
+                              std::to_string(signature->parameters.size())) +
+                   " argument(s), found " +
+                   std::to_string(expression.Arguments().size()));
     }
     const std::size_t count =
         argumentTypes.size() < signature->parameters.size()
@@ -5032,7 +5120,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                 : IsAssignable(expected, argumentTypes[index]);
         if (!assignable && !CanReborrow(expected, argumentTypes[index])) {
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
-                   expression.Arguments()[index]->Range(),
+                   arguments[index]->Range(),
                    "argument " + std::to_string(index + 1) + ": " +
                        TypeMismatch(signature->parameters[index],
                                     argumentTypes[index]));
@@ -5841,25 +5929,57 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
             }
         }
     }
-    if (expression.Arguments().size() + offset !=
-        function->ParameterTypes().size())
+    std::vector<const core::Expression*> arguments;
+    arguments.reserve(expression.Arguments().size());
+    for (const auto& argument : expression.Arguments())
+        arguments.push_back(argument.get());
+    std::size_t required = function->ParameterTypes().size() - offset;
+    if (const auto* declaration = function->Declaration()) {
+        for (std::size_t index = offset;
+             index < declaration->Parameters().size(); ++index)
+            if (declaration->Parameters()[index]->DefaultValue() != nullptr) {
+                required = index - offset;
+                break;
+            }
+        if (arguments.size() >= required &&
+            arguments.size() + offset <= declaration->Parameters().size()) {
+            for (std::size_t index = arguments.size() + offset;
+                 index < declaration->Parameters().size(); ++index)
+                arguments.push_back(
+                    declaration->Parameters()[index]->DefaultValue());
+            if (arguments.size() != expression.Arguments().size())
+                _model._callArguments[&expression] = arguments;
+        }
+    }
+    if (arguments.size() + offset != function->ParameterTypes().size())
         Report(diagnostics::DiagnosticCode::WrongArgumentCount,
-               expression.Range(), "wrong number of method arguments");
-    for (std::size_t i = 0; i < expression.Arguments().size(); ++i) {
+               expression.Range(),
+               "method expects " +
+                   (required != function->ParameterTypes().size() - offset
+                        ? "between " + std::to_string(required) + " and " +
+                              std::to_string(function->ParameterTypes().size() -
+                                             offset)
+                        : std::to_string(function->ParameterTypes().size() -
+                                         offset)) +
+                   " argument(s), found " +
+                   std::to_string(expression.Arguments().size()));
+    for (std::size_t i = 0; i < arguments.size(); ++i) {
         const SemanticType expected =
             i + offset < function->ParameterTypes().size()
                 ? function->ParameterTypes()[i + offset]
                 : SemanticType::Error();
+        const bool provided = i < expression.Arguments().size();
         const SemanticType actual =
-            AnalyzeExpression(*expression.Arguments()[i], expected);
-        CheckTransfer(*expression.Arguments()[i], expected,
-                      i + offset < function->ParameterTypes().size() &&
-                          function->ParameterContract(i + offset) ==
-                              core::OwnershipContract::Own);
+            provided ? AnalyzeExpression(*arguments[i], expected)
+                     : _model.TypeOf(*arguments[i]);
+        if (provided)
+            CheckTransfer(*arguments[i], expected,
+                          i + offset < function->ParameterTypes().size() &&
+                              function->ParameterContract(i + offset) ==
+                                  core::OwnershipContract::Own);
         if (!IsAssignable(expected, actual) && !CanReborrow(expected, actual))
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
-                   expression.Arguments()[i]->Range(),
-                   TypeMismatch(expected, actual));
+                   arguments[i]->Range(), TypeMismatch(expected, actual));
     }
     return function->ReturnType().WithoutConst();
 }

@@ -461,10 +461,10 @@ class GraphBuilder final {
                     next = AddNode({next, failure});
                     _graph.nodes[next].allocation = &call;
                 }
-                for (auto argument = call.Arguments().rbegin();
-                     argument != call.Arguments().rend(); ++argument) {
+                const auto arguments = _model.ArgumentsFor(call);
+                for (auto argument = arguments.rbegin();
+                     argument != arguments.rend(); ++argument)
                     next = BuildExpression(**argument, next);
-                }
                 if (allocation && call.TypeArgument() && !dynamic) {
                     next = AddNode({next, failure});
                     _graph.nodes[next].allocation = &call;
@@ -474,10 +474,10 @@ class GraphBuilder final {
             case core::AstNodeKind::MemberCallExpression: {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(expression);
-                for (auto argument = call.Arguments().rbegin();
-                     argument != call.Arguments().rend(); ++argument) {
+                const auto arguments = _model.ArgumentsFor(call);
+                for (auto argument = arguments.rbegin();
+                     argument != arguments.rend(); ++argument)
                     next = BuildExpression(**argument, next);
-                }
                 return call.Access() == TokenType::Scope
                            ? next
                            : BuildExpression(call.Receiver(), next);

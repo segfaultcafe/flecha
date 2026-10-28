@@ -606,9 +606,9 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     function->BuiltIn() ==
                         semantic::BuiltInFunction::StorageNew);
             std::vector<std::unique_ptr<BoundExpression>> arguments;
-            arguments.reserve(call.Arguments().size());
-            for (const std::unique_ptr<core::Expression>& argument :
-                 call.Arguments()) {
+            const auto sourceArguments = _semanticModel->ArgumentsFor(call);
+            arguments.reserve(sourceArguments.size());
+            for (const core::Expression* argument : sourceArguments) {
                 const semantic::SemanticType parameterType =
                     (!function ||
                      function->BuiltIn() == semantic::BuiltInFunction::None ||
@@ -650,7 +650,9 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     else
                         arguments.push_back(LowerExpression(member.Receiver()));
                 }
-                for (const auto& argument : member.Arguments())
+                const auto sourceArguments =
+                    _semanticModel->ArgumentsFor(member);
+                for (const core::Expression* argument : sourceArguments)
                     arguments.push_back(LowerExpression(
                         *argument, method->ParameterTypes()[arguments.size()]));
                 return std::make_unique<BoundCallExpression>(

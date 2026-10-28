@@ -93,6 +93,7 @@ void Walk(const AstNode& input, const Callback& callback) {
         case AstNodeKind::Parameter: {
             NODE(Parameter);
             visit(n.Type());
+            optional(n.DefaultValue());
             break;
         }
         case AstNodeKind::BlockStatement: {

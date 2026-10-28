@@ -346,7 +346,8 @@ class BorrowChecker final {
                 const auto& call =
                     static_cast<const core::CallExpression&>(expression);
                 CollectUses(call.Callee(), uses);
-                for (const auto& argument : call.Arguments())
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
                     CollectUses(*argument, uses);
                 break;
             }
@@ -361,7 +362,8 @@ class BorrowChecker final {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(expression);
                 CollectUses(call.Receiver(), uses);
-                for (const auto& argument : call.Arguments())
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
                     CollectUses(*argument, uses);
                 break;
             }
@@ -500,16 +502,18 @@ class BorrowChecker final {
                              symbol->Kind() == SymbolKind::Function;
                 }
                 if (!direct) operands.push_back(&call.Callee());
-                for (const auto& argument : call.Arguments())
-                    operands.push_back(argument.get());
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
+                    operands.push_back(argument);
             } else if (deferred.Kind() == Kind::MemberCallExpression) {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(deferred);
                 const FunctionSymbol* method = _model.MethodFor(call);
                 if (method != nullptr && method->HasReceiver())
                     operands.push_back(&call.Receiver());
-                for (const auto& argument : call.Arguments())
-                    operands.push_back(argument.get());
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
+                    operands.push_back(argument);
             }
             const auto& captures =
                 _model.DeferredCaptures(*node.deferRegistration);
@@ -1196,9 +1200,9 @@ class BorrowChecker final {
                                     origin.exclusive, call.Callee().Range());
                 }
                 Value borrowSource;
-                for (std::size_t index = 0; index < call.Arguments().size();
-                     ++index) {
-                    Value value = Evaluate(*call.Arguments()[index]);
+                const auto arguments = _model.ArgumentsFor(call);
+                for (std::size_t index = 0; index < arguments.size(); ++index) {
+                    Value value = Evaluate(*arguments[index]);
                     const bool destroys =
                         signature != nullptr &&
                         ((index == 0 && function != nullptr &&
@@ -1210,8 +1214,8 @@ class BorrowChecker final {
                           signature->parameterContracts[index] ==
                               core::OwnershipContract::Own));
                     if (destroys)
-                        CheckAccess(Place(*call.Arguments()[index]), true,
-                                    call.Arguments()[index]->Range());
+                        CheckAccess(Place(*arguments[index]), true,
+                                    arguments[index]->Range());
                     if (signature != nullptr &&
                         std::find(signature->borrowSourceIndices.begin(),
                                   signature->borrowSourceIndices.end(),
@@ -1224,7 +1228,7 @@ class BorrowChecker final {
                         (void)Borrow(
                             std::move(value),
                             IsExclusiveBorrow(signature->parameters[index]),
-                            call.Arguments()[index]->Range());
+                            arguments[index]->Range());
                     }
                 }
                 _temporaries = previousLoans;
@@ -1306,13 +1310,14 @@ class BorrowChecker final {
                         }
                     }
                     const std::size_t offset = method->HasReceiver() ? 1 : 0;
-                    for (std::size_t i = 0; i < call.Arguments().size(); ++i) {
-                        Value value = Evaluate(*call.Arguments()[i]);
+                    const auto arguments = _model.ArgumentsFor(call);
+                    for (std::size_t i = 0; i < arguments.size(); ++i) {
+                        Value value = Evaluate(*arguments[i]);
                         const std::size_t parameter = i + offset;
                         if (method->ParameterContract(parameter) ==
                             core::OwnershipContract::Own)
-                            CheckAccess(Place(*call.Arguments()[i]), true,
-                                        call.Arguments()[i]->Range());
+                            CheckAccess(Place(*arguments[i]), true,
+                                        arguments[i]->Range());
                         if (std::find(method->BorrowSourceIndices().begin(),
                                       method->BorrowSourceIndices().end(),
                                       parameter) !=
@@ -1322,7 +1327,7 @@ class BorrowChecker final {
                         if (type.HasBorrowedLifetime())
                             (void)Borrow(std::move(value),
                                          IsExclusiveBorrow(type),
-                                         call.Arguments()[i]->Range());
+                                         arguments[i]->Range());
                     }
                     if (hasMutableReceiver) {
                         _reservations.pop_back();

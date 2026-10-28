@@ -90,7 +90,8 @@ class FunctionSymbol final : public Symbol {
                    bool isExtern = false, std::string linkName = {},
                    const EnumType* enumOwner = nullptr,
                    std::vector<std::size_t> borrowSourceIndices = {},
-                   std::vector<core::OwnershipContract> parameterContracts = {})
+                   std::vector<core::OwnershipContract> parameterContracts = {},
+                   const core::FunctionDeclaration* declaration = nullptr)
         : FunctionSymbol(std::move(name),
                          std::make_shared<const CallableSignature>(
                              CallableSignature{returnType,
@@ -100,8 +101,8 @@ class FunctionSymbol final : public Symbol {
                                                std::move(borrowSourceIndices),
                                                isUnsafe}),
                          declarationRange, builtIn, owner, isPrivate,
-                         hasReceiver, isExtern, std::move(linkName),
-                         enumOwner) {}
+                         hasReceiver, isExtern, std::move(linkName), enumOwner,
+                         declaration) {}
 
     FunctionSymbol(std::string name,
                    std::shared_ptr<const CallableSignature> signature,
@@ -110,7 +111,8 @@ class FunctionSymbol final : public Symbol {
                    const StructureType* owner = nullptr, bool isPrivate = false,
                    bool hasReceiver = false, bool isExtern = false,
                    std::string linkName = {},
-                   const EnumType* enumOwner = nullptr)
+                   const EnumType* enumOwner = nullptr,
+                   const core::FunctionDeclaration* declaration = nullptr)
         : Symbol(SymbolKind::Function, std::move(name), SemanticType(signature),
                  declarationRange, false),
           _signature(std::move(signature)),
@@ -120,6 +122,7 @@ class FunctionSymbol final : public Symbol {
           _isPrivate(isPrivate),
           _hasReceiver(hasReceiver),
           _isExtern(isExtern),
+          _declaration(declaration),
           _linkName(linkName.empty() ? Name() : std::move(linkName)) {}
 
     [[nodiscard]] SemanticType ReturnType() const { return _signature->result; }
@@ -148,6 +151,9 @@ class FunctionSymbol final : public Symbol {
                    : core::OwnershipContract::None;
     }
     [[nodiscard]] BuiltInFunction BuiltIn() const { return _builtIn; }
+    [[nodiscard]] const core::FunctionDeclaration* Declaration() const {
+        return _declaration;
+    }
 
    private:
     std::shared_ptr<const CallableSignature> _signature;
@@ -157,6 +163,7 @@ class FunctionSymbol final : public Symbol {
     bool _isPrivate;
     bool _hasReceiver;
     bool _isExtern;
+    const core::FunctionDeclaration* _declaration;
     std::string _linkName;
 };
 
