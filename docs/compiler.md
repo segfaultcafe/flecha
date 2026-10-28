@@ -10,12 +10,17 @@ executable for the host platform.
 ```text
 flecha --version
 flecha check INPUT [--root DIR] [--lib NAME=DIR ...]
+                   [--package-graph GRAPH]
 flecha build INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
+             [--package-graph GRAPH]
              [--link OBJECT-OR-LIBRARY ...]
 flecha test INPUT_TEST [--root DIR] [--lib NAME=DIR ...] [--verbose]
+            [--package-graph GRAPH]
             [--link OBJECT-OR-LIBRARY ...]
 flecha --emit-llvm INPUT [-o OUTPUT] [--root DIR] [--lib NAME=DIR ...]
+                         [--package-graph GRAPH]
 flecha --emit-object INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
+                                      [--package-graph GRAPH]
 ```
 
 Release builds report the package version, such as `flecha 0.1.1`. Builds from
@@ -46,6 +51,13 @@ before linking.
 option maps one `lib::` namespace to a source directory. `--link` adds a native
 object or library when building or testing code containing `extern`
 declarations.
+
+Longbow uses `--package-graph` to supply the versioned resolved graph described
+in [the package ecosystem](package_ecosystem.md). Within that graph,
+`lib::<alias>` is resolved through the dependency map of the package containing
+the importing source, while `root` remains that package's own source root. The
+graph option cannot be combined with `--root` or `--lib`. Direct compiler users
+may continue using those legacy options for a flat set of local libraries.
 
 The compiler invokes a host C++ linker driver for executable builds. Release
 packages validate this path on Linux, Windows, and macOS.

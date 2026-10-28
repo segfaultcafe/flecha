@@ -142,6 +142,56 @@ The graph is a generated compiler input under `target`; it is not a handwritten
 public configuration format. Its schema is versioned so Longbow and Flecha can
 diagnose incompatible toolchain components.
 
+Schema 1 is JSON:
+
+```json
+{
+  "schema": 1,
+  "root": "workspace",
+  "packages": [
+    {
+      "id": "workspace",
+      "identity": "local/application",
+      "source": "../src",
+      "dependencies": {
+        "json": "flecha-json@1.2.3",
+        "std": "toolchain-std"
+      }
+    },
+    {
+      "id": "flecha-json@1.2.3",
+      "identity": "flecha/json",
+      "version": "1.2.3",
+      "source": "/verified/cache/source",
+      "checksum": "sha256:...",
+      "flecha": ">=0.3.0, <0.4.0",
+      "dependencies": {}
+    },
+    {
+      "id": "toolchain-std",
+      "identity": "flecha/std",
+      "source": "/toolchain/share/flecha/std/src",
+      "dependencies": {}
+    }
+  ]
+}
+```
+
+`root` names the node containing the compiler entry source. Node `id` values
+are opaque, graph-unique compilation identities rather than import aliases or
+canonical registry names. This keeps module, nominal-type, error-family, and
+generic-specialization identities isolated even when packages contain the same
+module and declaration names. Each `dependencies` key is a local Flecha import
+alias and its value is a target node id. `source` is absolute or relative to
+the graph file. `version`, `revision`, `checksum`, and `flecha` carry resolved
+source metadata when applicable.
+
+The compiler accepts the graph through `--package-graph`, rejects unsupported
+schemas, missing nodes, invalid aliases, dependency cycles, and entries outside
+the root node's source tree, and resolves every import without network access.
+`--package-graph` is mutually exclusive with the compatibility `--root` and
+`--lib` options.
+
 ## Lockfile and cache
 
 `longbow.lock` records the complete selected graph, including exact versions,

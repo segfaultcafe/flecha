@@ -136,6 +136,7 @@ The complete command-line form is:
 ```text
 flecha <check|build|test|--emit-llvm|--emit-object> <input.fl> [-o output]
        [--root source-directory] [--lib name=source-directory ...]
+       [--package-graph graph.json]
        [--link object-or-library ...]
 ```
 

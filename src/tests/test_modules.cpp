@@ -50,6 +50,28 @@ class ModuleTests : public ::testing::Test {
                 diagnostic.range.start.file + ":" + diagnostic.message + "\n";
         return messages;
     }
+    std::string CheckGraph(const std::string& graph,
+                           const std::string& entry = "app/main.fl",
+                           flecha::core::ModuleLoadMode mode =
+                               flecha::core::ModuleLoadMode::Runtime) {
+        Write("target/package-graph.json", graph);
+        std::string error;
+        const auto packages = flecha::core::PackageGraph::Load(
+            root / "target/package-graph.json", error);
+        if (!packages) return "package graph error: " + error;
+        flecha::diagnostics::DiagnosticBag diagnostics;
+        flecha::core::ModuleLoader loader(diagnostics);
+        auto unit = loader.Load(root / entry, *packages, mode);
+        if (!diagnostics.HasErrors()) {
+            flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+            auto model = analyzer.Analyze(*unit);
+        }
+        std::string messages;
+        for (const auto& diagnostic : diagnostics.Diagnostics())
+            messages +=
+                diagnostic.range.start.file + ":" + diagnostic.message + "\n";
+        return messages;
+    }
 };
 TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
     Write("a/calc.fl", "module calc; export i32 value() { return 20; }");
@@ -212,6 +234,153 @@ TEST_F(ModuleTests, LibrariesUseTheirOwnRootAndDiamondImportsShareIdentity) {
         "module main; @imports :: lib::fixture::one :: lib::fixture::two; i32 "
         "main() { b := one::make(); return two::read(&b); }");
     EXPECT_EQ(Check(), "");
+}
+TEST_F(ModuleTests, PackageGraphResolvesRecursivePackageLocalAliasesAndRoots) {
+    Write("app/main.fl", R"(module main;
+        @imports :: lib::middle::api :: lib::std::marker;
+        i32 main() { return api::answer() + marker::offset(); }
+    )");
+    Write("middle/api.fl", R"(module api;
+        @imports :: root::helper :: lib::leaf::value;
+        export i32 answer() { return helper::base() + value::rest(); }
+    )");
+    Write("middle/helper.fl",
+          "module helper; export i32 base() { return 19; }");
+    Write("leaf/value.fl", "module value; export i32 rest() { return 22; }");
+    Write("std/marker.fl", "module marker; export i32 offset() { return 1; }");
+    EXPECT_EQ(CheckGraph(R"({
+        "schema": 1,
+        "root": "workspace",
+        "packages": [
+            {"id":"workspace", "identity":"local/app", "source":"../app",
+             "dependencies":{"middle":"middle@1", "std":"toolchain-std"}},
+            {"id":"middle@1", "identity":"example/middle", "version":"1.0.0",
+             "source":"../middle", "checksum":"sha256:middle",
+             "dependencies":{"leaf":"leaf@2"}},
+            {"id":"leaf@2", "identity":"example/leaf", "version":"2.0.0",
+             "source":"../leaf", "dependencies":{}},
+            {"id":"toolchain-std", "identity":"flecha/std", "source":"../std",
+             "flecha":">=0.3.0, <0.4.0", "dependencies":{}}
+        ]
+    })"),
+              "");
+}
+TEST_F(ModuleTests,
+       PackageGraphIsolatesRepeatedAliasesModulesAndGenericSpecializations) {
+    Write("app/main.fl", R"(module main;
+        @imports :: lib::first::use as first :: lib::second::use as second;
+        i32 main() { return first::answer() + second::answer(); }
+    )");
+    Write("first/use.fl", R"(module use; @imports :: lib::common::model;
+        export i32 answer() {
+            value := model::make<i32>(20);
+            return model::read<i32>(&value);
+        }
+    )");
+    Write("second/use.fl", R"(module use; @imports :: lib::common::model;
+        export i32 answer() {
+            value := model::make<i32>(22);
+            return model::read<i32>(&value);
+        }
+    )");
+    Write("left/model.fl", R"(module model;
+        export structure Box<T> { T value; };
+        export Box<T> make<T>(T value) {
+            result := Box<T>::init(); result.value = value; return result;
+        }
+        export T read<T>(&const Box<T> value) { return value->value; }
+    )");
+    Write("right/model.fl", R"(module model;
+        export structure Box<T> { T value; };
+        export Box<T> make<T>(T value) {
+            result := Box<T>::init(); result.value = value; return result;
+        }
+        export T read<T>(&const Box<T> value) { return value->value; }
+    )");
+    EXPECT_EQ(CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"first":"first", "second":"second"}},
+            {"id":"first", "identity":"owner/first", "source":"../first",
+             "dependencies":{"common":"left"}},
+            {"id":"second", "identity":"owner/second", "source":"../second",
+             "dependencies":{"common":"right"}},
+            {"id":"left", "identity":"one/common", "source":"../left",
+             "dependencies":{}},
+            {"id":"right", "identity":"two/common", "source":"../right",
+             "dependencies":{}}
+        ]
+    })"),
+              "");
+}
+TEST_F(ModuleTests, PackageGraphDiagnosesAliasesRelativeToImportingPackage) {
+    Write("app/main.fl", R"(module main; @imports :: lib::middle::api;
+        i32 main() { return api::answer(); }
+    )");
+    Write("middle/api.fl", R"(module api; @imports :: lib::missing::value;
+        export i32 answer() { return value::answer(); }
+    )");
+    const std::string errors = CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"middle":"middle"}},
+            {"id":"middle", "identity":"owner/middle", "source":"../middle",
+             "dependencies":{}}
+        ]
+    })");
+    EXPECT_NE(
+        errors.find("package 'owner/middle' has no dependency alias 'missing'"),
+        std::string::npos)
+        << errors;
+}
+TEST_F(ModuleTests, PackageGraphDiagnosesCyclesAndMalformedGraphs) {
+    const std::string cycle = CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"dependency":"dependency"}},
+            {"id":"dependency", "identity":"owner/dependency",
+             "source":"../dependency", "dependencies":{"app":"app"}}
+        ]
+    })");
+    EXPECT_NE(cycle.find("package graph cycle: app -> dependency -> app"),
+              std::string::npos)
+        << cycle;
+
+    const std::string missing = CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"missing":"absent"}}
+        ]
+    })");
+    EXPECT_NE(missing.find("references missing node 'absent'"),
+              std::string::npos)
+        << missing;
+
+    const std::string invalidAlias = CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"if":"app"}}
+        ]
+    })");
+    EXPECT_NE(invalidAlias.find("invalid dependency alias 'if'"),
+              std::string::npos)
+        << invalidAlias;
+
+    const std::string unsupported = CheckGraph(R"({
+        "schema":2, "root":"app", "packages":[]
+    })");
+    EXPECT_NE(unsupported.find("unsupported package graph schema 2"),
+              std::string::npos)
+        << unsupported;
+
+    const std::string malformed = CheckGraph("{\"schema\":1,", "app/main.fl");
+    EXPECT_NE(malformed.find("package graph error: line 1"), std::string::npos)
+        << malformed;
 }
 TEST_F(ModuleTests, ExportedStructuresBundleMethodsButRespectPrivacy) {
     Write("box.fl",
