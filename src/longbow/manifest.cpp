@@ -810,8 +810,10 @@ void AddRegistryDependency(const fs::path& directory,
     if (!ValidIdentifier(alias) || manifest.dependencies.contains(alias))
         throw std::runtime_error("invalid or duplicate dependency alias '" +
                                  alias + "'");
+    const std::string normalizedRequirement =
+        requirement == "latest" ? "*" : requirement;
     std::string error;
-    if (!VersionRequirement::Parse(requirement, error))
+    if (!VersionRequirement::Parse(normalizedRequirement, error))
         throw std::runtime_error("invalid dependency version: " + error);
     const fs::path file = directory / "longbow.toml";
     auto lines = ManifestLines(file);
@@ -819,7 +821,7 @@ void AddRegistryDependency(const fs::path& directory,
     (void)begin;
     lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(end),
                  alias + " = { package = \"" + identity + "\", version = \"" +
-                     requirement + "\" }");
+                     normalizedRequirement + "\" }");
     WriteManifestLines(file, lines);
 }
 

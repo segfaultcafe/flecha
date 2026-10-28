@@ -88,6 +88,11 @@ publish/yank authorization. HTTPS requests use the platform `curl` executable;
 bearer tokens are passed through an owner-only temporary header file rather
 than command-line arguments. Registry access remains entirely in Longbow.
 
+`longbow add OWNER/PACKAGE@latest` is shorthand for the stable-version `*`
+requirement. Longbow stores `*` in the manifest, selects the newest active
+non-prerelease version during resolution, and records the exact version and
+checksum in `longbow.lock`.
+
 Since Flecha 0.2.1, test discovery reads module declarations rather than file
 suffixes. Several arbitrarily named files may contribute to one logical test
 module. Longbow invokes every such source file, while each compiler invocation

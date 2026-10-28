@@ -263,6 +263,10 @@ longbow publish
 longbow yank VERSION
 ```
 
+`latest` is accepted as a command-line convenience for `add` and is normalized
+to the stable-version `*` requirement in `longbow.toml`. Resolution still
+records one exact immutable version and checksum in `longbow.lock`.
+
 Resolution and fetch are separate internally even when `build`, `check`,
 `test`, or `run` invokes both. Diagnostics identify whether failure came from
 manifest validation, version selection, network acquisition, checksum
