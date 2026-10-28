@@ -83,6 +83,7 @@ the compatible bundled standard library automatically:
 ```toml
 [package]
 name = "json"
+registry = "flecha/json"
 version = "1.2.0"
 kind = "library"
 flecha = ">=0.3.0, <0.4.0"
@@ -233,6 +234,15 @@ Published owner/package/version tuples are immutable. A maintainer may yank a
 version so new resolutions avoid it, but an existing lock can continue using
 and downloading the archived content. Deleting or replacing published bytes is
 not an ordinary maintainer operation.
+
+The manifest's `package.registry` field declares the canonical
+`owner/package` publication identity and is retained in every snapshot.
+Longbow serializes archives deterministically, removes development path
+overrides from the normalized manifest, sorts paths bytewise, and hashes the
+exact bytes with SHA-256. Extraction accepts only `longbow.toml`, Flecha files
+below `src`, `README.md`, and root `LICENSE*` documents. Traversal, symbolic
+links, case collisions, excessive sizes, trailing data, native inputs, and
+other file types are rejected.
 
 Public packages are pure Flecha source in 0.3.0. Precompiled objects, native
 archives, build scripts, and target-specific package payloads require separate

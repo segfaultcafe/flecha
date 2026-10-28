@@ -47,6 +47,10 @@ kind = "program"
 [dependencies]
 ```
 
+Publishable libraries also set `registry = "owner/package"` in `[package]`.
+That owner-scoped identity is metadata; imports still use the consumer's local
+dependency alias and the library's Flecha module names.
+
 Project names may contain letters, digits, spaces, hyphens, underscores, and
 dots. They must begin with a letter or digit. Longbow normalizes a library
 project's name into a lowercase Flecha identifier for its entry filename and

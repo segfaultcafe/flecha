@@ -5,6 +5,7 @@
 #include <string>
 
 #include "core/package_graph.hpp"
+#include "longbow/archive.hpp"
 #include "longbow/cache.hpp"
 #include "longbow/manifest.hpp"
 #include "longbow/resolver.hpp"
@@ -88,6 +89,48 @@ TEST(LongbowCacheTests, StoresVerifiesAndReusesContentAddressedSources) {
     std::ofstream(root / "input/nested/data.txt") << "verified bytes\n";
     EXPECT_EQ(cache.Store(root / "input", checksum), stored);
     EXPECT_EQ(cache.Find(checksum), stored);
+    fs::remove_all(root);
+}
+
+TEST(LongbowArchiveTests, NormalizesHashesAndExtractsPublishedSources) {
+    const fs::path root =
+        fs::temp_directory_path() / "flecha_package_archive_test";
+    fs::remove_all(root);
+    fs::create_directories(root / "package/src");
+    std::ofstream(root / "package/longbow.toml") << R"([package]
+name = "sample"
+registry = "owner/sample"
+version = "1.2.3"
+kind = "library"
+flecha = "^0.3"
+
+[dependencies]
+json = { package = "flecha/json", version = "^1", path = "../json" }
+)";
+    std::ofstream(root / "package/src/sample.fl") << "module sample;\n";
+    std::ofstream(root / "package/README.md") << "# Sample\n";
+    std::ofstream(root / "package/private.txt") << "not published\n";
+
+    const auto first =
+        flecha::longbow::BuildPackageArchive(root / "package");
+    const auto second =
+        flecha::longbow::BuildPackageArchive(root / "package");
+    EXPECT_EQ(first.bytes, second.bytes);
+    EXPECT_EQ(first.checksum, second.checksum);
+    EXPECT_EQ(first.files,
+              (std::vector<std::string>{"README.md", "longbow.toml",
+                                        "src/sample.fl"}));
+
+    flecha::longbow::ExtractPackageArchive(first.bytes, root / "extracted");
+    const auto manifest =
+        flecha::longbow::ReadManifest(root / "extracted");
+    EXPECT_EQ(manifest.registry, "owner/sample");
+    EXPECT_FALSE(manifest.dependencies.at("json").path);
+    EXPECT_EQ(flecha::longbow::Sha256(first.bytes),
+              first.checksum.substr(std::string("sha256:").size()));
+    EXPECT_THROW(flecha::longbow::ExtractPackageArchive(
+                     first.bytes + "trailing", root / "invalid"),
+                 std::runtime_error);
     fs::remove_all(root);
 }
 

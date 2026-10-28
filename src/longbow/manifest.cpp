@@ -545,6 +545,10 @@ bool ValidProjectName(const std::string& name) {
     return std::regex_match(name, std::regex("[A-Za-z0-9][A-Za-z0-9 _.-]*"));
 }
 
+bool ValidPackageIdentity(const std::string& identity) {
+    return CanonicalPackage(identity);
+}
+
 std::string ModuleName(const std::string& projectName) {
     std::string module;
     bool separator = false;
@@ -595,6 +599,11 @@ Manifest ReadManifest(const fs::path& directory) {
             if (key == "name") {
                 manifest.name = value;
                 hasName = true;
+            } else if (key == "registry") {
+                if (!CanonicalPackage(value))
+                    throw std::runtime_error(
+                        "package.registry must be a valid owner/package");
+                manifest.registry = value;
             } else if (key == "version") {
                 std::string error;
                 const auto version = SemanticVersion::Parse(value, error);

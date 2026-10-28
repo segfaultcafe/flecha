@@ -60,6 +60,7 @@ struct Dependency final {
 struct Manifest final {
     std::filesystem::path directory;
     std::string name;
+    std::optional<std::string> registry;
     SemanticVersion version;
     PackageKind kind = PackageKind::Program;
     std::optional<VersionRequirement> flecha;
@@ -69,6 +70,7 @@ struct Manifest final {
 
 [[nodiscard]] bool ValidIdentifier(const std::string& name);
 [[nodiscard]] bool ValidProjectName(const std::string& name);
+[[nodiscard]] bool ValidPackageIdentity(const std::string& identity);
 [[nodiscard]] std::string ModuleName(const std::string& projectName);
 [[nodiscard]] Manifest ReadManifest(const std::filesystem::path& directory);
 

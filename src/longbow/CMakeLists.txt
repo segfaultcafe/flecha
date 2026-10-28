@@ -1,4 +1,5 @@
 add_library(longbow_model STATIC
+    archive.cpp
     cache.cpp
     manifest.cpp
     resolver.cpp
