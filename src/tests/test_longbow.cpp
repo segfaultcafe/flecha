@@ -5,6 +5,7 @@
 #include <string>
 
 #include "core/package_graph.hpp"
+#include "longbow/cache.hpp"
 #include "longbow/manifest.hpp"
 #include "longbow/resolver.hpp"
 #include "longbow/sha256.hpp"
@@ -56,6 +57,38 @@ TEST(LongbowHashTests, MatchesPublishedSha256Vectors) {
     EXPECT_EQ(
         flecha::longbow::Sha256("abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+}
+
+TEST(LongbowCacheTests, StoresVerifiesAndReusesContentAddressedSources) {
+    const fs::path root =
+        fs::temp_directory_path() / "flecha_content_addressed_cache_test";
+    fs::remove_all(root);
+    fs::create_directories(root / "input/nested");
+    std::ofstream(root / "input/main.fl") << "module main;\n";
+    std::ofstream(root / "input/nested/data.txt") << "verified bytes\n";
+    const std::string checksum =
+        "sha256:" + flecha::longbow::Sha256Tree(root / "input");
+    const flecha::longbow::PackageCache cache(root / "cache");
+    const fs::path stored = cache.Store(root / "input", checksum);
+    EXPECT_TRUE(fs::is_regular_file(stored / "nested/data.txt"));
+    fs::remove_all(root / "input");
+    const auto found = cache.Find(checksum);
+    ASSERT_TRUE(found);
+    EXPECT_EQ(*found, stored);
+
+    std::ofstream(stored / "nested/data.txt") << "corrupt\n";
+    EXPECT_THROW(
+        {
+            [[maybe_unused]] const auto corrupt = cache.Find(checksum);
+        },
+        std::runtime_error);
+
+    fs::create_directories(root / "input/nested");
+    std::ofstream(root / "input/main.fl") << "module main;\n";
+    std::ofstream(root / "input/nested/data.txt") << "verified bytes\n";
+    EXPECT_EQ(cache.Store(root / "input", checksum), stored);
+    EXPECT_EQ(cache.Find(checksum), stored);
+    fs::remove_all(root);
 }
 
 TEST(LongbowVersionTests, MatchesCaretTildePartialAndComparatorRequirements) {

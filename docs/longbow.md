@@ -129,6 +129,12 @@ application edits do not invalidate dependency state. Toolchain `std` is
 recorded by source kind rather than a host-specific installation path, keeping
 the lock portable across installed toolchains.
 
+Verified source trees are stored by SHA-256 under the platform-native user
+cache directory. Set `LONGBOW_CACHE_DIR` to use an explicit cache root in CI or
+managed installations. Cache entries contain a completion marker and are
+rehash-verified before reuse; incomplete or corrupt entries are rejected. The
+cache is disposable and contains no authoritative project state.
+
 A runnable multi-module example is in `examples/modules`. From that directory,
 run `../../build/longbow run` after building the tools.
 
