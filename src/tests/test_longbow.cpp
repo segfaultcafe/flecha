@@ -334,6 +334,26 @@ kind = "program"
     EXPECT_FALSE(manifest.dependencies.contains("json"));
 }
 
+TEST_F(LongbowManifestTests, NormalizesLatestRegistryDependencyToAnyStableVersion) {
+    Write(R"([package]
+name = "sample"
+version = "0.1.0"
+kind = "program"
+
+[dependencies]
+)");
+    flecha::longbow::AddRegistryDependency(root, "flecha/json", "latest",
+                                           "json");
+    const auto manifest = flecha::longbow::ReadManifest(root);
+    ASSERT_TRUE(manifest.dependencies.contains("json"));
+    ASSERT_TRUE(manifest.dependencies.at("json").version);
+    EXPECT_EQ(manifest.dependencies.at("json").version->String(), "*");
+    EXPECT_TRUE(manifest.dependencies.at("json").version->Matches(
+        SemanticVersion{1, 2, 3}));
+    EXPECT_FALSE(manifest.dependencies.at("json").version->Matches(
+        SemanticVersion{2, 0, 0, {"beta"}, {}}));
+}
+
 class LongbowResolverTests : public ::testing::Test {
    protected:
     fs::path root;

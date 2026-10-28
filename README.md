@@ -218,6 +218,10 @@ longbow test [PROJECT] [--verbose]
 longbow run -- [program arguments]
 ```
 
+`longbow add OWNER/PACKAGE@latest` selects the newest active stable release;
+the manifest stores the equivalent `*` requirement and the lockfile records the
+exact resolved version.
+
 See [`docs/longbow.md`](docs/longbow.md) for the complete project workflow and
 [`docs/package_ecosystem.md`](docs/package_ecosystem.md) for identities, locks,
 cache behavior, archives, and the registry protocol.
