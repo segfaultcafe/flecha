@@ -91,3 +91,50 @@ move-only with the underlying stream callable. The file cannot be accessed,
 moved, or closed while that borrow remains live. An adapter neither owns nor
 closes the file, and a writer does not flush automatically; callers retain
 responsibility for flushing and closing after the adapter's final use.
+
+## Buffered streams
+
+Import `lib::std::io::buffered` to wrap an existing `io::stream::Reader` or
+`io::stream::Writer`. `BufferedReader::withCapacity` and
+`BufferedWriter::withCapacity` require a nonzero capacity, allocate an owning
+byte slice, and move the supplied stream adapter into the result. Zero capacity
+reports `IoError.InvalidOptions`; allocation failure reports
+`AllocationError.OutOfMemory`. The moved adapter is consumed and destroyed on
+every construction outcome, so a failed construction releases any borrow it
+carried exactly once.
+
+A buffered wrapper owns its allocation and stream adapter but not the resource
+borrowed by that adapter. For example, wrapping `File::reader()` moves the
+file's mutable borrow through the stream reader into the buffered reader. The
+file cannot be accessed, moved, closed, or adapted again until the buffered
+reader's final possible use. Moving the buffered wrapper transfers both the
+allocation and borrow without copying either one.
+
+`BufferedReader::read` returns immediately from existing read-ahead data. When
+the internal buffer is empty, destinations at least as large as the configured
+capacity are read directly; smaller destinations cause one capacity-sized
+read-ahead operation. Successful zero progress records end of input. Bytes
+returned together with an underlying error remain readable, and that error is
+deferred until the call that consumes the final buffered byte. `readExact`
+repeats this operation and reports `IoError.UnexpectedEof` when input ends
+before the destination is full. Zero-length reads succeed without touching the
+underlying reader.
+
+`BufferedWriter::write` buffers small inputs. When pending data prevents a new
+input from fitting, it is drained before any byte from the new input is
+accepted. Inputs at least as large as the capacity are written directly when
+the buffer is empty, preserving the underlying partial count and error.
+`writeAll` repeats partial operations until every source byte is accepted.
+
+`BufferedWriter::flush` drains only the Flecha-owned byte buffer; the generic
+`io::stream::Writer` abstraction has no operation for flushing an underlying
+resource. A partial failure removes only the acknowledged prefix and preserves
+the unwritten suffix in order, allowing a later `flush` to retry without
+duplication. Successful zero progress reports `IoError.WriteFailed` and keeps
+all unwritten data. An empty flush succeeds without calling the writer.
+
+Destruction releases the owned allocation and stream adapter but deliberately
+does not flush. Buffered data remaining at destruction is discarded because a
+destructor cannot report an I/O error. Callers must explicitly invoke the
+buffered writer's `flush`; after its final use releases a file borrow, they may
+separately call `File::flush` and `File::close`.
