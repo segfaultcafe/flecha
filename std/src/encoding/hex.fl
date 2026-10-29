@@ -1,12 +1,9 @@
 module hex;
 
-@imports :: root::encoding::binary;
+@imports :: root::text::strings;
 
-// Reports hexadecimal length, capacity, and input failures.
+// Reports hexadecimal output-length and input-validation failures.
 export error HexError {
-    // The destination cannot hold the complete encoded or decoded value.
-    InsufficientSpace,
-
     // The required output length cannot be represented by usize.
     Overflow,
 
@@ -24,42 +21,10 @@ export (usize, HexError) encoded_length(usize byteCount) {
     return (length, none);
 }
 
-// Returns half an even character count, or HexError.InvalidEncoding.
-export (usize, HexError) decoded_length(usize characterCount) {
-    if characterCount % 2 != 0 {
+// Validates hexadecimal source and returns its decoded byte count.
+export (usize, HexError) decoded_length([]const u8 source) {
+    if source.len() % 2 != 0 {
         return (none, HexError.InvalidEncoding);
-    }
-
-    return (characterCount / 2, none);
-}
-
-// Encodes source with lowercase digits and returns the byte count written.
-// Failure leaves destination unchanged.
-export (usize, HexError) encode([]u8 destination, []const u8 source) {
-    return encode_with_case(destination, source, false);
-}
-
-// Encodes source with uppercase digits and returns the byte count written.
-// Failure leaves destination unchanged.
-export (usize, HexError) encode_upper(
-    []u8 destination,
-    []const u8 source
-) {
-    return encode_with_case(destination, source, true);
-}
-
-// Decodes hexadecimal bytes and leaves destination unchanged on failure.
-export (usize, HexError) decode(
-    []u8 destination,
-    []const u8 source
-) {
-    const usize LENGTH, HexError lengthError = decoded_length(source.len());
-    if lengthError != none {
-        return (none, lengthError);
-    }
-
-    if destination.len() < LENGTH {
-        return (none, HexError.InsufficientSpace);
     }
 
     loop usize index = 0; index < source.len(); index++ {
@@ -68,71 +33,138 @@ export (usize, HexError) decode(
         }
     }
 
-    loop usize index = 0; index < LENGTH; index++ {
-        const usize SOURCE_INDEX = index * 2;
-        const u8 HIGH = digit_value(source[SOURCE_INDEX]);
-        const u8 LOW = digit_value(source[SOURCE_INDEX + 1]);
-        destination[index] = (HIGH << 4) | LOW;
+    return (source.len() / 2, none);
+}
+
+// Encodes a borrowed byte string with lowercase hexadecimal digits.
+export (string, error) encode(stringv source) {
+    bytes, encodeError := encode_to_bytes(source);
+    if encodeError != none {
+        return (none, encodeError);
     }
 
-    return (LENGTH, none);
+    return strings::string_from_bytes(bytes[:]);
 }
 
-// Writes lowercase hexadecimal digits, leaving the writer unchanged on failure.
-export HexError write(&binary::Writer destination, []const u8 source) {
-    return write_with_case(destination, source, false);
+// Encodes arbitrary borrowed bytes as a lowercase hexadecimal string.
+export (string, error) encode_bytes([]const u8 source) {
+    return encode(source.cast<stringv>);
 }
 
-// Writes uppercase hexadecimal digits, leaving the writer unchanged on failure.
-export HexError write_upper(&binary::Writer destination, []const u8 source) {
-    return write_with_case(destination, source, true);
+// Encodes arbitrary borrowed bytes as owned lowercase hexadecimal bytes.
+export (own []u8, error) encode_btb([]const u8 source) {
+    return encode_to_bytes(source.cast<stringv>);
 }
 
-(usize, HexError) encode_with_case(
-    []u8 destination,
-    []const u8 source,
-    bool uppercase
-) {
-    const usize LENGTH, HexError lengthError = encoded_length(source.len());
+// Encodes a borrowed byte string as owned lowercase hexadecimal bytes.
+export (own []u8, error) encode_to_bytes(stringv source) {
+    return encode_with_case(source, false);
+}
+
+// Encodes a borrowed byte string with uppercase hexadecimal digits.
+export (string, error) encode_upper(stringv source) {
+    bytes, encodeError := encode_upper_to_bytes(source);
+    if encodeError != none {
+        return (none, encodeError);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Encodes arbitrary borrowed bytes as an uppercase hexadecimal string.
+export (string, error) encode_upper_bytes([]const u8 source) {
+    return encode_upper(source.cast<stringv>);
+}
+
+// Encodes arbitrary borrowed bytes as owned uppercase hexadecimal bytes.
+export (own []u8, error) encode_upper_btb([]const u8 source) {
+    return encode_upper_to_bytes(source.cast<stringv>);
+}
+
+// Encodes a borrowed byte string as owned uppercase hexadecimal bytes.
+export (own []u8, error) encode_upper_to_bytes(stringv source) {
+    return encode_with_case(source, true);
+}
+
+// Decodes a borrowed hexadecimal string into a byte-oriented string.
+export (string, error) decode(stringv source) {
+    bytes, decodeError := decode_to_bytes(source);
+    if decodeError != none {
+        return (none, decodeError);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Decodes borrowed hexadecimal bytes into a byte-oriented string.
+export (string, error) decode_from_bytes([]const u8 source) {
+    return decode(source.cast<stringv>);
+}
+
+// Decodes borrowed hexadecimal bytes into owned binary bytes.
+export (own []u8, error) decode_btb([]const u8 source) {
+    return decode_to_bytes(source.cast<stringv>);
+}
+
+// Validates source before allocating and returns its decoded bytes.
+export (own []u8, error) decode_to_bytes(stringv source) {
+    const usize LENGTH, HexError lengthError =
+        validated_decoded_length(source);
     if lengthError != none {
         return (none, lengthError);
     }
 
-    if destination.len() < LENGTH {
-        return (none, HexError.InsufficientSpace);
+    destination, allocationError := new<own []u8>(LENGTH);
+    if allocationError != none {
+        return (none, allocationError);
     }
 
-    loop usize index = 0; index < source.len(); index++ {
+    loop usize index = 0; index < LENGTH; index++ {
+        const usize SOURCE_INDEX = index * 2;
+        const u8 HIGH = digit_value(source[SOURCE_INDEX.cast<u32>]);
+        const u8 LOW = digit_value(source[(SOURCE_INDEX + 1).cast<u32>]);
+        destination[index] = (HIGH << 4) | LOW;
+    }
+
+    return (destination, none);
+}
+
+(own []u8, error) encode_with_case(stringv source, bool uppercase) {
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    const usize LENGTH, HexError lengthError =
+        encoded_length(SOURCE_LENGTH);
+    if lengthError != none {
+        return (none, lengthError);
+    }
+
+    destination, allocationError := new<own []u8>(LENGTH);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    loop usize index = 0; index < SOURCE_LENGTH; index++ {
         const usize DESTINATION_INDEX = index * 2;
-        const u8 BYTE = source[index];
+        const u8 BYTE = source[index.cast<u32>];
         destination[DESTINATION_INDEX] = digit(BYTE >> 4, uppercase);
         destination[DESTINATION_INDEX + 1] = digit(BYTE & 15, uppercase);
     }
 
-    return (LENGTH, none);
+    return (destination, none);
 }
 
-HexError write_with_case(
-    &binary::Writer destination,
-    []const u8 source,
-    bool uppercase
-) {
-    const usize LENGTH, HexError lengthError = encoded_length(source.len());
-    if lengthError != none {
-        return lengthError;
+(usize, HexError) validated_decoded_length(stringv source) {
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    if SOURCE_LENGTH % 2 != 0 {
+        return (none, HexError.InvalidEncoding);
     }
 
-    if destination->remaining() < LENGTH {
-        return HexError.InsufficientSpace;
+    loop usize index = 0; index < SOURCE_LENGTH; index++ {
+        if !is_digit(source[index.cast<u32>]) {
+            return (none, HexError.InvalidEncoding);
+        }
     }
 
-    loop usize index = 0; index < source.len(); index++ {
-        const u8 BYTE = source[index];
-        destination->writeByte(digit(BYTE >> 4, uppercase));
-        destination->writeByte(digit(BYTE & 15, uppercase));
-    }
-
-    return none;
+    return (SOURCE_LENGTH / 2, none);
 }
 
 u8 digit(u8 value, bool uppercase) {

@@ -47,26 +47,55 @@ binary::append_varint<u32>(&buffer, count);
 ## Hexadecimal
 
 The `hex` module encodes raw bytes as hexadecimal ASCII and decodes either
-letter case:
+letter case. Like Base64, its primary string API allocates the result for the
+caller:
 
 ```flecha
 @imports :: lib::std::encoding::hex;
 
-written, encodeError := hex::encode(destination, source);
-decoded, decodeError := hex::decode(binaryDestination, encodedSource);
+encoded, encodeError := hex::encode("foobar");
+decoded, decodeError := hex::decode("666f6f626172");
 ```
 
 `encode` emits lowercase characters and `encode_upper` emits uppercase.
-Decoding rejects odd lengths and non-hexadecimal characters. All operations
-are transactional and write no terminator.
+`encode_bytes` accepts arbitrary borrowed bytes, and the `encode_btb` and
+`encode_to_bytes` variants return newly allocated hexadecimal bytes. The
+uppercase API provides matching `_bytes`, `_btb`, and `_to_bytes` variants.
+`decode_from_bytes` returns a byte-oriented `string`, while `decode_btb` and
+`decode_to_bytes` return newly allocated binary bytes.
 
-Hex can also target a binary Writer without making the Writer depend on the
-codec:
+Decoding validates the complete source before allocation and rejects odd
+lengths and non-hexadecimal characters. Length overflow and malformed input
+report `HexError`; allocation failures are returned through the owning APIs'
+general `error` result.
+
+## Base64
+
+The `base64` module implements the standard padded Base64 alphabet from RFC
+4648. Its primary string API allocates the result for the caller:
 
 ```flecha
-writeError := hex::write(&writer, source);
-upperError := hex::write_upper(&writer, source);
+@imports :: lib::std::encoding::base64;
+
+encoded, encodeError := base64::encode("foobar");
+decoded, decodeError := base64::decode("Zm9vYmFy");
 ```
 
-Length overflow, insufficient destination space, and malformed input report
-`HexError`.
+`encode_bytes` accepts arbitrary borrowed bytes when the source is not already
+a `stringv`. `encode_to_bytes` returns newly allocated ASCII bytes instead of a
+`string`. On the decoding side, `decode_from_bytes` accepts borrowed Base64
+bytes and returns a byte-oriented `string`, while `decode_to_bytes` returns a
+newly allocated owned byte slice. Empty input succeeds and returns an empty
+result of the requested type.
+
+Encoding is deterministic and always emits `=` padding when the final group is
+incomplete. Decoding is strict: the source length must be a multiple of four,
+only the standard `A-Z`, `a-z`, `0-9`, `+`, and `/` alphabet is accepted,
+padding may appear only at the end, and discarded bits in the final quartet
+must be zero. Whitespace, URL-safe digits, missing padding, extra padding, and
+other non-canonical encodings report `Base64Error.InvalidEncoding`.
+
+`encoded_length` reports `Base64Error.Overflow` before allocation when the
+encoded size cannot fit in `usize`. Decoding validates the complete input
+before allocating its output. Allocation failures from the owning APIs are
+returned through their general `error` result.

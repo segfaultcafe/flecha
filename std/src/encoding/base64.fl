@@ -1,0 +1,305 @@
+module base64;
+
+@imports :: root::text::strings;
+
+const u8 PADDING = 61;
+
+// Reports Base64 output-length and input-validation failures.
+export error Base64Error {
+    // The required output length cannot be represented by usize.
+    Overflow,
+
+    // The source is not canonical padded RFC 4648 Base64.
+    InvalidEncoding,
+}
+
+// Returns the padded RFC 4648 character count, or Base64Error.Overflow.
+export (usize, Base64Error) encoded_length(usize byteCount) {
+    usize groupCount = byteCount / 3;
+    bool overflowed = false;
+    if byteCount % 3 != 0 {
+        groupCount, overflowed = groupCount.overflow_add(1);
+    } also overflowed {
+        return (none, Base64Error.Overflow);
+    }
+
+    length, overflowed := groupCount.overflow_mul(4);
+    if overflowed {
+        return (none, Base64Error.Overflow);
+    }
+
+    return (length, none);
+}
+
+// Validates canonical padded RFC 4648 Base64 and returns its decoded length.
+export (usize, Base64Error) decoded_length([]const u8 source) {
+    if source.len() % 4 != 0 {
+        return (none, Base64Error.InvalidEncoding);
+    }
+
+    if source.len() == 0 {
+        return (0, none);
+    }
+
+    usize padding = 0;
+    if source[source.len() - 1] == 61 {
+        padding = 1;
+    } also source[source.len() - 2] == 61 {
+        padding = 2;
+    }
+
+    const usize PAYLOAD_LENGTH = source.len() - padding;
+    loop usize index = 0; index < PAYLOAD_LENGTH; index++ {
+        if !is_digit(source[index]) {
+            return (none, Base64Error.InvalidEncoding);
+        }
+    }
+
+    loop usize index = PAYLOAD_LENGTH; index < source.len(); index++ {
+        if source[index] != 61 {
+            return (none, Base64Error.InvalidEncoding);
+        }
+    }
+
+    if padding == 2 and (digit_value(source[PAYLOAD_LENGTH - 1]) & 15) != 0 {
+        return (none, Base64Error.InvalidEncoding);
+    }
+
+    if padding == 1 and (digit_value(source[PAYLOAD_LENGTH - 1]) & 3) != 0 {
+        return (none, Base64Error.InvalidEncoding);
+    }
+
+    return ((source.len() / 4) * 3 - padding, none);
+}
+
+// Encodes a borrowed byte string as padded RFC 4648 Base64 text.
+export (string, error) encode(stringv source) {
+    bytes, encodeError := encode_to_bytes(source);
+    if encodeError != none {
+        return (none, encodeError);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Encodes borrowed bytes as padded RFC 4648 Base64 text.
+export (string, error) encode_bytes([]const u8 source) {
+    return encode(source.cast<stringv>);
+}
+
+// Encodes a borrowed byte string as newly allocated Base64 bytes.
+export (own []u8, error) encode_to_bytes(stringv source) {
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    const usize LEN, Base64Error err = encoded_length(SOURCE_LENGTH);
+    if err != none {
+        return (none, err);
+    }
+
+    destination, allocationError := new<own []u8>(LEN);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    usize sourceIndex = 0;
+    usize destIndex = 0;
+    while SOURCE_LENGTH - sourceIndex >= 3 {
+        const u8 FIRST = source[sourceIndex.cast<u32>];
+        const u8 SECOND = source[(sourceIndex + 1).cast<u32>];
+        const u8 THIRD = source[(sourceIndex + 2).cast<u32>];
+        encode_group(destination[destIndex:], FIRST, SECOND, THIRD);
+        sourceIndex += 3;
+        destIndex += 4;
+    }
+
+    const usize REMAINING = SOURCE_LENGTH - sourceIndex;
+    if REMAINING == 1 {
+        const u8 FIRST = source[sourceIndex.cast<u32>];
+        destination[destIndex] = digit(FIRST >> 2);
+        destination[destIndex + 1] = digit((FIRST & 3) << 4);
+        destination[destIndex + 2] = PADDING;
+        destination[destIndex + 3] = PADDING;
+    } else if REMAINING == 2 {
+        const u8 FIRST = source[sourceIndex.cast<u32>];
+        const u8 SECOND = source[(sourceIndex + 1).cast<u32>];
+        destination[destIndex] = digit(FIRST >> 2);
+        destination[destIndex + 1] = digit(((FIRST & 3) << 4) | (SECOND >> 4));
+        destination[destIndex + 2] = digit((SECOND & 15) << 2);
+        destination[destIndex + 3] = PADDING;
+    }
+
+    return (destination, none);
+}
+
+// Strictly decodes padded RFC 4648 Base64 into a byte-oriented string.
+export (string, error) decode(stringv source) {
+    bytes, decodeErr := decode_to_bytes(source);
+    if decodeErr != none {
+        return (none, decodeErr);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Strictly decodes Base64 bytes into a byte-oriented string.
+export (string, error) decode_from_bytes([]const u8 source) {
+    return decode(source.cast<stringv>);
+}
+
+// Validates source before allocating and returns its decoded bytes.
+export (own []u8, error) decode_to_bytes(stringv source) {
+    const usize LEN, Base64Error err = validated_decoded_length(source);
+    if err != none {
+        return (none, err);
+    }
+
+    destination, allocationError := new<own []u8>(LEN);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    usize sourceIndex = 0;
+    usize destinationIndex = 0;
+
+    while sourceIndex < SOURCE_LENGTH {
+        const u8 FIRST_BYTE = source[sourceIndex.cast<u32>];
+        const u8 SECOND_BYTE = source[(sourceIndex + 1).cast<u32>];
+        const u8 THIRD_BYTE = source[(sourceIndex + 2).cast<u32>];
+        const u8 FOURTH_BYTE = source[(sourceIndex + 3).cast<u32>];
+
+        const u8 FIRST = digit_value(FIRST_BYTE);
+        const u8 SECOND = digit_value(SECOND_BYTE);
+
+        destination[destinationIndex] =
+            (FIRST << 2) | (SECOND >> 4);
+        destinationIndex++;
+
+        if THIRD_BYTE != PADDING {
+            const u8 THIRD = digit_value(THIRD_BYTE);
+
+            destination[destinationIndex] =
+                ((SECOND & 15) << 4) | (THIRD >> 2);
+            destinationIndex++;
+
+            if FOURTH_BYTE != PADDING {
+                const u8 FOURTH = digit_value(FOURTH_BYTE);
+
+                destination[destinationIndex] =
+                    ((THIRD & 3) << 6) | FOURTH;
+                destinationIndex++;
+            }
+        }
+
+        sourceIndex += 4;
+    }
+
+    return (destination, none);
+}
+
+(usize, Base64Error) validated_decoded_length(stringv source) {
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+
+    if SOURCE_LENGTH % 4 != 0 {
+        return (none, Base64Error.InvalidEncoding);
+    }
+
+    if SOURCE_LENGTH == 0 {
+        return (0, none);
+    }
+
+    usize padding = 0;
+    const u8 LAST = source[(SOURCE_LENGTH - 1).cast<u32>];
+    const u8 SECOND_LAST = source[(SOURCE_LENGTH - 2).cast<u32>];
+    if LAST == PADDING {
+        padding = 1;
+    } also SECOND_LAST == PADDING {
+        padding = 2;
+    }
+
+    const usize PAYLOAD_LENGTH = SOURCE_LENGTH - padding;
+    loop usize index = 0; index < PAYLOAD_LENGTH; index++ {
+        const u8 BYTE = source[index.cast<u32>];
+        if !is_digit(BYTE) {
+            return (none, Base64Error.InvalidEncoding);
+        }
+    }
+
+    loop usize index = PAYLOAD_LENGTH; index < SOURCE_LENGTH; index++ {
+        const u8 BYTE = source[index.cast<u32>];
+        if BYTE != PADDING {
+            return (none, Base64Error.InvalidEncoding);
+        }
+    }
+
+    const u8 FINAL_DIGIT =
+        source[(PAYLOAD_LENGTH - 1).cast<u32>];
+
+    if padding == 2 and (digit_value(FINAL_DIGIT) & 15) != 0 {
+        return (none, Base64Error.InvalidEncoding);
+    }
+
+    if padding == 1 and (digit_value(FINAL_DIGIT) & 3) != 0 {
+        return (none, Base64Error.InvalidEncoding);
+    }
+
+    return ((SOURCE_LENGTH / 4) * 3 - padding, none);
+}
+
+void encode_group(
+    []u8 destination,
+    u8 first,
+    u8 second,
+    u8 third
+) {
+    destination[0] = digit(first >> 2);
+    destination[1] = digit(((first & 3) << 4) | (second >> 4));
+    destination[2] = digit(((second & 15) << 2) | (third >> 6));
+    destination[3] = digit(third & 63);
+}
+
+u8 digit(u8 value) {
+    if value < 26 {
+        return value + 65;
+    }
+
+    if value < 52 {
+        return value + 71;
+    }
+
+    if value < 62 {
+        return value - 4;
+    }
+
+    if value == 62 {
+        return 43;
+    }
+
+    return 47;
+}
+
+bool is_digit(u8 value) {
+    return (value >= 65 and value <= 90) or
+        (value >= 97 and value <= 122) or
+        (value >= 48 and value <= 57) or
+        value == 43 or value == 47;
+}
+
+u8 digit_value(u8 value) {
+    if value >= 65 and value <= 90 {
+        return value - 65;
+    }
+
+    if value >= 97 and value <= 122 {
+        return value - 71;
+    }
+
+    if value >= 48 and value <= 57 {
+        return value + 4;
+    }
+
+    if value == 43 {
+        return 62;
+    }
+
+    return 63;
+}

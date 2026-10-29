@@ -6053,6 +6053,29 @@ TEST(SemanticMemoryTests, OwningSlicesAreSafeManagedMoveOnlyBuffers) {
                     .diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests,
+     ManagedSliceFactoriesDoNotExpandRawAllocationStatesAtCallers) {
+    auto analysis = Analyze(R"(
+        (own []u8, error) make() {
+            return new<own []u8>(1);
+        }
+        void use() {
+            _, a := make();
+            _, b := make();
+            _, c := make();
+            _, d := make();
+            _, e := make();
+            _, f := make();
+            _, g := make();
+            _, h := make();
+            _, i := make();
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
 TEST(SemanticMemoryTests, StructuresWithOwningSlicesAreTriviallyZeroable) {
     auto generated = Analyze(R"(
         structure Buffer { own []u8 storage; usize length; };
