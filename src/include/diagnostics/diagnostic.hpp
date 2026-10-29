@@ -81,6 +81,7 @@ enum class DiagnosticCode {
     MovedValue,
     InvalidFormat,
     InvalidDefaultArgument,
+    InvalidVariadic,
     NativeTargetUnavailable,
     ObjectEmissionFailed,
     RuntimeUnavailable,

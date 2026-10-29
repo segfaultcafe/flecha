@@ -101,6 +101,7 @@ class SemanticAnalyzer final {
     void RegisterBuiltIns();
     void RegisterFunctions(const core::CompilationUnit& unit);
     void AnalyzeFunction(const core::FunctionDeclaration& function);
+    void AnalyzeVariadicFunction(const core::FunctionDeclaration& function);
     void AnalyzeDefaultArguments(const core::FunctionDeclaration& function);
     void AnalyzeBlock(const core::BlockStatement& block, bool createScope);
     void AnalyzeStatement(const core::Statement& statement);

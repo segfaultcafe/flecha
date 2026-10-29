@@ -87,6 +87,12 @@ std::vector<const core::Expression*> SemanticModel::ArgumentsFor(
     return arguments;
 }
 
+const FunctionSymbol* SemanticModel::ForwardedFunction(
+    const core::CallExpression& expression) const {
+    const auto found = _forwardedFunctions.find(&expression);
+    return found == _forwardedFunctions.end() ? nullptr : found->second;
+}
+
 const core::ModuleConstantDeclaration* SemanticModel::ModuleConstantFor(
     const Symbol& symbol) const {
     const auto found = _moduleConstants.find(&symbol);

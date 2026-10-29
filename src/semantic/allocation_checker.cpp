@@ -35,8 +35,7 @@ bool ExposesHeapHandle(SemanticType type) {
 }
 
 bool IsManagedSliceAllocation(SemanticType type) {
-    return type.Kind() == SemanticTypeKind::Tuple &&
-           !type.Elements().empty() &&
+    return type.Kind() == SemanticTypeKind::Tuple && !type.Elements().empty() &&
            type.Elements()[0].Kind() == SemanticTypeKind::OwnedSlice;
 }
 
@@ -175,9 +174,8 @@ class AllocationChecker final {
                                 *node.memoryExpression)
                                 .Function());
                     const bool trackedAllocation =
-                        node.allocation &&
-                        !IsManagedSliceAllocation(
-                            _model.TypeOf(*node.allocation));
+                        node.allocation && !IsManagedSliceAllocation(
+                                               _model.TypeOf(*node.allocation));
                     if (trackedAllocation || heapIndex || heapSlice ||
                         resourceClosure ||
                         (callee &&
@@ -431,7 +429,7 @@ class AllocationChecker final {
     }
 
     void Register(const core::FunctionDeclaration& function) {
-        if (function.IsExtern()) return;
+        if (function.IsExtern() || function.HasVariadicPack()) return;
         const auto* symbol =
             static_cast<const FunctionSymbol*>(_model.DeclaredSymbol(function));
         if (!symbol) return;
@@ -760,6 +758,9 @@ class AllocationChecker final {
         if (expression.Kind() == AstNodeKind::CallExpression) {
             const auto& call =
                 static_cast<const core::CallExpression&>(expression);
+            if (const FunctionSymbol* forwarded =
+                    _model.ForwardedFunction(call))
+                return forwarded;
             const Symbol* symbol = DirectTarget(call.Callee());
             return symbol && symbol->Kind() == SymbolKind::Function
                        ? static_cast<const FunctionSymbol*>(symbol)

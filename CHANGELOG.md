@@ -4,6 +4,11 @@
 
 ### Added
 
+- Free functions can declare an allocation-free forwarding pack with
+  `values...` and expand it in their single forwarding call with `values...`.
+  Forwarding aliases emit no runtime function or variadic ABI, and borrow
+  contracts distinguish pack-only `<- ...values` from explicit mixed sources
+  such as `<- (fallback, ...values)`.
 - Flecha now accepts a versioned package graph whose dependency aliases are
   resolved relative to each importing package, preserving source and nominal
   identity across recursive graphs while keeping compatibility with `--lib`.
