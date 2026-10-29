@@ -21,6 +21,14 @@ typedef enum FlechaRuntimeStringStatus {
     FLECHA_RUNTIME_STRING_OUT_OF_MEMORY = 1,
 } FlechaRuntimeStringStatus;
 
+typedef enum FlechaRuntimeFloatTextStatus {
+    FLECHA_RUNTIME_FLOAT_TEXT_OK = 0,
+    FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX = 1,
+    FLECHA_RUNTIME_FLOAT_TEXT_OUT_OF_RANGE = 2,
+    FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE = 3,
+    FLECHA_RUNTIME_FLOAT_TEXT_OUT_OF_MEMORY = 4,
+} FlechaRuntimeFloatTextStatus;
+
 typedef enum FlechaRuntimeReadFileStatus {
     FLECHA_RUNTIME_READ_FILE_OK = 0,
     FLECHA_RUNTIME_READ_FILE_NOT_FOUND = 1,
@@ -133,6 +141,18 @@ void flecha_runtime_v1_string_from_bool(FlechaRuntimeString* output,
                                         uint8_t value);
 void flecha_runtime_v1_string_from_char(FlechaRuntimeString* output,
                                         uint8_t value);
+
+// Parses the complete locale-independent decimal input. Every failure resets
+// output to zero. Formatting emits the shortest round-trippable representation,
+// resets written before validation, and leaves destination unchanged on failure.
+int32_t flecha_runtime_v1_parse_f32(float* output, const char* data,
+                                    size_t length);
+int32_t flecha_runtime_v1_parse_f64(double* output, const char* data,
+                                    size_t length);
+int32_t flecha_runtime_v1_format_f32(uint8_t* destination, size_t capacity,
+                                     float value, size_t* written);
+int32_t flecha_runtime_v1_format_f64(uint8_t* destination, size_t capacity,
+                                     double value, size_t* written);
 
 // Reads path as platform-native binary file contents. Paths are byte strings
 // on POSIX and UTF-8 on Windows. On success output owns a malloc-compatible,

@@ -31,7 +31,7 @@ export (string, error) replace(
             }
         }
 
-        return result.asString();
+        return result.toString();
     }
 
     u32 index = 0;
@@ -63,5 +63,5 @@ export (string, error) replace(
         }
     }
 
-    return result.asString();
+    return result.toString();
 }
