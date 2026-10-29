@@ -1,0 +1,75 @@
+module stdio_test;
+
+@imports
+    :: root::io::stdio
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test standard_output_accepts_empty_operations(&testing::UnitTest t) {
+    output := stdio::standard_output();
+    [0]u8 empty = none;
+
+    count, writeError := output.writeBytes(empty[:]);
+    asserts::is_true(
+        t,
+        count == 0 and writeError == none,
+        "an empty standard-output write is a no-op"
+    );
+    asserts::is_true(
+        t,
+        output.writeAllBytes(empty[:]) == none,
+        "writeAllBytes accepts empty output"
+    );
+    asserts::is_true(
+        t,
+        output.writeAll("") == none,
+        "writeAll accepts empty output"
+    );
+    asserts::is_true(t, output.flush() == none, "standard output flushes");
+}
+
+test standard_error_accepts_empty_operations(&testing::UnitTest t) {
+    output := stdio::standard_error();
+    [0]u8 empty = none;
+
+    count, writeError := output.writeBytes(empty[:]);
+    asserts::is_true(
+        t,
+        count == 0 and writeError == none,
+        "an empty standard-error write is a no-op"
+    );
+    asserts::is_true(
+        t,
+        output.writeAllBytes(empty[:]) == none,
+        "writeAllBytes accepts empty error output"
+    );
+    asserts::is_true(
+        t,
+        output.writeAll("") == none,
+        "writeAll accepts empty error output"
+    );
+    asserts::is_true(t, output.flush() == none, "standard error flushes");
+}
+
+test standard_stream_writers_are_independent_process_views(
+    &testing::UnitTest t
+) {
+    standardOutput := stdio::standard_output();
+    standardError := stdio::standard_error();
+    standardOutputWriter := standardOutput.writer();
+    standardErrorWriter := standardError.writer();
+    [0]u8 empty = none;
+
+    outputCount, outputError := standardOutputWriter.write(empty[:]);
+    errorCount, errorError := standardErrorWriter.write(empty[:]);
+    asserts::is_true(
+        t,
+        outputCount == 0 and outputError == none,
+        "a standard-output writer is reusable independently of its view"
+    );
+    asserts::is_true(
+        t,
+        errorCount == 0 and errorError == none,
+        "a standard-error writer is reusable independently of its view"
+    );
+}

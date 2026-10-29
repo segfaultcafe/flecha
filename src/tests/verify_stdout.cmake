@@ -11,6 +11,7 @@ execute_process(
     COMMAND "${FLECHA_OUTPUT}"
     RESULT_VARIABLE runResult
     OUTPUT_VARIABLE actualOutput
+    ERROR_VARIABLE actualError
 )
 if(NOT runResult EQUAL 42)
     message(FATAL_ERROR "native program returned ${runResult}, expected 42")
@@ -36,5 +37,11 @@ false
 if(NOT actualOutput STREQUAL expectedOutput)
     message(FATAL_ERROR
         "native output mismatch\nexpected:\n${expectedOutput}\nactual:\n${actualOutput}"
+    )
+endif()
+
+if(NOT actualError STREQUAL expectedOutput)
+    message(FATAL_ERROR
+        "native standard error mismatch\nexpected:\n${expectedOutput}\nactual:\n${actualError}"
     )
 endif()

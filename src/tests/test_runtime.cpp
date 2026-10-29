@@ -30,6 +30,24 @@ TEST(RuntimeStringViewTests, AcceptsValidSubstringBounds) {
 
 TEST(RuntimeStringViewTests, AcceptsNullStorageForEmptyOutput) {
     EXPECT_NO_FATAL_FAILURE(flecha_runtime_v1_stdout_string_view(nullptr, 0));
+    EXPECT_NO_FATAL_FAILURE(flecha_runtime_v1_stderr_string_view(nullptr, 0));
+}
+
+TEST(RuntimeStandardStreamTests, ValidatesBuffersAndCountOutputs) {
+    std::size_t count = 99;
+    EXPECT_EQ(flecha_runtime_v1_standard_output_write(nullptr, 0, &count),
+              FLECHA_RUNTIME_IO_OK);
+    EXPECT_EQ(count, 0);
+
+    count = 99;
+    EXPECT_EQ(flecha_runtime_v1_standard_error_write(nullptr, 1, &count),
+              FLECHA_RUNTIME_IO_INVALID_OPTIONS);
+    EXPECT_EQ(count, 0);
+
+    EXPECT_EQ(flecha_runtime_v1_standard_output_write(nullptr, 0, nullptr),
+              FLECHA_RUNTIME_IO_INVALID_OPTIONS);
+    EXPECT_EQ(flecha_runtime_v1_standard_error_write(nullptr, 0, nullptr),
+              FLECHA_RUNTIME_IO_INVALID_OPTIONS);
 }
 
 TEST(RuntimeStringViewTests, RejectsInvalidBounds) {

@@ -1,0 +1,44 @@
+module main;
+
+@imports
+    :: lib::std::io::buffered
+    :: lib::std::io::stdio;
+
+i32 main() {
+    stdout("builtin output|");
+    output := stdio::standard_output();
+    if output.writeAll("direct output|") != none {
+        return 1;
+    }
+    bufferedOutput, allocationError := buffered::BufferedWriter::withCapacity(
+        output.writer(),
+        4
+    );
+    if allocationError != none {
+        return 2;
+    }
+    [9]u8 bufferedBytes = ['b', 'u', 'f', 'f', 'e', 'r', 'e', 'd', '|'];
+    if bufferedOutput.writeAll(bufferedBytes[:]) != none or
+        bufferedOutput.flush() != none or output.flush() != none {
+        return 3;
+    }
+
+    stderr("builtin error|");
+    errorOutput := stdio::standard_error();
+    if errorOutput.writeAll("direct error|") != none {
+        return 4;
+    }
+    bufferedError, errorAllocationError :=
+        buffered::BufferedWriter::withCapacity(errorOutput.writer(), 4);
+    if errorAllocationError != none {
+        return 5;
+    }
+    [9]u8 bufferedErrorBytes =
+        ['b', 'u', 'f', 'f', 'e', 'r', 'e', 'd', '|'];
+    if bufferedError.writeAll(bufferedErrorBytes[:]) != none or
+        bufferedError.flush() != none or errorOutput.flush() != none {
+        return 6;
+    }
+
+    return 42;
+}

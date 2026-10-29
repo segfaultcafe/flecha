@@ -734,14 +734,20 @@ TEST(LlvmCodeGeneratorTests, CoercesCharactersAndExternBytePointers) {
     EXPECT_NE(ir.find("call void @native_write(ptr"), std::string::npos);
 }
 
-TEST(LlvmCodeGeneratorTests, EmitsLengthAwareStandardOutput) {
+TEST(LlvmCodeGeneratorTests, EmitsLengthAwareStandardOutputAndError) {
     GeneratedSource result = Generate(
         "i32 main() { stdout(); stdout(\"Flecha\", -42, true); "
         "stdoutln(); stdoutln(\"Language\"); stdout(1 as i8); "
         "stdout(2 as i16); stdout(3 as i64); stdout(4 as isize); "
         "stdout(5 as u8); stdout(6 as u16); stdout(7 as u32); "
         "stdout(8 as u64); stdout(9 as usize); stdout(1 as f32); "
-        "stdout(1.5); stdout(true); stdout('x'); return 42; }");
+        "stdout(1.5); stdout(true); stdout('x'); stderr(); "
+        "stderr(\"Flecha\", -42, true); stderrln(); "
+        "stderrln(\"Language\"); stderr(1 as i8); stderr(2 as i16); "
+        "stderr(3 as i64); stderr(4 as isize); stderr(5 as u8); "
+        "stderr(6 as u16); stderr(7 as u32); stderr(8 as u64); "
+        "stderr(9 as usize); stderr(1 as f32); stderr(1.5); "
+        "stderr(true); stderr('x'); return 42; }");
 
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_NE(result.module, nullptr) << result.generator->Error();
@@ -753,6 +759,9 @@ TEST(LlvmCodeGeneratorTests, EmitsLengthAwareStandardOutput) {
                                     "f64",         "bool",  "char",  "newline"};
     for (const std::string& suffix : suffixes) {
         EXPECT_NE(ir.find("@flecha_runtime_v1_stdout_" + suffix),
+                  std::string::npos)
+            << suffix;
+        EXPECT_NE(ir.find("@flecha_runtime_v1_stderr_" + suffix),
                   std::string::npos)
             << suffix;
     }

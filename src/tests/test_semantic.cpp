@@ -1587,7 +1587,8 @@ TEST(SemanticDeclarationTests, RegistersFunctionsParametersAndLocals) {
 TEST(SemanticBuiltInTests, ProvidesTypedStandardOutput) {
     Analysis analysis = Analyze(
         "i32 main() { stdout(\"Flecha\"); "
-        "stdoutln(\"Language\"); return 42; }");
+        "stdoutln(\"Language\"); stderr(\"error\"); "
+        "stderrln(\"detail\"); return 42; }");
 
     ASSERT_FALSE(analysis.diagnostics.HasErrors());
     const FunctionDeclaration& function = FunctionAt(analysis, 0);
@@ -1617,6 +1618,31 @@ TEST(SemanticBuiltInTests, ProvidesTypedStandardOutput) {
         static_cast<const FunctionSymbol*>(analysis.model.SymbolFor(lineName));
     ASSERT_NE(lineSymbol, nullptr);
     EXPECT_EQ(lineSymbol->BuiltIn(), BuiltInFunction::StdoutLine);
+
+    const ExpressionStatement& errorStatement =
+        static_cast<const ExpressionStatement&>(
+            *function.Body().Statements()[2]);
+    const CallExpression& errorCall =
+        static_cast<const CallExpression&>(errorStatement.Value());
+    const NameExpression& errorName =
+        static_cast<const NameExpression&>(errorCall.Callee());
+    const FunctionSymbol* errorSymbol = static_cast<const FunctionSymbol*>(
+        analysis.model.SymbolFor(errorName));
+    ASSERT_NE(errorSymbol, nullptr);
+    EXPECT_EQ(errorSymbol->BuiltIn(), BuiltInFunction::Stderr);
+
+    const ExpressionStatement& errorLineStatement =
+        static_cast<const ExpressionStatement&>(
+            *function.Body().Statements()[3]);
+    const CallExpression& errorLineCall =
+        static_cast<const CallExpression&>(errorLineStatement.Value());
+    const NameExpression& errorLineName =
+        static_cast<const NameExpression&>(errorLineCall.Callee());
+    const FunctionSymbol* errorLineSymbol =
+        static_cast<const FunctionSymbol*>(
+            analysis.model.SymbolFor(errorLineName));
+    ASSERT_NE(errorLineSymbol, nullptr);
+    EXPECT_EQ(errorLineSymbol->BuiltIn(), BuiltInFunction::StderrLine);
 }
 
 TEST(SemanticBuiltInTests, SpecializesAndValidatesStructuralHashing) {
@@ -1654,10 +1680,12 @@ TEST(SemanticBuiltInTests, SpecializesAndValidatesStructuralHashing) {
               nullptr);
 }
 
-TEST(SemanticBuiltInTests, ValidatesStandardOutputArguments) {
+TEST(SemanticBuiltInTests, ValidatesStandardOutputAndErrorArguments) {
     Analysis valid = Analyze(
         "void Main() { stdout(); stdout(42, false, 'x', 1.5); "
-        "stdoutln(); stdoutln(\"answer: \", 42); }");
+        "stdoutln(); stdoutln(\"answer: \", 42); stderr(); "
+        "stderr(42, false, 'x', 1.5); stderrln(); "
+        "stderrln(\"failure: \", 42); }");
     EXPECT_FALSE(valid.diagnostics.HasErrors());
 
     Analysis wrongType = Analyze("void Main() { stdout(null); }");
@@ -1668,6 +1696,16 @@ TEST(SemanticBuiltInTests, ValidatesStandardOutputArguments) {
     EXPECT_NE(
         FindDiagnostic(lineWrongType, DiagnosticCode::IncompatibleArgument),
         nullptr);
+
+    Analysis errorWrongType = Analyze("void Main() { stderr(null); }");
+    EXPECT_NE(
+        FindDiagnostic(errorWrongType, DiagnosticCode::IncompatibleArgument),
+        nullptr);
+
+    Analysis errorLineWrongType = Analyze("void Main() { stderrln(none); }");
+    EXPECT_NE(FindDiagnostic(errorLineWrongType,
+                             DiagnosticCode::IncompatibleArgument),
+              nullptr);
 }
 
 TEST(SemanticBuiltInTests, ValidatesFormattedStandardOutput) {
