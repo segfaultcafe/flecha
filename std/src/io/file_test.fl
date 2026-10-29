@@ -1,6 +1,7 @@
 module file_test;
 
 @imports
+    :: root::io::buffered
     :: root::io::file
     :: root::io::errors
     :: root::io::filesystem
@@ -345,4 +346,95 @@ test copy_transfers_bytes_between_file_adapters(&testing::UnitTest t) {
         destinationCleanupError == none,
         "the copy destination is removed"
     );
+}
+
+test buffered_adapters_round_trip_bytes_and_release_file_borrows(
+    &testing::UnitTest t
+) {
+    stringv path = ".flecha-buffered-file-round-trip.tmp";
+    [7]u8 source = [1, 2, 3, 4, 5, 6, 7];
+
+    output, openWriteError := file::File::open(
+        path,
+        file::OpenOptions::writeOnly()
+    );
+    asserts::is_true(t, openWriteError == none, "the output file opens");
+
+    if output.isOpen() {
+        writer := output.writer();
+        bufferedWriter, allocationError :=
+            buffered::BufferedWriter::withCapacity(writer, 3);
+        asserts::is_true(
+            t,
+            allocationError == none,
+            "the buffered writer allocates"
+        );
+
+        if allocationError == none {
+            writeError := bufferedWriter.writeAll(source[:]);
+            flushError := bufferedWriter.flush();
+            asserts::is_true(
+                t,
+                writeError == none and flushError == none,
+                "the buffered writer drains every byte"
+            );
+        }
+
+        asserts::is_true(
+            t,
+            output.flush() == none,
+            "the file borrow ends after the buffered writer's final use"
+        );
+        asserts::is_true(t, output.close() == none, "the output file closes");
+    }
+
+    input, openReadError := file::File::open(
+        path,
+        file::OpenOptions::readOnly()
+    );
+    asserts::is_true(t, openReadError == none, "the input file opens");
+
+    if input.isOpen() {
+        reader := input.reader();
+        bufferedReader, allocationError :=
+            buffered::BufferedReader::withCapacity(reader, 3);
+        asserts::is_true(
+            t,
+            allocationError == none,
+            "the buffered reader allocates"
+        );
+
+        if allocationError == none {
+            [7]u8 destination = none;
+            readError := bufferedReader.readExact(destination[:]);
+            asserts::is_true(
+                t,
+                readError == none,
+                "the buffered reader fills the destination"
+            );
+            asserts::is_true(
+                t,
+                destination[0] == 1 and destination[3] == 4 and
+                    destination[6] == 7,
+                "the buffered round trip preserves byte order"
+            );
+
+            [1]u8 extra = none;
+            count, eofError := bufferedReader.read(extra[:]);
+            asserts::is_true(
+                t,
+                count == 0 and eofError == none,
+                "the buffered reader reports EOF"
+            );
+        }
+
+        asserts::is_true(
+            t,
+            input.close() == none,
+            "the file borrow ends after the buffered reader's final use"
+        );
+    }
+
+    cleanupError := filesystem::remove_file(path);
+    asserts::is_true(t, cleanupError == none, "the round-trip file is removed");
 }

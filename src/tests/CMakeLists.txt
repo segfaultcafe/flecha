@@ -440,6 +440,28 @@ add_test(NAME StandardLibraryTests.FileStream
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/file_stream_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_file_stream.cmake)
 
+foreach(case IN ITEMS reader_allocation_failure writer_allocation_failure)
+    add_test(NAME StandardLibraryTests.BufferedIo.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/buffered_io/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/buffered_io_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=1
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+add_test(NAME CompilerDiagnostics.BufferedIo
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/buffered_io_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_buffered_io_diagnostics.cmake)
+
 add_test(NAME NativeSemanticTests.RuntimeArrays
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
