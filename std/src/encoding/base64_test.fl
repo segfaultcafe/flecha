@@ -1,0 +1,190 @@
+module base64_test;
+
+@imports
+    :: root::encoding::base64
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+void assert_encoded(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    encoded, err := base64::encode(source);
+    asserts::is_true(
+        t,
+        err == none and encoded.view() == expected,
+        message
+    );
+}
+
+void assert_decoded(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    decoded, err := base64::decode(source);
+    asserts::is_true(
+        t,
+        err == none and decoded.view() == expected,
+        message
+    );
+}
+
+void assert_invalid(
+    &testing::UnitTest t,
+    stringv source,
+    stringv message
+) {
+    _, err := base64::decode_to_bytes(source);
+    asserts::is_true(
+        t,
+        err == base64::Base64Error.InvalidEncoding,
+        message
+    );
+}
+
+void assert_encode_bytes(&testing::UnitTest t) {
+    [6]u8 source = [0, 255, 16, 128, 127, 1];
+    encoded, err := base64::encode_bytes(source[:]);
+    asserts::is_true(
+        t,
+        err == none and encoded.view() == "AP8QgH8B",
+        "encode_bytes deterministically encodes arbitrary bytes"
+    );
+}
+
+void assert_decode_from_bytes(&testing::UnitTest t) {
+    [8]u8 source = [65, 80, 56, 81, 103, 72, 56, 66];
+    decoded, err := base64::decode_from_bytes(source[:]);
+    view := decoded.view();
+    const u8 FIRST = view[0];
+    const u8 SECOND = view[1];
+    const u8 THIRD = view[2];
+    const u8 FOURTH = view[3];
+    const u8 FIFTH = view[4];
+    const u8 SIXTH = view[5];
+    asserts::is_true(
+        t,
+        err == none and decoded.len() == 6 and
+            FIRST == 0 and SECOND == 255 and
+            THIRD == 16 and FOURTH == 128 and
+            FIFTH == 127 and SIXTH == 1,
+        "decode_from_bytes returns the original binary string"
+    );
+}
+
+void assert_binary_string(&testing::UnitTest t) {
+    decoded, err := base64::decode("AP8QgH8B");
+    view := decoded.view();
+    const u8 FIRST = view[0];
+    const u8 SECOND = view[1];
+    asserts::is_true(
+        t,
+        err == none and decoded.len() == 6 and
+            FIRST == 0 and SECOND == 255,
+        "the string-returning decoder preserves arbitrary bytes"
+    );
+}
+
+void assert_empty_encode_bytes(&testing::UnitTest t) {
+    encoded, err := base64::encode_to_bytes("");
+    asserts::is_true(
+        t,
+        err == none and encoded.len() == 0,
+        "encoding empty input returns an owned empty byte slice"
+    );
+}
+
+void assert_empty_decode_bytes(&testing::UnitTest t) {
+    decoded, err := base64::decode_to_bytes("");
+    asserts::is_true(
+        t,
+        err == none and decoded.len() == 0,
+        "decoding empty input returns an owned empty byte slice"
+    );
+}
+
+test length_helpers_validate_input_and_overflow(&testing::UnitTest t) {
+    emptyEncoded, emptyEncodedError := base64::encoded_length(0);
+    oneEncoded, oneEncodedError := base64::encoded_length(1);
+    threeEncoded, threeEncodedError := base64::encoded_length(3);
+    _, overflowError := base64::encoded_length(usize.max_value);
+
+    [4]u8 canonical = [90, 103, 61, 61];
+    [3]u8 truncated = [90, 103, 61];
+    decoded, decodedError := base64::decoded_length(canonical[:]);
+    _, truncatedError := base64::decoded_length(truncated[:]);
+
+    asserts::is_true(
+        t,
+        emptyEncoded == 0 and emptyEncodedError == none,
+        "empty input has an empty encoding"
+    );
+    asserts::is_true(
+        t,
+        oneEncoded == 4 and oneEncodedError == none and
+            threeEncoded == 4 and threeEncodedError == none,
+        "encoded length rounds complete and partial groups to four bytes"
+    );
+    asserts::is_true(
+        t,
+        overflowError == base64::Base64Error.Overflow,
+        "encoded length reports overflow before allocation"
+    );
+    asserts::is_true(
+        t,
+        decoded == 1 and decodedError == none,
+        "decoded length accounts for padding"
+    );
+    asserts::is_true(
+        t,
+        truncatedError == base64::Base64Error.InvalidEncoding,
+        "decoded length rejects an incomplete quartet"
+    );
+}
+
+test encode_matches_rfc_4648_vectors(&testing::UnitTest t) {
+    assert_encoded(t, "", "", "the empty RFC vector encodes");
+    assert_encoded(t, "f", "Zg==", "f encodes");
+    assert_encoded(t, "fo", "Zm8=", "fo encodes");
+    assert_encoded(t, "foo", "Zm9v", "foo encodes");
+    assert_encoded(t, "foob", "Zm9vYg==", "foob encodes");
+    assert_encoded(t, "fooba", "Zm9vYmE=", "fooba encodes");
+    assert_encoded(t, "foobar", "Zm9vYmFy", "foobar encodes");
+}
+
+test decode_matches_rfc_4648_vectors(&testing::UnitTest t) {
+    assert_decoded(t, "", "", "the empty RFC vector decodes");
+    assert_decoded(t, "Zg==", "f", "f decodes");
+    assert_decoded(t, "Zm8=", "fo", "fo decodes");
+    assert_decoded(t, "Zm9v", "foo", "foo decodes");
+    assert_decoded(t, "Zm9vYg==", "foob", "foob decodes");
+    assert_decoded(t, "Zm9vYmE=", "fooba", "fooba decodes");
+    assert_decoded(t, "Zm9vYmFy", "foobar", "foobar decodes");
+}
+
+test byte_adapters_preserve_binary_data(&testing::UnitTest t) {
+    assert_encode_bytes(t);
+    assert_decode_from_bytes(t);
+    assert_binary_string(t);
+}
+
+test strict_decode_rejects_malformed_input(&testing::UnitTest t) {
+    assert_invalid(t, "A", "a one-character source is truncated");
+    assert_invalid(t, "Zg=", "an incomplete quartet is truncated");
+    assert_invalid(t, "Zm$=", "an invalid alphabet character is rejected");
+    assert_invalid(t, "=m9v", "leading padding is rejected");
+    assert_invalid(t, "Z=9v", "middle padding is rejected");
+    assert_invalid(t, "Zm=v", "split padding is rejected");
+    assert_invalid(t, "====", "padding without a payload is rejected");
+    assert_invalid(t, "Zh==", "nonzero discarded four bits are rejected");
+    assert_invalid(t, "Zm9=", "nonzero discarded two bits are rejected");
+}
+
+test empty_byte_results_are_owned_and_successful(&testing::UnitTest t) {
+    assert_empty_encode_bytes(t);
+    assert_empty_decode_bytes(t);
+}

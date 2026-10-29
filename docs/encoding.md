@@ -70,3 +70,34 @@ upperError := hex::write_upper(&writer, source);
 
 Length overflow, insufficient destination space, and malformed input report
 `HexError`.
+
+## Base64
+
+The `base64` module implements the standard padded Base64 alphabet from RFC
+4648. Its primary string API allocates the result for the caller:
+
+```flecha
+@imports :: lib::std::encoding::base64;
+
+encoded, encodeError := base64::encode("foobar");
+decoded, decodeError := base64::decode("Zm9vYmFy");
+```
+
+`encode_bytes` accepts arbitrary borrowed bytes when the source is not already
+a `stringv`. `encode_to_bytes` returns newly allocated ASCII bytes instead of a
+`string`. On the decoding side, `decode_from_bytes` accepts borrowed Base64
+bytes and returns a byte-oriented `string`, while `decode_to_bytes` returns a
+newly allocated owned byte slice. Empty input succeeds and returns an empty
+result of the requested type.
+
+Encoding is deterministic and always emits `=` padding when the final group is
+incomplete. Decoding is strict: the source length must be a multiple of four,
+only the standard `A-Z`, `a-z`, `0-9`, `+`, and `/` alphabet is accepted,
+padding may appear only at the end, and discarded bits in the final quartet
+must be zero. Whitespace, URL-safe digits, missing padding, extra padding, and
+other non-canonical encodings report `Base64Error.InvalidEncoding`.
+
+`encoded_length` reports `Base64Error.Overflow` before allocation when the
+encoded size cannot fit in `usize`. Decoding validates the complete input
+before allocating its output. Allocation failures from the owning APIs are
+returned through their general `error` result.

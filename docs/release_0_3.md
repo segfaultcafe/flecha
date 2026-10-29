@@ -215,10 +215,12 @@ Add:
 - a canonical binary encoding layer.
 
 The mutable builder, integer and floating-point parsing and formatting, ASCII,
-UTF-8, hexadecimal, and canonical binary foundations are implemented with
-focused standard-library and native-runtime tests. Base64 remains follow-up
-work. JSON is an independently versioned package planned for the 0.4 library
-wave rather than a bundled standard-library module.
+UTF-8, hexadecimal, Base64, and canonical binary foundations are implemented
+with focused standard-library and native-runtime tests. Base64 uses the
+standard padded RFC 4648 alphabet, allocates results for callers, and strictly
+rejects malformed or non-canonical input. JSON is an independently versioned
+package planned for the 0.4 library wave rather than a bundled standard-library
+module.
 
 The existing `string` and `stringv` types remain byte-oriented. Unicode APIs
 must not silently change their indexing or length semantics. CSV, TOML, YAML,
