@@ -65,10 +65,14 @@ T ParseWithCLocale(const char* text, char** end) {
     else
         return _strtod_l(text, end, CLocale());
 #else
+    const locale_t previous = uselocale(CLocale());
+    T result;
     if constexpr (std::is_same_v<T, float>)
-        return strtof_l(text, end, CLocale());
+        result = std::strtof(text, end);
     else
-        return strtod_l(text, end, CLocale());
+        result = std::strtod(text, end);
+    (void)uselocale(previous);
+    return result;
 #endif
 }
 
