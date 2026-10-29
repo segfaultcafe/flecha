@@ -92,6 +92,54 @@ moved, or closed while that borrow remains live. An adapter neither owns nor
 closes the file, and a writer does not flush automatically; callers retain
 responsibility for flushing and closing after the adapter's final use.
 
+## Standard output and error
+
+The `stdout` and `stdoutln` built-ins remain the concise path for ordinary
+formatted program output. `stderr` and `stderrln` provide the same printable
+value and newline behavior for diagnostics. These built-ins do not expose
+partial progress or recoverable output errors.
+
+Import `lib::std::io::stdio` when standard output or standard error must be a
+fallible byte destination:
+
+```flecha
+@imports
+    :: lib::std::io::buffered
+    :: lib::std::io::stdio;
+
+output := stdio::standard_output();
+writer, allocationError := buffered::BufferedWriter::withCapacity(
+    output.writer(),
+    4096
+);
+if allocationError != none {
+    return allocationError;
+}
+
+// Write bytes through writer.
+return writer.flush();
+```
+
+`standard_output()` and `standard_error()` return lightweight, non-owning
+views of process-owned streams. The views never close a stream and require no
+destructor. Multiple views may coexist. Their `write` and `writeAll` methods
+accept strings; `writeBytes` and `writeAllBytes` accept byte slices. All four
+preserve the same partial-progress and zero-progress rules as
+`io::stream::Writer`. A zero-length write is a successful no-op.
+
+Each `writer()` call returns an independent captureless
+`io::stream::Writer`; it does not borrow the view. The native write operation
+first flushes typed built-in output pending in the same C stream, then performs
+one unbuffered descriptor write. Consequently a buffered standard stream
+requires only `BufferedWriter::flush()` to emit its pending bytes. Calling the
+view's `flush()` explicitly is useful for output previously emitted through
+the built-ins and reports `IoError.FlushFailed` when the process stream cannot
+be flushed.
+
+Standard-stream writes and flushes are blocking operations. They do not
+validate text encoding and do not add line endings. Use the built-ins when
+typed formatting or an appended newline is desired.
+
 ## Buffered streams
 
 Import `lib::std::io::buffered` to wrap an existing `io::stream::Reader` or

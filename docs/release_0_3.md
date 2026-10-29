@@ -298,6 +298,13 @@ and buffered paths, boundary crossings, short operations, EOF, zero progress,
 error retry, allocation failure, movement, borrow conflicts, file round trips,
 and byte ordering without native buffering support.
 
+The standard-output and standard-error portion is also implemented. The
+`stderr` and `stderrln` built-ins mirror the existing printable `stdout`
+operations, while `std::io::stdio` exposes process-owned streams as fallible
+byte destinations with captureless `io::stream::Writer` adapters. These views
+never close process resources and compose directly with `BufferedWriter`.
+Standard input remains part of the later input/parsing work.
+
 ### 6. Blocking networking
 
 Add an initial `net` layer containing:

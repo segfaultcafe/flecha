@@ -14,14 +14,22 @@ and an exact byte length. A terminating null byte is neither required nor
 included in the length.
 
 The compiler emits one typed output call for each supported Flecha scalar
-value. `stdout` and `stdoutln` accept zero or more printable values and emit
-them in argument order; `stdoutln` then emits
-`flecha_runtime_v1_stdout_newline` once. `stdoutf` parses its string-literal
-format at compile time and lowers literal segments and substituted values to
-the same typed calls. It supports `%d` for numeric values, `%s` for `string`,
-`stringv`, or `char`, `%b` for `bool` or `u8`, and `%%` for a literal percent
-sign. `stdoutf` does not append a newline. No variadic C ABI is exposed by
-these language-level facilities.
+value. `stdout`, `stdoutln`, `stderr`, and `stderrln` accept zero or more
+printable values and emit them in argument order. The `ln` forms then emit the
+corresponding `flecha_runtime_v1_*_newline` operation once. `stdoutf` parses
+its string-literal format at compile time and lowers literal segments and
+substituted values to the stdout typed calls. It supports `%d` for numeric
+values, `%s` for `string`, `stringv`, or `char`, `%b` for `bool` or `u8`, and
+`%%` for a literal percent sign. `stdoutf` does not append a newline. No
+variadic C ABI is exposed by these language-level facilities.
+
+The standard I/O library uses additive byte-write and flush operations for the
+process-owned standard output and standard error streams. A write resets its
+count output before validation, flushes typed built-in output already pending
+in the selected C stream, and then performs one unbuffered descriptor write
+that preserves partial progress on failure. Null storage is valid only with
+zero length. These operations do not transfer ownership of or close the
+process streams.
 
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the
