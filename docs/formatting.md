@@ -29,8 +29,9 @@ The `fmt` functions are compile-time forwarding wrappers over compiler
 built-ins. Flecha emits typed operations for the concrete call arguments; no C
 variadic call or runtime type-erased argument pack is part of the ABI.
 
-Use `std::io::stdio` instead when a program needs fallible byte-oriented output,
-partial-progress reporting, or a writer that composes with buffered I/O.
+Use `std::io::stdio` instead when a program needs fallible byte-oriented
+standard streams, partial-progress reporting, or readers and writers that
+compose with buffered I/O.
 
 ## Typed line input
 
@@ -64,6 +65,11 @@ The built-ins return `error`. `InputError` also provides `ReadFailed`,
 `AllocationError.OutOfMemory`. The destination remains unchanged on every
 failure. There is no formatted-input builtin: compose a formatted prompt
 explicitly with `fmt::printf(...)` and then call `stdin(&value)`.
+
+For raw bytes rather than typed complete-line conversion, use
+`std::io::stdio::standard_input()`. Its non-owning `StandardInput` view exposes
+`read` and a reusable `io::stream::Reader`; EOF follows the stream convention
+of `(0, none)`.
 
 An explicit typed declaration without `=` uses `none` as its initializer when
 the resolved type is trivially zeroable, so `i32 count;` is exactly the

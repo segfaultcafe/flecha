@@ -299,11 +299,13 @@ and buffered paths, boundary crossings, short operations, EOF, zero progress,
 error retry, allocation failure, movement, borrow conflicts, file round trips,
 and byte ordering without native buffering support.
 
-The standard-output and standard-error portion is also implemented. The
-`stderr` and `stderrln` built-ins mirror the existing printable `stdout`
-operations, while `std::io::stdio` exposes process-owned streams as fallible
-byte destinations with captureless `io::stream::Writer` adapters. These views
-never close process resources and compose directly with `BufferedWriter`.
+The standard-stream portion is also implemented. The `stderr` and `stderrln`
+built-ins mirror the existing printable `stdout` operations, while
+`std::io::stdio` exposes process-owned streams as non-owning fallible byte
+sources and destinations. `StandardInput` supplies a captureless
+`io::stream::Reader`; standard output and error supply captureless
+`io::stream::Writer` adapters. These views never close process resources and
+compose directly with buffered I/O.
 The root `std::fmt` facade provides `print`, `println`, `printf`, and matching
 standard-error operations through compile-time forwarding packs. Literal `{}`
 formats are checked by the compiler, and `sprintf` returns an owning string
