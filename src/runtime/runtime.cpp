@@ -11,6 +11,10 @@
 #include <limits>
 #include <type_traits>
 
+#ifdef __APPLE__
+#include <xlocale.h>
+#endif
+
 namespace {
 
 #ifdef _WIN32
