@@ -5717,6 +5717,31 @@ TEST(SemanticMemoryTests, RejectsForeignFreesAndUnverifiedStorage) {
         nullptr);
 }
 
+TEST(SemanticMemoryTests, SummarizesRecursiveSafeAggregateOwnership) {
+    Analysis result = Analyze(R"(
+        structure Box { own *i32 data; };
+        Box Box::zero() override { return build Box {}; }
+        unsafe Box Box::init(own *i32 data) override {
+            return build Box { self.data = data; };
+        }
+        void Box::tear(&self) override { unsafe { free(self->data); } }
+        unsafe (Box, error) make_recursive(u32 depth) {
+            if depth == 0 {
+                data, err := new<i32>(42);
+                if err != none { return (none, err); }
+                return (Box::init(data), none);
+            }
+            return make_recursive(depth - 1);
+        }
+        unsafe void use() {
+            value, err := make_recursive(3);
+            if err != none { return; }
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
 TEST(SemanticMemoryTests, PreservesTupleAndIndirectBindingAliases) {
     EXPECT_FALSE(Analyze("unsafe void f() { result := new<u8>(42); p, e := "
                          "result; free(p); }")

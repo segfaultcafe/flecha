@@ -496,12 +496,13 @@ states across CFG edges and visible nonrecursive calls. Counting free statements
 is insufficient. Leaks, double frees, use-after-free, known invalid frees, null
 paths, and unsupported ownership escapes are compile-time errors. Bounded call
 interpretation handles local helpers and factories; explicit `own` / `lend`
-contracts cover annotated and recursive functions. Inferred recursive summaries
-and ownership contracts for external declarations remain future work. See
-[raw_allocation.md](raw_allocation.md)
-for exact limits. Arbitrary raw-pointer manipulation and the validity of external
-input pointers remain programmer obligations inside unsafe code; complete static
-memory safety is not promised.
+contracts cover annotated and recursive raw-pointer functions. Recursive calls
+that carry only safe values use declared-shape summaries while their bodies are
+checked independently. Inferred recursive raw-pointer effects and ownership
+contracts for external declarations remain future work. See
+[raw_allocation.md](raw_allocation.md) for exact limits. Arbitrary raw-pointer
+manipulation and the validity of external input pointers remain programmer
+obligations inside unsafe code; complete static memory safety is not promised.
 
 A null-aware operation such as the proposed
 `ptr->safe_set(value)` can allocate and initialize when ptr is null,

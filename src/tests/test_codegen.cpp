@@ -2114,6 +2114,52 @@ TEST(NativeCompilerTests, RunsWholeValueMovesWithExactlyOnceCleanup) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsRecursiveSafeAggregateOwnership) {
+    GeneratedSource result = Generate(R"(
+        structure Box { own *i32 data; };
+        Box Box::zero() override { return build Box {}; }
+        unsafe Box Box::init(own *i32 data) override {
+            return build Box { self.data = data; };
+        }
+        void Box::tear(&self) override { unsafe { free(self->data); } }
+        unsafe i32 Box::read(&const self) { return *self->data; }
+        unsafe (Box, error) make_recursive(u32 depth) {
+            if depth == 0 {
+                data, err := new<i32>(42);
+                if err != none { return (none, err); }
+                return (Box::init(data), none);
+            }
+            return make_recursive(depth - 1);
+        }
+        i32 main() {
+            unsafe {
+                value, err := make_recursive(3);
+                if err != none { return 1; }
+                return value.read();
+            }
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_recursive_safe_aggregate_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_recursive_safe_aggregate_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsChainedOwningReceiverMethods) {
     GeneratedSource result = Generate(R"(
         structure Box { *i32 tears; i32 value; };
