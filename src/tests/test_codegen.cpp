@@ -790,10 +790,20 @@ TEST(LlvmCodeGeneratorTests, EmitsFormattedStandardOutput) {
 }
 
 TEST(NativeCompilerTests, RunsVariadicAndFormattedStandardOutput) {
-    GeneratedSource result = Generate(
-        "i32 main() { stdout(\"answer: \", 42); stdoutln('!'); "
-        "stdoutf(\"expected: %d, text: %s%s, ok: %b/%b, percent: %%\", "
-        "-7, \"flecha\", '.', true, 0 as u8); return 0; }");
+    GeneratedSource result = Generate(R"(
+        void print(values...) { stdout(values...); }
+        void println(values...) { stdoutln(values...); }
+        void printf(stringv format, values...) {
+            stdoutf(format, values...);
+        }
+        i32 main() {
+            print("answer: ", 42);
+            println('!');
+            printf("expected: %d, text: %s%s, ok: %b/%b, percent: %%",
+                   -7, "flecha", '.', true, 0 as u8);
+            return 0;
+        }
+    )");
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_NE(result.boundProgram, nullptr);
 

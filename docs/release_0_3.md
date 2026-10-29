@@ -418,6 +418,9 @@ itself:
 7. Accept a package graph whose dependency aliases are scoped to the importing
    source identity, while keeping all network and registry operations in
    Longbow.
+8. Provide allocation-free compile-time forwarding packs for the small Flecha
+   wrappers over typed standard-output and standard-error operations, without
+   exposing a native variadic ABI or a runtime pack value.
 
 This work should be delivered as focused compiler or runtime changes in support
 of a concrete standard-library API. It must not become an unrelated language

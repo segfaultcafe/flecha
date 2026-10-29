@@ -110,6 +110,118 @@ TEST(SemanticTests, AcceptsTrailingDefaultArgumentsAtDirectCallsAndMethods) {
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
+TEST(SemanticTests, AcceptsVariadicForwardingToOutputBuiltIns) {
+    Analysis analysis = Analyze(R"(
+        void print(values...) { stdout(values...); }
+        void printf(stringv format, values...) {
+            stdoutf(format, values...);
+        }
+        i32 main() {
+            print();
+            print("answer: ", 42, true);
+            printf("%s %d", "value", 42);
+            return 0;
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticTests, DistinguishesFixedAndPackBorrowSources) {
+    Analysis analysis = Analyze(R"(
+        stringv target(stringv fixed, stringv value) <- (fixed, value) {
+            return fixed;
+        }
+        stringv forward(stringv fixed, values...)
+            <- (fixed, ...values) {
+            return target(fixed, values...);
+        }
+        void main() { value := forward("fixed", "pack"); stdout(value); }
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    const auto& forward = FunctionAt(analysis, 1);
+    const auto* symbol = static_cast<const FunctionSymbol*>(
+        analysis.model.DeclaredSymbol(forward));
+    ASSERT_NE(symbol, nullptr);
+    ASSERT_EQ(symbol->BorrowSourceIndices().size(), 1);
+    EXPECT_EQ(symbol->BorrowSourceIndices()[0], 0);
+    EXPECT_TRUE(symbol->BorrowsVariadicPack());
+}
+
+TEST(SemanticTests, PackBorrowSourcesRetainLoansAtCallSites) {
+    Analysis analysis = Analyze(R"(
+        &const i32 target(&const i32 value) <- value { return value; }
+        &const i32 forward(values...) <- ...values {
+            return target(values...);
+        }
+        void main() {
+            i32 value = 41;
+            source := &value;
+            borrowed := forward(source);
+            value = 42;
+            stdout(*borrowed);
+        }
+    )");
+
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::BorrowConflict),
+              nullptr);
+}
+
+TEST(SemanticTests, PreservesFixedOwnershipThroughVariadicForwarding) {
+    Analysis analysis = Analyze(R"(
+        unsafe void destroy(own *i32 pointer) { free(pointer); }
+        unsafe void forward_destroy(own *i32 pointer, values...) {
+            destroy(pointer, values...);
+        }
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            forward_destroy(pointer);
+            return 42;
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticTests, RejectsVariadicExpansionOutsideForwardingBody) {
+    Analysis analysis = Analyze(R"(
+        void sink(i32 value) {}
+        void main() { value := 42; sink(value...); }
+    )");
+
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::InvalidVariadic),
+              nullptr);
+}
+
+TEST(SemanticTests, RejectsNonForwardingVariadicBodies) {
+    Analysis analysis = Analyze(R"(
+        void invalid(values...) { stdout(values...); stdoutln(); }
+        void main() {}
+    )");
+
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::InvalidVariadic),
+              nullptr);
+}
+
+TEST(SemanticTests, RejectsVariadicForwardingCyclesAndCallableValues) {
+    Analysis cycle = Analyze(R"(
+        void first(values...) { second(values...); }
+        void second(values...) { first(values...); }
+        void main() {}
+    )");
+    EXPECT_NE(FindDiagnostic(cycle, DiagnosticCode::InvalidVariadic), nullptr);
+
+    Analysis callable = Analyze(R"(
+        func Printer(stringv) => ();
+        void print(values...) { stdout(values...); }
+        void main() { Printer callback = print; }
+    )");
+    EXPECT_NE(FindDiagnostic(callable, DiagnosticCode::InvalidVariadic),
+              nullptr);
+}
+
 TEST(SemanticTests, RejectsRequiredParametersAfterDefaults) {
     Analysis analysis =
         Analyze("void invalid(i32 first = 1, i32 second) {} void main() {}");

@@ -128,6 +128,8 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-S0060";
         case DiagnosticCode::InvalidDefaultArgument:
             return "FLECHA-S0061";
+        case DiagnosticCode::InvalidVariadic:
+            return "FLECHA-S0062";
         case DiagnosticCode::InvalidGeneric:
             return "FLECHA-S0054";
         case DiagnosticCode::InvalidAllocation:

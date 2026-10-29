@@ -519,7 +519,10 @@ class FunctionDeclaration final : public Declaration {
         std::unique_ptr<BlockStatement> body,
         source::SourceRange nameRange = {}, std::string owner = {},
         std::vector<std::string> borrowSources = {},
-        std::vector<source::SourceRange> borrowSourceRanges = {})
+        std::vector<source::SourceRange> borrowSourceRanges = {},
+        std::string variadicPackName = {},
+        source::SourceRange variadicPackRange = {},
+        bool borrowsVariadicPack = false)
         : Declaration(range),
           _owner(std::move(owner)),
           _modifiers(std::move(modifiers)),
@@ -529,7 +532,10 @@ class FunctionDeclaration final : public Declaration {
           _body(std::move(body)),
           _nameRange(nameRange.Empty() ? range : nameRange),
           _borrowSources(std::move(borrowSources)),
-          _borrowSourceRanges(std::move(borrowSourceRanges)) {}
+          _borrowSourceRanges(std::move(borrowSourceRanges)),
+          _variadicPackName(std::move(variadicPackName)),
+          _variadicPackRange(variadicPackRange),
+          _borrowsVariadicPack(borrowsVariadicPack) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::FunctionDeclaration;
@@ -573,7 +579,7 @@ class FunctionDeclaration final : public Declaration {
     }
     [[nodiscard]] const BlockStatement& Body() const { return *_body; }
     [[nodiscard]] bool HasBorrowSources() const {
-        return !_borrowSources.empty();
+        return !_borrowSources.empty() || _borrowsVariadicPack;
     }
     [[nodiscard]] const std::vector<std::string>& BorrowSources() const {
         return _borrowSources;
@@ -587,6 +593,18 @@ class FunctionDeclaration final : public Declaration {
         _borrowSources = std::move(sources);
         _borrowSourceRanges = std::move(ranges);
     }
+    [[nodiscard]] bool HasVariadicPack() const {
+        return !_variadicPackName.empty();
+    }
+    [[nodiscard]] const std::string& VariadicPackName() const {
+        return _variadicPackName;
+    }
+    [[nodiscard]] const source::SourceRange& VariadicPackRange() const {
+        return _variadicPackRange;
+    }
+    [[nodiscard]] bool BorrowsVariadicPack() const {
+        return _borrowsVariadicPack;
+    }
 
    private:
     std::string _owner;
@@ -598,6 +616,9 @@ class FunctionDeclaration final : public Declaration {
     source::SourceRange _nameRange;
     std::vector<std::string> _borrowSources;
     std::vector<source::SourceRange> _borrowSourceRanges;
+    std::string _variadicPackName;
+    source::SourceRange _variadicPackRange;
+    bool _borrowsVariadicPack;
     bool _isTest = false;
     bool _isTestHarness = false;
 };
@@ -1362,11 +1383,13 @@ class CallExpression final : public Expression {
     CallExpression(source::SourceRange range,
                    std::unique_ptr<Expression> callee,
                    std::vector<std::unique_ptr<Expression>> arguments,
-                   std::unique_ptr<TypeNode> typeArgument = nullptr)
+                   std::unique_ptr<TypeNode> typeArgument = nullptr,
+                   std::vector<bool> expandedArguments = {})
         : Expression(range),
           _callee(std::move(callee)),
           _arguments(std::move(arguments)),
-          _typeArgument(std::move(typeArgument)) {}
+          _typeArgument(std::move(typeArgument)),
+          _expandedArguments(std::move(expandedArguments)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::CallExpression;
@@ -1379,11 +1402,15 @@ class CallExpression final : public Expression {
         const {
         return _arguments;
     }
+    [[nodiscard]] bool ArgumentIsExpanded(std::size_t index) const {
+        return index < _expandedArguments.size() && _expandedArguments[index];
+    }
 
    private:
     std::unique_ptr<Expression> _callee;
     std::vector<std::unique_ptr<Expression>> _arguments;
     std::unique_ptr<TypeNode> _typeArgument;
+    std::vector<bool> _expandedArguments;
 };
 
 class MemberCallExpression final : public Expression {
@@ -1394,13 +1421,15 @@ class MemberCallExpression final : public Expression {
                          std::unique_ptr<Expression> receiver,
                          std::string member, source::SourceRange memberRange,
                          std::vector<std::unique_ptr<Expression>> arguments,
-                         TokenType access = TokenType::Dot)
+                         TokenType access = TokenType::Dot,
+                         std::vector<bool> expandedArguments = {})
         : Expression(range),
           _access(access),
           _receiver(std::move(receiver)),
           _member(std::move(member)),
           _memberRange(memberRange),
-          _arguments(std::move(arguments)) {}
+          _arguments(std::move(arguments)),
+          _expandedArguments(std::move(expandedArguments)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::MemberCallExpression;
@@ -1414,6 +1443,9 @@ class MemberCallExpression final : public Expression {
         const {
         return _arguments;
     }
+    [[nodiscard]] bool ArgumentIsExpanded(std::size_t index) const {
+        return index < _expandedArguments.size() && _expandedArguments[index];
+    }
 
     void Rename(std::string name) { _member = std::move(name); }
     TokenType Access() const { return _access; }
@@ -1424,6 +1456,7 @@ class MemberCallExpression final : public Expression {
     std::string _member;
     source::SourceRange _memberRange;
     std::vector<std::unique_ptr<Expression>> _arguments;
+    std::vector<bool> _expandedArguments;
 };
 
 class SliceExpression final : public Expression {

@@ -135,8 +135,10 @@ The normal semantic, allocation, lowering, and native code generation passes
 then process those declarations. Generic templates themselves emit no code.
 
 There is no partial explicit/inferred type-argument list, default type argument,
-variadic parameter pack, constant generic parameter, user specialization
-override, trait system, or separate compiled generic interface yet. The standard
+variadic generic parameter pack, constant generic parameter, user specialization
+override, trait system, or separate compiled generic interface yet. The
+language's untyped forwarding packs are a separate compile-time call-forwarding
+facility and cannot participate in generic substitution. The standard
 library provides [`RawArray<T>`](dynamic_arrays.md), implemented in Flecha. Its
 runtime storage currently supports numeric, boolean, and character elements;
 pointers and structures are not yet supported. Element restrictions are

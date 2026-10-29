@@ -77,6 +77,24 @@ TEST(LoweringTests, ResolvesDeclarationsNamesAssignmentsAndCalls) {
     EXPECT_EQ(assignment.Value().Type().Kind(), SemanticTypeKind::I32);
 }
 
+TEST(LoweringTests, ErasesVariadicForwardersAndCallsTheirTargetDirectly) {
+    LoweredSource result = Lower(R"(
+        void print(values...) { stdout(values...); }
+        i32 main() { print("answer: ", 42, true); return 0; }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    ASSERT_EQ(result.program->Functions().size(), 1);
+    const BoundFunction& mainFunction = *result.program->Functions().front();
+    const auto& statement = static_cast<const BoundExpressionStatement&>(
+        *mainFunction.Body().Statements().front());
+    const auto& call =
+        static_cast<const BoundCallExpression&>(statement.Expression());
+    EXPECT_EQ(call.Function().BuiltIn(), BuiltInFunction::Stdout);
+    EXPECT_EQ(call.Arguments().size(), 3);
+}
+
 TEST(LoweringTests, NormalizesElseIfAndAlsoToNestedConditionals) {
     LoweredSource result = Lower(
         "i32 main() { value := 0; if true { value = 1; } "

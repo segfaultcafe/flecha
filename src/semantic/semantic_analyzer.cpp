@@ -1596,6 +1596,34 @@ void SemanticAnalyzer::RegisterFunctions(const core::CompilationUnit& unit) {
 void SemanticAnalyzer::RegisterFunction(
     const core::FunctionDeclaration& function, bool generated) {
     SetSource(function.sourceId);
+    if (function.HasVariadicPack()) {
+        if (!function.genericParameters.empty() ||
+            !function.ownerParameters.empty())
+            Report(diagnostics::DiagnosticCode::InvalidVariadic,
+                   function.VariadicPackRange(),
+                   "variadic forwarding functions cannot be generic");
+        if (!function.Owner().empty())
+            Report(diagnostics::DiagnosticCode::InvalidVariadic,
+                   function.VariadicPackRange(),
+                   "variadic forwarding is currently limited to free "
+                   "functions");
+        if (function.IsExtern())
+            Report(diagnostics::DiagnosticCode::InvalidVariadic,
+                   function.VariadicPackRange(),
+                   "extern functions cannot declare a forwarding pack");
+        for (const auto& parameter : function.Parameters()) {
+            if (parameter->Name() == function.VariadicPackName())
+                Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                       function.VariadicPackRange(),
+                       "variadic pack conflicts with parameter '" +
+                           parameter->Name() + "'");
+            if (parameter->DefaultValue() != nullptr)
+                Report(diagnostics::DiagnosticCode::InvalidVariadic,
+                       parameter->DefaultValue()->Range(),
+                       "variadic forwarding functions cannot have default "
+                       "arguments");
+        }
+    }
     StructureType* owner = nullptr;
     EnumType* enumOwner = nullptr;
     if (!function.Owner().empty()) {
@@ -1697,7 +1725,9 @@ void SemanticAnalyzer::RegisterFunction(
                "borrow contract");
     } else if (!CanCarryBorrow(returnType) && function.HasBorrowSources()) {
         Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
-               function.BorrowSourceRanges().front(),
+               function.BorrowSourceRanges().empty()
+                   ? function.VariadicPackRange()
+                   : function.BorrowSourceRanges().front(),
                "a borrow contract requires a result that can carry a borrow");
     } else if (function.HasBorrowSources()) {
         std::set<std::size_t> seen;
@@ -1862,7 +1892,7 @@ void SemanticAnalyzer::RegisterFunction(
             BuiltInFunction::None, owner,
             function.HasModifier(core::FunctionModifier::Private), receiver,
             function.IsExtern(), function.IsExtern() ? function.Name() : "",
-            enumOwner, &function),
+            enumOwner, &function, function.BorrowsVariadicPack()),
         function));
     if (symbol && function.HasModifier(core::FunctionModifier::Extern))
         _forbiddenZeroEffects.insert(symbol);
@@ -2048,13 +2078,43 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
         if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration)
             AnalyzeDefaultArguments(
                 static_cast<const core::FunctionDeclaration&>(*declaration));
+    for (const std::unique_ptr<core::Declaration>& declaration :
+         unit.Declarations())
+        if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration &&
+            static_cast<const core::FunctionDeclaration&>(*declaration)
+                .HasVariadicPack())
+            AnalyzeFunction(
+                static_cast<const core::FunctionDeclaration&>(*declaration));
+    for (const auto& declaration : unit.Declarations()) {
+        if (declaration->Kind() != core::AstNodeKind::FunctionDeclaration)
+            continue;
+        const auto& syntax =
+            static_cast<const core::FunctionDeclaration&>(*declaration);
+        if (!syntax.HasVariadicPack()) continue;
+        const auto* start =
+            static_cast<const FunctionSymbol*>(_model.DeclaredSymbol(syntax));
+        if (start == nullptr) continue;
+        std::unordered_set<const FunctionSymbol*> seen;
+        const FunctionSymbol* current = start;
+        while (current != nullptr && seen.insert(current).second) {
+            const auto next = _model._variadicTargets.find(current);
+            current =
+                next == _model._variadicTargets.end() ? nullptr : next->second;
+        }
+        if (current != nullptr && current->Declaration() != nullptr)
+            Report(
+                diagnostics::DiagnosticCode::InvalidVariadic,
+                start->Declaration()->VariadicPackRange(),
+                "variadic forwarding cycle involving '" + start->Name() + "'");
+    }
     for (const auto& function : _model._generatedFunctions)
         AnalyzeFunction(*function);
     for (const std::unique_ptr<core::Declaration>& declaration :
          unit.Declarations()) {
         if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration) {
-            AnalyzeFunction(
-                static_cast<const core::FunctionDeclaration&>(*declaration));
+            const auto& function =
+                static_cast<const core::FunctionDeclaration&>(*declaration);
+            if (!function.HasVariadicPack()) AnalyzeFunction(function);
         }
     }
     // Anonymous functions are discovered while their enclosing bodies are
@@ -2157,6 +2217,14 @@ void SemanticAnalyzer::AnalyzeFunction(
                       parameter->NameRange(), !parameter->Type().IsConst()),
                   *parameter);
     }
+    if (function.HasVariadicPack()) {
+        AnalyzeVariadicFunction(function);
+        _currentScope = previousScope;
+        _currentFunction = nullptr;
+        _inUnsafe = false;
+        _inZero = false;
+        return;
+    }
     if (function.IsExtern()) {
         _currentScope = previousScope;
         _currentFunction = nullptr;
@@ -2189,6 +2257,166 @@ void SemanticAnalyzer::AnalyzeFunction(
     _currentFunction = nullptr;
     _inUnsafe = false;
     _inZero = false;
+}
+
+void SemanticAnalyzer::AnalyzeVariadicFunction(
+    const core::FunctionDeclaration& function) {
+    const auto invalid = [&](source::SourceRange range, std::string message) {
+        Report(diagnostics::DiagnosticCode::InvalidVariadic, range,
+               std::move(message));
+    };
+    if (_currentFunction == nullptr) return;
+
+    const auto& statements = function.Body().Statements();
+    if (statements.size() != 1) {
+        invalid(function.Body().Range(),
+                "a variadic function body must contain exactly one "
+                "forwarding call");
+        return;
+    }
+
+    const core::Expression* value = nullptr;
+    if (_currentFunction->ReturnType().Kind() == SemanticTypeKind::Void &&
+        statements[0]->Kind() == core::AstNodeKind::ExpressionStatement) {
+        value = &static_cast<const core::ExpressionStatement&>(*statements[0])
+                     .Value();
+    } else if (_currentFunction->ReturnType().Kind() !=
+                   SemanticTypeKind::Void &&
+               statements[0]->Kind() == core::AstNodeKind::ReturnStatement) {
+        value =
+            static_cast<const core::ReturnStatement&>(*statements[0]).Value();
+    }
+    if (value == nullptr ||
+        value->Kind() != core::AstNodeKind::CallExpression) {
+        invalid(statements[0]->Range(),
+                _currentFunction->ReturnType().Kind() == SemanticTypeKind::Void
+                    ? "a void variadic function must contain one forwarding "
+                      "call statement"
+                    : "a non-void variadic function must return one "
+                      "forwarding call");
+        return;
+    }
+
+    const auto& call = static_cast<const core::CallExpression&>(*value);
+    if (call.Callee().Kind() != core::AstNodeKind::NameExpression ||
+        call.TypeArgument() != nullptr) {
+        invalid(call.Callee().Range(),
+                "a variadic pack can currently forward only to a named "
+                "function");
+        return;
+    }
+    if (call.Arguments().size() != function.Parameters().size() + 1) {
+        invalid(call.Range(),
+                "a forwarding call must pass every fixed parameter in order "
+                "followed by the expanded pack");
+        return;
+    }
+    for (std::size_t index = 0; index < function.Parameters().size(); ++index) {
+        const auto& argument = *call.Arguments()[index];
+        if (call.ArgumentIsExpanded(index) ||
+            argument.Kind() != core::AstNodeKind::NameExpression ||
+            static_cast<const core::NameExpression&>(argument).Name() !=
+                function.Parameters()[index]->Name()) {
+            invalid(argument.Range(),
+                    "a forwarding call must pass fixed parameter '" +
+                        function.Parameters()[index]->Name() +
+                        "' unchanged and in order");
+            return;
+        }
+    }
+    const std::size_t packIndex = function.Parameters().size();
+    const auto& pack = *call.Arguments()[packIndex];
+    if (!call.ArgumentIsExpanded(packIndex) ||
+        pack.Kind() != core::AstNodeKind::NameExpression ||
+        static_cast<const core::NameExpression&>(pack).Name() !=
+            function.VariadicPackName()) {
+        invalid(pack.Range(),
+                "the final forwarding argument must be the expanded pack '" +
+                    function.VariadicPackName() + "...'");
+        return;
+    }
+
+    const auto& callee =
+        static_cast<const core::NameExpression&>(call.Callee());
+    const Symbol* targetBase = _currentScope->Lookup(callee.Name());
+    if (targetBase == nullptr || targetBase->Kind() != SymbolKind::Function) {
+        invalid(callee.Range(), "variadic forwarding target '" + callee.Name() +
+                                    "' is not a function");
+        return;
+    }
+    const auto* target = static_cast<const FunctionSymbol*>(targetBase);
+    if (target == _currentFunction) {
+        invalid(callee.Range(), "a variadic function cannot forward to itself");
+        return;
+    }
+    if (!IsAssignable(_currentFunction->ReturnType(), target->ReturnType()) ||
+        !IsAssignable(target->ReturnType(), _currentFunction->ReturnType())) {
+        invalid(callee.Range(),
+                "forwarding target returns '" +
+                    std::string(target->ReturnType().Name()) +
+                    "', but the variadic function returns '" +
+                    std::string(_currentFunction->ReturnType().Name()) + "'");
+    }
+    if (target->IsUnsafe() && !_currentFunction->IsUnsafe())
+        invalid(callee.Range(),
+                "a safe variadic function cannot forward to an unsafe "
+                "function");
+    if (target->BuiltIn() == BuiltInFunction::None) {
+        const std::size_t shared =
+            std::min(_currentFunction->ParameterTypes().size(),
+                     target->ParameterTypes().size());
+        for (std::size_t index = 0; index < shared; ++index) {
+            const SemanticType source =
+                _currentFunction->ParameterTypes()[index];
+            const SemanticType destination = target->ParameterTypes()[index];
+            if (!IsAssignable(destination, source) ||
+                !IsAssignable(source, destination))
+                invalid(call.Arguments()[index]->Range(),
+                        "fixed parameter '" +
+                            function.Parameters()[index]->Name() +
+                            "' has type '" + std::string(source.Name()) +
+                            "', but the forwarding target expects '" +
+                            std::string(destination.Name()) + "'");
+            if (_currentFunction->ParameterContract(index) !=
+                target->ParameterContract(index))
+                invalid(call.Arguments()[index]->Range(),
+                        "fixed parameter ownership must match the forwarding "
+                        "target");
+        }
+        for (std::size_t index = shared;
+             index < target->ParameterTypes().size(); ++index)
+            if (target->ParameterContract(index) !=
+                core::OwnershipContract::None)
+                invalid(pack.Range(),
+                        "an untyped variadic pack cannot supply an ownership-"
+                        "contract parameter");
+    }
+    for (const std::size_t targetSource : target->BorrowSourceIndices()) {
+        const bool declared =
+            targetSource < _currentFunction->ParameterTypes().size()
+                ? std::find(_currentFunction->BorrowSourceIndices().begin(),
+                            _currentFunction->BorrowSourceIndices().end(),
+                            targetSource) !=
+                      _currentFunction->BorrowSourceIndices().end()
+                : _currentFunction->BorrowsVariadicPack();
+        if (!declared)
+            invalid(callee.Range(),
+                    "the variadic function borrow contract must include every "
+                    "source borrowed by its forwarding target");
+    }
+    if (target->BorrowsVariadicPack() &&
+        !_currentFunction->BorrowsVariadicPack())
+        invalid(callee.Range(),
+                "the variadic function must declare '..." +
+                    function.VariadicPackName() +
+                    "' as a borrow source because its target borrows the "
+                    "forwarded pack");
+
+    _model._bindings.insert_or_assign(&callee, target);
+    _model._types.insert_or_assign(&callee, target->Type());
+    _model._types.insert_or_assign(&call, target->ReturnType().WithoutConst());
+    _model._variadicTargets.insert_or_assign(_currentFunction, target);
+    _functionCalls[_currentFunction].insert(target);
 }
 
 void SemanticAnalyzer::CollectPositions(const core::BlockStatement& block,
@@ -3772,6 +4000,17 @@ SemanticType SemanticAnalyzer::AnalyzeName(
                    "' cannot be stored as a callable value");
         return SemanticType::Error();
     }
+    if (symbol->Kind() == SymbolKind::Function &&
+        static_cast<const FunctionSymbol*>(symbol)->Declaration() != nullptr &&
+        static_cast<const FunctionSymbol*>(symbol)
+            ->Declaration()
+            ->HasVariadicPack() &&
+        !_analyzingCallCallee) {
+        Report(diagnostics::DiagnosticCode::InvalidVariadic, expression.Range(),
+               "variadic forwarding function '" + expression.Name() +
+                   "' cannot be stored as a callable value");
+        return SemanticType::Error();
+    }
     _model._bindings.emplace(&expression, symbol);
     return symbol->Type().WithoutConst();
 }
@@ -4905,7 +5144,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
     }
     const bool previousCallee = _analyzingCallCallee;
     _analyzingCallCallee = true;
-    const SemanticType calleeType = AnalyzeExpression(expression.Callee());
+    SemanticType calleeType = AnalyzeExpression(expression.Callee());
     _analyzingCallCallee = previousCallee;
     const FunctionSymbol* function = nullptr;
     if (expression.Callee().Kind() == core::AstNodeKind::NameExpression) {
@@ -4914,6 +5153,51 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         if (symbol != nullptr && symbol->Kind() == SymbolKind::Function) {
             function = static_cast<const FunctionSymbol*>(symbol);
         }
+    }
+    const FunctionSymbol* declaredFunction = function;
+    std::vector<const FunctionSymbol*> variadicFunctions;
+    std::optional<std::size_t> variadicMinimumArguments;
+    if (function && function->Declaration() &&
+        function->Declaration()->HasVariadicPack()) {
+        variadicMinimumArguments = function->ParameterTypes().size();
+        for (std::size_t index = 0; index < expression.Arguments().size();
+             ++index)
+            if (expression.ArgumentIsExpanded(index))
+                Report(diagnostics::DiagnosticCode::InvalidVariadic,
+                       expression.Arguments()[index]->Range(),
+                       "callers pass ordinary arguments; only a variadic "
+                       "function body may expand its pack");
+
+        std::unordered_set<const FunctionSymbol*> seen;
+        while (function && function->Declaration() &&
+               function->Declaration()->HasVariadicPack()) {
+            if (!seen.insert(function).second) {
+                Report(diagnostics::DiagnosticCode::InvalidVariadic,
+                       expression.Callee().Range(),
+                       "variadic forwarding cycle involving '" +
+                           declaredFunction->Name() + "'");
+                return SemanticType::Error();
+            }
+            variadicFunctions.push_back(function);
+            *variadicMinimumArguments = std::max(
+                *variadicMinimumArguments, function->ParameterTypes().size());
+            const auto target = _model._variadicTargets.find(function);
+            if (target == _model._variadicTargets.end())
+                return SemanticType::Error();
+            function = target->second;
+        }
+        if (function != nullptr) {
+            calleeType = function->Type();
+            _model._forwardedFunctions.insert_or_assign(&expression, function);
+        }
+    } else {
+        for (std::size_t index = 0; index < expression.Arguments().size();
+             ++index)
+            if (expression.ArgumentIsExpanded(index))
+                Report(diagnostics::DiagnosticCode::InvalidVariadic,
+                       expression.Arguments()[index]->Range(),
+                       "argument expansion is only valid for a declared "
+                       "variadic pack inside its forwarding function");
     }
     if (function && (function->BuiltIn() == BuiltInFunction::New ||
                      function->BuiltIn() == BuiltInFunction::Free ||
@@ -4980,6 +5264,40 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                                signature->parameterContracts[index] ==
                                    core::OwnershipContract::Own;
         if (provided) CheckTransfer(*arguments[index], expected, consuming);
+    }
+    if (declaredFunction != nullptr && variadicMinimumArguments.has_value()) {
+        if (expression.Arguments().size() < *variadicMinimumArguments)
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "variadic function '" + declaredFunction->Name() +
+                       "' expects at least " +
+                       std::to_string(*variadicMinimumArguments) +
+                       " argument(s), found " +
+                       std::to_string(expression.Arguments().size()));
+        for (const FunctionSymbol* variadic : variadicFunctions) {
+            const std::size_t fixedCount =
+                std::min(expression.Arguments().size(),
+                         variadic->ParameterTypes().size());
+            for (std::size_t index = 0; index < fixedCount; ++index) {
+                const SemanticType expected = variadic->ParameterTypes()[index];
+                if (!IsAssignable(expected, argumentTypes[index]) &&
+                    !CanReborrow(expected, argumentTypes[index]))
+                    Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                           expression.Arguments()[index]->Range(),
+                           "argument " + std::to_string(index + 1) + ": " +
+                               TypeMismatch(expected, argumentTypes[index]));
+            }
+        }
+        if (declaredFunction->BorrowsVariadicPack()) {
+            for (std::size_t index = declaredFunction->ParameterTypes().size();
+                 index < argumentTypes.size(); ++index)
+                if (!argumentTypes[index].IsError() &&
+                    !CanCarryBorrow(argumentTypes[index]))
+                    Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                           expression.Arguments()[index]->Range(),
+                           "expanded borrow source must be able to carry a "
+                           "borrow");
+        }
     }
     if (calleeType.IsError()) return SemanticType::Error();
     if (signature == nullptr) {
