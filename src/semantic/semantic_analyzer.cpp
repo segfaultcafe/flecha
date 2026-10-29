@@ -69,23 +69,6 @@ bool IsSliceElement(SemanticType type) {
            type.Kind() == SemanticTypeKind::OwnedSlice;
 }
 
-bool IsRuntimeArrayStructureField(SemanticType type) {
-    if (type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool ||
-        type.Kind() == SemanticTypeKind::Char ||
-        type.Kind() == SemanticTypeKind::Pointer)
-        return true;
-    if (type.Kind() == SemanticTypeKind::Enum) return type.IsZeroable();
-    if (type.Kind() == SemanticTypeKind::Array)
-        return IsRuntimeArrayStructureField(*type.Target());
-    if (type.Kind() == SemanticTypeKind::Structure) {
-        if (!type.IsCopyable() || !type.IsZeroable()) return false;
-        for (const auto& field : type.Structure()->fields)
-            if (!IsRuntimeArrayStructureField(field.type)) return false;
-        return true;
-    }
-    return false;
-}
-
 bool IsExternScalar(SemanticType type) {
     return type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool ||
            type.Kind() == SemanticTypeKind::Char;
@@ -4866,21 +4849,14 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
             if (dynamic && expression.TypeArgument()->IsConst())
                 element = element.WithConst();
             if (dynamic && !uninitialized &&
-                !(element.IsNumeric() ||
-                  element.Kind() == SemanticTypeKind::Bool ||
-                  element.Kind() == SemanticTypeKind::Char ||
-                  (element.Kind() == SemanticTypeKind::Enum &&
-                   element.IsZeroable()) ||
-                  (element.Kind() == SemanticTypeKind::Structure &&
-                   IsRuntimeArrayStructureField(element))))
+                (!StorageSize(element) || !element.IsZeroable() ||
+                 element.IsImmovable()))
                 Report(diagnostics::DiagnosticCode::InvalidAllocation,
                        expression.TypeArgument()->Range(),
-                       "runtime arrays require numeric, bool, char, enum, or "
-                       "trivially copyable default-constructible structure "
-                       "elements with supported fields");
-            if (dynamic && !uninitialized &&
-                element.Kind() == SemanticTypeKind::Structure &&
-                IsRuntimeArrayStructureField(element))
+                       "runtime arrays require sized, safely movable, "
+                       "semantically zeroable elements");
+            if (dynamic && !uninitialized && element.IsZeroable() &&
+                !element.IsTriviallyZeroable())
                 WarnForNontrivialDefault(element,
                                          expression.TypeArgument()->Range());
             if (uninitialized && element.IsImmovable())
@@ -4888,7 +4864,8 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
                        expression.TypeArgument()->Range(),
                        "uninitialized collection storage requires movable "
                        "elements");
-            if (!element.IsError() && !StorageSize(element))
+            if (!element.IsError() && !StorageSize(element) &&
+                (!dynamic || uninitialized))
                 Report(
                     diagnostics::DiagnosticCode::InvalidAllocation,
                     expression.TypeArgument()->Range(),
@@ -5959,6 +5936,7 @@ void SemanticAnalyzer::GenerateInitializers() {
         if (type.Kind() != SemanticTypeKind::Structure)
             return type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool ||
                    type.Kind() == SemanticTypeKind::Char ||
+                   type.Kind() == SemanticTypeKind::String ||
                    type.Kind() == SemanticTypeKind::Pointer ||
                    type.Kind() == SemanticTypeKind::OwnedBuffer ||
                    type.Kind() == SemanticTypeKind::OwnedSlice;

@@ -5608,8 +5608,7 @@ TEST(SemanticAllocationTests, TypesNewFreeAndAllocationErrors) {
 TEST(SemanticAllocationTests, RejectsUnsupportedStorageAndInvalidCalls) {
     for (const std::string& body :
          {"new(42);", "new<void>(none);", "new<stringv>(\"view\");",
-          "new<&i32>(none);", "new<[]string>(1);", "free(42);",
-          "*void p = null; free(p);"}) {
+          "new<&i32>(none);", "free(42);", "*void p = null; free(p);"}) {
         SCOPED_TRACE(body);
         EXPECT_NE(FindDiagnostic(Analyze("unsafe void f() { " + body + " }"),
                                  DiagnosticCode::InvalidAllocation),
@@ -6382,18 +6381,30 @@ TEST(SemanticReferenceTests, StructuresCanStoreSliceBorrows) {
 }
 
 TEST(SemanticMemoryTests,
-     RuntimeArraysRejectUnsupportedElementsAndInvalidCounts) {
+     RuntimeArraysAcceptSizedMovableSemanticallyZeroableElements) {
+    auto analysis = Analyze(R"(
+        void use() {
+            strings, stringError := new<own []string>(2);
+            if stringError != none { return; }
+            strings[0] = "flecha";
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests,
+     RuntimeArraysRejectNonzeroableImmovableElementsAndInvalidCounts) {
     for (const std::string source :
          {"unsafe void f(i32 n) { p, e := new<[]i32>(n); free(p); }",
           "unsafe void f() { p, e := new<[]i32>(-1); free(p); }",
-          "unsafe void f() { p, e := new<[]string>(2); free(p); }",
-          "unsafe void f() { p, e := new<[]*i32>(2); free(p); }",
-          "structure Text { string value; }; Text Text::zero() override { "
-          "return build Text {}; } unsafe void f() { p, e := "
-          "new<[]Text>(2); free(p); }",
-          "structure Owned { i32 value; }; void Owned::tear(&self) override "
-          "{} Owned Owned::zero() override { return build Owned {}; } "
-          "unsafe void f() { p, e := new<[]Owned>(2); free(p); }",
+          "enum Status: u8 { Ready } unsafe void f() { p, e := "
+          "new<[]Status>(2); free(p); }",
+          "structure Immovable { i32 value; }; unsafe void "
+          "Immovable::tear(&self) override {} Immovable "
+          "Immovable::zero() override { return build Immovable {}; } "
+          "unsafe void f() { p, e := new<[]Immovable>(2); free(p); }",
           "unsafe void f() { p, e := new<[]i32>(); }",
           "void f() { p, e := new<[]i32>(2); }"})
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors()) << source;

@@ -51,6 +51,25 @@ bool CaptureStoredByValue(core::AnonymousFunctionExpression::CaptureMode mode) {
            mode == CaptureMode::Own;
 }
 
+bool RequiresTypedDestruction(semantic::SemanticType type) {
+    using Kind = semantic::SemanticTypeKind;
+    if (type.Kind() == Kind::String || type.Kind() == Kind::OwnedSlice ||
+        type.Kind() == Kind::Function)
+        return true;
+    if (type.Kind() == Kind::Structure) {
+        if (type.Structure()->tear) return true;
+        for (const auto& field : type.Structure()->fields)
+            if (RequiresTypedDestruction(field.type)) return true;
+        return false;
+    }
+    if (type.Kind() == Kind::Array)
+        return RequiresTypedDestruction(*type.Target());
+    if (type.Kind() == Kind::Tuple)
+        for (const auto& element : type.Elements())
+            if (RequiresTypedDestruction(element)) return true;
+    return false;
+}
+
 }  // namespace
 
 LlvmCodeGenerator::LlvmCodeGenerator() : _builder(_context) {}
@@ -3960,6 +3979,43 @@ void LlvmCodeGenerator::EmitArrayElements(
     _builder.SetInsertPoint(done);
 }
 
+void LlvmCodeGenerator::EmitRuntimeArrayElements(
+    llvm::Value* storage, llvm::Value* count,
+    semantic::SemanticType elementType, bool reverse,
+    const std::function<void(llvm::Value*)>& action) {
+    llvm::Type* countType = count->getType();
+    auto* before = _builder.GetInsertBlock();
+    auto* check =
+        llvm::BasicBlock::Create(_context, "elements.check", _currentFunction);
+    auto* body =
+        llvm::BasicBlock::Create(_context, "elements.body", _currentFunction);
+    auto* done =
+        llvm::BasicBlock::Create(_context, "elements.done", _currentFunction);
+    _builder.CreateBr(check);
+    _builder.SetInsertPoint(check);
+    auto* index = _builder.CreatePHI(countType, 2, "elements.index");
+    index->addIncoming(reverse ? count : llvm::ConstantInt::get(countType, 0),
+                       before);
+    llvm::Value* valid =
+        reverse
+            ? _builder.CreateICmpNE(index, llvm::ConstantInt::get(countType, 0))
+            : _builder.CreateICmpULT(index, count);
+    _builder.CreateCondBr(valid, body, done);
+    _builder.SetInsertPoint(body);
+    llvm::Value* offset =
+        reverse
+            ? _builder.CreateSub(index, llvm::ConstantInt::get(countType, 1))
+            : index;
+    action(_builder.CreateInBoundsGEP(MapType(elementType), storage, offset));
+    llvm::Value* next =
+        reverse
+            ? offset
+            : _builder.CreateAdd(index, llvm::ConstantInt::get(countType, 1));
+    index->addIncoming(next, _builder.GetInsertBlock());
+    _builder.CreateBr(check);
+    _builder.SetInsertPoint(done);
+}
+
 void LlvmCodeGenerator::EmitDestroyAt(llvm::Value* storage,
                                       semantic::SemanticType type) {
     using Kind = semantic::SemanticTypeKind;
@@ -4202,11 +4258,7 @@ llvm::Value* LlvmCodeGenerator::EmitAllocation(
                       expression.ElementType()))
             return nullptr;
     } else if (!expression.IsUninitialized() &&
-               (expression.ElementType().Kind() ==
-                    semantic::SemanticTypeKind::Structure ||
-                (expression.ElementType().Kind() ==
-                     semantic::SemanticTypeKind::Enum &&
-                 !expression.ElementType().IsTriviallyZeroable()))) {
+               !expression.ElementType().IsTriviallyZeroable()) {
         auto* indexStorage =
             CreateTemporaryAlloca(sizeType, "allocation.zero.index");
         _builder.CreateStore(llvm::ConstantInt::get(sizeType, 0), indexStorage);
@@ -4264,11 +4316,12 @@ llvm::Value* LlvmCodeGenerator::EmitAllocation(
 
 llvm::Value* LlvmCodeGenerator::EmitFree(llvm::Value* owner,
                                          semantic::SemanticType ownerType) {
+    const bool countedOwner =
+        ownerType.Kind() == semantic::SemanticTypeKind::OwnedBuffer ||
+        ownerType.Kind() == semantic::SemanticTypeKind::OwnedSlice;
     llvm::Value* pointer =
-        (ownerType.Kind() == semantic::SemanticTypeKind::OwnedBuffer ||
-         ownerType.Kind() == semantic::SemanticTypeKind::OwnedSlice)
-            ? _builder.CreateExtractValue(owner, 0, "free.data")
-            : owner;
+        countedOwner ? _builder.CreateExtractValue(owner, 0, "free.data")
+                     : owner;
     const semantic::SemanticType target = *ownerType.Target();
     auto* release =
         llvm::BasicBlock::Create(_context, "free.release", _currentFunction);
@@ -4279,7 +4332,15 @@ llvm::Value* LlvmCodeGenerator::EmitFree(llvm::Value* owner,
                               llvm::Constant::getNullValue(pointer->getType())),
         release, done);
     _builder.SetInsertPoint(release);
-    EmitDestroyAt(pointer, target);
+    if (countedOwner && RequiresTypedDestruction(target)) {
+        llvm::Value* count =
+            _builder.CreateExtractValue(owner, 1, "free.length");
+        EmitRuntimeArrayElements(
+            pointer, count, target, true,
+            [&](llvm::Value* slot) { EmitDestroyAt(slot, target); });
+    } else {
+        EmitDestroyAt(pointer, target);
+    }
     llvm::FunctionCallee deallocate = _module->getOrInsertFunction(
         "flecha_runtime_v1_free",
         llvm::FunctionType::get(llvm::Type::getVoidTy(_context),

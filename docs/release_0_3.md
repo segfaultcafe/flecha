@@ -465,8 +465,9 @@ itself:
 
 1. Specify unsigned overflow behavior or provide explicit checked, wrapping,
    and saturating intrinsics.
-2. Support runtime-array storage for movable, destructible, and nested owning
-   element types.
+2. Runtime-array storage supports sized, safely movable, semantically zeroable
+   elements, including destructible and nested owning values, with per-element
+   reverse destruction.
 3. Provide safe construction of owning strings from validated byte buffers.
 4. Expose arguments, environment, time, randomness, processes, directories,
    and sockets through additive versioned runtime operations.
