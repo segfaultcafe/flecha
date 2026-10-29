@@ -16,12 +16,27 @@ included in the length.
 The compiler emits one typed output call for each supported Flecha scalar
 value. `stdout`, `stdoutln`, `stderr`, and `stderrln` accept zero or more
 printable values and emit them in argument order. The `ln` forms then emit the
-corresponding `flecha_runtime_v1_*_newline` operation once. `stdoutf` parses
-its string-literal format at compile time and lowers literal segments and
-substituted values to the stdout typed calls. It supports `%d` for numeric
-values, `%s` for `string`, `stringv`, or `char`, `%b` for `bool` or `u8`, and
-`%%` for a literal percent sign. `stdoutf` does not append a newline. No
-variadic C ABI is exposed by these language-level facilities.
+corresponding `flecha_runtime_v1_*_newline` operation once. `stdoutf` and
+`stderrf` parse their string-literal format at compile time and lower literal
+segments and substituted values to typed stream calls. Each `{}` consumes one
+printable value; `{{` and `}}` emit literal braces. The formatted operations do
+not append a newline.
+
+`__sprintf` uses the same compile-time parser and appends typed values to an
+internal fallible format buffer. Finishing transfers one malloc-compatible
+allocation to an owning Flecha string. Failure releases partial storage and
+produces `AllocationError.OutOfMemory`. No variadic C ABI or runtime type-erased
+argument pack is exposed by any of these language-level facilities.
+
+`stdin` and `stdinln` lower their prompt values to typed stdout operations,
+flush stdout, and call `flecha_runtime_v1_standard_input_read_line`. The line
+reader removes LF and a preceding CR, distinguishes immediate EOF from a final
+unterminated line, and transfers malloc-compatible owning-string storage only
+on success. Typed `flecha_runtime_v1_input_parse_*` operations consume the
+complete line. Their stable status table is success `0`, EOF `1`, read failure
+`2`, invalid syntax `3`, out of range `4`, prompt flush failure `5`, and out of
+memory `6`. Code generation stores into the referenced destination only on
+success and maps failures to `InputError` or `AllocationError`.
 
 The standard I/O library uses additive byte-write and flush operations for the
 process-owned standard output and standard error streams. A write resets its

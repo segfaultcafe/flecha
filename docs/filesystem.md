@@ -94,10 +94,12 @@ responsibility for flushing and closing after the adapter's final use.
 
 ## Standard output and error
 
-The `stdout` and `stdoutln` built-ins remain the concise path for ordinary
-formatted program output. `stderr` and `stderrln` provide the same printable
-value and newline behavior for diagnostics. These built-ins do not expose
-partial progress or recoverable output errors.
+Import `lib::std::fmt` for ordinary typed program output. Its `print`,
+`println`, and `printf` functions write to standard output; `eprint`,
+`eprintln`, and `eprintf` provide the corresponding standard-error operations.
+See [Formatting and console output](formatting.md) for the format syntax and
+allocation behavior. These conveniences do not expose partial progress or
+recoverable output errors.
 
 Import `lib::std::io::stdio` when standard output or standard error must be a
 fallible byte destination:
@@ -137,8 +139,8 @@ the built-ins and reports `IoError.FlushFailed` when the process stream cannot
 be flushed.
 
 Standard-stream writes and flushes are blocking operations. They do not
-validate text encoding and do not add line endings. Use the built-ins when
-typed formatting or an appended newline is desired.
+validate text encoding and do not add line endings. Use `std::fmt` when typed
+formatting or an appended newline is desired.
 
 ## Buffered streams
 

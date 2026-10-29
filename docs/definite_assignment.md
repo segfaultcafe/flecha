@@ -1,24 +1,27 @@
 # Definite assignment
 
-Typed value declarations may omit their initializer:
+Typed value declarations may omit their initializer only when the resolved type
+is trivially zeroable. Omission is exactly shorthand for `= none`:
 
 ```flecha
 i32 answer;
-string message;
+*u8 pointer;
+string message = none;
 
 answer = 42;
 message = "ready";
 ```
 
-The compiler reports `FLECHA-S0021` when a variable may be read before every
-control-flow path has assigned it. Assignments made only inside a loop are not
-definite after that loop because the loop may execute zero times.
+`answer` is immediately readable as zero and `pointer` as null. A declaration
+whose default construction performs work must spell `= none` explicitly.
 
-This syntax currently supports all integer and floating-point types, `bool`,
-`char`, and owning `string`. `void` is never a variable type. Borrowed
-`stringv` declarations require an initializer and otherwise produce
-`FLECHA-S0022`; delayed borrow initialization will be considered when Flecha's
-lifetime analysis can carry borrow origins through control-flow joins.
+The shorthand supports integer and floating-point types, `bool`, `char`, raw
+pointers, and compound types whose elements have trivial zero values. It also
+supports enums whose default is represented by zero and structures whose
+canonical `zero` construction is trivial. Owning `string`, error values,
+borrowed `stringv`, nonzero-default enums, and structures with nontrivial
+`zero` construction require an explicit initializer. `void` is never a
+variable type.
 
 Inferred declarations continue to require an initializer:
 
@@ -30,24 +33,10 @@ answer := 42;
 
 Analysis runs after name binding and uses resolved symbols, so shadowed names
 remain distinct. Each function gets a control-flow graph with reads, writes,
-declarations, conditions, and explicit transfer edges. A worklist computes a
-fixed point: at each join, a variable is initialized only if it is initialized
-on **every reachable predecessor**. Parameters start initialized. A declaration
-starts a fresh initialization state each time execution reaches it.
-
-A terminating branch contributes no fallthrough edge. For example:
-
-```flecha
-i32 choose(bool condition) {
-    i32 value;
-    if condition {
-        return 0;
-    } else {
-        value = 42;
-    }
-    return value;
-}
-```
+declarations, conditions, and explicit transfer edges. Parameters start
+initialized, and every accepted local declaration initializes its value. The
+remaining definite-assignment checks primarily prevent jumps from bypassing a
+declaration or initializer before a later read.
 
 The same rule applies to `break`, `proceed`, and `jumpto`. Unreachable reads do
 not produce `FLECHA-S0021`; name resolution and type checking still apply to
@@ -59,12 +48,8 @@ reported once, after convergence, in source order within each function.
 `proceed` targets the innermost loop's condition, skipping its remaining body
 and `also` clause. `break` targets that loop's exit. Normal body completion
 reaches the conditional `also` clause, if present, before the next iteration.
-Nested loops maintain separate targets. Assignments on a backedge cannot
-initialize a read on the first iteration.
-
-The condition's false edge permits zero iterations, so assignments made only
-inside a loop cannot normally initialize a variable after it. Assignments in
-a condition itself are modeled in evaluation order. Boolean `and` and `or`
+Nested loops maintain separate targets. Assignments in a condition are modeled
+in evaluation order. Boolean `and` and `or`
 short-circuit: their right operands run only on the corresponding condition
 edge. Integer bitwise operations evaluate both operands.
 
@@ -100,8 +85,9 @@ when a jump skips their declarations. Cleanup emission includes all slots in
 the scopes being exited, including later declarations and temporaries that
 may have executed before a backward jump to an earlier exit. Transfers of
 ownership clear the source storage so repeated execution cannot double-free
-an allocation. This does not change the requirement that `stringv`
-declarations have initializers or extend borrow-origin analysis.
+an allocation. This does not change the requirement that owning strings and
+`stringv` declarations spell their initializers explicitly or extend
+borrow-origin analysis.
 
 ## Verification
 

@@ -55,6 +55,7 @@ The milestone follows these rules:
 The initial public module layout is:
 
 ```text
+std::fmt                 typed console and owning-string formatting
 std::math::*              numeric, integer, bits, floating_point, constants
 std::memory::*            slices
 std::bytes::*             buffer, sequence
@@ -303,7 +304,16 @@ The standard-output and standard-error portion is also implemented. The
 operations, while `std::io::stdio` exposes process-owned streams as fallible
 byte destinations with captureless `io::stream::Writer` adapters. These views
 never close process resources and compose directly with `BufferedWriter`.
-Standard input remains part of the later input/parsing work.
+The root `std::fmt` facade provides `print`, `println`, `printf`, and matching
+standard-error operations through compile-time forwarding packs. Literal `{}`
+formats are checked by the compiler, and `sprintf` returns an owning string
+with explicit allocation failure. No runtime variadic ABI is introduced.
+The `stdin` and `stdinln` built-ins provide typed line input into an
+already-declared mutable destination. The compiler selects complete-line
+conversion from the referenced type, preserves the destination on failure, and
+reports EOF, read, parse, range, prompt-flush, and allocation failures
+explicitly. Formatted input is intentionally absent; formatted prompts compose
+through `std::fmt` followed by `stdin`.
 
 ### 6. Blocking networking
 
