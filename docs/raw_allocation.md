@@ -180,8 +180,11 @@ allocating in a loop. Previously freed aliases remain stale if the site repeats.
 Analysis is bounded at 128 distinct states per CFG node and 100,000 processed
 states per root function, including interpreted callees. Exceeding either budget
 is an error, not a silently successful check. Complex but valid programs may
-need simpler control flow. Declared ownership contracts support recursive calls; general inferred recursive
-summaries and owning container storage remain future work.
+need simpler control flow. Declared ownership contracts support recursive raw
+pointer calls. Recursive calls carrying only safe values are summarized with
+their declared result shape, so movable structures and owning containers can be
+returned recursively while every function body is still verified independently.
+Uncontracted recursion that exposes raw allocation handles remains rejected.
 
 This is an allocation checker, not a proof that arbitrary unsafe code is memory
 safe. Raw pointer parameters entering a root function are symbolic external

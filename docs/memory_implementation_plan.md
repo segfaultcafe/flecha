@@ -245,11 +245,13 @@ Proposed branch for the remaining work: `feat/resource-call-effects`. Depends on
 
 Bounded interpretation of visible nonrecursive callees is already implemented
 in `feat/raw-allocation`, including consuming helpers, conditional consumption,
-returned allocations, deferred cleanup, and caller aliases. Explicit contracts now support independent checking and annotated recursion.
-Owning fields support build-time initialization and verified tear cleanup. General
-inferred recursive summaries, external functions, and field replacement remain
-future work. The historical inferred-summary proposal below is not the current
-implementation contract.
+returned allocations, deferred cleanup, and caller aliases. Explicit contracts
+now support independent checking and annotated raw-pointer recursion. Recursive
+calls whose signatures and arguments expose only safe values use opaque result
+summaries while each body is checked independently. Owning fields support
+build-time initialization and verified tear cleanup. General inferred recursive
+raw-pointer effects and external functions remain future work. The historical
+inferred-summary proposal below is not the current implementation contract.
 
 - Infer borrow/consume/escape summaries for visible functions. Include deferred
   effects on all returning paths and compute summaries to a fixed point for

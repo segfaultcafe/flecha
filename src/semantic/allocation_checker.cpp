@@ -21,6 +21,19 @@ bool IsHeapHandle(SemanticType type) {
            type.Kind() == SemanticTypeKind::OwnedBuffer;
 }
 
+bool ExposesHeapHandle(SemanticType type) {
+    if (IsHeapHandle(type)) return true;
+    if (type.Kind() == SemanticTypeKind::Tuple)
+        return std::any_of(type.Elements().begin(), type.Elements().end(),
+                           ExposesHeapHandle);
+    if (type.Kind() == SemanticTypeKind::Array ||
+        type.Kind() == SemanticTypeKind::Slice ||
+        type.Kind() == SemanticTypeKind::OwnedSlice ||
+        type.Kind() == SemanticTypeKind::Reference)
+        return ExposesHeapHandle(*type.Target());
+    return false;
+}
+
 enum class ValueKind {
     Unknown,
     Null,
@@ -779,6 +792,17 @@ class AllocationChecker final {
         return _resourceFunctions.contains(found->second);
     }
 
+    bool CanSummarizeRecursiveCall(const core::FunctionDeclaration& syntax,
+                                   const FunctionSymbol& function,
+                                   const std::vector<Value>& arguments) const {
+        if (HasResourceCaptures(syntax)) return false;
+        if (ExposesHeapHandle(function.ReturnType())) return false;
+        for (const SemanticType& type : function.ParameterTypes())
+            if (ExposesHeapHandle(type)) return false;
+        return std::none_of(arguments.begin(), arguments.end(),
+                            [&](const Value& value) { return Tracks(value); });
+    }
+
     void InvalidateMutableFields(State& state, const FunctionSymbol* function,
                                  const core::Expression& at,
                                  const std::vector<Value>& arguments) {
@@ -996,10 +1020,21 @@ class AllocationChecker final {
         }
         if (std::find(_active.begin(), _active.end(), found->second) !=
             _active.end()) {
-            Report(DiagnosticCode::UnverifiedOwnership, expression,
-                   "recursive pointer ownership requires a contract and cannot "
-                   "yet be verified");
-            return {};
+            if (!function || !CanSummarizeRecursiveCall(*found->second,
+                                                        *function, arguments)) {
+                Report(DiagnosticCode::UnverifiedOwnership, expression,
+                       "recursive pointer ownership requires a contract and "
+                       "cannot yet be verified");
+                return {};
+            }
+            // Structures, strings, owning slices, and other safe movable values
+            // carry their cleanup in their types. Their bodies are verified
+            // independently, so a recursive edge only needs an opaque result
+            // with the correct tuple shape. Raw allocation handles remain
+            // ineligible and continue to require explicit own/lend contracts.
+            Value result =
+                ContractResult(state, expression, found->second->ReturnType());
+            return {{std::move(state), std::move(result)}};
         }
         return Run(*found->second, std::move(state), arguments);
     }
