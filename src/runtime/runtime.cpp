@@ -250,7 +250,7 @@ int32_t FormatFloat(uint8_t* destination, size_t capacity, T value,
 }
 
 template <typename T>
-void PrintFloat(T value) {
+void PrintFloat(FILE* stream, T value) {
     uint8_t buffer[128];
     size_t length = 0;
     if (FormatFloat(buffer, sizeof(buffer), value, &length) !=
@@ -259,7 +259,7 @@ void PrintFloat(T value) {
                          stderr);
         std::abort();
     }
-    if (length != 0) (void)std::fwrite(buffer, 1, length, stdout);
+    if (length != 0) (void)std::fwrite(buffer, 1, length, stream);
 }
 
 template <typename T>
@@ -326,11 +326,11 @@ void flecha_runtime_v1_stdout_usize(uintptr_t value) {
 }
 
 void flecha_runtime_v1_stdout_f32(float value) {
-    PrintFloat(value);
+    PrintFloat(stdout, value);
 }
 
 void flecha_runtime_v1_stdout_f64(double value) {
-    PrintFloat(value);
+    PrintFloat(stdout, value);
 }
 
 void flecha_runtime_v1_stdout_bool(uint8_t value) {
@@ -345,6 +345,73 @@ void flecha_runtime_v1_stdout_char(uint8_t value) {
 
 void flecha_runtime_v1_stdout_newline(void) {
     (void)std::fputc('\n', stdout);
+}
+
+void flecha_runtime_v1_stderr_string_view(const char* data, size_t length) {
+    if (length == 0) return;
+    (void)std::fwrite(data, 1, length, stderr);
+}
+
+void flecha_runtime_v1_stderr_i8(int8_t value) {
+    (void)std::fprintf(stderr, "%" PRId8, value);
+}
+
+void flecha_runtime_v1_stderr_i16(int16_t value) {
+    (void)std::fprintf(stderr, "%" PRId16, value);
+}
+
+void flecha_runtime_v1_stderr_i32(int32_t value) {
+    (void)std::fprintf(stderr, "%" PRId32, value);
+}
+
+void flecha_runtime_v1_stderr_i64(int64_t value) {
+    (void)std::fprintf(stderr, "%" PRId64, value);
+}
+
+void flecha_runtime_v1_stderr_isize(intptr_t value) {
+    (void)std::fprintf(stderr, "%" PRIdPTR, value);
+}
+
+void flecha_runtime_v1_stderr_u8(uint8_t value) {
+    (void)std::fprintf(stderr, "%" PRIu8, value);
+}
+
+void flecha_runtime_v1_stderr_u16(uint16_t value) {
+    (void)std::fprintf(stderr, "%" PRIu16, value);
+}
+
+void flecha_runtime_v1_stderr_u32(uint32_t value) {
+    (void)std::fprintf(stderr, "%" PRIu32, value);
+}
+
+void flecha_runtime_v1_stderr_u64(uint64_t value) {
+    (void)std::fprintf(stderr, "%" PRIu64, value);
+}
+
+void flecha_runtime_v1_stderr_usize(uintptr_t value) {
+    (void)std::fprintf(stderr, "%" PRIuPTR, value);
+}
+
+void flecha_runtime_v1_stderr_f32(float value) {
+    PrintFloat(stderr, value);
+}
+
+void flecha_runtime_v1_stderr_f64(double value) {
+    PrintFloat(stderr, value);
+}
+
+void flecha_runtime_v1_stderr_bool(uint8_t value) {
+    const char* text = value == 0 ? "false" : "true";
+    const size_t length = value == 0 ? 5 : 4;
+    (void)std::fwrite(text, 1, length, stderr);
+}
+
+void flecha_runtime_v1_stderr_char(uint8_t value) {
+    (void)std::fputc(value, stderr);
+}
+
+void flecha_runtime_v1_stderr_newline(void) {
+    (void)std::fputc('\n', stderr);
 }
 
 uint8_t flecha_runtime_v1_string_view_at(const char* data, size_t length,

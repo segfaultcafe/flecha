@@ -160,8 +160,10 @@ class LlvmCodeGenerator final {
         semantic::SemanticType rightType);
     [[nodiscard]] llvm::Value* EmitRuntimeOutput(llvm::Value* value,
                                                  semantic::SemanticType type,
-                                                 bool newline);
-    [[nodiscard]] llvm::Value* EmitRuntimeNewline();
+                                                 bool newline,
+                                                 bool standardError = false);
+    [[nodiscard]] llvm::Value* EmitRuntimeNewline(
+        bool standardError = false);
     [[nodiscard]] llvm::Value* EmitBuiltInOutput(
         const lowering::BoundCallExpression& expression,
         const std::vector<llvm::Value*>& arguments);

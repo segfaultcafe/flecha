@@ -1362,6 +1362,8 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     registerOutput("stdout", BuiltInFunction::Stdout);
     registerOutput("stdoutln", BuiltInFunction::StdoutLine);
     registerOutput("stdoutf", BuiltInFunction::StdoutFormat);
+    registerOutput("stderr", BuiltInFunction::Stderr);
+    registerOutput("stderrln", BuiltInFunction::StderrLine);
     for (const auto& [name, intrinsic] :
          {std::pair{"new", BuiltInFunction::New},
           std::pair{"free", BuiltInFunction::Free},
@@ -4991,7 +4993,9 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         _functionCalls[_currentFunction].insert(function);
     if (function && (function->BuiltIn() == BuiltInFunction::Stdout ||
                      function->BuiltIn() == BuiltInFunction::StdoutLine ||
-                     function->BuiltIn() == BuiltInFunction::StdoutFormat)) {
+                     function->BuiltIn() == BuiltInFunction::StdoutFormat ||
+                     function->BuiltIn() == BuiltInFunction::Stderr ||
+                     function->BuiltIn() == BuiltInFunction::StderrLine)) {
         if (_inZero)
             Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                    expression.Range(),

@@ -28,6 +28,8 @@ enum class BuiltInFunction {
     Stdout,
     StdoutLine,
     StdoutFormat,
+    Stderr,
+    StderrLine,
     New,
     Free,
     Take,

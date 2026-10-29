@@ -64,6 +64,14 @@ typedef enum FlechaRuntimeFilesystemStatus {
     FLECHA_RUNTIME_FILESYSTEM_DIRECTORY_NOT_EMPTY = 9,
 } FlechaRuntimeFilesystemStatus;
 
+typedef enum FlechaRuntimeIoStatus {
+    FLECHA_RUNTIME_IO_OK = 0,
+    FLECHA_RUNTIME_IO_PERMISSION_DENIED = 2,
+    FLECHA_RUNTIME_IO_TOO_LARGE = 5,
+    FLECHA_RUNTIME_IO_INVALID_OPTIONS = 7,
+    FLECHA_RUNTIME_IO_FAILED = 8,
+} FlechaRuntimeIoStatus;
+
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.
@@ -96,6 +104,37 @@ void flecha_runtime_v1_stdout_f64(double value);
 void flecha_runtime_v1_stdout_bool(uint8_t value);
 void flecha_runtime_v1_stdout_char(uint8_t value);
 void flecha_runtime_v1_stdout_newline(void);
+void flecha_runtime_v1_stderr_string_view(const char* data, size_t length);
+void flecha_runtime_v1_stderr_i8(int8_t value);
+void flecha_runtime_v1_stderr_i16(int16_t value);
+void flecha_runtime_v1_stderr_i32(int32_t value);
+void flecha_runtime_v1_stderr_i64(int64_t value);
+void flecha_runtime_v1_stderr_isize(intptr_t value);
+void flecha_runtime_v1_stderr_u8(uint8_t value);
+void flecha_runtime_v1_stderr_u16(uint16_t value);
+void flecha_runtime_v1_stderr_u32(uint32_t value);
+void flecha_runtime_v1_stderr_u64(uint64_t value);
+void flecha_runtime_v1_stderr_usize(uintptr_t value);
+void flecha_runtime_v1_stderr_f32(float value);
+void flecha_runtime_v1_stderr_f64(double value);
+void flecha_runtime_v1_stderr_bool(uint8_t value);
+void flecha_runtime_v1_stderr_char(uint8_t value);
+void flecha_runtime_v1_stderr_newline(void);
+
+// Flushes typed built-in output pending in the selected C stream, then performs
+// one unbuffered descriptor write. Null storage is valid only for a zero-length
+// write. The count output is reset before validation and preserves partial
+// progress on failure.
+int32_t flecha_runtime_v1_standard_output_write(const uint8_t* source,
+                                                size_t length,
+                                                size_t* bytes_written);
+int32_t flecha_runtime_v1_standard_error_write(const uint8_t* source,
+                                               size_t length,
+                                               size_t* bytes_written);
+
+// Flushes bytes emitted through the corresponding process-owned C stream.
+int32_t flecha_runtime_v1_standard_output_flush(void);
+int32_t flecha_runtime_v1_standard_error_flush(void);
 uint8_t flecha_runtime_v1_string_view_at(const char* data, size_t length,
                                          uint32_t index);
 void flecha_runtime_v1_string_view_check_substr(size_t length, uint32_t start,

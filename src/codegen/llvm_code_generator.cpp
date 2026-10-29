@@ -862,7 +862,8 @@ llvm::Value* LlvmCodeGenerator::CoerceValue(
 
 llvm::Value* LlvmCodeGenerator::EmitRuntimeOutput(llvm::Value* value,
                                                   semantic::SemanticType type,
-                                                  bool newline) {
+                                                  bool newline,
+                                                  bool standardError) {
     std::string suffix;
     std::vector<llvm::Value*> arguments;
     std::vector<llvm::Type*> parameterTypes;
@@ -932,19 +933,21 @@ llvm::Value* LlvmCodeGenerator::EmitRuntimeOutput(llvm::Value* value,
 
     llvm::FunctionType* outputType = llvm::FunctionType::get(
         llvm::Type::getVoidTy(_context), parameterTypes, false);
+    const std::string stream = standardError ? "stderr" : "stdout";
     llvm::FunctionCallee output = _module->getOrInsertFunction(
-        "flecha_runtime_v1_stdout_" + suffix, outputType);
+        "flecha_runtime_v1_" + stream + "_" + suffix, outputType);
     llvm::Value* call = _builder.CreateCall(output, arguments);
     if (!newline) return call;
 
-    return EmitRuntimeNewline();
+    return EmitRuntimeNewline(standardError);
 }
 
-llvm::Value* LlvmCodeGenerator::EmitRuntimeNewline() {
+llvm::Value* LlvmCodeGenerator::EmitRuntimeNewline(bool standardError) {
     llvm::FunctionType* newlineType =
         llvm::FunctionType::get(llvm::Type::getVoidTy(_context), {}, false);
+    const std::string stream = standardError ? "stderr" : "stdout";
     llvm::FunctionCallee emitNewline = _module->getOrInsertFunction(
-        "flecha_runtime_v1_stdout_newline", newlineType);
+        "flecha_runtime_v1_" + stream + "_newline", newlineType);
     return _builder.CreateCall(emitNewline);
 }
 
@@ -952,16 +955,23 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInOutput(
     const lowering::BoundCallExpression& expression,
     const std::vector<llvm::Value*>& arguments) {
     const semantic::BuiltInFunction builtIn = expression.Function().BuiltIn();
+    const bool standardError =
+        builtIn == semantic::BuiltInFunction::Stderr ||
+        builtIn == semantic::BuiltInFunction::StderrLine;
     llvm::Value* result = nullptr;
     if (builtIn == semantic::BuiltInFunction::Stdout ||
-        builtIn == semantic::BuiltInFunction::StdoutLine) {
+        builtIn == semantic::BuiltInFunction::StdoutLine ||
+        builtIn == semantic::BuiltInFunction::Stderr ||
+        builtIn == semantic::BuiltInFunction::StderrLine) {
         for (std::size_t index = 0; index < arguments.size(); ++index) {
             result = EmitRuntimeOutput(
-                arguments[index], expression.Arguments()[index]->Type(), false);
+                arguments[index], expression.Arguments()[index]->Type(), false,
+                standardError);
             if (result == nullptr) return nullptr;
         }
-        if (builtIn == semantic::BuiltInFunction::StdoutLine)
-            return EmitRuntimeNewline();
+        if (builtIn == semantic::BuiltInFunction::StdoutLine ||
+            builtIn == semantic::BuiltInFunction::StderrLine)
+            return EmitRuntimeNewline(standardError);
     } else if (builtIn == semantic::BuiltInFunction::StdoutFormat) {
         if (expression.Arguments().empty() ||
             expression.Arguments().front()->Kind() !=
@@ -1025,7 +1035,7 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInOutput(
                : EmitRuntimeOutput(value,
                                    semantic::SemanticType(
                                        semantic::SemanticTypeKind::StringView),
-                                   false);
+                                   false, standardError);
 }
 
 llvm::Value* LlvmCodeGenerator::EmitStringViewOperation(
@@ -3354,7 +3364,11 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 call.Function().BuiltIn() ==
                     semantic::BuiltInFunction::StdoutLine ||
                 call.Function().BuiltIn() ==
-                    semantic::BuiltInFunction::StdoutFormat)
+                    semantic::BuiltInFunction::StdoutFormat ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::Stderr ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StderrLine)
                 return EmitBuiltInOutput(call, arguments);
             if (call.Function().BuiltIn() == semantic::BuiltInFunction::Free)
                 return EmitFree(arguments.front(),
