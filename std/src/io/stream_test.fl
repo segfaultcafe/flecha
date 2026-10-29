@@ -29,6 +29,26 @@ test read_forwards_the_operation_result(&testing::UnitTest t) {
     );
 }
 
+test zero_stream_adapters_report_closed(&testing::UnitTest t) {
+    stream::Reader reader = none;
+    [0]u8 destination = none;
+    count, readError := reader.read(destination[:]);
+    asserts::is_true(
+        t,
+        count == 0 and readError == errors::IoError.Closed,
+        "the inert reader reports Closed"
+    );
+
+    stream::Writer writer = none;
+    [0]u8 source = none;
+    writeCount, writeError := writer.write(source[:]);
+    asserts::is_true(
+        t,
+        writeCount == 0 and writeError == errors::IoError.Closed,
+        "the inert writer reports Closed"
+    );
+}
+
 test read_exact_collects_partial_reads(&testing::UnitTest t) {
     [5]u8 source = [1, 2, 3, 4, 5];
     usize position = 0;

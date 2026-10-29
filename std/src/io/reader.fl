@@ -17,6 +17,13 @@ Reader Reader::init(Read operation) <- operation override {
     };
 }
 
+// Constructs the inert representation used by none.
+Reader Reader::zero() override {
+    return build Reader {
+        self.operation = closed_read;
+    };
+}
+
 // Performs one read and preserves its partial byte count on error.
 (usize, error) Reader::read(&self, []u8 destination) {
     return (self->operation)(destination);
@@ -41,4 +48,8 @@ error Reader::readExact(&self, []u8 destination) {
     }
 
     return none;
+}
+
+quiver (usize, error) closed_read([]u8 destination) {
+    return (none, errors::IoError.Closed);
 }

@@ -1,0 +1,66 @@
+module reader_allocation_failure;
+
+@imports
+    :: lib::std::io::buffered
+    :: lib::std::io::stream;
+
+structure Owner {
+    *i32 cleanupCount;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+    };
+}
+
+Owner Owner::init(*i32 cleanupCount) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount = *self->cleanupCount + 1;
+        }
+    }
+}
+
+i32 Owner::value(&const self) {
+    return 42;
+}
+
+i32 main() {
+    i32 cleanupCount = 0;
+    {
+        Owner owner = none;
+        unsafe {
+            owner = Owner::init(&raw cleanupCount);
+        }
+        reader := stream::Reader::init(
+            [own owner](destination) => {
+                if destination.len() > 0 {
+                    destination[0] = owner.value().cast<u8>;
+                    return (1, none);
+                }
+                return (none, none);
+            }
+        );
+
+        _, allocationError :=
+            buffered::BufferedReader::withCapacity(reader, 4);
+        if allocationError != AllocationError.OutOfMemory {
+            return 1;
+        }
+        if cleanupCount != 1 {
+            return 2;
+        }
+    }
+
+    if cleanupCount != 1 {
+        return 3;
+    }
+    return 42;
+}

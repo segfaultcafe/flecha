@@ -287,6 +287,17 @@ existing `File` model. Blocking operations must be identified in their API
 documentation. Platform errors map to stable Flecha error families without
 discarding partial byte counts or child-process status.
 
+The buffered-I/O portion of Stage 5 is implemented in Flecha over the existing
+stream adapters. Buffered readers preserve read-ahead bytes and defer a partial
+read error until its final buffered byte. Buffered writers require explicit
+flush, preserve unwritten suffixes for retry, and never perform fallible work
+during destruction. Both owners move their stream adapter, own exactly one byte
+allocation, propagate file borrows, and release every moved value exactly once
+on success or allocation failure. Focused tests cover empty operations, direct
+and buffered paths, boundary crossings, short operations, EOF, zero progress,
+error retry, allocation failure, movement, borrow conflicts, file round trips,
+and byte ordering without native buffering support.
+
 ### 6. Blocking networking
 
 Add an initial `net` layer containing:
