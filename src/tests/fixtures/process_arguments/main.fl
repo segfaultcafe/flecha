@@ -1,0 +1,31 @@
+module main;
+
+@imports :: lib::std::process::arguments;
+
+i32 main() {
+    values, captureError := arguments::capture();
+    if captureError != none or values.len() != 5 {
+        return 1;
+    }
+    if values[0].len() == 0 or values[1] != "alpha" or
+        values[2] != "two words" or values[3] != "" or
+        values[4] != "--flag=value" {
+        return 2;
+    }
+
+    repeated, repeatedError := arguments::capture();
+    if repeatedError != none or repeated.len() != values.len() {
+        return 3;
+    }
+
+    values[1] = "changed";
+    if repeated[1] != "alpha" or values[1] != "changed" {
+        return 4;
+    }
+
+    moved := values;
+    if moved[1] != "changed" or moved[2] != "two words" {
+        return 5;
+    }
+    return 42;
+}
