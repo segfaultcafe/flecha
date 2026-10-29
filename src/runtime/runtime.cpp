@@ -1,9 +1,155 @@
 #include "runtime/runtime_abi.h"
 
+#include <charconv>
 #include <cinttypes>
-#include <cstdlib>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <system_error>
+
+namespace {
+
+bool TextEquals(const char* data, size_t length, const char* expected,
+                size_t expectedLength) {
+    return length == expectedLength &&
+           std::memcmp(data, expected, expectedLength) == 0;
+}
+
+bool ValidDecimal(const char* first, const char* last) {
+    if (first != last && (*first == '+' || *first == '-')) ++first;
+
+    bool digits = false;
+    while (first != last && *first >= '0' && *first <= '9') {
+        digits = true;
+        ++first;
+    }
+    if (first != last && *first == '.') {
+        ++first;
+        while (first != last && *first >= '0' && *first <= '9') {
+            digits = true;
+            ++first;
+        }
+    }
+    if (!digits) return false;
+
+    if (first != last && (*first == 'e' || *first == 'E')) {
+        ++first;
+        if (first != last && (*first == '+' || *first == '-')) ++first;
+
+        const char* exponent = first;
+        while (first != last && *first >= '0' && *first <= '9') ++first;
+        if (first == exponent) return false;
+    }
+
+    return first == last;
+}
+
+template <typename T>
+int32_t ParseFloat(T* output, const char* data, size_t length) {
+    *output = 0;
+    if (length == 0 || data == nullptr)
+        return FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX;
+
+    if (TextEquals(data, length, "nan", 3) ||
+        TextEquals(data, length, "+nan", 4) ||
+        TextEquals(data, length, "-nan", 4)) {
+        *output = std::numeric_limits<T>::quiet_NaN();
+        return FLECHA_RUNTIME_FLOAT_TEXT_OK;
+    }
+    if (TextEquals(data, length, "inf", 3) ||
+        TextEquals(data, length, "+inf", 4)) {
+        *output = std::numeric_limits<T>::infinity();
+        return FLECHA_RUNTIME_FLOAT_TEXT_OK;
+    }
+    if (TextEquals(data, length, "-inf", 4)) {
+        *output = -std::numeric_limits<T>::infinity();
+        return FLECHA_RUNTIME_FLOAT_TEXT_OK;
+    }
+
+    const char* first = data;
+    const char* last = data + length;
+    if (!ValidDecimal(first, last))
+        return FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX;
+    if (*first == '+') {
+        ++first;
+    }
+
+    T parsed = 0;
+    const auto result =
+        std::from_chars(first, last, parsed, std::chars_format::general);
+    if (result.ec == std::errc::result_out_of_range)
+        return FLECHA_RUNTIME_FLOAT_TEXT_OUT_OF_RANGE;
+    if (result.ec == std::errc::invalid_argument || result.ptr != last)
+        return FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX;
+
+    *output = parsed;
+    return FLECHA_RUNTIME_FLOAT_TEXT_OK;
+}
+
+template <typename T>
+int32_t FormatFloat(uint8_t* destination, size_t capacity, T value,
+                    size_t* written) {
+    *written = 0;
+
+    char buffer[128];
+    size_t length = 0;
+    if (std::isnan(value)) {
+        std::memcpy(buffer, "nan", 3);
+        length = 3;
+    } else if (std::isinf(value)) {
+        if (std::signbit(value)) {
+            std::memcpy(buffer, "-inf", 4);
+            length = 4;
+        } else {
+            std::memcpy(buffer, "inf", 3);
+            length = 3;
+        }
+    } else {
+        const auto result = std::to_chars(buffer, buffer + sizeof(buffer),
+                                          value, std::chars_format::general);
+        if (result.ec != std::errc{})
+            return FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE;
+        length = static_cast<size_t>(result.ptr - buffer);
+    }
+
+    if (capacity < length || (length != 0 && destination == nullptr))
+        return FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE;
+
+    if (length != 0) std::memcpy(destination, buffer, length);
+    *written = length;
+    return FLECHA_RUNTIME_FLOAT_TEXT_OK;
+}
+
+template <typename T>
+void PrintFloat(T value) {
+    uint8_t buffer[128];
+    size_t length = 0;
+    if (FormatFloat(buffer, sizeof(buffer), value, &length) !=
+        FLECHA_RUNTIME_FLOAT_TEXT_OK) {
+        (void)std::fputs("Flecha runtime error: scalar formatting failed\n",
+                         stderr);
+        std::abort();
+    }
+    if (length != 0) (void)std::fwrite(buffer, 1, length, stdout);
+}
+
+template <typename T>
+void StringFromFloat(FlechaRuntimeString* output, T value) {
+    uint8_t buffer[128];
+    size_t length = 0;
+    if (FormatFloat(buffer, sizeof(buffer), value, &length) !=
+        FLECHA_RUNTIME_FLOAT_TEXT_OK) {
+        (void)std::fputs("Flecha runtime error: scalar formatting failed\n",
+                         stderr);
+        std::abort();
+    }
+    flecha_runtime_v1_string_from_view(
+        output, reinterpret_cast<const char*>(buffer), length);
+}
+
+}  // namespace
 
 extern "C" {
 
@@ -53,11 +199,11 @@ void flecha_runtime_v1_stdout_usize(uintptr_t value) {
 }
 
 void flecha_runtime_v1_stdout_f32(float value) {
-    (void)std::fprintf(stdout, "%.9g", static_cast<double>(value));
+    PrintFloat(value);
 }
 
 void flecha_runtime_v1_stdout_f64(double value) {
-    (void)std::fprintf(stdout, "%.17g", value);
+    PrintFloat(value);
 }
 
 void flecha_runtime_v1_stdout_bool(uint8_t value) {
@@ -206,30 +352,32 @@ FLECHA_FORMAT_STRING_FUNCTION(usize, uintptr_t, "%" PRIuPTR)
 
 void flecha_runtime_v1_string_from_f32(FlechaRuntimeString* output,
                                        float value) {
-    char buffer[128];
-    const int length = std::snprintf(buffer, sizeof(buffer), "%.9g",
-                                     static_cast<double>(value));
-    if (length < 0 || static_cast<size_t>(length) >= sizeof(buffer)) {
-        (void)std::fputs(
-            "Flecha runtime error: scalar formatting failed\n", stderr);
-        std::abort();
-    }
-    flecha_runtime_v1_string_from_view(output, buffer,
-                                       static_cast<size_t>(length));
+    StringFromFloat(output, value);
 }
 
 void flecha_runtime_v1_string_from_f64(FlechaRuntimeString* output,
                                        double value) {
-    char buffer[128];
-    const int length =
-        std::snprintf(buffer, sizeof(buffer), "%.17g", value);
-    if (length < 0 || static_cast<size_t>(length) >= sizeof(buffer)) {
-        (void)std::fputs(
-            "Flecha runtime error: scalar formatting failed\n", stderr);
-        std::abort();
-    }
-    flecha_runtime_v1_string_from_view(output, buffer,
-                                       static_cast<size_t>(length));
+    StringFromFloat(output, value);
+}
+
+int32_t flecha_runtime_v1_parse_f32(float* output, const char* data,
+                                    size_t length) {
+    return ParseFloat(output, data, length);
+}
+
+int32_t flecha_runtime_v1_parse_f64(double* output, const char* data,
+                                    size_t length) {
+    return ParseFloat(output, data, length);
+}
+
+int32_t flecha_runtime_v1_format_f32(uint8_t* destination, size_t capacity,
+                                     float value, size_t* written) {
+    return FormatFloat(destination, capacity, value, written);
+}
+
+int32_t flecha_runtime_v1_format_f64(uint8_t* destination, size_t capacity,
+                                     double value, size_t* written) {
+    return FormatFloat(destination, capacity, value, written);
 }
 
 void flecha_runtime_v1_string_from_bool(FlechaRuntimeString* output,

@@ -1,6 +1,8 @@
 module strings;
 
-@imports :: root::text::errors;
+@imports
+    :: root::text::errors
+    :: root::text::runtime;
 
 const u8 PARSE_MINUS = 45;
 const u8 PARSE_PLUS = 43;
@@ -65,4 +67,65 @@ export (T, error) stringv_to_int<T: integer>(stringv value) {
     }
 
     return (result, none);
+}
+
+// Parses the complete locale-independent decimal text as a floating-point
+// value. Leading or trailing whitespace is rejected; overflow and underflow
+// report ParseError.Overflow.
+export (T, error) stringv_to_float<T: floating_point>(stringv value) {
+    if value.len() == 0 {
+        return (none, errors::ParseError.Empty);
+    }
+
+    if T.isof<f32> {
+        parsed, err := parse_f32(value);
+        return (parsed.cast<T>, err);
+    }
+
+    parsed, err := parse_f64(value);
+    return (parsed.cast<T>, err);
+}
+
+(f32, error) parse_f32(stringv value) {
+    f32 output = none;
+    i32 status = none;
+
+    unsafe {
+        status = runtime::flecha_runtime_v1_parse_f32(
+            &raw output,
+            value.data(),
+            value.len().cast<usize>
+        );
+    }
+
+    if status == 0 {
+        return (output, none);
+    }
+    if status == 2 {
+        return (none, errors::ParseError.Overflow);
+    }
+
+    return (none, errors::ParseError.InvalidSyntax);
+}
+
+(f64, error) parse_f64(stringv value) {
+    f64 output = none;
+    i32 status = none;
+
+    unsafe {
+        status = runtime::flecha_runtime_v1_parse_f64(
+            &raw output,
+            value.data(),
+            value.len().cast<usize>
+        );
+    }
+
+    if status == 0 {
+        return (output, none);
+    }
+    if status == 2 {
+        return (none, errors::ParseError.Overflow);
+    }
+
+    return (none, errors::ParseError.InvalidSyntax);
 }

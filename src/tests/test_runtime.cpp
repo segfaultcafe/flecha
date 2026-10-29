@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -112,6 +113,82 @@ TEST(RuntimeStringTests, ConcatenatesIndependentOwnedStorage) {
     EXPECT_EQ(joined.capacity, 6);
     EXPECT_STREQ(joined.data, "flecha");
     flecha_runtime_v1_string_destroy(joined.data);
+}
+
+TEST(RuntimeFloatTextTests, ParsesCompleteLocaleIndependentValues) {
+    float narrow = 0;
+    double wide = 0;
+
+    EXPECT_EQ(flecha_runtime_v1_parse_f32(&narrow, "-12.5e2", 7),
+              FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_EQ(narrow, -1250.0F);
+    EXPECT_EQ(flecha_runtime_v1_parse_f64(&wide, "+0.125", 6),
+              FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_EQ(wide, 0.125);
+
+    EXPECT_EQ(flecha_runtime_v1_parse_f64(&wide, "1.5x", 4),
+              FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX);
+    EXPECT_EQ(wide, 0.0);
+    EXPECT_EQ(flecha_runtime_v1_parse_f64(&wide, " 1.5", 4),
+              FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX);
+    EXPECT_EQ(flecha_runtime_v1_parse_f64(&wide, "1e9999", 6),
+              FLECHA_RUNTIME_FLOAT_TEXT_OUT_OF_RANGE);
+    EXPECT_EQ(wide, 0.0);
+    EXPECT_EQ(flecha_runtime_v1_parse_f64(&wide, "NAN", 3),
+              FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX);
+    EXPECT_EQ(flecha_runtime_v1_parse_f64(&wide, "nan(payload)", 12),
+              FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX);
+}
+
+TEST(RuntimeFloatTextTests, FormatsShortestRoundTrippableValues) {
+    std::array<std::uint8_t, 64> text{};
+    std::size_t written = 99;
+
+    EXPECT_EQ(flecha_runtime_v1_format_f64(text.data(), text.size(), 1.25,
+                                           &written),
+              FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(text.data()), written),
+              "1.25");
+
+    double parsed = 0;
+    EXPECT_EQ(flecha_runtime_v1_parse_f64(
+                  &parsed, reinterpret_cast<char*>(text.data()), written),
+              FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_EQ(parsed, 1.25);
+
+    EXPECT_EQ(flecha_runtime_v1_format_f64(text.data(), text.size(), -0.0,
+                                           &written),
+              FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(text.data()), written),
+              "-0");
+    EXPECT_EQ(flecha_runtime_v1_parse_f64(
+                  &parsed, reinterpret_cast<char*>(text.data()), written),
+              FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_TRUE(std::signbit(parsed));
+
+    EXPECT_EQ(flecha_runtime_v1_format_f64(
+                  text.data(), text.size(),
+                  std::numeric_limits<double>::infinity(), &written),
+              FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(text.data()), written),
+              "inf");
+    EXPECT_EQ(flecha_runtime_v1_format_f64(
+                  text.data(), text.size(),
+                  std::numeric_limits<double>::quiet_NaN(), &written),
+              FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(text.data()), written),
+              "nan");
+}
+
+TEST(RuntimeFloatTextTests, PreservesDestinationWhenSpaceIsInsufficient) {
+    std::array<std::uint8_t, 3> text{'k', 'e', 'p'};
+    std::size_t written = 99;
+
+    EXPECT_EQ(flecha_runtime_v1_format_f64(text.data(), text.size(), 12.5,
+                                           &written),
+              FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE);
+    EXPECT_EQ(written, 0);
+    EXPECT_EQ(text, (std::array<std::uint8_t, 3>{'k', 'e', 'p'}));
 }
 
 TEST(RuntimeFilesystemTests, ReadsEmptyAndBinaryFiles) {

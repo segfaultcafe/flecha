@@ -73,6 +73,18 @@ error StringBuilder::appendInteger<T: integer>(
     return self->storage.write(formatted[:written]);
 }
 
+// Appends the shortest locale-independent decimal representation that round
+// trips to value. Allocation failure preserves the builder contents.
+error StringBuilder::appendFloat<T: floating_point>(&self, T value) {
+    [64]u8 formatted = none;
+    written, formatError := format_float<T>(formatted[:], value);
+    if formatError != none {
+        return formatError;
+    }
+
+    return self->storage.write(formatted[:written]);
+}
+
 // Appends "true" or "false".
 error StringBuilder::appendBool(&self, bool value) {
     if value {

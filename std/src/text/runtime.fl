@@ -5,3 +5,29 @@ quiver extern unsafe i32 flecha_runtime_v1_string_try_from_bytes(
     *const u8 data,
     usize length
 );
+
+quiver extern unsafe i32 flecha_runtime_v1_parse_f32(
+    *f32 output,
+    *const char data,
+    usize length
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_parse_f64(
+    *f64 output,
+    *const char data,
+    usize length
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_format_f32(
+    *u8 destination,
+    usize capacity,
+    f32 value,
+    *usize written
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_format_f64(
+    *u8 destination,
+    usize capacity,
+    f64 value,
+    *usize written
+);

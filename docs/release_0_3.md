@@ -18,10 +18,9 @@ The north-star programs for this release are:
 
 - a nontrivial command-line application;
 - a persistent, deterministic blockchain or append-only ledger prototype;
-- a structured-data reader and writer;
 - a blocking TCP client and server;
-- a separately versioned library published, resolved, and consumed through the
-  public Flecha package registry; and
+- a package-development fixture created, published, resolved, and consumed
+  through the public Flecha package registry; and
 - a concurrent worker application if the required memory-model rules can be
   specified without delaying the rest of the milestone.
 
@@ -66,7 +65,7 @@ std::containers::raw_array
                           low-level compatibility array
 std::containers::errors   collection errors
 std::text::*              ascii, utf8, builder, parse, format
-std::encoding::*          binary, hex, base64, json
+std::encoding::*          binary, hex, base64
 std::io::*                errors, file, buffered, stdio, filesystem, path,
                           directory, temp
 std::process::*           args, environment, command
@@ -213,8 +212,13 @@ Add:
 - ASCII classification and case conversion;
 - UTF-8 validation, decoding, and code-point iteration;
 - hexadecimal and Base64 codecs;
-- a canonical binary encoding layer; and
-- JSON tokenization, parsing, and writing.
+- a canonical binary encoding layer.
+
+The mutable builder, integer and floating-point parsing and formatting, ASCII,
+UTF-8, hexadecimal, and canonical binary foundations are implemented with
+focused standard-library and native-runtime tests. Base64 remains follow-up
+work. JSON is an independently versioned package planned for the 0.4 library
+wave rather than a bundled standard-library module.
 
 The existing `string` and `stringv` types remain byte-oriented. Unicode APIs
 must not silently change their indexing or length semantics. CSV, TOML, YAML,
@@ -423,7 +427,7 @@ Flecha 0.3.0 is ready when:
 
 1. Stages 1 through 7 are implemented, documented, and tested. Stage 8's test
    helpers required by those modules are also complete.
-2. The CLI, structured-data, ledger, and blocking-network north-star programs
+2. The CLI, ledger, and blocking-network north-star programs
    build and run from clean, relocated release packages.
 3. The complete suite passes on Linux x86-64, Windows x86-64, macOS x86-64,
    and macOS arm64 where those release runners remain supported.

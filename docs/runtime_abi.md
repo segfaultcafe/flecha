@@ -51,6 +51,22 @@ failure and invalid dynamic operations must use the runtime failure mechanism.
 Object-only compilation may leave owning-string runtime symbols unresolved in
 the same way it currently leaves output and bounds-check symbols unresolved.
 
+## Floating-point text conversion
+
+The version 1 runtime exposes typed `f32` and `f64` parsing and formatting
+entry points for the standard text library. Input is an explicit byte pointer
+and length; parsing consumes the complete input, ignores no whitespace, and is
+independent of the process locale. Decimal input accepts an optional sign,
+fraction, and decimal exponent. The only non-finite spellings are `nan`, `inf`,
+and `-inf`, with an optional leading plus accepted by parsing.
+
+Formatting produces lowercase non-finite spellings and otherwise emits the
+shortest decimal representation that round trips to the same width. Negative
+zero retains its sign. The destination is unchanged when it is too small, and
+the written-length output is zero on every failure. Stable status values
+distinguish invalid syntax, an out-of-range value, and insufficient space.
+The safe `strings` wrappers map them to `ParseError` and `FormatError`.
+
 ## File reading
 
 `flecha_runtime_v1_read_file` receives an owning-string output pointer plus

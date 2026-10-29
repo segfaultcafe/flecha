@@ -1,6 +1,8 @@
 module strings;
 
-@imports :: root::text::errors;
+@imports
+    :: root::text::errors
+    :: root::text::runtime;
 
 const u8 MINUS = 45;
 
@@ -12,6 +14,52 @@ export (string, error) int_to_string<T: integer>(T value, u8 base = 10) {
     }
 
     return string_from_bytes(storage[:written]);
+}
+
+// Formats value as the shortest locale-independent decimal representation that
+// round trips to the same floating-point value.
+export (string, error) float_to_string<T: floating_point>(T value) {
+    [64]u8 storage = none;
+    written, formatErr := format_float<T>(storage[:], value);
+    if formatErr != none {
+        return (none, formatErr);
+    }
+
+    return string_from_bytes(storage[:written]);
+}
+
+// Writes the shortest locale-independent round-trippable representation.
+// Insufficient space leaves destination unchanged.
+export (usize, error) format_float<T: floating_point>(
+    []u8 destination,
+    T value,
+) {
+    usize written = 0;
+    i32 status = none;
+
+    unsafe {
+        if T.isof<f32> {
+            status = runtime::flecha_runtime_v1_format_f32(
+                destination.data(),
+                destination.len(),
+                value.cast<f32>,
+                &raw written
+            );
+        } else {
+            status = runtime::flecha_runtime_v1_format_f64(
+                destination.data(),
+                destination.len(),
+                value.cast<f64>,
+                &raw written
+            );
+        }
+    }
+
+    if status != 0 {
+        return (none, errors::FormatError.InsufficientSpace);
+    }
+
+    return (written, none);
 }
 
 // Formats value using lowercase digits in a base from 2 through 36.

@@ -186,6 +186,98 @@ test integer_text_conversion_reports_invalid_input(
     );
 }
 
+test floating_text_conversion_round_trips_values(&testing::UnitTest t) {
+    narrowText, narrowFormatError :=
+        strings::float_to_string<f32>(1.25 as f32);
+    wideText, wideFormatError :=
+        strings::float_to_string<f64>(-0.00000000000000001);
+    narrow, narrowParseError :=
+        strings::stringv_to_float<f32>(narrowText.cast<stringv>);
+    wide, wideParseError :=
+        strings::stringv_to_float<f64>(wideText.cast<stringv>);
+
+    asserts::is_true(
+        t,
+        narrowFormatError == none and wideFormatError == none and
+            narrowParseError == none and wideParseError == none,
+        "floating-point formatting and parsing succeed"
+    );
+    asserts::is_true(
+        t,
+        narrow == (1.25 as f32) and wide == -0.00000000000000001,
+        "shortest formatting round trips both widths"
+    );
+}
+
+test floating_text_parsing_requires_complete_input(&testing::UnitTest t) {
+    positive, positiveError := strings::stringv_to_float<f64>("+1.5e2");
+    _, emptyError := strings::stringv_to_float<f64>("");
+    _, whitespaceError := strings::stringv_to_float<f64>(" 1.5");
+    _, suffixError := strings::stringv_to_float<f32>("1.5x");
+    _, overflowError := strings::stringv_to_float<f64>("1e9999");
+    _, nonCanonicalError := strings::stringv_to_float<f64>("NAN");
+
+    asserts::is_true(
+        t,
+        positiveError == none and positive == 150.0,
+        "signed exponent notation parses"
+    );
+    asserts::is_true(
+        t,
+        emptyError == text_errors::ParseError.Empty,
+        "empty floating-point text is rejected"
+    );
+    asserts::is_true(
+        t,
+        whitespaceError == text_errors::ParseError.InvalidSyntax and
+            suffixError == text_errors::ParseError.InvalidSyntax and
+            nonCanonicalError == text_errors::ParseError.InvalidSyntax,
+        "whitespace, trailing bytes, and noncanonical spellings are rejected"
+    );
+    asserts::is_true(
+        t,
+        overflowError == text_errors::ParseError.Overflow,
+        "floating-point range errors are reported"
+    );
+}
+
+test floating_format_preserves_small_destinations(&testing::UnitTest t) {
+    [3]u8 destination = [107, 101, 112];
+    _, err := strings::format_float<f64>(destination[:], 12.5);
+
+    asserts::is_true(
+        t,
+        err == text_errors::FormatError.InsufficientSpace,
+        "short destinations report the formatting error"
+    );
+    asserts::is_true(
+        t,
+        destination[0] == 107 and destination[1] == 101 and
+            destination[2] == 112,
+        "failed formatting preserves destination bytes"
+    );
+}
+
+test string_builder_appends_floating_values(&testing::UnitTest t) {
+    value := strings::StringBuilder::init();
+    prefixError := value.append("values=");
+    firstError := value.appendFloat<f32>(1.25 as f32);
+    separatorError := value.appendChar(',');
+    secondError := value.appendFloat<f64>(-0.5);
+
+    asserts::is_true(
+        t,
+        prefixError == none and firstError == none and
+            separatorError == none and secondError == none,
+        "floating-point builder appends succeed"
+    );
+    asserts::is_true(
+        t,
+        value.view() == "values=1.25,-0.5",
+        "builder uses deterministic shortest formatting"
+    );
+}
+
 test string_builder_appends_repeated_characters_and_lines(
     &testing::UnitTest t
 ) {
