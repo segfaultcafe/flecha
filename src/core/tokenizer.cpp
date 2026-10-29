@@ -183,6 +183,11 @@ Token Tokenizer::NextToken() {
         case ',':
             return makeToken(TokenType::Comma);
         case '.':
+            if (Peek() == '.' && Peek(1) == '.') {
+                Advance();
+                Advance();
+                return makeToken(TokenType::Ellipsis);
+            }
             return makeToken(TokenType::Dot);
         case '(':
             return makeToken(TokenType::LParen);

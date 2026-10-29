@@ -89,6 +89,8 @@ TEST(DiagnosticTests, SemanticCodesAreStableAndContiguous) {
               "FLECHA-S0060");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidDefaultArgument),
               "FLECHA-S0061");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidVariadic),
+              "FLECHA-S0062");
 }
 
 TEST(DiagnosticTests, CompilerCodesAreStableAndContiguous) {

@@ -43,6 +43,8 @@ class SemanticModel final {
         const core::CallExpression& expression) const;
     [[nodiscard]] std::vector<const core::Expression*> ArgumentsFor(
         const core::MemberCallExpression& expression) const;
+    [[nodiscard]] const FunctionSymbol* ForwardedFunction(
+        const core::CallExpression& expression) const;
     [[nodiscard]] const core::ModuleConstantDeclaration* ModuleConstantFor(
         const Symbol& symbol) const;
     const StructureField* FieldFor(
@@ -102,6 +104,10 @@ class SemanticModel final {
     std::unordered_map<const core::Expression*,
                        std::vector<const core::Expression*>>
         _callArguments;
+    std::unordered_map<const FunctionSymbol*, const FunctionSymbol*>
+        _variadicTargets;
+    std::unordered_map<const core::CallExpression*, const FunctionSymbol*>
+        _forwardedFunctions;
     std::unordered_map<const Symbol*, const core::ModuleConstantDeclaration*>
         _moduleConstants;
     std::unordered_map<const core::DestructureBinding*, const Symbol*>

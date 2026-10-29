@@ -617,21 +617,30 @@ Parser::ParseCallableTypeDeclaration() {
 
 bool Parser::ParseBorrowSources(
     const std::vector<std::unique_ptr<Parameter>>& parameters,
-    std::vector<std::string>& sources,
-    std::vector<source::SourceRange>& ranges) {
+    std::vector<std::string>& sources, std::vector<source::SourceRange>& ranges,
+    const std::string* variadicPackName, bool* borrowsVariadicPack) {
     if (!Match(TokenType::LeftArrow)) return true;
 
-    if (Match(TokenType::Dot)) {
-        if (Consume(TokenType::Dot, "second '.' in '...args'") == nullptr ||
-            Consume(TokenType::Dot, "third '.' in '...args'") == nullptr)
-            return false;
+    const auto parseExpandedSource = [&]() {
         const Token* args =
             Consume(TokenType::Identifier, "'args' after '<- ...'");
         if (args == nullptr) return false;
-        if (args->value != "args") {
+        if (variadicPackName != nullptr && args->value == *variadicPackName) {
+            if (borrowsVariadicPack != nullptr && *borrowsVariadicPack) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::InvalidBorrowContract,
+                    args->range,
+                    "duplicate borrow source '..." + args->value + "'");
+                return false;
+            }
+            if (borrowsVariadicPack != nullptr) *borrowsVariadicPack = true;
+            return true;
+        }
+        if (args->value != "args" || variadicPackName != nullptr) {
             _diagnostics.Report(
-                diagnostics::DiagnosticCode::UnexpectedToken, args->range,
-                "the all-parameter borrow shorthand is spelled '...args'");
+                diagnostics::DiagnosticCode::InvalidBorrowContract, args->range,
+                "expanded borrow source '..." + args->value +
+                    "' must name the variadic pack");
             return false;
         }
         if (parameters.empty()) {
@@ -652,6 +661,10 @@ bool Parser::ParseBorrowSources(
             ranges.push_back(parameter->NameRange());
         }
         return true;
+    };
+
+    if (Match(TokenType::Ellipsis)) {
+        return parseExpandedSource();
     }
 
     if (Match(TokenType::LParen)) {
@@ -665,9 +678,23 @@ bool Parser::ParseBorrowSources(
             return false;
         }
         while (!Check(TokenType::RParen) && !IsAtEnd()) {
+            if (Match(TokenType::Ellipsis)) {
+                if (!parseExpandedSource()) return false;
+                if (!Match(TokenType::Comma)) break;
+                continue;
+            }
             const Token* source =
                 Consume(TokenType::Identifier, "borrow source name");
             if (source == nullptr) return false;
+            if (variadicPackName != nullptr &&
+                source->value == *variadicPackName) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::InvalidBorrowContract,
+                    source->range,
+                    "variadic borrow source must be expanded as '..." +
+                        source->value + "'");
+                return false;
+            }
             sources.push_back(source->value);
             ranges.push_back(source->range);
             if (!Match(TokenType::Comma)) break;
@@ -679,6 +706,13 @@ bool Parser::ParseBorrowSources(
     const Token* source =
         Consume(TokenType::Identifier, "borrow source after '<-'");
     if (source == nullptr) return false;
+    if (variadicPackName != nullptr && source->value == *variadicPackName) {
+        _diagnostics.Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                            source->range,
+                            "variadic borrow source must be expanded as '..." +
+                                source->value + "'");
+        return false;
+    }
     sources.push_back(source->value);
     ranges.push_back(source->range);
     return true;
@@ -742,7 +776,24 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     }
 
     std::vector<std::unique_ptr<Parameter>> parameters;
+    std::string variadicPackName;
+    source::SourceRange variadicPackRange;
     while (!Check(TokenType::RParen) && !IsAtEnd()) {
+        if (Check(TokenType::Identifier) &&
+            Peek(1).type == TokenType::Ellipsis) {
+            const Token& pack = Advance();
+            Advance();
+            variadicPackName = pack.value;
+            variadicPackRange = pack.range;
+            if (Match(TokenType::Comma)) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::InvalidVariadic,
+                    Current().range,
+                    "a variadic pack must be the final parameter");
+                while (!IsAtEnd() && !Check(TokenType::RParen)) Advance();
+            }
+            break;
+        }
         std::unique_ptr<Parameter> parameter;
         // Receiver shorthand is only legal in the first slot of a method.
         if (!owner.empty() && parameters.empty() &&
@@ -792,7 +843,11 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
 
     std::vector<std::string> borrowSources;
     std::vector<source::SourceRange> borrowSourceRanges;
-    if (!ParseBorrowSources(parameters, borrowSources, borrowSourceRanges))
+    bool borrowsVariadicPack = false;
+    const std::string* packName =
+        variadicPackName.empty() ? nullptr : &variadicPackName;
+    if (!ParseBorrowSources(parameters, borrowSources, borrowSourceRanges,
+                            packName, &borrowsVariadicPack))
         return nullptr;
 
     if (Match(TokenType::Override))
@@ -817,7 +872,8 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         source::SourceRange{start, end}, std::move(modifiers),
         std::move(returnType), name->value, std::move(parameters),
         std::move(body), name->range, std::move(owner),
-        std::move(borrowSources), std::move(borrowSourceRanges));
+        std::move(borrowSources), std::move(borrowSourceRanges),
+        std::move(variadicPackName), variadicPackRange, borrowsVariadicPack);
     declaration->genericParameters = std::move(genericParameters);
     declaration->ownerParameters = std::move(ownerParameters);
     declaration->genericConstraints = std::move(genericConstraints);
@@ -1765,10 +1821,12 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
                 !Consume(TokenType::LParen, "'(' after typed intrinsic"))
                 return expression;
             source::SourceLocation end = expression->Range().end;
-            auto arguments = ParseArgumentList(end);
+            std::vector<bool> expandedArguments;
+            auto arguments = ParseArgumentList(end, &expandedArguments);
             expression = std::make_unique<CallExpression>(
                 source::SourceRange{expression->Range().start, end},
-                std::move(expression), std::move(arguments), std::move(type));
+                std::move(expression), std::move(arguments), std::move(type),
+                std::move(expandedArguments));
             continue;
         }
         if (expression->Kind() == AstNodeKind::NameExpression &&
@@ -1855,8 +1913,9 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
                 continue;
             }
             source::SourceLocation end = member->range.end;
+            std::vector<bool> expandedArguments;
             std::vector<std::unique_ptr<Expression>> arguments =
-                ParseArgumentList(end);
+                ParseArgumentList(end, &expandedArguments);
             // Reference member spelling shares the dereference AST, including
             // its lvalue, borrowing, and code-generation behavior.
             if (access == TokenType::Arrow && member->value == "deref" &&
@@ -1869,7 +1928,7 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             expression = std::make_unique<MemberCallExpression>(
                 source::SourceRange{expression->Range().start, end},
                 std::move(expression), member->value, member->range,
-                std::move(arguments), access);
+                std::move(arguments), access, std::move(expandedArguments));
             static_cast<MemberCallExpression&>(*expression).typeArguments =
                 std::move(typeArguments);
             continue;
@@ -1908,18 +1967,20 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
 
         if (!Match(TokenType::LParen)) break;
         source::SourceLocation end = expression->Range().end;
+        std::vector<bool> expandedArguments;
         std::vector<std::unique_ptr<Expression>> arguments =
-            ParseArgumentList(end);
+            ParseArgumentList(end, &expandedArguments);
         expression = std::make_unique<CallExpression>(
             source::SourceRange{expression->Range().start, end},
-            std::move(expression), std::move(arguments));
+            std::move(expression), std::move(arguments), nullptr,
+            std::move(expandedArguments));
     }
 
     return expression;
 }
 
 std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
-    source::SourceLocation& end) {
+    source::SourceLocation& end, std::vector<bool>* expandedArguments) {
     std::vector<std::unique_ptr<Expression>> arguments;
     while (!Check(TokenType::RParen) && !IsAtEnd()) {
         std::unique_ptr<Expression> argument = ParseExpression();
@@ -1930,7 +1991,11 @@ std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
             }
         } else {
             end = argument->Range().end;
+            const bool expanded = Check(TokenType::Ellipsis);
+            if (expanded) end = Advance().range.end;
             arguments.push_back(std::move(argument));
+            if (expandedArguments != nullptr)
+                expandedArguments->push_back(expanded);
         }
 
         if (Match(TokenType::Comma)) {

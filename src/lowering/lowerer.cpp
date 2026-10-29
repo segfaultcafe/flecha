@@ -22,8 +22,10 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
         if (declaration->Kind() != core::AstNodeKind::FunctionDeclaration) {
             continue;
         }
-        functions.push_back(LowerFunction(
-            static_cast<const core::FunctionDeclaration&>(*declaration)));
+        const auto& function =
+            static_cast<const core::FunctionDeclaration&>(*declaration);
+        if (!function.HasVariadicPack())
+            functions.push_back(LowerFunction(function));
     }
     for (const auto& function : semanticModel.GeneratedFunctions())
         functions.push_back(LowerFunction(*function));
@@ -590,8 +592,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     function =
                         static_cast<const semantic::FunctionSymbol*>(symbol);
             }
+            if (const auto* forwarded = _semanticModel->ForwardedFunction(call))
+                function = forwarded;
             const auto& signature =
-                _semanticModel->TypeOf(call.Callee()).Signature();
+                function != nullptr
+                    ? function->Signature()
+                    : _semanticModel->TypeOf(call.Callee()).Signature();
             if (function &&
                 (function->BuiltIn() == semantic::BuiltInFunction::New ||
                  function->BuiltIn() == semantic::BuiltInFunction::StorageNew))

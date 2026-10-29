@@ -1182,15 +1182,19 @@ class BorrowChecker final {
                     symbol && symbol->Kind() == SymbolKind::Function
                         ? static_cast<const FunctionSymbol*>(symbol)
                         : nullptr;
+                const FunctionSymbol* effective =
+                    _model.ForwardedFunction(call);
+                if (effective == nullptr) effective = function;
                 const SemanticType callable = _model.TypeOf(call.Callee());
                 const CallableSignature* signature =
-                    callable.Kind() == SemanticTypeKind::Function
+                    effective != nullptr ? &effective->Signature()
+                    : callable.Kind() == SemanticTypeKind::Function
                         ? &callable.Signature()
                         : nullptr;
                 const bool allocation =
-                    function &&
-                    (function->BuiltIn() == BuiltInFunction::New ||
-                     function->BuiltIn() == BuiltInFunction::StorageNew);
+                    effective &&
+                    (effective->BuiltIn() == BuiltInFunction::New ||
+                     effective->BuiltIn() == BuiltInFunction::StorageNew);
                 const State skipped = allocation ? *_state : State{};
                 const std::vector<Loan> previousLoans = _temporaries;
                 if (function == nullptr) {
@@ -1205,22 +1209,34 @@ class BorrowChecker final {
                     Value value = Evaluate(*arguments[index]);
                     const bool destroys =
                         signature != nullptr &&
-                        ((index == 0 && function != nullptr &&
-                          (function->BuiltIn() == BuiltInFunction::Free ||
-                           function->BuiltIn() ==
+                        ((index == 0 && effective != nullptr &&
+                          (effective->BuiltIn() == BuiltInFunction::Free ||
+                           effective->BuiltIn() ==
                                BuiltInFunction::StorageFree ||
-                           function->BuiltIn() == BuiltInFunction::Take)) ||
+                           effective->BuiltIn() == BuiltInFunction::Take)) ||
                          (index < signature->parameterContracts.size() &&
                           signature->parameterContracts[index] ==
                               core::OwnershipContract::Own));
                     if (destroys)
                         CheckAccess(Place(*arguments[index]), true,
                                     arguments[index]->Range());
-                    if (signature != nullptr &&
-                        std::find(signature->borrowSourceIndices.begin(),
-                                  signature->borrowSourceIndices.end(),
-                                  index) !=
-                            signature->borrowSourceIndices.end())
+                    const bool fixedBorrowSource =
+                        function != nullptr
+                            ? std::find(function->BorrowSourceIndices().begin(),
+                                        function->BorrowSourceIndices().end(),
+                                        index) !=
+                                  function->BorrowSourceIndices().end()
+                            : signature != nullptr &&
+                                  std::find(
+                                      signature->borrowSourceIndices.begin(),
+                                      signature->borrowSourceIndices.end(),
+                                      index) !=
+                                      signature->borrowSourceIndices.end();
+                    const bool packBorrowSource =
+                        function != nullptr &&
+                        function->BorrowsVariadicPack() &&
+                        index >= function->ParameterTypes().size();
+                    if (fixedBorrowSource || packBorrowSource)
                         AddBorrowSource(borrowSource, value);
                     if (signature != nullptr &&
                         index < signature->parameters.size() &&
@@ -1233,8 +1249,14 @@ class BorrowChecker final {
                 }
                 _temporaries = previousLoans;
                 if (allocation) Merge(*_state, skipped);
+                const bool hasBorrowSource =
+                    function != nullptr
+                        ? !function->BorrowSourceIndices().empty() ||
+                              function->BorrowsVariadicPack()
+                        : signature != nullptr &&
+                              !signature->borrowSourceIndices.empty();
                 if (signature != nullptr && CanCarryBorrow(signature->result) &&
-                    !signature->borrowSourceIndices.empty()) {
+                    hasBorrowSource) {
                     std::size_t resultIndex = 0;
                     return BorrowResult(
                         signature->result, borrowSource, expression.Range(),

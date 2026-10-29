@@ -118,6 +118,18 @@ TEST(TokenizerTests, RecognizesBorrowResultArrow) {
     EXPECT_EQ(tokens[3].type, TokenType::EOF_TOKEN);
 }
 
+TEST(TokenizerTests, RecognizesVariadicEllipsisWithoutChangingMemberDots) {
+    const std::vector<Token> tokens = Tokenize("values... object.member");
+
+    ASSERT_EQ(tokens.size(), 6);
+    EXPECT_EQ(tokens[0].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[1].type, TokenType::Ellipsis);
+    EXPECT_EQ(tokens[1].value, "...");
+    EXPECT_EQ(tokens[2].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[3].type, TokenType::Dot);
+    EXPECT_EQ(tokens[4].type, TokenType::Identifier);
+}
+
 TEST(TokenizerTests, RecognizesTextualLogicalOperators) {
     std::vector<Token> tokens = Tokenize("true and false or true");
 

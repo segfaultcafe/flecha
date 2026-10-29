@@ -91,7 +91,8 @@ class FunctionSymbol final : public Symbol {
                    const EnumType* enumOwner = nullptr,
                    std::vector<std::size_t> borrowSourceIndices = {},
                    std::vector<core::OwnershipContract> parameterContracts = {},
-                   const core::FunctionDeclaration* declaration = nullptr)
+                   const core::FunctionDeclaration* declaration = nullptr,
+                   bool borrowsVariadicPack = false)
         : FunctionSymbol(std::move(name),
                          std::make_shared<const CallableSignature>(
                              CallableSignature{returnType,
@@ -102,7 +103,7 @@ class FunctionSymbol final : public Symbol {
                                                isUnsafe}),
                          declarationRange, builtIn, owner, isPrivate,
                          hasReceiver, isExtern, std::move(linkName), enumOwner,
-                         declaration) {}
+                         declaration, borrowsVariadicPack) {}
 
     FunctionSymbol(std::string name,
                    std::shared_ptr<const CallableSignature> signature,
@@ -112,7 +113,8 @@ class FunctionSymbol final : public Symbol {
                    bool hasReceiver = false, bool isExtern = false,
                    std::string linkName = {},
                    const EnumType* enumOwner = nullptr,
-                   const core::FunctionDeclaration* declaration = nullptr)
+                   const core::FunctionDeclaration* declaration = nullptr,
+                   bool borrowsVariadicPack = false)
         : Symbol(SymbolKind::Function, std::move(name), SemanticType(signature),
                  declarationRange, false),
           _signature(std::move(signature)),
@@ -123,6 +125,7 @@ class FunctionSymbol final : public Symbol {
           _hasReceiver(hasReceiver),
           _isExtern(isExtern),
           _declaration(declaration),
+          _borrowsVariadicPack(borrowsVariadicPack),
           _linkName(linkName.empty() ? Name() : std::move(linkName)) {}
 
     [[nodiscard]] SemanticType ReturnType() const { return _signature->result; }
@@ -154,6 +157,9 @@ class FunctionSymbol final : public Symbol {
     [[nodiscard]] const core::FunctionDeclaration* Declaration() const {
         return _declaration;
     }
+    [[nodiscard]] bool BorrowsVariadicPack() const {
+        return _borrowsVariadicPack;
+    }
 
    private:
     std::shared_ptr<const CallableSignature> _signature;
@@ -164,6 +170,7 @@ class FunctionSymbol final : public Symbol {
     bool _hasReceiver;
     bool _isExtern;
     const core::FunctionDeclaration* _declaration;
+    bool _borrowsVariadicPack;
     std::string _linkName;
 };
 

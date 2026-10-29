@@ -71,7 +71,9 @@ class Parser {
     bool ParseBorrowSources(
         const std::vector<std::unique_ptr<Parameter>>& parameters,
         std::vector<std::string>& sources,
-        std::vector<source::SourceRange>& ranges);
+        std::vector<source::SourceRange>& ranges,
+        const std::string* variadicPackName = nullptr,
+        bool* borrowsVariadicPack = nullptr);
     std::unique_ptr<TypeNode> ParseType(bool allowOwn = false,
                                         bool allowLend = false,
                                         bool allowTupleOwners = false);
@@ -106,7 +108,7 @@ class Parser {
     std::unique_ptr<Expression> ParseUnaryExpression();
     std::unique_ptr<Expression> ParsePostfixExpression();
     std::vector<std::unique_ptr<Expression>> ParseArgumentList(
-        source::SourceLocation& end);
+        source::SourceLocation& end, std::vector<bool>* expandedArguments);
     std::unique_ptr<Expression> ParsePrimaryExpression();
     [[nodiscard]] bool IsAnonymousFunctionStart() const;
     [[nodiscard]] int BinaryPrecedence(TokenType type) const;

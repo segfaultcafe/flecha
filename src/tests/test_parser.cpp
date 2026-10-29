@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -141,6 +142,81 @@ TEST(ParserTests, ParsesTypedParametersAndBareReturn) {
     const ReturnStatement& returnStatement =
         static_cast<const ReturnStatement&>(*function.Body().Statements()[0]);
     EXPECT_EQ(returnStatement.Value(), nullptr);
+}
+
+TEST(ParserTests, ParsesVariadicPackExpansionAndPackBorrowSource) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        stringv forward(stringv fallback, values...)
+            <- (fallback, ...values) {
+            return target(fallback, values...);
+        }
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations().front());
+    ASSERT_EQ(function.Parameters().size(), 1);
+    EXPECT_TRUE(function.HasVariadicPack());
+    EXPECT_EQ(function.VariadicPackName(), "values");
+    ASSERT_EQ(function.BorrowSources().size(), 1);
+    EXPECT_EQ(function.BorrowSources()[0], "fallback");
+    EXPECT_TRUE(function.BorrowsVariadicPack());
+
+    const auto& returned = static_cast<const ReturnStatement&>(
+        *function.Body().Statements().front());
+    const auto& call = static_cast<const CallExpression&>(*returned.Value());
+    ASSERT_EQ(call.Arguments().size(), 2);
+    EXPECT_FALSE(call.ArgumentIsExpanded(0));
+    EXPECT_TRUE(call.ArgumentIsExpanded(1));
+}
+
+TEST(ParserTests, KeepsLegacyAllParameterBorrowShorthandWithoutAPack) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "stringv choose(stringv left, stringv right) <- ...args { "
+        "return left; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations().front());
+    ASSERT_EQ(function.BorrowSources().size(), 2);
+    EXPECT_EQ(function.BorrowSources()[0], "left");
+    EXPECT_EQ(function.BorrowSources()[1], "right");
+    EXPECT_FALSE(function.BorrowsVariadicPack());
+}
+
+TEST(ParserTests, PackNamedArgsTakesPrecedenceOverLegacyBorrowShorthand) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        stringv forward(stringv fixed, args...) <- ...args {
+            return target(fixed, args...);
+        }
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations().front());
+    EXPECT_TRUE(function.BorrowSources().empty());
+    EXPECT_TRUE(function.BorrowsVariadicPack());
+}
+
+TEST(ParserTests, RequiresVariadicPackToBeFinal) {
+    DiagnosticBag diagnostics;
+    (void)ParseSource(
+        "void invalid(values..., i32 later) { stdout(values...); }",
+        diagnostics);
+
+    ASSERT_TRUE(diagnostics.HasErrors());
+    EXPECT_TRUE(std::any_of(
+        diagnostics.Diagnostics().begin(), diagnostics.Diagnostics().end(),
+        [](const Diagnostic& diagnostic) {
+            return diagnostic.code == DiagnosticCode::InvalidVariadic;
+        }));
 }
 
 TEST(ParserTests, ParsesNamedCallableSignatures) {
@@ -499,7 +575,7 @@ TEST(ParserTests, ExpandsAllArgumentBorrowResultSources) {
     EXPECT_EQ(function.BorrowSources()[1], "other");
 }
 
-TEST(ParserTests, RequiresArgsAfterBorrowSourceEllipsis) {
+TEST(ParserTests, RequiresArgsOrADeclaredPackAfterBorrowSourceEllipsis) {
     DiagnosticBag diagnostics;
     (void)ParseSource(
         "&const i32 invalid(&const i32 value) <- ...values { return value; }",
@@ -508,7 +584,7 @@ TEST(ParserTests, RequiresArgsAfterBorrowSourceEllipsis) {
     EXPECT_TRUE(diagnostics.HasErrors());
     ASSERT_FALSE(diagnostics.Diagnostics().empty());
     EXPECT_EQ(diagnostics.Diagnostics().front().code,
-              DiagnosticCode::UnexpectedToken);
+              DiagnosticCode::InvalidBorrowContract);
 }
 
 TEST(ParserTests, RequiresBorrowSourceAfterLeftArrow) {

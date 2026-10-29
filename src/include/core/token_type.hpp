@@ -69,6 +69,7 @@ enum class TokenType {
     RCurly,
     Comma,
     Dot,
+    Ellipsis,
     Arrow,
     LeftArrow,
     Scope,

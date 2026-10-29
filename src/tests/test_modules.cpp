@@ -101,6 +101,17 @@ TEST_F(ModuleTests, ComposesLogicalModulesAcrossArbitraryFilenames) {
               std::string::npos);
 }
 
+TEST_F(ModuleTests, ExportsVariadicForwardingFunctionsAcrossModules) {
+    Write("output.fl", R"(module output;
+        export void print(values...) { stdout(values...); }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::output;
+        i32 main() { output::print("answer: ", 42); return 0; }
+    )");
+
+    EXPECT_EQ(Check(), "");
+}
+
 TEST_F(ModuleTests, GivesAnonymousFunctionsUniqueNamesAcrossSourceUnits) {
     Write("first_piece.fl", R"(module shared;
         func Reader() => (i32);
