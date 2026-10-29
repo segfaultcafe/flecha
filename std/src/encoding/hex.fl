@@ -52,7 +52,7 @@ export (string, error) encode_bytes([]const u8 source) {
 }
 
 // Encodes arbitrary borrowed bytes as owned lowercase hexadecimal bytes.
-export (own []u8, error) encode_btb([]const u8 source) {
+export (own []u8, error) encode_byte_to_byte([]const u8 source) {
     return encode_to_bytes(source.cast<stringv>);
 }
 
@@ -77,7 +77,7 @@ export (string, error) encode_upper_bytes([]const u8 source) {
 }
 
 // Encodes arbitrary borrowed bytes as owned uppercase hexadecimal bytes.
-export (own []u8, error) encode_upper_btb([]const u8 source) {
+export (own []u8, error) encode_upper_byte_to_byte([]const u8 source) {
     return encode_upper_to_bytes(source.cast<stringv>);
 }
 
@@ -102,7 +102,7 @@ export (string, error) decode_from_bytes([]const u8 source) {
 }
 
 // Decodes borrowed hexadecimal bytes into owned binary bytes.
-export (own []u8, error) decode_btb([]const u8 source) {
+export (own []u8, error) decode_byte_to_byte([]const u8 source) {
     return decode_to_bytes(source.cast<stringv>);
 }
 

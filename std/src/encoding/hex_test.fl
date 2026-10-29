@@ -117,30 +117,30 @@ test string_encode_and_decode_round_trip(&testing::UnitTest t) {
 
 test byte_adapters_preserve_binary_data(&testing::UnitTest t) {
     [4]u8 source = [0, 10, 171, 255];
-    encoded, encodeError := hex::encode_btb(source[:]);
-    upper, upperError := hex::encode_upper_btb(source[:]);
+    encoded, encodeError := hex::encode_byte_to_byte(source[:]);
+    upper, upperError := hex::encode_upper_byte_to_byte(source[:]);
 
     asserts::is_true(
         t,
         encodeError == none and encoded.len() == 8 and
             encoded[0] == 48 and encoded[3] == 97 and
             encoded[4] == 97 and encoded[7] == 102,
-        "encode_btb returns owned lowercase hexadecimal bytes"
+        "encode_byte_to_byte returns owned lowercase hexadecimal bytes"
     );
     asserts::is_true(
         t,
         upperError == none and upper.len() == 8 and
             upper[3] == 65 and upper[4] == 65 and upper[7] == 70,
-        "encode_upper_btb returns owned uppercase hexadecimal bytes"
+        "encode_upper_byte_to_byte returns owned uppercase hexadecimal bytes"
     );
 
-    decoded, decodeError := hex::decode_btb(encoded[:]);
+    decoded, decodeError := hex::decode_byte_to_byte(encoded[:]);
     asserts::is_true(
         t,
         decodeError == none and decoded.len() == 4 and
             decoded[0] == 0 and decoded[1] == 10 and
             decoded[2] == 171 and decoded[3] == 255,
-        "decode_btb restores arbitrary binary bytes"
+        "decode_byte_to_byte restores arbitrary binary bytes"
     );
 
     decodedString, stringError := hex::decode_from_bytes(encoded[:]);
