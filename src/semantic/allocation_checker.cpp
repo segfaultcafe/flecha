@@ -34,6 +34,12 @@ bool ExposesHeapHandle(SemanticType type) {
     return false;
 }
 
+bool IsManagedSliceAllocation(SemanticType type) {
+    return type.Kind() == SemanticTypeKind::Tuple &&
+           !type.Elements().empty() &&
+           type.Elements()[0].Kind() == SemanticTypeKind::OwnedSlice;
+}
+
 enum class ValueKind {
     Unknown,
     Null,
@@ -168,7 +174,11 @@ class AllocationChecker final {
                                 const core::AnonymousFunctionExpression&>(
                                 *node.memoryExpression)
                                 .Function());
-                    if (node.allocation || heapIndex || heapSlice ||
+                    const bool trackedAllocation =
+                        node.allocation &&
+                        !IsManagedSliceAllocation(
+                            _model.TypeOf(*node.allocation));
+                    if (trackedAllocation || heapIndex || heapSlice ||
                         resourceClosure ||
                         (callee &&
                          (callee->BuiltIn() == BuiltInFunction::Free ||
@@ -226,8 +236,12 @@ class AllocationChecker final {
         }
         SeedFields(function, state);
         SeedCaptures(function, state);
-        for (auto& outcome : Run(function, std::move(state), arguments))
-            _nullShapes[{&function, mask}].push_back(std::move(outcome.result));
+        auto& shapes = _nullShapes[{&function, mask}];
+        for (auto& outcome : Run(function, std::move(state), arguments)) {
+            if (std::find(shapes.begin(), shapes.end(), outcome.result) ==
+                shapes.end())
+                shapes.push_back(std::move(outcome.result));
+        }
     }
 
     void Verify(const core::FunctionDeclaration& function) {
@@ -252,8 +266,12 @@ class AllocationChecker final {
         SeedCaptures(function, state);
 
         auto outcomes = Run(function, std::move(state), arguments);
-        for (auto& outcome : outcomes)
-            _returnShapes[&function].push_back(std::move(outcome.result));
+        auto& shapes = _returnShapes[&function];
+        for (auto& outcome : outcomes) {
+            if (std::find(shapes.begin(), shapes.end(), outcome.result) ==
+                shapes.end())
+                shapes.push_back(std::move(outcome.result));
+        }
         _verifying.erase(&function);
         _verified.insert(&function);
     }
@@ -560,9 +578,7 @@ class AllocationChecker final {
 
     bool Allocate(State& state, const core::CallExpression& call) {
         const SemanticType resultType = _model.TypeOf(call);
-        if (resultType.Kind() == SemanticTypeKind::Tuple &&
-            !resultType.Elements().empty() &&
-            resultType.Elements()[0].Kind() == SemanticTypeKind::OwnedSlice) {
+        if (IsManagedSliceAllocation(resultType)) {
             Value value{ValueKind::Aggregate};
             value.elements = {{}, {ValueKind::Null}};
             Put(state, call, std::move(value));
