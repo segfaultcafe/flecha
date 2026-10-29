@@ -5,7 +5,7 @@ MathError named_error(bool fail) {
 }
 
 error MathError { DivisionByZero, Overflow, }
-error InputError { DivisionByZero, InvalidDigit }
+error ParseError { DivisionByZero, InvalidDigit }
 
 error generic_error(MathError value) { return value; }
 error echo_error(error value) { return value; }
@@ -25,28 +25,28 @@ bool strict_error(error a, error b) { return a === b; }
 i32 error_comparison_test() {
     MathError named = named_error(true);
     error general = generic_error(named);
-    error other = InputError.InvalidDigit;
+    error other = ParseError.InvalidDigit;
     if named == none or general == none { return 1; }
     if general != named or named != general { return 2; }
     if general != MathError.Overflow { return 3; }
-    if same_error(MathError.DivisionByZero, InputError.DivisionByZero) { return 4; }
+    if same_error(MathError.DivisionByZero, ParseError.DivisionByZero) { return 4; }
     if !same_error(MathError.DivisionByZero, MathError.DivisionByZero) { return 5; }
     if same_error(MathError.DivisionByZero, MathError.Overflow) { return 6; }
     if strict_error(general, other) or !strict_error(general, general) { return 7; }
-    if MathError.DivisionByZero === InputError.DivisionByZero { return 8; }
+    if MathError.DivisionByZero === ParseError.DivisionByZero { return 8; }
     if general === named or named === general { return 9; }
     if !(general !== named) { return 10; }
     named = none;
     general = named;
-    InputError input = none;
+    ParseError input = none;
     other = input;
     if general != none or none != named or none != other { return 11; }
     if general != other or !same_error(named, input) { return 12; }
     if named === none or general === none or none === named { return 13; }
     if !(named !== none) or !(none !== general) { return 14; }
     if generic_error(named_error(false)) != none { return 15; }
-    general = echo_error(InputError.InvalidDigit);
-    if general != InputError.InvalidDigit { return 16; }
+    general = echo_error(ParseError.InvalidDigit);
+    if general != ParseError.InvalidDigit { return 16; }
     return 42;
 }
 
@@ -59,9 +59,9 @@ i32 error_tuple_test() {
     if value != 5 or any != none { return 3; }
     MathError first, second = (MathError.Overflow, none);
     if first != MathError.Overflow or second != none { return 4; }
-    (error, error) pair = (first, InputError.InvalidDigit);
+    (error, error) pair = (first, ParseError.InvalidDigit);
     a, b := pair;
-    if a != first or b != InputError.InvalidDigit { return 5; }
+    if a != first or b != ParseError.InvalidDigit { return 5; }
     (string, (error, i32)) owned = ("failure", (first, 42));
     text, nested := owned;
     failure, number := nested;
@@ -74,13 +74,13 @@ i32 error_tuple_test() {
 void set_error(&error target, error value) { *target = value; }
 
 i32 error_storage_test() {
-    [3]error values = [MathError.Overflow, InputError.InvalidDigit, none];
+    [3]error values = [MathError.Overflow, ParseError.InvalidDigit, none];
     {
         []error slice = values[:];
         set_error(&slice[0], none);
         slice[2] = MathError.DivisionByZero;
         if slice.front() != none or slice.back() != MathError.DivisionByZero { return 8; }
-        if slice[0] != none or slice[1] != InputError.InvalidDigit { return 1; }
+        if slice[0] != none or slice[1] != ParseError.InvalidDigit { return 1; }
     }
     if values[2] != MathError.DivisionByZero { return 2; }
     [2]MathError named = none;
@@ -89,7 +89,7 @@ i32 error_storage_test() {
         *item = MathError.Overflow;
     }
     if named[0] != none or named[1] != MathError.Overflow { return 3; }
-    error delayed;
+    error delayed = none;
     if values[0] == none { delayed = named[1]; }
     else { delayed = none; }
     if delayed != MathError.Overflow { return 4; }
@@ -100,9 +100,9 @@ i32 error_storage_test() {
     }
     unsafe {
         *error ptr = &raw delayed;
-        *ptr = InputError.InvalidDigit;
+        *ptr = ParseError.InvalidDigit;
     }
-    if delayed != InputError.InvalidDigit { return 6; }
+    if delayed != ParseError.InvalidDigit { return 6; }
     usize count = 0;
     for (i, value) := range values {
         if value != none { count = count + 1; }
@@ -131,7 +131,7 @@ i32 error_defer_test() {
     if captured != none { return 2; }
     i32 calls = 0;
     unsafe {
-        if effect(&raw calls) === InputError.InvalidDigit { return 3; }
+        if effect(&raw calls) === ParseError.InvalidDigit { return 3; }
         if effect(&raw calls) === none { return 4; }
         if none === effect(&raw calls) { return 5; }
     }

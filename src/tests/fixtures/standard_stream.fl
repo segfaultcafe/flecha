@@ -2,6 +2,7 @@ module main;
 
 @imports
     :: lib::std::io::buffered
+    :: lib::std::fmt
     :: lib::std::io::stdio;
 
 i32 main() {
@@ -22,6 +23,9 @@ i32 main() {
         bufferedOutput.flush() != none or output.flush() != none {
         return 3;
     }
+    fmt::print("print ", 42, "|");
+    fmt::println("line|");
+    fmt::printf("formatted {} {{}}|", true);
 
     stderr("builtin error|");
     errorOutput := stdio::standard_error();
@@ -39,6 +43,9 @@ i32 main() {
         bufferedError.flush() != none or errorOutput.flush() != none {
         return 6;
     }
+    fmt::eprint("eprint ", 42, "|");
+    fmt::eprintln("eline|");
+    fmt::eprintf("eformatted {} {{}}|", false);
 
     return 42;
 }

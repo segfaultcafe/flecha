@@ -22,14 +22,18 @@ if(NOT runResult EQUAL 42)
     )
 endif()
 
-set(expectedOutput "builtin output|direct output|buffered|")
+set(expectedOutput
+    "builtin output|direct output|buffered|print 42|line|\nformatted true {}|"
+)
 if(NOT actualOutput STREQUAL expectedOutput)
     message(FATAL_ERROR
         "standard output mismatch\nexpected: ${expectedOutput}\nactual: ${actualOutput}"
     )
 endif()
 
-set(expectedError "builtin error|direct error|buffered|")
+set(expectedError
+    "builtin error|direct error|buffered|eprint 42|eline|\neformatted false {}|"
+)
 if(NOT actualError STREQUAL expectedError)
     message(FATAL_ERROR
         "standard error mismatch\nexpected: ${expectedError}\nactual: ${actualError}"

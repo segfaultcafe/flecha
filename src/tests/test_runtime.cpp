@@ -50,6 +50,63 @@ TEST(RuntimeStandardStreamTests, ValidatesBuffersAndCountOutputs) {
               FLECHA_RUNTIME_IO_INVALID_OPTIONS);
 }
 
+TEST(RuntimeStandardInputTests, ParsesCompleteTypedValues) {
+    std::int32_t signedValue = 0;
+    EXPECT_EQ(flecha_runtime_v1_input_parse_i32(&signedValue, "+42", 3),
+              FLECHA_RUNTIME_INPUT_OK);
+    EXPECT_EQ(signedValue, 42);
+    EXPECT_EQ(flecha_runtime_v1_input_parse_i32(&signedValue, "-7", 2),
+              FLECHA_RUNTIME_INPUT_OK);
+    EXPECT_EQ(signedValue, -7);
+
+    std::uint8_t byte = 0;
+    EXPECT_EQ(flecha_runtime_v1_input_parse_u8(&byte, "255", 3),
+              FLECHA_RUNTIME_INPUT_OK);
+    EXPECT_EQ(byte, 255);
+    EXPECT_EQ(flecha_runtime_v1_input_parse_u8(&byte, "256", 3),
+              FLECHA_RUNTIME_INPUT_OUT_OF_RANGE);
+    EXPECT_EQ(byte, 0);
+
+    double floating = 0;
+    EXPECT_EQ(flecha_runtime_v1_input_parse_f64(&floating, "1.25", 4),
+              FLECHA_RUNTIME_INPUT_OK);
+    EXPECT_DOUBLE_EQ(floating, 1.25);
+
+    std::uint8_t boolean = 0;
+    EXPECT_EQ(flecha_runtime_v1_input_parse_bool(&boolean, "true", 4),
+              FLECHA_RUNTIME_INPUT_OK);
+    EXPECT_EQ(boolean, 1);
+    EXPECT_EQ(flecha_runtime_v1_input_parse_bool(&boolean, "false", 5),
+              FLECHA_RUNTIME_INPUT_OK);
+    EXPECT_EQ(boolean, 0);
+
+    std::uint8_t character = 0;
+    EXPECT_EQ(flecha_runtime_v1_input_parse_char(&character, "x", 1),
+              FLECHA_RUNTIME_INPUT_OK);
+    EXPECT_EQ(character, static_cast<std::uint8_t>('x'));
+}
+
+TEST(RuntimeStandardInputTests, RejectsPartialAndInvalidConversions) {
+    std::int32_t integer = 99;
+    EXPECT_EQ(flecha_runtime_v1_input_parse_i32(&integer, "42x", 3),
+              FLECHA_RUNTIME_INPUT_INVALID_SYNTAX);
+    EXPECT_EQ(integer, 0);
+    EXPECT_EQ(flecha_runtime_v1_input_parse_i32(&integer, " 42", 3),
+              FLECHA_RUNTIME_INPUT_INVALID_SYNTAX);
+    EXPECT_EQ(flecha_runtime_v1_input_parse_i32(&integer, nullptr, 0),
+              FLECHA_RUNTIME_INPUT_INVALID_SYNTAX);
+
+    std::uint8_t boolean = 1;
+    EXPECT_EQ(flecha_runtime_v1_input_parse_bool(&boolean, "TRUE", 4),
+              FLECHA_RUNTIME_INPUT_INVALID_SYNTAX);
+    EXPECT_EQ(boolean, 0);
+
+    std::uint8_t character = 1;
+    EXPECT_EQ(flecha_runtime_v1_input_parse_char(&character, "xy", 2),
+              FLECHA_RUNTIME_INPUT_INVALID_SYNTAX);
+    EXPECT_EQ(character, 0);
+}
+
 TEST(RuntimeStringViewTests, RejectsInvalidBounds) {
     const char text[] = "flecha";
     EXPECT_DEATH((void)flecha_runtime_v1_string_view_at(text, 6, 6),
@@ -90,8 +147,8 @@ TEST(RuntimeStringTests, TryFromBytesCopiesEmbeddedNulls) {
     const std::array<std::uint8_t, 4> bytes{'A', 0, 'B', '\n'};
     FlechaRuntimeString output{};
 
-    EXPECT_EQ(flecha_runtime_v1_string_try_from_bytes(
-                  &output, bytes.data(), bytes.size()),
+    EXPECT_EQ(flecha_runtime_v1_string_try_from_bytes(&output, bytes.data(),
+                                                      bytes.size()),
               FLECHA_RUNTIME_STRING_OK);
     ASSERT_NE(output.data, nullptr);
     EXPECT_EQ(output.length, bytes.size());
@@ -134,6 +191,67 @@ TEST(RuntimeStringTests, ConcatenatesIndependentOwnedStorage) {
     flecha_runtime_v1_string_destroy(joined.data);
 }
 
+TEST(RuntimeFormatBufferTests, AppendsTypedValuesAndTransfersOwnership) {
+    FlechaRuntimeFormatBuffer buffer{};
+    flecha_runtime_v1_format_buffer_init(&buffer);
+    flecha_runtime_v1_format_buffer_append_string_view(&buffer, "value=", 6);
+    flecha_runtime_v1_format_buffer_append_i32(&buffer, -42);
+    flecha_runtime_v1_format_buffer_append_char(&buffer, '|');
+    flecha_runtime_v1_format_buffer_append_bool(&buffer, 1);
+    flecha_runtime_v1_format_buffer_append_char(&buffer, '|');
+    flecha_runtime_v1_format_buffer_append_f64(&buffer, 1.5);
+
+    FlechaRuntimeString output{};
+    EXPECT_EQ(flecha_runtime_v1_format_buffer_finish(&buffer, &output),
+              FLECHA_RUNTIME_STRING_OK);
+    ASSERT_NE(output.data, nullptr);
+    EXPECT_EQ(std::string(output.data, output.length), "value=-42|true|1.5");
+    EXPECT_EQ(output.data[output.length], '\0');
+    EXPECT_EQ(buffer.data, nullptr);
+    EXPECT_EQ(buffer.length, 0u);
+    EXPECT_EQ(buffer.capacity, 0u);
+    EXPECT_EQ(buffer.status, FLECHA_RUNTIME_STRING_OK);
+    flecha_runtime_v1_string_destroy(output.data);
+}
+
+TEST(RuntimeFormatBufferTests, FinishesEmptyOutputWithoutAllocation) {
+    FlechaRuntimeFormatBuffer buffer{};
+    flecha_runtime_v1_format_buffer_init(&buffer);
+    flecha_runtime_v1_format_buffer_append_string_view(&buffer, nullptr, 0);
+
+    FlechaRuntimeString output{reinterpret_cast<char*>(1), 1, 1};
+    EXPECT_EQ(flecha_runtime_v1_format_buffer_finish(&buffer, &output),
+              FLECHA_RUNTIME_STRING_OK);
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.length, 0u);
+    EXPECT_EQ(output.capacity, 0u);
+}
+
+TEST(RuntimeFormatBufferTests, PreservesFailureAndSupportsAFreshRetry) {
+    FlechaRuntimeFormatBuffer buffer{};
+    flecha_runtime_v1_format_buffer_init(&buffer);
+    flecha_runtime_v1_format_buffer_append_string_view(&buffer, "partial", 7);
+    ASSERT_NE(buffer.data, nullptr);
+    buffer.status = FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;
+    flecha_runtime_v1_format_buffer_append_string_view(&buffer, "ignored", 7);
+
+    FlechaRuntimeString output{reinterpret_cast<char*>(1), 1, 1};
+    EXPECT_EQ(flecha_runtime_v1_format_buffer_finish(&buffer, &output),
+              FLECHA_RUNTIME_STRING_OUT_OF_MEMORY);
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.length, 0u);
+    EXPECT_EQ(output.capacity, 0u);
+    EXPECT_EQ(buffer.data, nullptr);
+    EXPECT_EQ(buffer.status, FLECHA_RUNTIME_STRING_OK);
+
+    flecha_runtime_v1_format_buffer_append_string_view(&buffer, "retry", 5);
+    EXPECT_EQ(flecha_runtime_v1_format_buffer_finish(&buffer, &output),
+              FLECHA_RUNTIME_STRING_OK);
+    ASSERT_NE(output.data, nullptr);
+    EXPECT_EQ(std::string(output.data, output.length), "retry");
+    flecha_runtime_v1_string_destroy(output.data);
+}
+
 TEST(RuntimeFloatTextTests, ParsesCompleteLocaleIndependentValues) {
     float narrow = 0;
     double wide = 0;
@@ -163,9 +281,9 @@ TEST(RuntimeFloatTextTests, FormatsShortestRoundTrippableValues) {
     std::array<std::uint8_t, 64> text{};
     std::size_t written = 99;
 
-    EXPECT_EQ(flecha_runtime_v1_format_f64(text.data(), text.size(), 1.25,
-                                           &written),
-              FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_EQ(
+        flecha_runtime_v1_format_f64(text.data(), text.size(), 1.25, &written),
+        FLECHA_RUNTIME_FLOAT_TEXT_OK);
     EXPECT_EQ(std::string(reinterpret_cast<char*>(text.data()), written),
               "1.25");
 
@@ -175,11 +293,10 @@ TEST(RuntimeFloatTextTests, FormatsShortestRoundTrippableValues) {
               FLECHA_RUNTIME_FLOAT_TEXT_OK);
     EXPECT_EQ(parsed, 1.25);
 
-    EXPECT_EQ(flecha_runtime_v1_format_f64(text.data(), text.size(), -0.0,
-                                           &written),
-              FLECHA_RUNTIME_FLOAT_TEXT_OK);
-    EXPECT_EQ(std::string(reinterpret_cast<char*>(text.data()), written),
-              "-0");
+    EXPECT_EQ(
+        flecha_runtime_v1_format_f64(text.data(), text.size(), -0.0, &written),
+        FLECHA_RUNTIME_FLOAT_TEXT_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(text.data()), written), "-0");
     EXPECT_EQ(flecha_runtime_v1_parse_f64(
                   &parsed, reinterpret_cast<char*>(text.data()), written),
               FLECHA_RUNTIME_FLOAT_TEXT_OK);
@@ -203,9 +320,9 @@ TEST(RuntimeFloatTextTests, PreservesDestinationWhenSpaceIsInsufficient) {
     std::array<std::uint8_t, 3> text{'k', 'e', 'p'};
     std::size_t written = 99;
 
-    EXPECT_EQ(flecha_runtime_v1_format_f64(text.data(), text.size(), 12.5,
-                                           &written),
-              FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE);
+    EXPECT_EQ(
+        flecha_runtime_v1_format_f64(text.data(), text.size(), 12.5, &written),
+        FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE);
     EXPECT_EQ(written, 0);
     EXPECT_EQ(text, (std::array<std::uint8_t, 3>{'k', 'e', 'p'}));
 }

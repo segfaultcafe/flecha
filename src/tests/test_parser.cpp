@@ -891,6 +891,7 @@ TEST(ParserVariableDeclarationTests, ParsesTypedInitializedVariables) {
     EXPECT_EQ(x.Name(), "x");
     ASSERT_NE(x.Initializer(), nullptr);
     EXPECT_EQ(x.Initializer()->Kind(), AstNodeKind::LiteralExpression);
+    EXPECT_FALSE(x.IsImplicitlyDefaulted());
 
     const VariableDeclarationStatement& y =
         static_cast<const VariableDeclarationStatement&>(
@@ -902,9 +903,10 @@ TEST(ParserVariableDeclarationTests, ParsesTypedInitializedVariables) {
     EXPECT_EQ(
         static_cast<const LiteralExpression&>(*y.Initializer()).LiteralType(),
         TokenType::False);
+    EXPECT_FALSE(y.IsImplicitlyDefaulted());
 }
 
-TEST(ParserVariableDeclarationTests, ParsesTypedDeclarationWithoutInitializer) {
+TEST(ParserVariableDeclarationTests, DefaultsTypedDeclarationToNone) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
         ParseSource("void check() { i32 value; }", diagnostics);
@@ -919,7 +921,12 @@ TEST(ParserVariableDeclarationTests, ParsesTypedDeclarationWithoutInitializer) {
     ASSERT_NE(variable.ExplicitType(), nullptr);
     EXPECT_EQ(variable.ExplicitType()->Type(), PrimitiveType::I32);
     EXPECT_EQ(variable.Name(), "value");
-    EXPECT_EQ(variable.Initializer(), nullptr);
+    ASSERT_NE(variable.Initializer(), nullptr);
+    ASSERT_EQ(variable.Initializer()->Kind(), AstNodeKind::LiteralExpression);
+    EXPECT_EQ(static_cast<const LiteralExpression&>(*variable.Initializer())
+                  .LiteralType(),
+              TokenType::None);
+    EXPECT_TRUE(variable.IsImplicitlyDefaulted());
 }
 
 TEST(ParserVariableDeclarationTests, ParsesInferredVariables) {

@@ -110,16 +110,22 @@ TEST(SemanticTests, AcceptsTrailingDefaultArgumentsAtDirectCallsAndMethods) {
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
-TEST(SemanticTests, AcceptsVariadicForwardingToOutputBuiltIns) {
+TEST(SemanticTests, AcceptsVariadicForwardingToFormattingBuiltIns) {
     Analysis analysis = Analyze(R"(
         void print(values...) { stdout(values...); }
         void printf(stringv format, values...) {
             stdoutf(format, values...);
         }
+        (string, error) sprintf(stringv format, values...) {
+            return __sprintf(format, values...);
+        }
         i32 main() {
             print();
             print("answer: ", 42, true);
-            printf("%s %d", "value", 42);
+            printf("{} {}", "value", 42);
+            text, err := sprintf("{} {}", "value", 42);
+            if err != none { return 1; }
+            stdout(text);
             return 0;
         }
     )");
@@ -1242,13 +1248,11 @@ TEST(SemanticCallableTests, PropagatesBorrowOriginsThroughOwnCaptures) {
         nullptr);
 }
 
-TEST(SemanticCallableTests, ChecksCopyCaptureSourceInitialization) {
-    EXPECT_NE(FindErrorDiagnostic(
-                  Analyze("func Mapper(i32) => (i32); i32 main() { i32 x; "
-                          "Mapper f = [copy x](v) => { return v + x; }; return "
-                          "0; }"),
-                  DiagnosticCode::UninitializedVariable),
-              nullptr);
+TEST(SemanticCallableTests, CopyCapturesDefaultedTypedSources) {
+    EXPECT_FALSE(
+        Analyze("func Mapper(i32) => (i32); i32 main() { i32 x; "
+                "Mapper f = [copy x](v) => { return v + x; }; return f(0); }")
+            .diagnostics.HasErrors());
 }
 
 TEST(SemanticCallableTests, ResolvesCheckedReferenceCaptures) {
@@ -1526,7 +1530,7 @@ TEST(SemanticMatchTests, DiagnosesPatternsExhaustivenessAndArmTypes) {
     }
 }
 
-TEST(SemanticMatchTests, MergesDefiniteAssignmentAcrossEveryArm) {
+TEST(SemanticMatchTests, PreservesDefaultValuesAcrossEveryArm) {
     Analysis valid = Analyze(R"(
         enum State { Idle, Running, }
         i32 f(State state) {
@@ -1551,8 +1555,7 @@ TEST(SemanticMatchTests, MergesDefiniteAssignmentAcrossEveryArm) {
             return result;
         }
     )");
-    EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::UninitializedVariable),
-              nullptr);
+    EXPECT_FALSE(invalid.diagnostics.HasErrors());
 }
 
 TEST(SemanticMatchTests, ExpandsGenericFunctionsContainingMatches) {
@@ -1738,8 +1741,8 @@ TEST(SemanticBuiltInTests, ProvidesTypedStandardOutput) {
         static_cast<const CallExpression&>(errorStatement.Value());
     const NameExpression& errorName =
         static_cast<const NameExpression&>(errorCall.Callee());
-    const FunctionSymbol* errorSymbol = static_cast<const FunctionSymbol*>(
-        analysis.model.SymbolFor(errorName));
+    const FunctionSymbol* errorSymbol =
+        static_cast<const FunctionSymbol*>(analysis.model.SymbolFor(errorName));
     ASSERT_NE(errorSymbol, nullptr);
     EXPECT_EQ(errorSymbol->BuiltIn(), BuiltInFunction::Stderr);
 
@@ -1750,9 +1753,8 @@ TEST(SemanticBuiltInTests, ProvidesTypedStandardOutput) {
         static_cast<const CallExpression&>(errorLineStatement.Value());
     const NameExpression& errorLineName =
         static_cast<const NameExpression&>(errorLineCall.Callee());
-    const FunctionSymbol* errorLineSymbol =
-        static_cast<const FunctionSymbol*>(
-            analysis.model.SymbolFor(errorLineName));
+    const FunctionSymbol* errorLineSymbol = static_cast<const FunctionSymbol*>(
+        analysis.model.SymbolFor(errorLineName));
     ASSERT_NE(errorLineSymbol, nullptr);
     EXPECT_EQ(errorLineSymbol->BuiltIn(), BuiltInFunction::StderrLine);
 }
@@ -1820,51 +1822,107 @@ TEST(SemanticBuiltInTests, ValidatesStandardOutputAndErrorArguments) {
               nullptr);
 }
 
-TEST(SemanticBuiltInTests, ValidatesFormattedStandardOutput) {
-    Analysis unsupported = Analyze(
-        "void Main() { stdoutf(\"expected: %d, text: %s%c\", 42, "
-        "\"flecha\", '!', true); }");
-    EXPECT_NE(FindDiagnostic(unsupported, DiagnosticCode::InvalidFormat),
-              nullptr);
+TEST(SemanticBuiltInTests, ValidatesFormattedStandardOutputAndError) {
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidFormat),
               "FLECHA-S0060");
 
     Analysis supported = Analyze(
-        "void Main() { stdoutf(\"expected: %d, text: %s%s, ok: %b/%b, "
-        "percent: %%\", 42, \"flecha\", '!', true, 1 as u8); }");
+        "void Main() { stdoutf(\"expected: {}, text: {}{}, ok: {}/{}, "
+        "braces: {{}}\", 42, \"flecha\", '!', true, 1 as u8); "
+        "stderrf(\"error: {}\", \"detail\"); }");
     EXPECT_FALSE(supported.diagnostics.HasErrors());
 
     Analysis missingFormat = Analyze("void Main() { stdoutf(); }");
     EXPECT_NE(FindDiagnostic(missingFormat, DiagnosticCode::WrongArgumentCount),
               nullptr);
 
+    Analysis missingErrorFormat = Analyze("void Main() { stderrf(); }");
+    EXPECT_NE(
+        FindDiagnostic(missingErrorFormat, DiagnosticCode::WrongArgumentCount),
+        nullptr);
+
     Analysis nonLiteral = Analyze(
-        "void Main() { stringv format = \"%d\"; stdoutf(format, 42); }");
+        "void Main() { stringv format = \"{}\"; stdoutf(format, 42); }");
     EXPECT_NE(FindDiagnostic(nonLiteral, DiagnosticCode::InvalidFormat),
               nullptr);
 
-    Analysis incomplete = Analyze("void Main() { stdoutf(\"value: %\", 1); }");
+    Analysis incomplete = Analyze("void Main() { stdoutf(\"value: {\", 1); }");
     EXPECT_NE(FindDiagnostic(incomplete, DiagnosticCode::InvalidFormat),
               nullptr);
 
-    Analysis wrongCount = Analyze("void Main() { stdoutf(\"%d %s\", 1); }");
+    Analysis unmatchedClose = Analyze("void Main() { stderrf(\"value: }\"); }");
+    EXPECT_NE(FindDiagnostic(unmatchedClose, DiagnosticCode::InvalidFormat),
+              nullptr);
+
+    Analysis wrongCount = Analyze("void Main() { stdoutf(\"{} {}\", 1); }");
     EXPECT_NE(FindDiagnostic(wrongCount, DiagnosticCode::WrongArgumentCount),
               nullptr);
 
-    Analysis wrongDecimal = Analyze("void Main() { stdoutf(\"%d\", false); }");
-    EXPECT_NE(
-        FindDiagnostic(wrongDecimal, DiagnosticCode::IncompatibleArgument),
-        nullptr);
-
-    Analysis wrongString = Analyze("void Main() { stdoutf(\"%s\", 42); }");
-    EXPECT_NE(FindDiagnostic(wrongString, DiagnosticCode::IncompatibleArgument),
+    Analysis wrongType = Analyze("void Main() { stderrf(\"{}\", none); }");
+    EXPECT_NE(FindDiagnostic(wrongType, DiagnosticCode::IncompatibleArgument),
               nullptr);
 
-    Analysis wrongBoolean =
-        Analyze("void Main() { stdoutf(\"%b\", 1 as u16); }");
+    Analysis stringSupported = Analyze(
+        "void Main() { text, err := __sprintf(\"{} {{}} {}\", 42, true); "
+        "if err == none { stdout(text); } }");
+    EXPECT_FALSE(stringSupported.diagnostics.HasErrors());
+
+    Analysis stringNonLiteral = Analyze(
+        "void Main() { stringv format = \"{}\"; "
+        "text, err := __sprintf(format, 42); }");
+    EXPECT_NE(FindDiagnostic(stringNonLiteral, DiagnosticCode::InvalidFormat),
+              nullptr);
+
+    Analysis stringWrongCount =
+        Analyze("void Main() { text, err := __sprintf(\"{} {}\", 1); }");
     EXPECT_NE(
-        FindDiagnostic(wrongBoolean, DiagnosticCode::IncompatibleArgument),
+        FindDiagnostic(stringWrongCount, DiagnosticCode::WrongArgumentCount),
         nullptr);
+}
+
+TEST(SemanticBuiltInTests, InfersStandardInputConversionFromDestination) {
+    Analysis supported = Analyze(R"(
+        void Main() {
+            i8 a; i16 b; i32 c; i64 d; isize e;
+            u8 f; u16 g; u32 h; u64 i; usize j;
+            f32 k; f64 l; bool m; char n; string text = none;
+            error first = stdin("number: ", &c);
+            error second = stdinln("text", &text);
+            stdin(&a); stdin(&b); stdin(&d); stdin(&e);
+            stdin(&f); stdin(&g); stdin(&h); stdin(&i); stdin(&j);
+            stdin(&k); stdin(&l); stdin(&m); stdin(&n);
+        }
+    )");
+    EXPECT_FALSE(supported.diagnostics.HasErrors());
+}
+
+TEST(SemanticBuiltInTests, RejectsInvalidStandardInputDestinations) {
+    EXPECT_NE(FindDiagnostic(Analyze("void Main() { stdin(); }"),
+                             DiagnosticCode::WrongArgumentCount),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(Analyze("void Main() { stdin(42); }"),
+                             DiagnosticCode::IncompatibleArgument),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("void Main() { const i32 value; stdin(&value); }"),
+                  DiagnosticCode::IncompatibleArgument),
+              nullptr);
+    EXPECT_NE(
+        FindDiagnostic(Analyze("structure Value { i32 field; }; void Main() { "
+                               "Value value; stdin(&value); }"),
+                       DiagnosticCode::IncompatibleArgument),
+        nullptr);
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("void Main() { i32 value; stdin(null, &value); }"),
+                  DiagnosticCode::IncompatibleArgument),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("void Main() { string value; other := &value; }"),
+                  DiagnosticCode::InvalidReference),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(Analyze("void Main() { stdin(&missing); }"),
+                             DiagnosticCode::UnknownName),
+              nullptr);
 }
 
 TEST(SemanticStringViewTests, TypesEveryStringViewOperation) {
@@ -2110,35 +2168,30 @@ TEST(SemanticDeclarationTests, SupportsExplicitInferenceAndLaterAssignments) {
         SemanticTypeKind::I32);
 }
 
-TEST(SemanticDeclarationTests, SupportsDefiniteAssignmentForValueTypes) {
+TEST(SemanticDeclarationTests, DefaultsExplicitValueTypesToNone) {
     Analysis valid = Analyze(
-        "i32 Main(bool choose) { i32 value; string text; "
-        "if choose { value = 40; text = \"left\"; } "
-        "else { value = 42; text = \"right\"; } "
+        "i32 Main(bool choose) { i32 value; string text = none; "
+        "if choose { value = 40; text = \"left\"; } else { text = \"right\"; } "
         "stdoutln(text); return value; }");
     EXPECT_FALSE(valid.diagnostics.HasErrors());
 
     Analysis directRead = Analyze("i32 Main() { i32 value; return value; }");
-    EXPECT_NE(FindDiagnostic(directRead, DiagnosticCode::UninitializedVariable),
-              nullptr);
+    EXPECT_FALSE(directRead.diagnostics.HasErrors());
 
     Analysis incompleteBranch = Analyze(
         "i32 Main(bool choose) { i32 value; if choose { value = 42; } "
         "return value; }");
-    EXPECT_NE(
-        FindDiagnostic(incompleteBranch, DiagnosticCode::UninitializedVariable),
-        nullptr);
+    EXPECT_FALSE(incompleteBranch.diagnostics.HasErrors());
 
     Analysis loopOnly = Analyze(
         "i32 Main(bool run) { i32 value; while run { value = 42; break; } "
         "return value; }");
-    EXPECT_NE(FindDiagnostic(loopOnly, DiagnosticCode::UninitializedVariable),
-              nullptr);
+    EXPECT_FALSE(loopOnly.diagnostics.HasErrors());
 
     Analysis everyType = Analyze(
         "void Main() { i8 a; i16 b; i32 c; i64 d; isize e; "
         "u8 f; u16 g; u32 h; u64 i; usize j; f32 k; f64 l; "
-        "bool m; char n; string o; "
+        "bool m; char n; string o = none; "
         "a = 1 as i8; b = 1 as i16; c = 1; d = 1 as i64; "
         "e = 1 as isize; f = 1 as u8; g = 1 as u16; h = 1 as u32; "
         "i = 1 as u64; j = 1 as usize; k = 1.0 as f32; l = 1.0; "
@@ -2146,11 +2199,65 @@ TEST(SemanticDeclarationTests, SupportsDefiniteAssignmentForValueTypes) {
     EXPECT_FALSE(everyType.diagnostics.HasErrors());
 }
 
-TEST(SemanticDeclarationTests, BorrowedViewsRequireImmediateInitialization) {
-    Analysis analysis = Analyze("void Main() { stringv view; }");
-    EXPECT_NE(
-        FindDiagnostic(analysis, DiagnosticCode::BorrowRequiresInitializer),
-        nullptr);
+TEST(SemanticDeclarationTests,
+     RequiresOmittedInitializersToBeTriviallyZeroable) {
+    const Analysis valid = Analyze(R"(
+        structure Pair { i32 left; i32 right; };
+        enum Zero { default Empty = 0, One = 1, }
+        unsafe void valid() {
+            i32 scalar;
+            *u8 pointer;
+            [2]bool flags;
+            (i32, bool) pair;
+            Pair composite;
+            Zero enumeration;
+        }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    const std::string declarations = R"(
+        error Fault { Bad }
+        enum Offset { default One = 1, Two = 2, }
+        structure Nontrivial { i32 value; };
+        Nontrivial Nontrivial::zero() override {
+            return build Nontrivial { self.value = 1; };
+        }
+    )";
+    for (const std::string& local :
+         {"string value;", "stringv value;", "error value;", "Fault value;",
+          "Offset value;", "Nontrivial value;"}) {
+        SCOPED_TRACE(local);
+        const Analysis invalid =
+            Analyze(declarations + "void invalid() { " + local + " }");
+        const Diagnostic* diagnostic =
+            FindDiagnostic(invalid, DiagnosticCode::InvalidVariableType);
+        ASSERT_NE(diagnostic, nullptr);
+        EXPECT_NE(diagnostic->message.find("trivially zeroable"),
+                  std::string::npos);
+    }
+
+    const Analysis explicitDefaults = Analyze(declarations + R"(
+        void explicitDefaults() {
+            string text = none;
+            error any = none;
+            Fault fault = none;
+            Offset offset = none;
+            Nontrivial composite = none;
+        }
+    )");
+    EXPECT_FALSE(explicitDefaults.diagnostics.HasErrors());
+
+    EXPECT_FALSE(Analyze(R"(
+        T defaultValue<T>() { T value; return value; }
+        i32 use() { return defaultValue<i32>(); }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+        T defaultValue<T>() { T value; return value; }
+        string use() { return defaultValue<string>(); }
+    )"),
+                             DiagnosticCode::InvalidVariableType),
+              nullptr);
 }
 
 TEST(SemanticInferenceTests, InfersEverySupportedLiteralCategory) {
@@ -2518,7 +2625,7 @@ TEST(SemanticControlFlowAssignmentTests, IntersectsOnlyFallthroughBranches) {
         "else if b { x = 42; } else { x = 40; } return x; }",
         "i32 main(bool a, bool b) { i32 x; if a { if b { x = 42; } "
         "else { return 0; } } else { x = 40; } return x; }",
-        "i32 main(bool c) { string x; if c { x = \"yes\"; } "
+        "i32 main(bool c) { string x = none; if c { x = \"yes\"; } "
         "else { x = \"no\"; } stdoutln(x); return 42; }",
         "i32 main(bool c) { i32 x; if c { return 1; } else { return 2; } "
         "return x; }",
@@ -2529,7 +2636,7 @@ TEST(SemanticControlFlowAssignmentTests, IntersectsOnlyFallthroughBranches) {
     }
 }
 
-TEST(SemanticControlFlowAssignmentTests, RejectsIncompleteBranchJoins) {
+TEST(SemanticControlFlowAssignmentTests, DefaultsSurviveIncompleteBranches) {
     const std::vector<std::string> programs = {
         "i32 main(bool c) { i32 x; if c { x = 42; } else {} return x; }",
         "i32 main(bool c) { i32 x; if c { x = 42; } return x; }",
@@ -2537,16 +2644,14 @@ TEST(SemanticControlFlowAssignmentTests, RejectsIncompleteBranchJoins) {
         "else if b { return 0; } return x; }",
         "i32 main(bool a, bool b) { i32 x; if a { if b { x = 42; } } "
         "else { x = 40; } return x; }",
-        "i32 main(bool c) { string x; if c { x = \"yes\"; } stdoutln(x); "
+        "i32 main(bool c) { string x = none; if c { x = \"yes\"; } "
+        "stdoutln(x); "
         "return 0; }",
         "i32 main(bool c) { i32 x; if c {} also c { x = 42; } return x; }",
     };
     for (const std::string& program : programs) {
         SCOPED_TRACE(program);
-        Analysis analysis = Analyze(program);
-        ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-        EXPECT_EQ(analysis.diagnostics.Diagnostics()[0].code,
-                  DiagnosticCode::UninitializedVariable);
+        EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
     }
 }
 
@@ -2573,7 +2678,7 @@ TEST(SemanticControlFlowAssignmentTests, ModelsBreakProceedAndAlsoEdges) {
 }
 
 TEST(SemanticControlFlowAssignmentTests,
-     RejectsLoopOnlyAndUnreachableAssignments) {
+     DefaultsSurviveLoopOnlyAndUnreachableAssignments) {
     const std::vector<std::string> programs = {
         "i32 main(bool c) { i32 x; while c { x = 42; break; } return x; }",
         "i32 main(bool c) { i32 x; while c { x = 42; proceed; } return x; }",
@@ -2589,10 +2694,7 @@ TEST(SemanticControlFlowAssignmentTests,
     };
     for (const std::string& program : programs) {
         SCOPED_TRACE(program);
-        Analysis analysis = Analyze(program);
-        ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-        EXPECT_EQ(analysis.diagnostics.Diagnostics()[0].code,
-                  DiagnosticCode::UninitializedVariable);
+        EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
     }
 }
 
@@ -2611,8 +2713,8 @@ TEST(SemanticControlFlowAssignmentTests, FollowsForwardBackwardAndNestedJumps) {
         "}",
         "void main(bool c) { while c { i32 x; if c { jumpto end; } "
         "else { x = 42; } stdoutln(x); #end break; } }",
-        "void main(bool c) { while c { jumpto position; string x; "
-        "#position x = \"ready\"; stdoutln(x); break; } }",
+        "void main(bool c) { while c { jumpto position; i32 x; "
+        "#position x = 42; stdoutln(x); break; } }",
     };
     for (const std::string& program : programs) {
         SCOPED_TRACE(program);
@@ -2622,14 +2724,8 @@ TEST(SemanticControlFlowAssignmentTests, FollowsForwardBackwardAndNestedJumps) {
 
 TEST(SemanticControlFlowAssignmentTests,
      RejectsBypassedDeclarationsAndAssignments) {
-    const std::vector<std::string> programs = {
+    const std::vector<std::string> defaulted = {
         "void main(bool c) { i32 x; while c { jumpto end; x = 42; "
-        "#end stdoutln(x); break; } }",
-        "void main(bool c) { while c { jumpto end; x := 42; "
-        "#end stdoutln(x); break; } }",
-        "void main(bool c) { while c { jumpto end; string x = \"ready\"; "
-        "#end stdoutln(x); break; } }",
-        "void main(bool c) { while c { jumpto end; stringv x = \"ready\"; "
         "#end stdoutln(x); break; } }",
         "void main(bool c) { i32 x; while c { if c { jumpto end; } "
         "x = 42; #end stdoutln(x); break; } }",
@@ -2640,13 +2736,26 @@ TEST(SemanticControlFlowAssignmentTests,
         "void main(bool c) { i32 x; while c { jumpto inner; "
         "#outer stdoutln(x); break; while c { #inner jumpto outer; x = 42; } } "
         "}",
-        "void main(bool c) { while c { jumpto inner; while c { x := 42; "
-        "#inner stdoutln(x); break; } } }",
         "void main(bool c) { while c { #again i32 x; if c { x = 42; jumpto "
         "again; } "
         "stdoutln(x); break; } }",
     };
-    for (const std::string& program : programs) {
+    for (const std::string& program : defaulted) {
+        SCOPED_TRACE(program);
+        EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
+    }
+
+    const std::vector<std::string> bypassed = {
+        "void main(bool c) { while c { jumpto end; x := 42; "
+        "#end stdoutln(x); break; } }",
+        "void main(bool c) { while c { jumpto end; string x = \"ready\"; "
+        "#end stdoutln(x); break; } }",
+        "void main(bool c) { while c { jumpto end; stringv x = \"ready\"; "
+        "#end stdoutln(x); break; } }",
+        "void main(bool c) { while c { jumpto inner; while c { x := 42; "
+        "#inner stdoutln(x); break; } } }",
+    };
+    for (const std::string& program : bypassed) {
         SCOPED_TRACE(program);
         Analysis analysis = Analyze(program);
         ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
@@ -2669,9 +2778,7 @@ TEST(SemanticControlFlowAssignmentTests, DistinguishesShadowedSymbols) {
     Analysis invalid = Analyze(
         "i32 main(bool c) { i32 x; if c { x := 42; stdoutln(x); } "
         "else { x = 40; } return x; }");
-    ASSERT_EQ(invalid.diagnostics.Diagnostics().size(), 1);
-    EXPECT_EQ(invalid.diagnostics.Diagnostics()[0].code,
-              DiagnosticCode::UninitializedVariable);
+    EXPECT_FALSE(invalid.diagnostics.HasErrors());
     Analysis valid = Analyze(
         "i32 main(bool c) { x := 42; if c { i32 x; x = 1; stdoutln(x); } "
         "return x; }");
@@ -2698,7 +2805,7 @@ TEST(SemanticControlFlowAssignmentTests,
         SCOPED_TRACE(program);
         EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
     }
-    const std::vector<std::string> invalid = {
+    const std::vector<std::string> defaulted = {
         "bool main(bool c) { bool x; c and (x = true); return x; }",
         "bool main(bool c) { bool x; c or (x = true); return x; }",
         "void main(bool c) { bool x; if c and (x = c) {} else { stdoutln(x); } "
@@ -2707,16 +2814,13 @@ TEST(SemanticControlFlowAssignmentTests,
         "i32 main() { i32 x; return x + (x = 21); }",
         "i32 main() { i32 x; x = x + 1; return x; }",
     };
-    for (const std::string& program : invalid) {
+    for (const std::string& program : defaulted) {
         SCOPED_TRACE(program);
-        Analysis analysis = Analyze(program);
-        ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-        EXPECT_EQ(analysis.diagnostics.Diagnostics()[0].code,
-                  DiagnosticCode::UninitializedVariable);
+        EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
     }
 }
 
-TEST(SemanticControlFlowAssignmentTests, ReportsExactReachableReadRangeOnce) {
+TEST(SemanticControlFlowAssignmentTests, AllowsReadsOfDefaultedValuesAtJumps) {
     const std::string source =
         "void main(bool c) {\n"
         "    i32 value;\n"
@@ -2728,15 +2832,7 @@ TEST(SemanticControlFlowAssignmentTests, ReportsExactReachableReadRangeOnce) {
         "    }\n"
         "}";
     Analysis analysis = Analyze(source);
-    ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-    const Diagnostic& diagnostic = analysis.diagnostics.Diagnostics()[0];
-    EXPECT_EQ(DiagnosticCodeName(diagnostic.code), "FLECHA-S0021");
-    EXPECT_EQ(diagnostic.range.start.offset, source.find("value);"));
-    EXPECT_EQ(diagnostic.range.start.line, 6);
-    EXPECT_EQ(diagnostic.range.start.column, 24);
-    EXPECT_EQ(diagnostic.range.end.line, 6);
-    EXPECT_EQ(diagnostic.range.end.column, 29);
-    EXPECT_EQ(diagnostic.range.Length(), 5);
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
 TEST(SemanticTypeTests, NormalizesAliasesAndRetainsEachQualifierLayer) {
@@ -2817,20 +2913,12 @@ TEST(SemanticConstTests, RejectsWritesToLocalsAndParametersAtExactNameRange) {
     }
 }
 
-TEST(SemanticConstTests, RequiresInitializerAndPreservesBorrowRestrictions) {
+TEST(SemanticConstTests, DefaultsTypedDeclarationsAndPreservesBorrows) {
     Analysis analysis = Analyze("void f() { const i32 value; }");
-    ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-    const Diagnostic& diagnostic = analysis.diagnostics.Diagnostics()[0];
-    EXPECT_EQ(DiagnosticCodeName(diagnostic.code), "FLECHA-S0023");
-    EXPECT_EQ(diagnostic.range.start.offset, 21);
-    EXPECT_EQ(diagnostic.range.Length(), 5);
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
     Analysis borrowed = Analyze("void f() { const stringv value; }");
-    EXPECT_NE(
-        FindDiagnostic(borrowed, DiagnosticCode::BorrowRequiresInitializer),
-        nullptr);
-    EXPECT_NE(
-        FindDiagnostic(borrowed, DiagnosticCode::ConstRequiresInitializer),
-        nullptr);
+    EXPECT_NE(FindDiagnostic(borrowed, DiagnosticCode::InvalidVariableType),
+              nullptr);
     Analysis escaped = Analyze(
         "stringv f() { const string value = \"hi\"; return value.view(); }");
     EXPECT_NE(FindDiagnostic(escaped, DiagnosticCode::BorrowEscapesOwner),
@@ -2953,28 +3041,27 @@ TEST(SemanticUnsafeTests, SeparatesBindingConstnessFromTargetConstness) {
     Analysis deep = Analyze("unsafe void f(**i32 p) { **const i32 q = p; }");
     EXPECT_NE(FindDiagnostic(deep, DiagnosticCode::IncompatibleType), nullptr);
     Analysis missing = Analyze("void f() { constptr i32 p; }");
-    EXPECT_NE(FindDiagnostic(missing, DiagnosticCode::ConstRequiresInitializer),
-              nullptr);
+    EXPECT_FALSE(missing.diagnostics.HasErrors());
 }
 
 TEST(SemanticUnsafeTests, ChecksInitializedAddressesAndIndirectStoreTargets) {
-    const std::vector<std::string> invalid{
+    const std::vector<std::string> defaulted{
         "unsafe void f() { i32 x; *i32 p = &raw x; }",
         "unsafe void f() { *i32 p; *p = 42; }",
         "unsafe void f() { *i32 p; *p = 42; *p; }",
         "i32 init(*i32 p) { return 42; } unsafe void f() { *i32 p; *p = init(p "
         "= none); }",
         "void f() { i32 x; unsafe { i32 y = x; } }",
-        "void f(bool c) { i32 x; if c { unsafe { x = 1; } } stdoutln(x); }",
-        "void f() { while true { jumpto use; unsafe { *i32 p = none; #use *p = "
-        "1; } } }"};
-    for (const std::string& source : invalid) {
+        "void f(bool c) { i32 x; if c { unsafe { x = 1; } } stdoutln(x); }"};
+    for (const std::string& source : defaulted) {
         SCOPED_TRACE(source);
-        Analysis analysis = Analyze(source);
-        EXPECT_NE(
-            FindDiagnostic(analysis, DiagnosticCode::UninitializedVariable),
-            nullptr);
+        EXPECT_FALSE(Analyze(source).diagnostics.HasErrors());
     }
+    Analysis bypassed = Analyze(
+        "void f() { while true { jumpto use; unsafe { *i32 p = none; #use *p "
+        "= 1; } } }");
+    EXPECT_NE(FindDiagnostic(bypassed, DiagnosticCode::UninitializedVariable),
+              nullptr);
     Analysis valid = Analyze(
         "i32 f() { i32 x; unsafe { (x) = 42; } { i32 x = 0; x = 1; } return x; "
         "}");
@@ -3121,10 +3208,9 @@ TEST(SemanticReferenceTests,
 TEST(SemanticReferenceTests,
      RequiresInitializedNonNullStorageAndCompatibleTypes) {
     const std::vector<std::pair<std::string, DiagnosticCode>> cases{
-        {"&i32 r;", DiagnosticCode::ReferenceRequiresInitializer},
+        {"&i32 r;", DiagnosticCode::IncompatibleType},
         {"&i32 r = none;", DiagnosticCode::IncompatibleType},
         {"&i32 r = null;", DiagnosticCode::IncompatibleType},
-        {"i32 x; r := &x;", DiagnosticCode::UninitializedVariable},
         {"r := &42;", DiagnosticCode::InvalidReference},
         {"i32 x = 1; u32 y = 2; r := &x; r = &y;",
          DiagnosticCode::IncompatibleType},
@@ -3543,9 +3629,8 @@ TEST(SemanticReferenceTests,
     Analysis analysis = Analyze(
         "void bad() { &i32 missing; }"
         "i32 moved() { i32 x = 1; r := &x; next := r; return *r; }");
-    EXPECT_NE(
-        FindDiagnostic(analysis, DiagnosticCode::ReferenceRequiresInitializer),
-        nullptr);
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::IncompatibleType),
+              nullptr);
     EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::MovedReference),
               nullptr);
 }
@@ -3596,9 +3681,8 @@ TEST(SemanticArrayTests,
          {"[2]u8 a; a[0] = 1;", "[2]u8 a; a.len();", "[2]u8 a; r := &a[0];",
           "[2]u8 a; copy := a;", "[2]u8 a; while true { a[0] = 1; break; }"}) {
         SCOPED_TRACE(body);
-        EXPECT_NE(FindDiagnostic(Analyze("void f() { " + body + " }"),
-                                 DiagnosticCode::UninitializedVariable),
-                  nullptr);
+        EXPECT_FALSE(
+            Analyze("void f() { " + body + " }").diagnostics.HasErrors());
     }
 }
 
@@ -3739,9 +3823,8 @@ TEST(SemanticArrayTests,
                                "&a[0]; while flag { *r = 3; a[1] = 4; } }"),
                        DiagnosticCode::BorrowConflict),
         nullptr);
-    EXPECT_NE(FindDiagnostic(Analyze("void f() { i32 x; a := [x; 0]; }"),
-                             DiagnosticCode::UninitializedVariable),
-              nullptr);
+    EXPECT_FALSE(
+        Analyze("void f() { i32 x; a := [x; 0]; }").diagnostics.HasErrors());
     EXPECT_NE(
         FindDiagnostic(
             Analyze("void f() { i32 x = 1; r := &x; moved := r; a := [*r]; }"),
@@ -3850,9 +3933,6 @@ TEST(SemanticAnalyzerTests, ChecksLoopScopeInitializationAndUpdateEdges) {
     for (const std::string& source :
          {"void f() { loop i := 0; i < 2; i++ {} i++; }",
           "void f() { a := [1]; for (i, v) := range a {} v++; }",
-          "void f() { i32 x; loop i := 0; i < 2; i++ { x = 2; } x++; }",
-          "void f() { i32 x; loop i := 0; i < 2; x++ { proceed; } }",
-          "void f() { [2]u8 a; for i := range a {} }",
           "void f() { loop i := 0; 1; i++ {} }",
           "void f() { loop i := 0; i < 2; local++ { local := 1; } }"}) {
         SCOPED_TRACE(source);
@@ -3861,13 +3941,20 @@ TEST(SemanticAnalyzerTests, ChecksLoopScopeInitializationAndUpdateEdges) {
     EXPECT_FALSE(
         Analyze("void f() { i32 x; loop i := 0; i < 2; x++ { x = 1; i++; } }")
             .diagnostics.HasErrors());
+    for (const std::string& source :
+         {"void f() { i32 x; loop i := 0; i < 2; i++ { x = 2; } x++; }",
+          "void f() { i32 x; loop i := 0; i < 2; x++ { proceed; } }",
+          "void f() { [2]u8 a; for i := range a {} }"}) {
+        SCOPED_TRACE(source);
+        EXPECT_FALSE(Analyze(source).diagnostics.HasErrors());
+    }
 }
 
 TEST(SemanticAnalyzerTests, IncrementHonorsPlacesConstBorrowingAndUnsafe) {
     for (const std::string& source :
-         {"void f() { i32 x; x++; }", "void f() { const i32 x = 1; x++; }",
-          "void f() { (1 + 2)++; }", "void f() { [1, 2][0]++; }",
-          "void f() { f64 x = 1.0; x++; }", "void f() { bool x = false; x++; }",
+         {"void f() { const i32 x = 1; x++; }", "void f() { (1 + 2)++; }",
+          "void f() { [1, 2][0]++; }", "void f() { f64 x = 1.0; x++; }",
+          "void f() { bool x = false; x++; }",
           "void f() { *u8 p = none; p++; }", "void f(*u8 p) { (*p)++; }",
           "void f() { x := 1; r := &x; x++; *r = 2; }",
           "void f() { x := 1; &const i32 r = &x; (*r)++; }",
@@ -3878,6 +3965,7 @@ TEST(SemanticAnalyzerTests, IncrementHonorsPlacesConstBorrowingAndUnsafe) {
     EXPECT_FALSE(Analyze("void f() { x := 1; r := &x; (*r)++; unsafe { p := "
                          "&raw x; (*p)++; } }")
                      .diagnostics.HasErrors());
+    EXPECT_FALSE(Analyze("void f() { i32 x; x++; }").diagnostics.HasErrors());
 }
 
 TEST(SemanticAnalyzerTests, CompoundUpdatesHonorTypesPlacesAndInitialization) {
@@ -3886,15 +3974,15 @@ TEST(SemanticAnalyzerTests, CompoundUpdatesHonorTypesPlacesAndInitialization) {
                          "x *= 3.0; x /= 2.0; bool b = true; b ^= false; }")
                      .diagnostics.HasErrors());
 
-    for (const std::string& source :
-         {"void f() { i32 x; x--; }", "void f() { i32 x; x += 1; }",
-          "void f() { const i32 x = 1; x -= 1; }",
-          "void f() { f64 x = 1.0; x ^= 1.0; }",
-          "void f() { bool x = true; x += false; }",
-          "void f() { (1 + 2) *= 3; }"}) {
+    for (const std::string& source : {"void f() { const i32 x = 1; x -= 1; }",
+                                      "void f() { f64 x = 1.0; x ^= 1.0; }",
+                                      "void f() { bool x = true; x += false; }",
+                                      "void f() { (1 + 2) *= 3; }"}) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+    EXPECT_FALSE(
+        Analyze("void f() { i32 x; x--; x += 1; }").diagnostics.HasErrors());
 }
 
 TEST(SemanticAnalyzerTests, RangeCopiesRespectLoansAndIterationLifetimes) {
@@ -3984,7 +4072,6 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
           "unsafe void f(*[2]u8 p) { s := (*p)[:]; }",
           "void f() { a := [1]; s := a[:]; unsafe { p := &raw s; } }",
           "void f() { a := [1]; s := a[:]; unsafe { p := &raw s.front(); } }",
-          "void f() { [2]u8 a; s := a[:]; }",
           "void f() { a := [1]; s := a[:]; s.len() = 1; }",
           "void f() { a := [1]; s := a[:]; s.front(0); }",
           "void f() { a := [1]; s := a[:]; s == s; }",
@@ -3992,6 +4079,8 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+    EXPECT_FALSE(
+        Analyze("void f() { [2]u8 a; s := a[:]; }").diagnostics.HasErrors());
 }
 
 TEST(SemanticMemoryTests, RuntimeArrayOwnersPreserveLengthAndMoveOwnership) {
@@ -4127,11 +4216,13 @@ TEST(SemanticDeferTests, CapturesAtRegistrationAndChecksCallsNormally) {
           "void f() { defer missing(); }",
           "void g(i32 x) {} void f() { defer g(); }",
           "void g(i32 x) {} void f() { defer g(true); }",
-          "void g(i32 x) {} void f() { i32 x; defer g(x); x = 1; }",
           "unsafe void g() {} void f() { defer g(); }"}) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+    EXPECT_FALSE(Analyze("void g(i32 x) {} void f() { i32 x; defer g(x); x = "
+                         "1; }")
+                     .diagnostics.HasErrors());
     const Analysis invalid = Analyze("void f() { defer 42; }");
     const auto* diagnostic =
         FindDiagnostic(invalid, DiagnosticCode::InvalidDefer);
@@ -4269,7 +4360,7 @@ TEST(SemanticTupleTests, SupportsValuesReturnsParametersAndContextualElements) {
         (u8, (bool, string)) f(u8 n) { return (n, (true, "text")); }
         (u8, (bool, string)) pass((u8, (bool, string)) p) { return p; }
         i32 main() {
-            (u8, (bool, string)) t;
+            (u8, (bool, string)) t = none;
             t = pass(f(42));
             (n, nested) := t;
             (bool ok, string text) = nested;
@@ -4328,6 +4419,12 @@ TEST(SemanticTupleTests, ChecksArityTypesMutabilityAndUnsupportedElements) {
 TEST(SemanticTupleTests, PreservesInitializationAndSimultaneousBindingRules) {
     for (const std::string& source :
          {"void f() { i32 a; i32 b; (a, b) = (1, 2); stdoutln(a + b); }",
+          "void f() { i32 a; i32 b; (a, b) = (1, a); }",
+          "void f(bool c) { i32 a; i32 b; if c { (a, b) = (1, 2); } "
+          "stdoutln(a); }",
+          "void f() { i32 a; while true { jumpto use; (a, i32 b) = (1, 2); "
+          "#use stdoutln(a); break; } }",
+          "void f() { (i32, bool) t; (a, b) := t; }",
           "void f() { i32 a; (i32 b, i32 c) = (a = 1, a); stdoutln(a); }",
           "void f() { a := 1; b := 2; (a, b) = (b, a); }",
           "void f() { a := 1; { (a, b) := (a, 2); stdoutln(a); } }",
@@ -4344,13 +4441,7 @@ TEST(SemanticTupleTests, PreservesInitializationAndSimultaneousBindingRules) {
         EXPECT_FALSE(Analyze(source).diagnostics.HasErrors());
     }
     for (const std::string& source :
-         {"void f() { i32 a; i32 b; (a, b) = (1, a); }",
-          "void f() { (a, b) := (1, a); }",
-          "void f(bool c) { i32 a; i32 b; if c { (a, b) = (1, 2); } "
-          "stdoutln(a); }",
-          "void f() { i32 a; while true { jumpto use; (a, i32 b) = (1, 2); "
-          "#use stdoutln(a); break; } }",
-          "void f() { (i32, bool) t; (a, b) := t; }",
+         {"void f() { (a, b) := (1, a); }",
           "void f() { a, b := (1, 2); a, b := (3, 4); }",
           "void f() { err := 0; _, err := (1, 2); }",
           "void f() { const i32 err = 0; value, err := (1, 2); }",
@@ -4631,15 +4722,16 @@ TEST(SemanticErrorTests, IntegratesDefiniteAssignmentQualifiersAndBorrowing) {
     const std::string prefix = "error Fault { Bad } ";
     EXPECT_NE(
         FindDiagnostic(Analyze(prefix + "error f() { error e; return e; }"),
-                       DiagnosticCode::UninitializedVariable),
+                       DiagnosticCode::InvalidVariableType),
         nullptr);
     EXPECT_NE(
         FindDiagnostic(Analyze(prefix + "Fault f(bool flag) { Fault e; if flag "
                                         "{ e = Fault.Bad; } return e; }"),
-                       DiagnosticCode::UninitializedVariable),
+                       DiagnosticCode::InvalidVariableType),
         nullptr);
-    EXPECT_FALSE(Analyze(prefix + "error f(bool flag) { error e; if flag { e = "
-                                  "Fault.Bad; } else { e = none; } return e; }")
+    EXPECT_FALSE(Analyze(prefix +
+                         "error f(bool flag) { error e = none; if flag "
+                         "{ e = Fault.Bad; } return e; }")
                      .diagnostics.HasErrors());
     EXPECT_NE(FindDiagnostic(
                   Analyze(prefix +
@@ -5627,11 +5719,7 @@ TEST(SemanticAllocationTests,
         FindDiagnostic(Analyze(prefix + "unsafe void f() { new<Box>(none); }"),
                        DiagnosticCode::IncompatibleArgument),
         nullptr);
-    EXPECT_NE(FindDiagnostic(Analyze("unsafe i32 f() { i32 x; p, e := "
-                                     "new<i32>(x = 42); free(p); return x; }"),
-                             DiagnosticCode::UninitializedVariable),
-              nullptr);
-    EXPECT_FALSE(Analyze("unsafe i32 f() { i32 x = 0; p, e := new<i32>(x = "
+    EXPECT_FALSE(Analyze("unsafe i32 f() { i32 x; p, e := new<i32>(x = "
                          "42); free(p); return x; }")
                      .diagnostics.HasErrors());
     EXPECT_NE(
