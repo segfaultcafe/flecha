@@ -1,15 +1,91 @@
 #include "runtime/runtime_abi.h"
 
-#include <charconv>
+#include <bit>
+#include <cerrno>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <locale.h>
 #include <limits>
-#include <system_error>
+#include <type_traits>
 
 namespace {
+
+#ifdef _WIN32
+using FlechaNumericLocale = _locale_t;
+#else
+using FlechaNumericLocale = locale_t;
+#endif
+
+class NumericLocale final {
+   public:
+    NumericLocale() {
+#ifdef _WIN32
+        _value = _create_locale(LC_NUMERIC, "C");
+#else
+        _value = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+#endif
+        if (_value == nullptr) {
+            (void)std::fputs(
+                "Flecha runtime error: C numeric locale is unavailable\n",
+                stderr);
+            std::abort();
+        }
+    }
+
+    ~NumericLocale() {
+#ifdef _WIN32
+        _free_locale(_value);
+#else
+        freelocale(_value);
+#endif
+    }
+
+    NumericLocale(const NumericLocale&) = delete;
+    NumericLocale& operator=(const NumericLocale&) = delete;
+
+    FlechaNumericLocale Get() const { return _value; }
+
+   private:
+    FlechaNumericLocale _value = nullptr;
+};
+
+FlechaNumericLocale CLocale() {
+    static const NumericLocale locale;
+    return locale.Get();
+}
+
+template <typename T>
+T ParseWithCLocale(const char* text, char** end) {
+#ifdef _WIN32
+    if constexpr (std::is_same_v<T, float>)
+        return _strtof_l(text, end, CLocale());
+    else
+        return _strtod_l(text, end, CLocale());
+#else
+    if constexpr (std::is_same_v<T, float>)
+        return strtof_l(text, end, CLocale());
+    else
+        return strtod_l(text, end, CLocale());
+#endif
+}
+
+template <typename T>
+int FormatWithCLocale(char* destination, size_t capacity, int precision,
+                      T value) {
+#ifdef _WIN32
+    return _snprintf_l(destination, capacity, "%.*g", CLocale(), precision,
+                       static_cast<double>(value));
+#else
+    const locale_t previous = uselocale(CLocale());
+    const int length = std::snprintf(destination, capacity, "%.*g", precision,
+                                     static_cast<double>(value));
+    (void)uselocale(previous);
+    return length;
+#endif
+}
 
 bool TextEquals(const char* data, size_t length, const char* expected,
                 size_t expectedLength) {
@@ -72,20 +148,65 @@ int32_t ParseFloat(T* output, const char* data, size_t length) {
     const char* last = data + length;
     if (!ValidDecimal(first, last))
         return FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX;
-    if (*first == '+') {
-        ++first;
-    }
+    if (*first == '+') ++first;
 
-    T parsed = 0;
-    const auto result =
-        std::from_chars(first, last, parsed, std::chars_format::general);
-    if (result.ec == std::errc::result_out_of_range)
+    const size_t finiteLength = static_cast<size_t>(last - first);
+    char localText[128];
+    char* text = localText;
+    if (finiteLength >= sizeof(localText)) {
+        if (finiteLength == SIZE_MAX)
+            return FLECHA_RUNTIME_FLOAT_TEXT_OUT_OF_MEMORY;
+        text = static_cast<char*>(std::malloc(finiteLength + 1));
+        if (text == nullptr) return FLECHA_RUNTIME_FLOAT_TEXT_OUT_OF_MEMORY;
+    }
+    std::memcpy(text, first, finiteLength);
+    text[finiteLength] = '\0';
+
+    errno = 0;
+    char* end = nullptr;
+    const T parsed = ParseWithCLocale<T>(text, &end);
+    const int parseError = errno;
+    const bool complete = end == text + finiteLength;
+    if (text != localText) std::free(text);
+
+    if (!complete) return FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX;
+    if (parseError == ERANGE && (parsed == 0 || std::isinf(parsed)))
         return FLECHA_RUNTIME_FLOAT_TEXT_OUT_OF_RANGE;
-    if (result.ec == std::errc::invalid_argument || result.ptr != last)
-        return FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX;
 
     *output = parsed;
     return FLECHA_RUNTIME_FLOAT_TEXT_OK;
+}
+
+template <typename T>
+bool SameFloat(T left, T right) {
+    if constexpr (std::is_same_v<T, float>)
+        return std::bit_cast<uint32_t>(left) == std::bit_cast<uint32_t>(right);
+    else
+        return std::bit_cast<uint64_t>(left) == std::bit_cast<uint64_t>(right);
+}
+
+template <typename T>
+size_t FormatFinite(char* buffer, size_t capacity, T value) {
+    constexpr int MAX_DIGITS = std::numeric_limits<T>::max_digits10;
+
+    for (int precision = 1; precision <= MAX_DIGITS; ++precision) {
+        const int candidateLength =
+            FormatWithCLocale(buffer, capacity, precision, value);
+        if (candidateLength < 0 ||
+            static_cast<size_t>(candidateLength) >= capacity)
+            return 0;
+
+        errno = 0;
+        char* end = nullptr;
+        const T parsed = ParseWithCLocale<T>(buffer, &end);
+        const bool representableRange =
+            errno != ERANGE || (parsed != 0 && !std::isinf(parsed));
+        if (representableRange && end == buffer + candidateLength &&
+            SameFloat(parsed, value))
+            return static_cast<size_t>(candidateLength);
+    }
+
+    return 0;
 }
 
 template <typename T>
@@ -107,11 +228,9 @@ int32_t FormatFloat(uint8_t* destination, size_t capacity, T value,
             length = 3;
         }
     } else {
-        const auto result = std::to_chars(buffer, buffer + sizeof(buffer),
-                                          value, std::chars_format::general);
-        if (result.ec != std::errc{})
+        length = FormatFinite(buffer, sizeof(buffer), value);
+        if (length == 0)
             return FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE;
-        length = static_cast<size_t>(result.ptr - buffer);
     }
 
     if (capacity < length || (length != 0 && destination == nullptr))

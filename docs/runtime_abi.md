@@ -64,8 +64,9 @@ Formatting produces lowercase non-finite spellings and otherwise emits the
 shortest decimal representation that round trips to the same width. Negative
 zero retains its sign. The destination is unchanged when it is too small, and
 the written-length output is zero on every failure. Stable status values
-distinguish invalid syntax, an out-of-range value, and insufficient space.
-The safe `strings` wrappers map them to `ParseError` and `FormatError`.
+distinguish invalid syntax, an out-of-range value, insufficient space, and
+failure to allocate the parser's null-terminated input copy. The safe `strings`
+wrappers map them to `ParseError`, `FormatError`, and `AllocationError`.
 
 ## File reading
 

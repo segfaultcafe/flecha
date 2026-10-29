@@ -71,7 +71,8 @@ export (T, error) stringv_to_int<T: integer>(stringv value) {
 
 // Parses the complete locale-independent decimal text as a floating-point
 // value. Leading or trailing whitespace is rejected; overflow and underflow
-// report ParseError.Overflow.
+// report ParseError.Overflow. AllocationError.OutOfMemory reports failure to
+// create the runtime's null-terminated parse input copy.
 export (T, error) stringv_to_float<T: floating_point>(stringv value) {
     if value.len() == 0 {
         return (none, errors::ParseError.Empty);
@@ -104,6 +105,9 @@ export (T, error) stringv_to_float<T: floating_point>(stringv value) {
     if status == 2 {
         return (none, errors::ParseError.Overflow);
     }
+    if status == 4 {
+        return (none, AllocationError.OutOfMemory);
+    }
 
     return (none, errors::ParseError.InvalidSyntax);
 }
@@ -125,6 +129,9 @@ export (T, error) stringv_to_float<T: floating_point>(stringv value) {
     }
     if status == 2 {
         return (none, errors::ParseError.Overflow);
+    }
+    if status == 4 {
+        return (none, AllocationError.OutOfMemory);
     }
 
     return (none, errors::ParseError.InvalidSyntax);

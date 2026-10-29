@@ -26,6 +26,7 @@ typedef enum FlechaRuntimeFloatTextStatus {
     FLECHA_RUNTIME_FLOAT_TEXT_INVALID_SYNTAX = 1,
     FLECHA_RUNTIME_FLOAT_TEXT_OUT_OF_RANGE = 2,
     FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE = 3,
+    FLECHA_RUNTIME_FLOAT_TEXT_OUT_OF_MEMORY = 4,
 } FlechaRuntimeFloatTextStatus;
 
 typedef enum FlechaRuntimeReadFileStatus {

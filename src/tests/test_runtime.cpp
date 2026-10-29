@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -189,6 +190,46 @@ TEST(RuntimeFloatTextTests, PreservesDestinationWhenSpaceIsInsufficient) {
               FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE);
     EXPECT_EQ(written, 0);
     EXPECT_EQ(text, (std::array<std::uint8_t, 3>{'k', 'e', 'p'}));
+}
+
+TEST(RuntimeFloatTextTests, RoundTripsFiniteWidthBoundaries) {
+    const auto roundTrip32 = [](float value) {
+        std::array<std::uint8_t, 64> text{};
+        std::size_t written = 0;
+        EXPECT_EQ(flecha_runtime_v1_format_f32(text.data(), text.size(), value,
+                                               &written),
+                  FLECHA_RUNTIME_FLOAT_TEXT_OK);
+
+        float parsed = 0;
+        EXPECT_EQ(flecha_runtime_v1_parse_f32(
+                      &parsed, reinterpret_cast<char*>(text.data()), written),
+                  FLECHA_RUNTIME_FLOAT_TEXT_OK);
+        EXPECT_EQ(std::bit_cast<std::uint32_t>(parsed),
+                  std::bit_cast<std::uint32_t>(value));
+    };
+    const auto roundTrip64 = [](double value) {
+        std::array<std::uint8_t, 64> text{};
+        std::size_t written = 0;
+        EXPECT_EQ(flecha_runtime_v1_format_f64(text.data(), text.size(), value,
+                                               &written),
+                  FLECHA_RUNTIME_FLOAT_TEXT_OK);
+
+        double parsed = 0;
+        EXPECT_EQ(flecha_runtime_v1_parse_f64(
+                      &parsed, reinterpret_cast<char*>(text.data()), written),
+                  FLECHA_RUNTIME_FLOAT_TEXT_OK);
+        EXPECT_EQ(std::bit_cast<std::uint64_t>(parsed),
+                  std::bit_cast<std::uint64_t>(value));
+    };
+
+    roundTrip32(std::numeric_limits<float>::denorm_min());
+    roundTrip32(std::numeric_limits<float>::min());
+    roundTrip32(std::numeric_limits<float>::max());
+    roundTrip32(1.0F / 3.0F);
+    roundTrip64(std::numeric_limits<double>::denorm_min());
+    roundTrip64(std::numeric_limits<double>::min());
+    roundTrip64(std::numeric_limits<double>::max());
+    roundTrip64(1.0 / 3.0);
 }
 
 TEST(RuntimeFilesystemTests, ReadsEmptyAndBinaryFiles) {

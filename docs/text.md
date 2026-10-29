@@ -20,7 +20,9 @@ Parsing consumes the complete input and never skips whitespace. Integer
 conversion reports empty input, invalid syntax, and target-width overflow.
 Floating-point conversion accepts decimal notation plus the canonical
 non-finite spellings `nan`, `inf`, and `-inf`; overflow and underflow report
-`ParseError.Overflow`.
+`ParseError.Overflow`. The runtime copies the length-delimited input before
+calling the platform conversion boundary, so allocation failure is reported as
+`AllocationError.OutOfMemory`.
 
 `format_integer` and `format_float` write into caller-provided byte slices.
 Failure leaves the destination unchanged. Floating-point formatting is
