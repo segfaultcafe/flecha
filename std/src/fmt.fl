@@ -1,0 +1,29 @@
+module fmt;
+
+export void print(values...) {
+    stdout(values...);
+}
+
+export void println(values...) {
+    stdoutln(values...);
+}
+
+export void printf(stringv format, values...) {
+    stdoutf(format, values...);
+}
+
+export void eprint(values...) {
+    stderr(values...);
+}
+
+export void eprintln(values...) {
+    stderrln(values...);
+}
+
+export void eprintf(stringv format, values...) {
+    stderrf(format, values...);
+}
+
+export (string, error) sprintf(stringv format, values...) {
+    return __sprintf(format, values...);
+}

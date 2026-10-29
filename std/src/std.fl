@@ -13,6 +13,7 @@ module std;
     :: root::io::stream
     :: root::io::buffered
     :: root::io::stdio
+    :: root::fmt
     :: root::io::filesystem
     :: root::io::file
     :: root::io::errors as io_errors

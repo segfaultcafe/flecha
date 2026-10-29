@@ -1326,18 +1326,18 @@ Parser::ParseVariableDeclarationStatement() {
     if (hasInitializer) {
         initializer = ParseExpression();
         if (initializer == nullptr) return nullptr;
+    } else {
+        initializer = std::make_unique<LiteralExpression>(
+            name->range, TokenType::None, "none");
     }
 
     const Token* semicolon =
         Consume(TokenType::SemiColon, "';' after variable declaration");
     const source::SourceLocation end =
-        semicolon == nullptr
-            ? (initializer == nullptr ? name->range.end
-                                      : initializer->Range().end)
-            : semicolon->range.end;
+        semicolon == nullptr ? initializer->Range().end : semicolon->range.end;
     return std::make_unique<VariableDeclarationStatement>(
         source::SourceRange{start, end}, std::move(type), name->value,
-        std::move(initializer), name->range);
+        std::move(initializer), name->range, false, !hasInitializer);
 }
 
 std::unique_ptr<AlsoClause> Parser::ParseAlsoClause() {

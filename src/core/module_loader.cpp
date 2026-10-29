@@ -102,9 +102,9 @@ std::string TestHarnessSource(
             "__flecha_test_context_" + std::to_string(index);
         contexts.push_back({&function, context});
         source << "testing::UnitTest " << context
-               << " = testing::UnitTest::init(\"" << function.Name()
-               << "\", " << (verbose ? "true" : "false") << "); "
-               << function.Name() << "(&" << context << "); if " << context
+               << " = testing::UnitTest::init(\"" << function.Name() << "\", "
+               << (verbose ? "true" : "false") << "); " << function.Name()
+               << "(&" << context << "); if " << context
                << ".failed() { __flecha_failed++; } else { "
                   "__flecha_passed++; } ";
     }
@@ -123,25 +123,23 @@ std::string TestHarnessSource(
                << function.NameRange().start.column << "\\n\"); "
                << context.variable << ".printOutput(); } ";
         if (verbose)
-            source << "else { stdoutln(\""
-                   << DotLeader("  " + function.Name()) << "ok\"); "
-                   << context.variable << ".printOutput(); } ";
+            source << "else { stdoutln(\"" << DotLeader("  " + function.Name())
+                   << "ok\"); " << context.variable << ".printOutput(); } ";
     }
     source << "stdoutln(\"\"); ";
-    source << "stdoutf(\"FAIL [%d/" << tests.size()
-           << "] tests passed, but [%d/" << tests.size()
+    source << "stdoutf(\"FAIL [{}/" << tests.size()
+           << "] tests passed, but [{}/" << tests.size()
            << "] failed\\n\", __flecha_passed, __flecha_failed); return 1; } ";
     if (verbose) {
         source << "stdoutln(\"" << escapedFileName << "\"); ";
         for (const auto& context : contexts)
             source << "stdoutln(\""
-                   << DotLeader("  " + context.function->Name())
-                   << "ok\"); " << context.variable << ".printOutput(); ";
+                   << DotLeader("  " + context.function->Name()) << "ok\"); "
+                   << context.variable << ".printOutput(); ";
         source << "stdoutln(\"\"); ";
     } else
-        source << "stdout(\"" << StringLiteral(DotLeader(fileName))
-               << "\"); ";
-    source << "stdoutf(\"OK [%d/" << tests.size()
+        source << "stdout(\"" << StringLiteral(DotLeader(fileName)) << "\"); ";
+    source << "stdoutf(\"OK [{}/" << tests.size()
            << "] tests passed\\n\", __flecha_passed); return 0; }";
     return source.str();
 }
@@ -286,7 +284,8 @@ void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root,
     Parser parser(std::move(tokens), _diagnostics);
     auto unit = parser.Parse();
     if (_mode == ModuleLoadMode::Test)
-        Report(fileRange, "'flecha test' requires a declared '<name>_test' module");
+        Report(fileRange,
+               "'flecha test' requires a declared '<name>_test' module");
     const std::string sourceId = "$legacy$";
     _modules.push_back(
         Module{"",
@@ -306,11 +305,13 @@ void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root,
     }
 }
 
-std::string ModuleLoader::VisitModule(
-    const fs::path& inputDirectory, const std::string& name,
-    const fs::path& root, bool entry, const fs::path& entrySource,
-    source::SourceRange importRange, std::string sourceIdentity,
-    std::string importingQuiverId) {
+std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
+                                      const std::string& name,
+                                      const fs::path& root, bool entry,
+                                      const fs::path& entrySource,
+                                      source::SourceRange importRange,
+                                      std::string sourceIdentity,
+                                      std::string importingQuiverId) {
     const fs::path directory = fs::weakly_canonical(inputDirectory);
     const fs::path relativeDirectory = directory.lexically_relative(root);
     const std::string quiverId = sourceIdentity + "\n" + root.generic_string() +
@@ -372,8 +373,9 @@ std::string ModuleLoader::VisitModule(
     const source::SourceLocation namespaceOrigin{0, 1, 1, directory.string()};
     const source::SourceRange namespaceRange{namespaceOrigin, namespaceOrigin};
     if (testModule && (_mode != ModuleLoadMode::Test || !entry))
-        Report(namespaceRange,
-               "test modules can only be compiled as the entry of 'flecha test'");
+        Report(
+            namespaceRange,
+            "test modules can only be compiled as the entry of 'flecha test'");
     if (entry && _mode == ModuleLoadMode::Test && !testModule)
         Report(namespaceRange,
                "'flecha test' requires a declared '<name>_test' module");
@@ -397,8 +399,8 @@ std::string ModuleLoader::VisitModule(
         _roots.emplace(file, root);
         const auto source = ReadSource(file);
         if (!source) {
-            Report(namespaceRange, "cannot open module source '" + file.string() +
-                                       "'");
+            Report(namespaceRange,
+                   "cannot open module source '" + file.string() + "'");
             continue;
         }
         diagnostics::DiagnosticBag lexical;
@@ -445,8 +447,7 @@ std::string ModuleLoader::VisitModule(
             }
             std::set<std::string> names;
             for (const auto& item : fs::directory_iterator(selectedDirectory)) {
-                if (!item.is_regular_file() ||
-                    item.path().extension() != ".fl")
+                if (!item.is_regular_file() || item.path().extension() != ".fl")
                     continue;
                 const std::string selected = ReadHeader(item.path()).name;
                 if (!selected.empty() && !IsTestModule(selected))
@@ -472,8 +473,8 @@ std::string ModuleLoader::VisitModule(
             Report(unit->Range(),
                    "logical module '" + name +
                        "' mixes ordinary and private module declarations");
-        sources.push_back(
-            {file, id + "s" + std::to_string(sourceIndex) + "$", std::move(unit)});
+        sources.push_back({file, id + "s" + std::to_string(sourceIndex) + "$",
+                           std::move(unit)});
     }
 
     const bool isPrivate = privateModule.value_or(false);
@@ -491,8 +492,9 @@ std::string ModuleLoader::VisitModule(
     std::vector<Module> sourceModules;
     std::string testPair;
     const std::string productionName =
-        testModule ? name.substr(0, name.size() - std::string_view("_test").size())
-                   : "";
+        testModule
+            ? name.substr(0, name.size() - std::string_view("_test").size())
+            : "";
     for (auto& source : sources) {
         Module module{id,
                       source.sourceId,
@@ -526,14 +528,15 @@ std::string ModuleLoader::VisitModule(
                  ++index)
                 targetDirectory /= import.path[index];
             targetDirectory = fs::weakly_canonical(targetDirectory);
-            const auto relative = targetDirectory.lexically_relative(sourceRoot);
+            const auto relative =
+                targetDirectory.lexically_relative(sourceRoot);
             if (relative.empty() || *relative.begin() == "..") {
                 Report(import.range, "module path escapes its source root");
                 continue;
             }
-            import.resolvedModule = VisitModule(
-                targetDirectory, targetName, sourceRoot, false, {}, import.range,
-                targetIdentity, quiverId);
+            import.resolvedModule =
+                VisitModule(targetDirectory, targetName, sourceRoot, false, {},
+                            import.range, targetIdentity, quiverId);
             if (IsStandardTestingImport(import))
                 _testingModule = import.resolvedModule;
             if (testModule && targetIdentity == sourceIdentity &&
@@ -545,7 +548,8 @@ std::string ModuleLoader::VisitModule(
 
     if (entry && testModule && testPair.empty())
         Report(namespaceRange,
-               "test module must explicitly import its paired production module '" +
+               "test module must explicitly import its paired production "
+               "module '" +
                    productionName + "'");
     for (auto& module : sourceModules) {
         module.testPair = testPair;
@@ -568,7 +572,8 @@ std::string ModuleLoader::VisitModule(
             Tokenizer(TestHarnessSource(tests, entrySource, _verboseTests),
                       generatedDiagnostics)
                 .Tokenize();
-        Parser generatedParser(std::move(generatedTokens), generatedDiagnostics);
+        Parser generatedParser(std::move(generatedTokens),
+                               generatedDiagnostics);
         Import testingImport;
         testingImport.path = {"lib", "std", "tests", "testing"};
         testingImport.alias = "testing";
@@ -592,7 +597,8 @@ std::string ModuleLoader::VisitModule(
                                   {std::move(testingImport)}});
         for (auto& declaration : generated->TakeDeclarations()) {
             if (declaration->Kind() == AstNodeKind::FunctionDeclaration)
-                static_cast<FunctionDeclaration&>(*declaration).MarkTestHarness();
+                static_cast<FunctionDeclaration&>(*declaration)
+                    .MarkTestHarness();
             declaration->moduleId = id;
             declaration->sourceId = harnessSource;
             declaration->quiverId = quiverId;

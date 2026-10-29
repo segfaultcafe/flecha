@@ -1364,6 +1364,30 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     registerOutput("stdoutf", BuiltInFunction::StdoutFormat);
     registerOutput("stderr", BuiltInFunction::Stderr);
     registerOutput("stderrln", BuiltInFunction::StderrLine);
+    registerOutput("stderrf", BuiltInFunction::StderrFormat);
+    for (const auto& [name, builtIn] :
+         {std::pair{"stdin", BuiltInFunction::Stdin},
+          std::pair{"stdinln", BuiltInFunction::StdinLine}}) {
+        auto function = std::make_unique<FunctionSymbol>(
+            name, SemanticType(SemanticTypeKind::ErrorValue),
+            std::vector<SemanticType>{
+                SemanticType(SemanticTypeKind::StringView)},
+            source::SourceRange{}, builtIn);
+        (void)_currentScope->Declare(*function);
+        _model._symbols.push_back(std::move(function));
+    }
+    {
+        auto function = std::make_unique<FunctionSymbol>(
+            "__sprintf",
+            SemanticType(std::vector<SemanticType>{
+                SemanticType(SemanticTypeKind::String),
+                SemanticType(SemanticTypeKind::ErrorValue)}),
+            std::vector<SemanticType>{
+                SemanticType(SemanticTypeKind::StringView)},
+            source::SourceRange{}, BuiltInFunction::StringFormat);
+        (void)_currentScope->Declare(*function);
+        _model._symbols.push_back(std::move(function));
+    }
     for (const auto& [name, intrinsic] :
          {std::pair{"new", BuiltInFunction::New},
           std::pair{"free", BuiltInFunction::Free},
@@ -1387,6 +1411,16 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     auto error = std::make_unique<Symbol>(SymbolKind::ErrorType, family->name,
                                           SemanticType(family),
                                           source::SourceRange{}, false);
+    (void)_currentScope->Declare(*error);
+    _model._symbols.push_back(std::move(error));
+
+    family = std::make_shared<ErrorFamily>();
+    family->name = "InputError";
+    family->variants = {"EndOfFile", "ReadFailed", "InvalidSyntax",
+                        "OutOfRange", "PromptFailed"};
+    error = std::make_unique<Symbol>(SymbolKind::ErrorType, family->name,
+                                     SemanticType(family),
+                                     source::SourceRange{}, false);
     (void)_currentScope->Declare(*error);
     _model._symbols.push_back(std::move(error));
 }
@@ -1941,6 +1975,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     _zeroDependencies.clear();
     _functionCalls.clear();
     _forbiddenZeroEffects.clear();
+    _implicitDefaults.clear();
     _buildSelf = nullptr;
     _allowBuildSelf = false;
     _buildDepth = 0;
@@ -2125,6 +2160,13 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
         AnalyzeFunction(*_model._anonymousFunctions[index]);
     ClassifyTrivialZeros(unit);
     _zeroTrivialityKnown = true;
+    for (const auto& [declaration, type] : _implicitDefaults) {
+        if (!type.IsError() && !type.IsTriviallyZeroable())
+            Report(diagnostics::DiagnosticCode::InvalidVariableType,
+                   declaration->NameRange(),
+                   "a declaration without an initializer requires a "
+                   "trivially zeroable type");
+    }
     for (const auto& structure : _model._structures)
         if (SemanticType(structure.get()).IsZeroable())
             WarnForNontrivialDefault(SemanticType(structure.get()),
@@ -2554,6 +2596,8 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
             SemanticType variableType = initializerType.WithoutConst();
             if (variable.HasExplicitType()) {
                 variableType = declaredType;
+                if (variable.IsImplicitlyDefaulted())
+                    _implicitDefaults.emplace_back(&variable, variableType);
                 if (variableType.Kind() == SemanticTypeKind::Void) {
                     Report(diagnostics::DiagnosticCode::InvalidVariableType,
                            variable.ExplicitType()->Range(),
@@ -4394,6 +4438,8 @@ SemanticType SemanticAnalyzer::AnalyzeUnary(
               target.Kind() == SemanticTypeKind::Enum ||
               target.Kind() == SemanticTypeKind::Bool ||
               target.Kind() == SemanticTypeKind::Char ||
+              (_allowStringReference &&
+               target.Kind() == SemanticTypeKind::String) ||
               target.Kind() == SemanticTypeKind::Pointer ||
               target.Kind() == SemanticTypeKind::Array ||
               (target.Kind() == SemanticTypeKind::Tuple &&
@@ -5256,9 +5302,17 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                 ? signature->parameters[index]
                 : SemanticType::Error();
         const bool provided = index < expression.Arguments().size();
+        const bool inputDestination =
+            function &&
+            (function->BuiltIn() == BuiltInFunction::Stdin ||
+             function->BuiltIn() == BuiltInFunction::StdinLine) &&
+            index + 1 == arguments.size();
+        const bool previousStringReference = _allowStringReference;
+        _allowStringReference = inputDestination;
         argumentTypes.push_back(
             provided ? AnalyzeExpression(*arguments[index], expected)
                      : _model.TypeOf(*arguments[index]));
+        _allowStringReference = previousStringReference;
         const bool consuming = signature != nullptr &&
                                index < signature->parameterContracts.size() &&
                                signature->parameterContracts[index] ==
@@ -5309,17 +5363,68 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         RequireUnsafe(expression.Callee().Range());
     if (_currentFunction && function)
         _functionCalls[_currentFunction].insert(function);
-    if (function && (function->BuiltIn() == BuiltInFunction::Stdout ||
-                     function->BuiltIn() == BuiltInFunction::StdoutLine ||
-                     function->BuiltIn() == BuiltInFunction::StdoutFormat ||
-                     function->BuiltIn() == BuiltInFunction::Stderr ||
-                     function->BuiltIn() == BuiltInFunction::StderrLine)) {
+    if (function && (function->BuiltIn() == BuiltInFunction::Stdin ||
+                     function->BuiltIn() == BuiltInFunction::StdinLine)) {
         if (_inZero)
             Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                    expression.Range(),
                    "zero cannot cause external side effects");
         if (_currentFunction) _forbiddenZeroEffects.insert(_currentFunction);
-        if (function->BuiltIn() != BuiltInFunction::StdoutFormat) {
+        if (argumentTypes.empty()) {
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "function '" + function->Name() +
+                       "' requires a destination reference");
+            return function->ReturnType().WithoutConst();
+        }
+        for (std::size_t index = 0; index + 1 < argumentTypes.size(); ++index) {
+            if (argumentTypes[index].IsError() ||
+                argumentTypes[index].IsPrintable())
+                continue;
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Arguments()[index]->Range(),
+                   "function '" + function->Name() +
+                       "' requires printable prompt values, found '" +
+                       std::string(argumentTypes[index].Name()) + "'");
+        }
+        const SemanticType destination = argumentTypes.back();
+        const bool reference =
+            destination.Kind() == SemanticTypeKind::Reference;
+        const SemanticType target =
+            reference ? *destination.Target() : SemanticType::Error();
+        const bool supported = target.IsInteger() || target.IsFloating() ||
+                               target.Kind() == SemanticTypeKind::Bool ||
+                               target.Kind() == SemanticTypeKind::Char ||
+                               target.Kind() == SemanticTypeKind::String;
+        if (!destination.IsError() &&
+            (!reference || target.IsConst() || !supported)) {
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Arguments().back()->Range(),
+                   "function '" + function->Name() +
+                       "' requires a mutable reference to string, bool, char, "
+                       "an integer, or a floating-point value");
+        }
+        return function->ReturnType().WithoutConst();
+    }
+    if (function && (function->BuiltIn() == BuiltInFunction::Stdout ||
+                     function->BuiltIn() == BuiltInFunction::StdoutLine ||
+                     function->BuiltIn() == BuiltInFunction::StdoutFormat ||
+                     function->BuiltIn() == BuiltInFunction::Stderr ||
+                     function->BuiltIn() == BuiltInFunction::StderrLine ||
+                     function->BuiltIn() == BuiltInFunction::StderrFormat ||
+                     function->BuiltIn() == BuiltInFunction::StringFormat)) {
+        const bool stringFormat =
+            function->BuiltIn() == BuiltInFunction::StringFormat;
+        if (_inZero && !stringFormat)
+            Report(diagnostics::DiagnosticCode::InvalidLifecycle,
+                   expression.Range(),
+                   "zero cannot cause external side effects");
+        if (_currentFunction) _forbiddenZeroEffects.insert(_currentFunction);
+        const bool formatted =
+            function->BuiltIn() == BuiltInFunction::StdoutFormat ||
+            function->BuiltIn() == BuiltInFunction::StderrFormat ||
+            stringFormat;
+        if (!formatted) {
             for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
                 if (argumentTypes[index].IsError() ||
                     argumentTypes[index].IsPrintable())
@@ -5334,9 +5439,10 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         }
 
         if (expression.Arguments().empty()) {
-            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
-                   expression.Range(),
-                   "function 'stdoutf' requires a format string");
+            Report(
+                diagnostics::DiagnosticCode::WrongArgumentCount,
+                expression.Range(),
+                "function '" + function->Name() + "' requires a format string");
             return function->ReturnType().WithoutConst();
         }
 
@@ -5353,7 +5459,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                     .LiteralType() != TokenType::StringLiteral) {
             Report(diagnostics::DiagnosticCode::InvalidFormat,
                    expression.Arguments().front()->Range(),
-                   "stdoutf format must be a string literal");
+                   function->Name() + " format must be a string literal");
             return function->ReturnType().WithoutConst();
         }
 
@@ -5379,37 +5485,11 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
             if (part.kind == core::OutputFormatPartKind::Literal) continue;
             if (argumentIndex >= argumentTypes.size()) break;
             const SemanticType type = argumentTypes[argumentIndex];
-            bool valid = type.IsError();
-            std::string_view expected;
-            char specifier = '?';
-            switch (part.kind) {
-                case core::OutputFormatPartKind::Decimal:
-                    valid = valid || type.IsNumeric();
-                    expected = "a number";
-                    specifier = 'd';
-                    break;
-                case core::OutputFormatPartKind::String:
-                    valid = valid || type.Kind() == SemanticTypeKind::String ||
-                            type.Kind() == SemanticTypeKind::StringView ||
-                            type.Kind() == SemanticTypeKind::Char;
-                    expected = "a string or char";
-                    specifier = 's';
-                    break;
-                case core::OutputFormatPartKind::Boolean:
-                    valid = valid || type.Kind() == SemanticTypeKind::Bool ||
-                            type.Kind() == SemanticTypeKind::U8;
-                    expected = "a bool or u8";
-                    specifier = 'b';
-                    break;
-                case core::OutputFormatPartKind::Literal:
-                    break;
-            }
-            if (!valid)
+            if (!type.IsError() && !type.IsPrintable())
                 Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                        expression.Arguments()[argumentIndex]->Range(),
                        "format argument " + std::to_string(argumentIndex) +
-                           " for '%" + std::string(1, specifier) +
-                           "' requires " + std::string(expected) + ", found '" +
+                           " for '{}' requires a printable value, found '" +
                            std::string(type.Name()) + "'");
             ++argumentIndex;
         }

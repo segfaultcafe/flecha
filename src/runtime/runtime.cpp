@@ -1,4 +1,4 @@
-#include "runtime/runtime_abi.h"
+#include <locale.h>
 
 #include <bit>
 #include <cerrno>
@@ -7,9 +7,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <locale.h>
 #include <limits>
 #include <type_traits>
+
+#include "runtime/runtime_abi.h"
 
 #ifdef __APPLE__
 #include <xlocale.h>
@@ -237,8 +238,7 @@ int32_t FormatFloat(uint8_t* destination, size_t capacity, T value,
         }
     } else {
         length = FormatFinite(buffer, sizeof(buffer), value);
-        if (length == 0)
-            return FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE;
+        if (length == 0) return FLECHA_RUNTIME_FLOAT_TEXT_INSUFFICIENT_SPACE;
     }
 
     if (capacity < length || (length != 0 && destination == nullptr))
@@ -325,13 +325,9 @@ void flecha_runtime_v1_stdout_usize(uintptr_t value) {
     (void)std::fprintf(stdout, "%" PRIuPTR, value);
 }
 
-void flecha_runtime_v1_stdout_f32(float value) {
-    PrintFloat(stdout, value);
-}
+void flecha_runtime_v1_stdout_f32(float value) { PrintFloat(stdout, value); }
 
-void flecha_runtime_v1_stdout_f64(double value) {
-    PrintFloat(stdout, value);
-}
+void flecha_runtime_v1_stdout_f64(double value) { PrintFloat(stdout, value); }
 
 void flecha_runtime_v1_stdout_bool(uint8_t value) {
     const char* text = value == 0 ? "false" : "true";
@@ -343,9 +339,7 @@ void flecha_runtime_v1_stdout_char(uint8_t value) {
     (void)std::fputc(value, stdout);
 }
 
-void flecha_runtime_v1_stdout_newline(void) {
-    (void)std::fputc('\n', stdout);
-}
+void flecha_runtime_v1_stdout_newline(void) { (void)std::fputc('\n', stdout); }
 
 void flecha_runtime_v1_stderr_string_view(const char* data, size_t length) {
     if (length == 0) return;
@@ -392,13 +386,9 @@ void flecha_runtime_v1_stderr_usize(uintptr_t value) {
     (void)std::fprintf(stderr, "%" PRIuPTR, value);
 }
 
-void flecha_runtime_v1_stderr_f32(float value) {
-    PrintFloat(stderr, value);
-}
+void flecha_runtime_v1_stderr_f32(float value) { PrintFloat(stderr, value); }
 
-void flecha_runtime_v1_stderr_f64(double value) {
-    PrintFloat(stderr, value);
-}
+void flecha_runtime_v1_stderr_f64(double value) { PrintFloat(stderr, value); }
 
 void flecha_runtime_v1_stderr_bool(uint8_t value) {
     const char* text = value == 0 ? "false" : "true";
@@ -410,18 +400,15 @@ void flecha_runtime_v1_stderr_char(uint8_t value) {
     (void)std::fputc(value, stderr);
 }
 
-void flecha_runtime_v1_stderr_newline(void) {
-    (void)std::fputc('\n', stderr);
-}
+void flecha_runtime_v1_stderr_newline(void) { (void)std::fputc('\n', stderr); }
 
 uint8_t flecha_runtime_v1_string_view_at(const char* data, size_t length,
                                          uint32_t index) {
     if (index >= length) {
-        (void)std::fprintf(
-            stderr,
-            "Flecha runtime error: stringv index %" PRIu32
-            " is out of bounds for length %zu\n",
-            index, length);
+        (void)std::fprintf(stderr,
+                           "Flecha runtime error: stringv index %" PRIu32
+                           " is out of bounds for length %zu\n",
+                           index, length);
         std::abort();
     }
     return static_cast<uint8_t>(data[index]);
@@ -430,11 +417,10 @@ uint8_t flecha_runtime_v1_string_view_at(const char* data, size_t length,
 void flecha_runtime_v1_string_view_check_substr(size_t length, uint32_t start,
                                                 uint32_t count) {
     if (start > length || count > length - start) {
-        (void)std::fprintf(
-            stderr,
-            "Flecha runtime error: stringv substring (%" PRIu32 ", %" PRIu32
-            ") is out of bounds for length %zu\n",
-            start, count, length);
+        (void)std::fprintf(stderr,
+                           "Flecha runtime error: stringv substring (%" PRIu32
+                           ", %" PRIu32 ") is out of bounds for length %zu\n",
+                           start, count, length);
         std::abort();
     }
 }
@@ -452,6 +438,142 @@ int32_t flecha_runtime_v1_string_try_from_bytes(FlechaRuntimeString* output,
     std::memcpy(owned, data, length);
     owned[length] = '\0';
     *output = {owned, length, length};
+    return FLECHA_RUNTIME_STRING_OK;
+}
+
+void flecha_runtime_v1_format_buffer_init(FlechaRuntimeFormatBuffer* buffer) {
+    *buffer = {nullptr, 0, 0, FLECHA_RUNTIME_STRING_OK};
+}
+
+namespace {
+
+bool FormatBufferReserve(FlechaRuntimeFormatBuffer* buffer, size_t additional) {
+    if (buffer->status != FLECHA_RUNTIME_STRING_OK) return false;
+    if (additional > SIZE_MAX - buffer->length - 1) {
+        buffer->status = FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;
+        return false;
+    }
+    const size_t required = buffer->length + additional + 1;
+    if (required <= buffer->capacity) return true;
+
+    size_t capacity = buffer->capacity == 0 ? 64 : buffer->capacity;
+    while (capacity < required) {
+        if (capacity > SIZE_MAX / 2) {
+            capacity = required;
+            break;
+        }
+        capacity *= 2;
+    }
+    char* data = static_cast<char*>(std::realloc(buffer->data, capacity));
+    if (data == nullptr) {
+        buffer->status = FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;
+        return false;
+    }
+    buffer->data = data;
+    buffer->capacity = capacity;
+    return true;
+}
+
+void FormatBufferAppend(FlechaRuntimeFormatBuffer* buffer, const char* data,
+                        size_t length) {
+    if (length == 0 || !FormatBufferReserve(buffer, length)) return;
+    if (data == nullptr) {
+        buffer->status = FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;
+        return;
+    }
+    std::memcpy(buffer->data + buffer->length, data, length);
+    buffer->length += length;
+    buffer->data[buffer->length] = '\0';
+}
+
+}  // namespace
+
+void flecha_runtime_v1_format_buffer_append_string_view(
+    FlechaRuntimeFormatBuffer* buffer, const char* data, size_t length) {
+    FormatBufferAppend(buffer, data, length);
+}
+
+#define FLECHA_FORMAT_BUFFER_APPEND_INTEGER(name, type, format)               \
+    void flecha_runtime_v1_format_buffer_append_##name(                       \
+        FlechaRuntimeFormatBuffer* buffer, type value) {                      \
+        char formatted[128];                                                  \
+        const int length =                                                    \
+            std::snprintf(formatted, sizeof(formatted), format, value);       \
+        if (length < 0 || static_cast<size_t>(length) >= sizeof(formatted)) { \
+            buffer->status = FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;             \
+            return;                                                           \
+        }                                                                     \
+        FormatBufferAppend(buffer, formatted, static_cast<size_t>(length));   \
+    }
+
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(i8, int8_t, "%" PRId8)
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(i16, int16_t, "%" PRId16)
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(i32, int32_t, "%" PRId32)
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(i64, int64_t, "%" PRId64)
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(isize, intptr_t, "%" PRIdPTR)
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(u8, uint8_t, "%" PRIu8)
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(u16, uint16_t, "%" PRIu16)
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(u32, uint32_t, "%" PRIu32)
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(u64, uint64_t, "%" PRIu64)
+FLECHA_FORMAT_BUFFER_APPEND_INTEGER(usize, uintptr_t, "%" PRIuPTR)
+
+#undef FLECHA_FORMAT_BUFFER_APPEND_INTEGER
+
+void flecha_runtime_v1_format_buffer_append_f32(
+    FlechaRuntimeFormatBuffer* buffer, float value) {
+    uint8_t formatted[128];
+    size_t length = 0;
+    if (FormatFloat(formatted, sizeof(formatted), value, &length) !=
+        FLECHA_RUNTIME_FLOAT_TEXT_OK) {
+        buffer->status = FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;
+        return;
+    }
+    FormatBufferAppend(buffer, reinterpret_cast<const char*>(formatted),
+                       length);
+}
+
+void flecha_runtime_v1_format_buffer_append_f64(
+    FlechaRuntimeFormatBuffer* buffer, double value) {
+    uint8_t formatted[128];
+    size_t length = 0;
+    if (FormatFloat(formatted, sizeof(formatted), value, &length) !=
+        FLECHA_RUNTIME_FLOAT_TEXT_OK) {
+        buffer->status = FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;
+        return;
+    }
+    FormatBufferAppend(buffer, reinterpret_cast<const char*>(formatted),
+                       length);
+}
+
+void flecha_runtime_v1_format_buffer_append_bool(
+    FlechaRuntimeFormatBuffer* buffer, uint8_t value) {
+    const char* text = value == 0 ? "false" : "true";
+    FormatBufferAppend(buffer, text, value == 0 ? 5 : 4);
+}
+
+void flecha_runtime_v1_format_buffer_append_char(
+    FlechaRuntimeFormatBuffer* buffer, uint8_t value) {
+    const char character = static_cast<char>(value);
+    FormatBufferAppend(buffer, &character, 1);
+}
+
+int32_t flecha_runtime_v1_format_buffer_finish(
+    FlechaRuntimeFormatBuffer* buffer, FlechaRuntimeString* output) {
+    *output = {nullptr, 0, 0};
+    if (buffer->status != FLECHA_RUNTIME_STRING_OK) {
+        std::free(buffer->data);
+        flecha_runtime_v1_format_buffer_init(buffer);
+        return FLECHA_RUNTIME_STRING_OUT_OF_MEMORY;
+    }
+    if (buffer->length == 0) {
+        std::free(buffer->data);
+        flecha_runtime_v1_format_buffer_init(buffer);
+        return FLECHA_RUNTIME_STRING_OK;
+    }
+
+    *output = {buffer->data, buffer->length, buffer->capacity - 1};
+    buffer->data = nullptr;
+    flecha_runtime_v1_format_buffer_init(buffer);
     return FLECHA_RUNTIME_STRING_OK;
 }
 
@@ -514,23 +636,21 @@ void flecha_runtime_v1_string_concat(FlechaRuntimeString* output,
     *output = {data, length, length};
 }
 
-void flecha_runtime_v1_string_destroy(char* data) {
-    std::free(data);
-}
+void flecha_runtime_v1_string_destroy(char* data) { std::free(data); }
 
 #define FLECHA_FORMAT_STRING_FUNCTION(name, type, format)                    \
-    void flecha_runtime_v1_string_from_##name(                               \
-        FlechaRuntimeString* output, type value) {                           \
-        char buffer[128];                                                     \
-        const int length = std::snprintf(buffer, sizeof(buffer), format,      \
-                                         value);                              \
-        if (length < 0 || static_cast<size_t>(length) >= sizeof(buffer)) {    \
-            (void)std::fputs(                                                 \
+    void flecha_runtime_v1_string_from_##name(FlechaRuntimeString* output,   \
+                                              type value) {                  \
+        char buffer[128];                                                    \
+        const int length =                                                   \
+            std::snprintf(buffer, sizeof(buffer), format, value);            \
+        if (length < 0 || static_cast<size_t>(length) >= sizeof(buffer)) {   \
+            (void)std::fputs(                                                \
                 "Flecha runtime error: scalar formatting failed\n", stderr); \
-            std::abort();                                                     \
-        }                                                                     \
-        flecha_runtime_v1_string_from_view(                                  \
-            output, buffer, static_cast<size_t>(length));                    \
+            std::abort();                                                    \
+        }                                                                    \
+        flecha_runtime_v1_string_from_view(output, buffer,                   \
+                                           static_cast<size_t>(length));     \
     }
 
 FLECHA_FORMAT_STRING_FUNCTION(i8, int8_t, "%" PRId8)

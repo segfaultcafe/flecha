@@ -957,22 +957,24 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInOutput(
     const semantic::BuiltInFunction builtIn = expression.Function().BuiltIn();
     const bool standardError =
         builtIn == semantic::BuiltInFunction::Stderr ||
-        builtIn == semantic::BuiltInFunction::StderrLine;
+        builtIn == semantic::BuiltInFunction::StderrLine ||
+        builtIn == semantic::BuiltInFunction::StderrFormat;
     llvm::Value* result = nullptr;
     if (builtIn == semantic::BuiltInFunction::Stdout ||
         builtIn == semantic::BuiltInFunction::StdoutLine ||
         builtIn == semantic::BuiltInFunction::Stderr ||
         builtIn == semantic::BuiltInFunction::StderrLine) {
         for (std::size_t index = 0; index < arguments.size(); ++index) {
-            result = EmitRuntimeOutput(
-                arguments[index], expression.Arguments()[index]->Type(), false,
-                standardError);
+            result = EmitRuntimeOutput(arguments[index],
+                                       expression.Arguments()[index]->Type(),
+                                       false, standardError);
             if (result == nullptr) return nullptr;
         }
         if (builtIn == semantic::BuiltInFunction::StdoutLine ||
             builtIn == semantic::BuiltInFunction::StderrLine)
             return EmitRuntimeNewline(standardError);
-    } else if (builtIn == semantic::BuiltInFunction::StdoutFormat) {
+    } else if (builtIn == semantic::BuiltInFunction::StdoutFormat ||
+               builtIn == semantic::BuiltInFunction::StderrFormat) {
         if (expression.Arguments().empty() ||
             expression.Arguments().front()->Kind() !=
                 lowering::BoundNodeKind::LiteralExpression)
@@ -1000,24 +1002,17 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInOutput(
                     value,
                     semantic::SemanticType(
                         semantic::SemanticTypeKind::StringView),
-                    false);
+                    false, standardError);
                 if (result == nullptr) return nullptr;
                 continue;
             }
             if (argumentIndex >= arguments.size())
                 return Fail("stdoutf argument count changed after analysis"),
                        nullptr;
-            semantic::SemanticType type =
+            const semantic::SemanticType type =
                 expression.Arguments()[argumentIndex]->Type();
-            llvm::Value* value = arguments[argumentIndex];
-            if (part.kind == core::OutputFormatPartKind::Boolean &&
-                type.Kind() == semantic::SemanticTypeKind::U8) {
-                value = _builder.CreateICmpNE(
-                    value, llvm::ConstantInt::get(value->getType(), 0),
-                    "stdoutf.byte.bool");
-                type = semantic::SemanticType(semantic::SemanticTypeKind::Bool);
-            }
-            result = EmitRuntimeOutput(value, type, false);
+            result = EmitRuntimeOutput(arguments[argumentIndex], type, false,
+                                       standardError);
             if (result == nullptr) return nullptr;
             ++argumentIndex;
         }
@@ -1036,6 +1031,380 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInOutput(
                                    semantic::SemanticType(
                                        semantic::SemanticTypeKind::StringView),
                                    false, standardError);
+}
+
+llvm::Value* LlvmCodeGenerator::EmitBuiltInStringFormat(
+    const lowering::BoundCallExpression& expression,
+    const std::vector<llvm::Value*>& arguments) {
+    if (expression.Arguments().empty() ||
+        expression.Arguments().front()->Kind() !=
+            lowering::BoundNodeKind::LiteralExpression)
+        return Fail("__sprintf format was not lowered as a literal"), nullptr;
+    const auto& literal = static_cast<const lowering::BoundLiteralExpression&>(
+        *expression.Arguments().front());
+    const core::OutputFormat format = core::ParseOutputFormat(literal.Value());
+    if (!format.IsValid())
+        return Fail("invalid __sprintf format reached code generation"),
+               nullptr;
+
+    auto* sizeType =
+        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
+    auto* statusType = llvm::Type::getInt32Ty(_context);
+    auto* pointerType = llvm::PointerType::getUnqual(_context);
+    auto* bufferType = llvm::StructType::get(
+        _context, {pointerType, sizeType, sizeType, statusType});
+    auto* buffer = CreateTemporaryAlloca(bufferType, "sprintf.buffer");
+    auto* output = CreateTemporaryAlloca(StringType(), "sprintf.output");
+    _builder.CreateStore(llvm::Constant::getNullValue(bufferType), buffer);
+    _builder.CreateStore(llvm::Constant::getNullValue(StringType()), output);
+
+    llvm::FunctionType* initType = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(_context), {buffer->getType()}, false);
+    _builder.CreateCall(_module->getOrInsertFunction(
+                            "flecha_runtime_v1_format_buffer_init", initType),
+                        {buffer});
+
+    const auto appendString = [&](llvm::Value* view) {
+        llvm::Value* data =
+            _builder.CreateExtractValue(view, 0, "sprintf.text.data");
+        llvm::Value* length =
+            _builder.CreateExtractValue(view, 1, "sprintf.text.length");
+        llvm::FunctionType* appendType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(_context),
+            {buffer->getType(), data->getType(), length->getType()}, false);
+        _builder.CreateCall(_module->getOrInsertFunction(
+                                "flecha_runtime_v1_format_buffer_append_"
+                                "string_view",
+                                appendType),
+                            {buffer, data, length});
+    };
+
+    std::size_t argumentIndex = 1;
+    for (const auto& part : format.parts) {
+        if (part.kind == core::OutputFormatPartKind::Literal) {
+            const lowering::BoundLiteralExpression text(
+                expression.Range(),
+                semantic::SemanticType(semantic::SemanticTypeKind::StringView),
+                part.text);
+            llvm::Value* view = EmitLiteral(text);
+            if (view == nullptr) return nullptr;
+            appendString(view);
+            continue;
+        }
+        if (argumentIndex >= arguments.size())
+            return Fail("__sprintf argument count changed after analysis"),
+                   nullptr;
+
+        const semantic::SemanticType type =
+            expression.Arguments()[argumentIndex]->Type();
+        llvm::Value* value = arguments[argumentIndex];
+        if (type.Kind() == semantic::SemanticTypeKind::String ||
+            type.Kind() == semantic::SemanticTypeKind::StringView) {
+            value = EmitStringView(value, type);
+            if (value == nullptr) return nullptr;
+            appendString(value);
+            ++argumentIndex;
+            continue;
+        }
+
+        std::string suffix;
+        switch (type.Kind()) {
+            case semantic::SemanticTypeKind::I8:
+                suffix = "i8";
+                break;
+            case semantic::SemanticTypeKind::I16:
+                suffix = "i16";
+                break;
+            case semantic::SemanticTypeKind::I32:
+                suffix = "i32";
+                break;
+            case semantic::SemanticTypeKind::I64:
+                suffix = "i64";
+                break;
+            case semantic::SemanticTypeKind::ISize:
+                suffix = "isize";
+                break;
+            case semantic::SemanticTypeKind::U8:
+                suffix = "u8";
+                break;
+            case semantic::SemanticTypeKind::U16:
+                suffix = "u16";
+                break;
+            case semantic::SemanticTypeKind::U32:
+                suffix = "u32";
+                break;
+            case semantic::SemanticTypeKind::U64:
+                suffix = "u64";
+                break;
+            case semantic::SemanticTypeKind::USize:
+                suffix = "usize";
+                break;
+            case semantic::SemanticTypeKind::F32:
+                suffix = "f32";
+                break;
+            case semantic::SemanticTypeKind::F64:
+                suffix = "f64";
+                break;
+            case semantic::SemanticTypeKind::Bool:
+                suffix = "bool";
+                value = _builder.CreateZExt(
+                    value, llvm::Type::getInt8Ty(_context), "sprintf.bool");
+                break;
+            case semantic::SemanticTypeKind::Char:
+                suffix = "char";
+                break;
+            default:
+                return Fail("__sprintf does not support type '" +
+                            std::string(type.Name()) + "'"),
+                       nullptr;
+        }
+        llvm::FunctionType* appendType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(_context),
+            {buffer->getType(), value->getType()}, false);
+        _builder.CreateCall(
+            _module->getOrInsertFunction(
+                "flecha_runtime_v1_format_buffer_append_" + suffix, appendType),
+            {buffer, value});
+        ++argumentIndex;
+    }
+
+    llvm::FunctionType* finishType = llvm::FunctionType::get(
+        statusType, {buffer->getType(), output->getType()}, false);
+    llvm::Value* status = _builder.CreateCall(
+        _module->getOrInsertFunction("flecha_runtime_v1_format_buffer_finish",
+                                     finishType),
+        {buffer, output}, "sprintf.status");
+    llvm::Value* failed = _builder.CreateICmpNE(
+        status, llvm::ConstantInt::get(statusType, 0), "sprintf.failed");
+
+    llvm::GlobalVariable* identity =
+        _module->getNamedGlobal(".flecha.error.AllocationError");
+    if (identity == nullptr) {
+        identity = new llvm::GlobalVariable(
+            *_module, llvm::Type::getInt8Ty(_context), true,
+            llvm::GlobalValue::PrivateLinkage,
+            llvm::ConstantInt::get(llvm::Type::getInt8Ty(_context), 0),
+            ".flecha.error.AllocationError");
+    }
+    llvm::Value* family = _builder.CreateSelect(
+        failed, identity, llvm::ConstantPointerNull::get(pointerType),
+        "sprintf.error.family");
+    llvm::Value* code = _builder.CreateSelect(
+        failed, llvm::ConstantInt::get(statusType, 1),
+        llvm::ConstantInt::get(statusType, 0), "sprintf.error.code");
+    const semantic::SemanticType errorType(
+        semantic::SemanticTypeKind::ErrorValue);
+    llvm::Value* error = llvm::PoisonValue::get(MapType(errorType));
+    error = _builder.CreateInsertValue(error, family, 0);
+    error = _builder.CreateInsertValue(error, code, 1, "sprintf.error");
+
+    llvm::Value* result =
+        llvm::Constant::getNullValue(MapType(expression.Type()));
+    result = _builder.CreateInsertValue(
+        result, _builder.CreateLoad(StringType(), output, "sprintf.string"), 0);
+    result = _builder.CreateInsertValue(result, error, 1, "sprintf.result");
+
+    auto* owned =
+        CreateOwnedValueTemporary(expression.Type(), "sprintf.owned.result");
+    EmitValueStorageCleanup(owned, expression.Type());
+    _builder.CreateStore(result, owned);
+    llvm::Value* value =
+        _builder.CreateLoad(MapType(expression.Type()), owned, "sprintf.owned");
+    _freshOwnedValues.emplace(value, owned);
+    return value;
+}
+
+llvm::Value* LlvmCodeGenerator::EmitBuiltInInput(
+    const lowering::BoundCallExpression& expression,
+    const std::vector<llvm::Value*>& arguments) {
+    if (arguments.empty())
+        return Fail("stdin reached code generation without a destination"),
+               nullptr;
+
+    for (std::size_t index = 0; index + 1 < arguments.size(); ++index) {
+        if (EmitRuntimeOutput(arguments[index],
+                              expression.Arguments()[index]->Type(),
+                              false) == nullptr)
+            return nullptr;
+    }
+    if (expression.Function().BuiltIn() ==
+            semantic::BuiltInFunction::StdinLine &&
+        EmitRuntimeNewline() == nullptr)
+        return nullptr;
+
+    auto* statusType = llvm::Type::getInt32Ty(_context);
+    auto* pointerType = llvm::PointerType::getUnqual(_context);
+    llvm::FunctionType* flushType =
+        llvm::FunctionType::get(statusType, std::vector<llvm::Type*>{}, false);
+    llvm::Value* flushStatus = _builder.CreateCall(
+        _module->getOrInsertFunction("flecha_runtime_v1_standard_output_flush",
+                                     flushType),
+        {}, "stdin.prompt.status");
+    llvm::Value* promptFailed = _builder.CreateICmpNE(
+        flushStatus, llvm::ConstantInt::get(statusType, 0),
+        "stdin.prompt.failed");
+
+    auto* line = CreateTemporaryAlloca(StringType(), "stdin.line");
+    _builder.CreateStore(llvm::Constant::getNullValue(StringType()), line);
+    auto* readBlock =
+        llvm::BasicBlock::Create(_context, "stdin.read", _currentFunction);
+    auto* convertBlock =
+        llvm::BasicBlock::Create(_context, "stdin.convert", _currentFunction);
+    auto* doneBlock =
+        llvm::BasicBlock::Create(_context, "stdin.done", _currentFunction);
+    llvm::BasicBlock* promptBlock = _builder.GetInsertBlock();
+    _builder.CreateCondBr(promptFailed, doneBlock, readBlock);
+
+    _builder.SetInsertPoint(readBlock);
+    llvm::FunctionType* readType =
+        llvm::FunctionType::get(statusType, {line->getType()}, false);
+    llvm::Value* readStatus = _builder.CreateCall(
+        _module->getOrInsertFunction(
+            "flecha_runtime_v1_standard_input_read_line", readType),
+        {line}, "stdin.read.status");
+    llvm::Value* readSucceeded =
+        _builder.CreateICmpEQ(readStatus, llvm::ConstantInt::get(statusType, 0),
+                              "stdin.read.succeeded");
+    _builder.CreateCondBr(readSucceeded, convertBlock, doneBlock);
+
+    _builder.SetInsertPoint(convertBlock);
+    const semantic::SemanticType referenceType =
+        expression.Arguments().back()->Type();
+    if (referenceType.Kind() != semantic::SemanticTypeKind::Reference)
+        return Fail("stdin destination is not a reference"), nullptr;
+    const semantic::SemanticType targetType = *referenceType.Target();
+    llvm::Value* target = arguments.back();
+    llvm::Value* conversionStatus = llvm::ConstantInt::get(statusType, 0);
+
+    if (targetType.Kind() == semantic::SemanticTypeKind::String) {
+        llvm::Value* result =
+            _builder.CreateLoad(StringType(), line, "stdin.string");
+        EmitValueDestroy(
+            _builder.CreateLoad(StringType(), target, "stdin.string.previous"),
+            targetType);
+        _builder.CreateStore(result, target);
+        _builder.CreateStore(llvm::Constant::getNullValue(StringType()), line);
+    } else {
+        llvm::Type* parsedType = MapType(targetType);
+        if (targetType.Kind() == semantic::SemanticTypeKind::Bool)
+            parsedType = llvm::Type::getInt8Ty(_context);
+        auto* parsed = CreateTemporaryAlloca(parsedType, "stdin.parsed");
+        _builder.CreateStore(llvm::Constant::getNullValue(parsedType), parsed);
+
+        llvm::Value* input =
+            _builder.CreateLoad(StringType(), line, "stdin.input");
+        llvm::Value* data =
+            _builder.CreateExtractValue(input, 0, "stdin.input.data");
+        llvm::Value* length =
+            _builder.CreateExtractValue(input, 1, "stdin.input.length");
+        std::string suffix;
+        switch (targetType.Kind()) {
+            case semantic::SemanticTypeKind::I8:
+                suffix = "i8";
+                break;
+            case semantic::SemanticTypeKind::I16:
+                suffix = "i16";
+                break;
+            case semantic::SemanticTypeKind::I32:
+                suffix = "i32";
+                break;
+            case semantic::SemanticTypeKind::I64:
+                suffix = "i64";
+                break;
+            case semantic::SemanticTypeKind::ISize:
+                suffix = "isize";
+                break;
+            case semantic::SemanticTypeKind::U8:
+                suffix = "u8";
+                break;
+            case semantic::SemanticTypeKind::U16:
+                suffix = "u16";
+                break;
+            case semantic::SemanticTypeKind::U32:
+                suffix = "u32";
+                break;
+            case semantic::SemanticTypeKind::U64:
+                suffix = "u64";
+                break;
+            case semantic::SemanticTypeKind::USize:
+                suffix = "usize";
+                break;
+            case semantic::SemanticTypeKind::F32:
+                suffix = "f32";
+                break;
+            case semantic::SemanticTypeKind::F64:
+                suffix = "f64";
+                break;
+            case semantic::SemanticTypeKind::Bool:
+                suffix = "bool";
+                break;
+            case semantic::SemanticTypeKind::Char:
+                suffix = "char";
+                break;
+            default:
+                return Fail("unsupported stdin destination type"), nullptr;
+        }
+        llvm::FunctionType* parseType = llvm::FunctionType::get(
+            statusType, {parsed->getType(), data->getType(), length->getType()},
+            false);
+        conversionStatus = _builder.CreateCall(
+            _module->getOrInsertFunction(
+                "flecha_runtime_v1_input_parse_" + suffix, parseType),
+            {parsed, data, length}, "stdin.convert.status");
+        EmitStringDestroy(input);
+        _builder.CreateStore(llvm::Constant::getNullValue(StringType()), line);
+
+        llvm::Value* parsedValue =
+            _builder.CreateLoad(parsedType, parsed, "stdin.value");
+        if (targetType.Kind() == semantic::SemanticTypeKind::Bool)
+            parsedValue = _builder.CreateICmpNE(
+                parsedValue, llvm::ConstantInt::get(parsedType, 0),
+                "stdin.bool");
+        llvm::Value* succeeded = _builder.CreateICmpEQ(
+            conversionStatus, llvm::ConstantInt::get(statusType, 0),
+            "stdin.convert.succeeded");
+        llvm::Value* previous =
+            _builder.CreateLoad(MapType(targetType), target, "stdin.previous");
+        _builder.CreateStore(_builder.CreateSelect(succeeded, parsedValue,
+                                                   previous, "stdin.selected"),
+                             target);
+    }
+    llvm::BasicBlock* convertedBlock = _builder.GetInsertBlock();
+    _builder.CreateBr(doneBlock);
+
+    _builder.SetInsertPoint(doneBlock);
+    auto* status = _builder.CreatePHI(statusType, 3, "stdin.status");
+    status->addIncoming(llvm::ConstantInt::get(statusType, 5), promptBlock);
+    status->addIncoming(readStatus, readBlock);
+    status->addIncoming(conversionStatus, convertedBlock);
+
+    const auto errorIdentity = [&](std::string name) {
+        llvm::GlobalVariable* identity = _module->getNamedGlobal(name);
+        if (identity == nullptr)
+            identity = new llvm::GlobalVariable(
+                *_module, llvm::Type::getInt8Ty(_context), true,
+                llvm::GlobalValue::PrivateLinkage,
+                llvm::ConstantInt::get(llvm::Type::getInt8Ty(_context), 0),
+                name);
+        return identity;
+    };
+    llvm::Value* failed = _builder.CreateICmpNE(
+        status, llvm::ConstantInt::get(statusType, 0), "stdin.failed");
+    llvm::Value* allocationFailed =
+        _builder.CreateICmpEQ(status, llvm::ConstantInt::get(statusType, 6),
+                              "stdin.allocation.failed");
+    llvm::Value* failureFamily = _builder.CreateSelect(
+        allocationFailed, errorIdentity(".flecha.error.AllocationError"),
+        errorIdentity(".flecha.error.InputError"), "stdin.failure.family");
+    llvm::Value* family = _builder.CreateSelect(
+        failed, failureFamily, llvm::ConstantPointerNull::get(pointerType),
+        "stdin.error.family");
+    llvm::Value* code = _builder.CreateSelect(
+        allocationFailed, llvm::ConstantInt::get(statusType, 1), status,
+        "stdin.error.code");
+    llvm::Value* error = llvm::PoisonValue::get(MapType(expression.Type()));
+    error = _builder.CreateInsertValue(error, family, 0);
+    return _builder.CreateInsertValue(error, code, 1, "stdin.error");
 }
 
 llvm::Value* LlvmCodeGenerator::EmitStringViewOperation(
@@ -3368,8 +3737,17 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 call.Function().BuiltIn() ==
                     semantic::BuiltInFunction::Stderr ||
                 call.Function().BuiltIn() ==
-                    semantic::BuiltInFunction::StderrLine)
+                    semantic::BuiltInFunction::StderrLine ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StderrFormat)
                 return EmitBuiltInOutput(call, arguments);
+            if (call.Function().BuiltIn() ==
+                semantic::BuiltInFunction::StringFormat)
+                return EmitBuiltInStringFormat(call, arguments);
+            if (call.Function().BuiltIn() == semantic::BuiltInFunction::Stdin ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StdinLine)
+                return EmitBuiltInInput(call, arguments);
             if (call.Function().BuiltIn() == semantic::BuiltInFunction::Free)
                 return EmitFree(arguments.front(),
                                 call.Function().ParameterTypes()[0]);
