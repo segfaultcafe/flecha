@@ -47,6 +47,28 @@ quiver extern unsafe i32 flecha_runtime_v1_file_stream_flush(
     *void handle
 );
 
+quiver extern unsafe i32 flecha_runtime_v1_standard_output_write(
+    *const u8 source,
+    usize length,
+    *usize bytes_written
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_standard_error_write(
+    *const u8 source,
+    usize length,
+    *usize bytes_written
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_standard_output_flush();
+
+quiver extern unsafe i32 flecha_runtime_v1_standard_error_flush();
+
+quiver extern unsafe i32 flecha_runtime_v1_standard_input_read(
+    *u8 destination,
+    usize capacity,
+    *usize bytes_read
+);
+
 quiver extern unsafe i32 flecha_runtime_v1_path_exists(
     *u8 output,
     *const char path,

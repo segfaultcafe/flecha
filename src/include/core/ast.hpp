@@ -978,18 +978,23 @@ class VariableDeclarationStatement final : public Statement {
                                  std::string name,
                                  std::unique_ptr<Expression> initializer,
                                  source::SourceRange nameRange = {},
-                                 bool isRangeSource = false)
+                                 bool isRangeSource = false,
+                                 bool isImplicitlyDefaulted = false)
         : Statement(range),
           _type(std::move(type)),
           _name(std::move(name)),
           _initializer(std::move(initializer)),
           _nameRange(nameRange.Empty() ? range : nameRange),
-          _isRangeSource(isRangeSource) {}
+          _isRangeSource(isRangeSource),
+          _isImplicitlyDefaulted(isImplicitlyDefaulted) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::VariableDeclarationStatement;
     }
     [[nodiscard]] bool IsRangeSource() const { return _isRangeSource; }
+    [[nodiscard]] bool IsImplicitlyDefaulted() const {
+        return _isImplicitlyDefaulted;
+    }
     [[nodiscard]] const TypeNode* ExplicitType() const { return _type.get(); }
     [[nodiscard]] bool HasExplicitType() const { return _type != nullptr; }
     [[nodiscard]] const std::string& Name() const { return _name; }
@@ -1006,6 +1011,7 @@ class VariableDeclarationStatement final : public Statement {
     std::unique_ptr<Expression> _initializer;
     source::SourceRange _nameRange;
     bool _isRangeSource;
+    bool _isImplicitlyDefaulted;
 };
 
 class TupleExpression final : public Expression {

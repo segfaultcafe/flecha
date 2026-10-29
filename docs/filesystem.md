@@ -92,6 +92,66 @@ moved, or closed while that borrow remains live. An adapter neither owns nor
 closes the file, and a writer does not flush automatically; callers retain
 responsibility for flushing and closing after the adapter's final use.
 
+## Standard output and error
+
+Import `lib::std::fmt` for ordinary typed program output. Its `print`,
+`println`, and `printf` functions write to standard output; `eprint`,
+`eprintln`, and `eprintf` provide the corresponding standard-error operations.
+See [Formatting and console output](formatting.md) for the format syntax and
+allocation behavior. These conveniences do not expose partial progress or
+recoverable output errors.
+
+Import `lib::std::io::stdio` when process standard streams must compose with
+fallible byte-oriented I/O:
+
+```flecha
+@imports
+    :: lib::std::io::buffered
+    :: lib::std::io::stdio;
+
+output := stdio::standard_output();
+writer, allocationError := buffered::BufferedWriter::withCapacity(
+    output.writer(),
+    4096
+);
+if allocationError != none {
+    return allocationError;
+}
+
+// Write bytes through writer.
+return writer.flush();
+```
+
+`standard_input()`, `standard_output()`, and `standard_error()` return
+lightweight, non-owning views of process-owned streams. The views never close
+a stream and require no destructor. Multiple views may coexist, but all input
+views consume the same process input cursor. `StandardInput::read` accepts a
+mutable byte slice, permits short reads, and reports EOF as `(0, none)`.
+Its `reader()` method returns a captureless `io::stream::Reader` that composes
+with `BufferedReader`. A zero-length read succeeds immediately without
+blocking. Once a reader is buffered, continue consuming input through that
+`BufferedReader`: its Flecha-owned read-ahead bytes are intentionally not
+visible to another standard-input view or to the typed `stdin` built-ins.
+
+The output views' `write` and `writeAll` methods accept strings; `writeBytes`
+and `writeAllBytes` accept byte slices. All four preserve the same
+partial-progress and zero-progress rules as `io::stream::Writer`. A
+zero-length write is a successful no-op.
+
+Each `writer()` call returns an independent captureless
+`io::stream::Writer`; it does not borrow the view. The native write operation
+first flushes typed built-in output pending in the same C stream, then performs
+one unbuffered descriptor write. Consequently a buffered standard stream
+requires only `BufferedWriter::flush()` to emit its pending bytes. Calling the
+view's `flush()` explicitly is useful for output previously emitted through
+the built-ins and reports `IoError.FlushFailed` when the process stream cannot
+be flushed.
+
+Standard-stream reads, writes, and flushes are blocking operations except for
+zero-length operations. They do not validate text encoding or add line
+endings. Use the `stdin` built-ins for complete-line typed conversion and
+`std::fmt` when typed formatting or an appended newline is desired.
+
 ## Buffered streams
 
 Import `lib::std::io::buffered` to wrap an existing `io::stream::Reader` or

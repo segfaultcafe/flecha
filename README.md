@@ -160,6 +160,9 @@ void main() {
 
 Functions place the return type before the function name. Local type inference uses `:=`; explicit declarations are also supported. See [`SPEC.md`](SPEC.md) for the current syntax and design goals.
 
+The standard formatting facade, `{}` replacement syntax, and console-output
+behavior are documented in [`docs/formatting.md`](docs/formatting.md).
+
 ## Projects and packages with Longbow
 
 Longbow manages a project described by `longbow.toml`.

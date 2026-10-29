@@ -53,9 +53,9 @@ if state === none {}            // always false: the static types differ
 ```
 
 Without a default variant, contextual `none` is rejected for that enum,
-including when it is nested in an array or tuple. A variable may still be
-declared without an initializer, but definite-assignment rules prevent it from
-being read before assignment.
+including when it is nested in an array or tuple. Initializer omission is
+available only when the enum has a default represented by zero. A nonzero
+default remains available through an explicit `= none` initializer.
 
 `==`, `!=`, `===`, and `!==` are supported only between values of the same enum
 type. Arithmetic, ordering, increment, implicit truth tests, and comparisons

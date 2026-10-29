@@ -159,6 +159,10 @@ void print(values...) {
 void printf(stringv format, values...) {
     stdoutf(format, values...);
 }
+
+export (string, error) sprintf(stringv format, values...) {
+    return __sprintf(format, values...);
+}
 ```
 
 This is a compile-time forwarding facility, not a runtime variadic value. The
@@ -170,6 +174,24 @@ returned, passed without expansion, or converted to a callable value. A
 forwarding declaration emits no function body or variadic ABI; its calls lower
 directly to the final target while retaining ordinary left-to-right argument
 evaluation and ownership checks.
+
+The formatting built-ins accept literal formats with `{}` replacement fields;
+`{{` and `}}` produce literal braces. `sprintf` returns a newly allocated
+owning string or `AllocationError.OutOfMemory` without exposing partial output.
+
+`stdin(promptValues..., &destination)` and
+`stdinln(promptValues..., &destination)` read one complete line. The final
+mutable checked reference must refer to an already-resolved integer,
+floating-point, `bool`, `char`, or owning `string` destination. Conversion is
+selected from that type and consumes the complete line. The destination is
+unchanged when the returned `error` is non-`none`. `stdinln` adds a newline to
+the prompt; it does not change the input delimiter. Formatted prompts use
+`printf` followed by `stdin`; there is no formatted-input builtin.
+
+An explicit typed local declaration may omit `= none` only when its resolved
+type is trivially zeroable: `i32 value;` and `i32 value = none;` are
+equivalent. A type whose default construction performs work must spell
+`= none` explicitly. Type-inferred declarations still require an initializer.
 
 In a function with `values...`, `<- ...values` selects only arguments supplied
 through that pack. Fixed parameters are included explicitly, for example
@@ -551,17 +573,18 @@ once-per-structure compilation warning. Fixed arrays default each element.
 
 ### 8.1 Initialization
 
-Ordinary typed declarations may omit an initializer, but the variable must be
-assigned on every reachable path before it is read:
+Ordinary typed declarations may omit an initializer only for trivially
+zeroable types. Omission is shorthand for `= none`, so the variable is
+immediately readable:
 
 ```flecha
-i32 count;          // not initialized
-count = 42;         // now readable
+i32 count;          // initialized to zero
+count = 42;
 bool ready = none;  // explicitly initialized to false
 ```
 
-The compiler checks definite assignment through branches, loops, and jumps.
-Owning `string` supports delayed initialization; borrowed `stringv` requires
+Types with nontrivial defaults, including owning `string`, require an explicit
+initializer. Borrowed `stringv` requires
 an initializer. See [definite assignment](docs/definite_assignment.md).
 
 ### 8.2 Const declarations
@@ -569,8 +592,10 @@ an initializer. See [definite assignment](docs/definite_assignment.md).
 Inside a function, `const T name = value;` initializes a fixed local binding.
 Its initializer may be a runtime expression; local `const` does not imply
 compile-time evaluation. Assignment to the binding is an error, even if the
-assigned value is unchanged. A const local must have an initializer; delayed
-const initialization is not supported.
+assigned value is unchanged. A const local of trivially zeroable type may omit
+its initializer as the same `= none` shorthand used by mutable locals. Other
+const locals require an explicit initializer; delayed initialization is not
+supported.
 
 ```flecha
 i32 add(const i32 input) {
@@ -751,9 +776,9 @@ rejected. `none` is contextually success; all named successes widen to the same
 generic success. Strict `===`/`!==` perform no widening or contextual conversion:
 different static error types, and error versus literal `none`, are unequal.
 
-Error values support ordinary const, definite-assignment, aggregate, and
-borrowing rules. An uninitialized error variable cannot be read. They are
-allocation-free and copyable, with no payloads or automatic propagation.
+Error values support ordinary const, aggregate, and borrowing rules. They are
+not eligible for initializer omission; spell `= none` to initialize success.
+They are allocation-free and copyable, with no payloads or automatic propagation.
 See [error_values.md](docs/error_values.md) for implemented behavior and the
 compiler-private representation. The allocator example above still depends on
 future allocation APIs.

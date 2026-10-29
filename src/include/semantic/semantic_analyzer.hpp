@@ -156,10 +156,14 @@ class SemanticAnalyzer final {
                        std::unordered_set<const FunctionSymbol*>>
         _functionCalls;
     std::unordered_set<const FunctionSymbol*> _forbiddenZeroEffects;
+    std::vector<
+        std::pair<const core::VariableDeclarationStatement*, SemanticType>>
+        _implicitDefaults;
     std::size_t _loopDepth = 0;
     bool _inUnsafe = false;
     bool _inZero = false;
     bool _zeroTrivialityKnown = false;
+    bool _allowStringReference = false;
     std::unordered_set<const core::Expression*> _directConstructions;
     std::unordered_map<const core::CallableTypeDeclaration*,
                        std::shared_ptr<CallableSignature>>

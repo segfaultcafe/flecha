@@ -14,14 +14,41 @@ and an exact byte length. A terminating null byte is neither required nor
 included in the length.
 
 The compiler emits one typed output call for each supported Flecha scalar
-value. `stdout` and `stdoutln` accept zero or more printable values and emit
-them in argument order; `stdoutln` then emits
-`flecha_runtime_v1_stdout_newline` once. `stdoutf` parses its string-literal
-format at compile time and lowers literal segments and substituted values to
-the same typed calls. It supports `%d` for numeric values, `%s` for `string`,
-`stringv`, or `char`, `%b` for `bool` or `u8`, and `%%` for a literal percent
-sign. `stdoutf` does not append a newline. No variadic C ABI is exposed by
-these language-level facilities.
+value. `stdout`, `stdoutln`, `stderr`, and `stderrln` accept zero or more
+printable values and emit them in argument order. The `ln` forms then emit the
+corresponding `flecha_runtime_v1_*_newline` operation once. `stdoutf` and
+`stderrf` parse their string-literal format at compile time and lower literal
+segments and substituted values to typed stream calls. Each `{}` consumes one
+printable value; `{{` and `}}` emit literal braces. The formatted operations do
+not append a newline.
+
+`__sprintf` uses the same compile-time parser and appends typed values to an
+internal fallible format buffer. Finishing transfers one malloc-compatible
+allocation to an owning Flecha string. Failure releases partial storage and
+produces `AllocationError.OutOfMemory`. No variadic C ABI or runtime type-erased
+argument pack is exposed by any of these language-level facilities.
+
+`stdin` and `stdinln` lower their prompt values to typed stdout operations,
+flush stdout, and call `flecha_runtime_v1_standard_input_read_line`. The line
+reader consumes the same descriptor-level primitive exposed by
+`flecha_runtime_v1_standard_input_read`, so switching between typed line input
+and `std::io::stdio::StandardInput` cannot strand bytes in a separate native
+read-ahead buffer. It removes LF and a preceding CR, distinguishes immediate
+EOF from a final unterminated line, and transfers malloc-compatible
+owning-string storage only on success. Typed
+`flecha_runtime_v1_input_parse_*` operations consume the complete line. Their
+stable status table is success `0`, EOF `1`, read failure `2`, invalid syntax
+`3`, out of range `4`, prompt flush failure `5`, and out of memory `6`. Code
+generation stores into the referenced destination only on success and maps
+failures to `InputError` or `AllocationError`.
+
+The standard I/O library uses additive byte-read, byte-write, and flush
+operations for process-owned streams. A read or write resets its count output
+before validation and performs one descriptor operation that preserves
+partial progress on failure. Writes first flush typed built-in output already
+pending in the selected C stream. Null storage is valid only with zero length;
+a successful zero-byte read is EOF. These operations do not transfer ownership
+of or close the process streams.
 
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the

@@ -53,27 +53,24 @@ are not part of the initial model.
 
 ## 2. Initialization and validity
 
-A declaration without an initializer creates a variable that cannot be read
-until assigned on every reachable path. It does not request an observable
-zero value. `none` explicitly requests a type's defined zero value where that
-conversion is supported.
-
-These are distinct:
+A declaration may omit its initializer only when its type is trivially
+zeroable. Omission requests the same observable zero value as `= none`, so
+these are equivalent:
 
 ```flecha
-i32 count;          // must be assigned before a read
+i32 count;          // initialized to zero
 i32 zero = none;    // initialized to zero
 ```
 
-The same distinction will apply to raw pointer variables: an initialized null
-pointer is a valid pointer value, but it does not designate an accessible
-object. Initializing a pointer says nothing about the initialization of its
-pointee.
+Types whose default construction performs work must spell `= none`
+explicitly. This keeps nontrivial initialization visible at the declaration.
 
-Taking a raw address initially requires a live, initialized variable. Writing
-through a raw pointer does not, by itself, prove another local initialized to
-the definite-assignment checker. Explicit uninitialized buffers, out-parameters,
-and tracked indirect initialization are later features.
+For raw pointer variables, the trivial zero is null. It is a valid pointer
+value, but it does not designate an accessible object. Initializing a pointer
+says nothing about the initialization of its pointee.
+
+Taking a raw address requires a live variable. Explicit uninitialized buffers,
+out-parameters, and tracked indirect initialization are later features.
 
 Initially, arrays must be initialized as whole values before producing a safe
 slice. Partial element initialization and partial moves of aggregates are
@@ -289,8 +286,8 @@ const i32 limit = 42;
 // increment(&limit);   // error: cannot mutably borrow const storage
 ```
 
-Initially require a declaration initializer. Single delayed initialization of
-const variables may be added later with exactly-once assignment analysis.
+A const declaration may use the same trivial-zero initializer omission as a
+mutable declaration. Other const types require an explicit initializer.
 `const` does not mean compile-time evaluation; runtime expressions may initialize
 const bindings.
 

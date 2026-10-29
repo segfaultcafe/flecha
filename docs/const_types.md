@@ -21,10 +21,12 @@ i32 main() {
 }
 ```
 
-- A const local requires an initializer, which may execute at runtime.
+- A const local of trivially zeroable type may omit its initializer; this is
+  shorthand for `= none`. Other const locals require an explicit initializer,
+  which may execute at runtime.
 - Const parameters receive their initial value from the caller.
 - Assignment to either is `FLECHA-S0005`, pointing at the assignment target.
-- Missing const local initialization is `FLECHA-S0023`, pointing at its name.
+- Invalid initializer omission is reported at the local's name.
 - Reads produce values without the outer binding qualifier. Copies and inferred
   declarations remain mutable unless their own declaration says `const`.
 - Top-level const on return and cast types does not make the receiving binding

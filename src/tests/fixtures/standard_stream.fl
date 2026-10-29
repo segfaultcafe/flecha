@@ -1,0 +1,82 @@
+module main;
+
+@imports
+    :: lib::std::io::buffered
+    :: lib::std::fmt
+    :: lib::std::io::stdio;
+
+i32 main() {
+    input := stdio::standard_input();
+    [0]u8 emptyInput = none;
+    emptyCount, emptyError := input.read(emptyInput[:]);
+    if emptyCount != 0 or emptyError != none {
+        return 1;
+    }
+
+    bufferedInput, inputAllocationError :=
+        buffered::BufferedReader::withCapacity(input.reader(), 4);
+    if inputAllocationError != none {
+        return 2;
+    }
+    [3]u8 firstInput = none;
+    [4]u8 middleInput = none;
+    [3]u8 finalInput = none;
+    if bufferedInput.readExact(firstInput[:]) != none or
+        bufferedInput.readExact(middleInput[:]) != none or
+        bufferedInput.readExact(finalInput[:]) != none {
+        return 3;
+    }
+    [1]u8 afterInput = none;
+    afterCount, afterError := bufferedInput.read(afterInput[:]);
+    if afterCount != 0 or afterError != none {
+        return 4;
+    }
+
+    stdout("builtin output|");
+    output := stdio::standard_output();
+    if output.writeAllBytes(firstInput[:]) != none or
+        output.writeAllBytes(middleInput[:]) != none or
+        output.writeAllBytes(finalInput[:]) != none {
+        return 5;
+    }
+    if output.writeAll("direct output|") != none {
+        return 6;
+    }
+    bufferedOutput, allocationError := buffered::BufferedWriter::withCapacity(
+        output.writer(),
+        4
+    );
+    if allocationError != none {
+        return 7;
+    }
+    [9]u8 bufferedBytes = ['b', 'u', 'f', 'f', 'e', 'r', 'e', 'd', '|'];
+    if bufferedOutput.writeAll(bufferedBytes[:]) != none or
+        bufferedOutput.flush() != none or output.flush() != none {
+        return 8;
+    }
+    fmt::print("print ", 42, "|");
+    fmt::println("line|");
+    fmt::printf("formatted {} {{}}|", true);
+
+    stderr("builtin error|");
+    errorOutput := stdio::standard_error();
+    if errorOutput.writeAll("direct error|") != none {
+        return 9;
+    }
+    bufferedError, errorAllocationError :=
+        buffered::BufferedWriter::withCapacity(errorOutput.writer(), 4);
+    if errorAllocationError != none {
+        return 10;
+    }
+    [9]u8 bufferedErrorBytes =
+        ['b', 'u', 'f', 'f', 'e', 'r', 'e', 'd', '|'];
+    if bufferedError.writeAll(bufferedErrorBytes[:]) != none or
+        bufferedError.flush() != none or errorOutput.flush() != none {
+        return 11;
+    }
+    fmt::eprint("eprint ", 42, "|");
+    fmt::eprintln("eline|");
+    fmt::eprintf("eformatted {} {{}}|", false);
+
+    return 42;
+}

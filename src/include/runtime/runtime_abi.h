@@ -16,6 +16,16 @@ typedef struct FlechaRuntimeString {
     size_t capacity;
 } FlechaRuntimeString;
 
+// Internal state used by compiler-lowered __sprintf calls. This is not a
+// language-level variadic container: code generation emits one typed append
+// call for each source argument.
+typedef struct FlechaRuntimeFormatBuffer {
+    char* data;
+    size_t length;
+    size_t capacity;
+    int32_t status;
+} FlechaRuntimeFormatBuffer;
+
 typedef enum FlechaRuntimeStringStatus {
     FLECHA_RUNTIME_STRING_OK = 0,
     FLECHA_RUNTIME_STRING_OUT_OF_MEMORY = 1,
@@ -64,6 +74,24 @@ typedef enum FlechaRuntimeFilesystemStatus {
     FLECHA_RUNTIME_FILESYSTEM_DIRECTORY_NOT_EMPTY = 9,
 } FlechaRuntimeFilesystemStatus;
 
+typedef enum FlechaRuntimeIoStatus {
+    FLECHA_RUNTIME_IO_OK = 0,
+    FLECHA_RUNTIME_IO_PERMISSION_DENIED = 2,
+    FLECHA_RUNTIME_IO_TOO_LARGE = 5,
+    FLECHA_RUNTIME_IO_INVALID_OPTIONS = 7,
+    FLECHA_RUNTIME_IO_FAILED = 8,
+} FlechaRuntimeIoStatus;
+
+typedef enum FlechaRuntimeInputStatus {
+    FLECHA_RUNTIME_INPUT_OK = 0,
+    FLECHA_RUNTIME_INPUT_END_OF_FILE = 1,
+    FLECHA_RUNTIME_INPUT_READ_FAILED = 2,
+    FLECHA_RUNTIME_INPUT_INVALID_SYNTAX = 3,
+    FLECHA_RUNTIME_INPUT_OUT_OF_RANGE = 4,
+    FLECHA_RUNTIME_INPUT_PROMPT_FAILED = 5,
+    FLECHA_RUNTIME_INPUT_OUT_OF_MEMORY = 6,
+} FlechaRuntimeInputStatus;
+
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.
@@ -96,6 +124,77 @@ void flecha_runtime_v1_stdout_f64(double value);
 void flecha_runtime_v1_stdout_bool(uint8_t value);
 void flecha_runtime_v1_stdout_char(uint8_t value);
 void flecha_runtime_v1_stdout_newline(void);
+void flecha_runtime_v1_stderr_string_view(const char* data, size_t length);
+void flecha_runtime_v1_stderr_i8(int8_t value);
+void flecha_runtime_v1_stderr_i16(int16_t value);
+void flecha_runtime_v1_stderr_i32(int32_t value);
+void flecha_runtime_v1_stderr_i64(int64_t value);
+void flecha_runtime_v1_stderr_isize(intptr_t value);
+void flecha_runtime_v1_stderr_u8(uint8_t value);
+void flecha_runtime_v1_stderr_u16(uint16_t value);
+void flecha_runtime_v1_stderr_u32(uint32_t value);
+void flecha_runtime_v1_stderr_u64(uint64_t value);
+void flecha_runtime_v1_stderr_usize(uintptr_t value);
+void flecha_runtime_v1_stderr_f32(float value);
+void flecha_runtime_v1_stderr_f64(double value);
+void flecha_runtime_v1_stderr_bool(uint8_t value);
+void flecha_runtime_v1_stderr_char(uint8_t value);
+void flecha_runtime_v1_stderr_newline(void);
+
+// Flushes typed built-in output pending in the selected C stream, then performs
+// one unbuffered descriptor write. Null storage is valid only for a zero-length
+// write. The count output is reset before validation and preserves partial
+// progress on failure.
+int32_t flecha_runtime_v1_standard_output_write(const uint8_t* source,
+                                                size_t length,
+                                                size_t* bytes_written);
+int32_t flecha_runtime_v1_standard_error_write(const uint8_t* source,
+                                               size_t length,
+                                               size_t* bytes_written);
+
+// Flushes bytes emitted through the corresponding process-owned C stream.
+int32_t flecha_runtime_v1_standard_output_flush(void);
+int32_t flecha_runtime_v1_standard_error_flush(void);
+
+// Performs one read from process standard input. Null storage is valid only
+// for a zero-length read. The count output is reset before validation and
+// preserves partial progress on failure. A zero count with success is EOF.
+int32_t flecha_runtime_v1_standard_input_read(uint8_t* destination,
+                                             size_t capacity,
+                                             size_t* bytes_read);
+
+// Reads one complete line, removing its LF and an immediately preceding CR.
+// EOF before any byte is distinct from a successful final unterminated line.
+// Success transfers one malloc-compatible owning string allocation.
+int32_t flecha_runtime_v1_standard_input_read_line(FlechaRuntimeString* output);
+int32_t flecha_runtime_v1_input_parse_i8(int8_t* output, const char* data,
+                                         size_t length);
+int32_t flecha_runtime_v1_input_parse_i16(int16_t* output, const char* data,
+                                          size_t length);
+int32_t flecha_runtime_v1_input_parse_i32(int32_t* output, const char* data,
+                                          size_t length);
+int32_t flecha_runtime_v1_input_parse_i64(int64_t* output, const char* data,
+                                          size_t length);
+int32_t flecha_runtime_v1_input_parse_isize(intptr_t* output, const char* data,
+                                            size_t length);
+int32_t flecha_runtime_v1_input_parse_u8(uint8_t* output, const char* data,
+                                         size_t length);
+int32_t flecha_runtime_v1_input_parse_u16(uint16_t* output, const char* data,
+                                          size_t length);
+int32_t flecha_runtime_v1_input_parse_u32(uint32_t* output, const char* data,
+                                          size_t length);
+int32_t flecha_runtime_v1_input_parse_u64(uint64_t* output, const char* data,
+                                          size_t length);
+int32_t flecha_runtime_v1_input_parse_usize(uintptr_t* output, const char* data,
+                                            size_t length);
+int32_t flecha_runtime_v1_input_parse_f32(float* output, const char* data,
+                                          size_t length);
+int32_t flecha_runtime_v1_input_parse_f64(double* output, const char* data,
+                                          size_t length);
+int32_t flecha_runtime_v1_input_parse_bool(uint8_t* output, const char* data,
+                                           size_t length);
+int32_t flecha_runtime_v1_input_parse_char(uint8_t* output, const char* data,
+                                           size_t length);
 uint8_t flecha_runtime_v1_string_view_at(const char* data, size_t length,
                                          uint32_t index);
 void flecha_runtime_v1_string_view_check_substr(size_t length, uint32_t start,
@@ -105,6 +204,41 @@ void flecha_runtime_v1_string_view_check_substr(size_t length, uint32_t start,
 int32_t flecha_runtime_v1_string_try_from_bytes(FlechaRuntimeString* output,
                                                 const uint8_t* data,
                                                 size_t length);
+void flecha_runtime_v1_format_buffer_init(FlechaRuntimeFormatBuffer* buffer);
+void flecha_runtime_v1_format_buffer_append_string_view(
+    FlechaRuntimeFormatBuffer* buffer, const char* data, size_t length);
+void flecha_runtime_v1_format_buffer_append_i8(
+    FlechaRuntimeFormatBuffer* buffer, int8_t value);
+void flecha_runtime_v1_format_buffer_append_i16(
+    FlechaRuntimeFormatBuffer* buffer, int16_t value);
+void flecha_runtime_v1_format_buffer_append_i32(
+    FlechaRuntimeFormatBuffer* buffer, int32_t value);
+void flecha_runtime_v1_format_buffer_append_i64(
+    FlechaRuntimeFormatBuffer* buffer, int64_t value);
+void flecha_runtime_v1_format_buffer_append_isize(
+    FlechaRuntimeFormatBuffer* buffer, intptr_t value);
+void flecha_runtime_v1_format_buffer_append_u8(
+    FlechaRuntimeFormatBuffer* buffer, uint8_t value);
+void flecha_runtime_v1_format_buffer_append_u16(
+    FlechaRuntimeFormatBuffer* buffer, uint16_t value);
+void flecha_runtime_v1_format_buffer_append_u32(
+    FlechaRuntimeFormatBuffer* buffer, uint32_t value);
+void flecha_runtime_v1_format_buffer_append_u64(
+    FlechaRuntimeFormatBuffer* buffer, uint64_t value);
+void flecha_runtime_v1_format_buffer_append_usize(
+    FlechaRuntimeFormatBuffer* buffer, uintptr_t value);
+void flecha_runtime_v1_format_buffer_append_f32(
+    FlechaRuntimeFormatBuffer* buffer, float value);
+void flecha_runtime_v1_format_buffer_append_f64(
+    FlechaRuntimeFormatBuffer* buffer, double value);
+void flecha_runtime_v1_format_buffer_append_bool(
+    FlechaRuntimeFormatBuffer* buffer, uint8_t value);
+void flecha_runtime_v1_format_buffer_append_char(
+    FlechaRuntimeFormatBuffer* buffer, uint8_t value);
+// Transfers the completed allocation to output. On failure, releases partial
+// storage, resets output, and returns FLECHA_RUNTIME_STRING_OUT_OF_MEMORY.
+int32_t flecha_runtime_v1_format_buffer_finish(
+    FlechaRuntimeFormatBuffer* buffer, FlechaRuntimeString* output);
 void flecha_runtime_v1_string_from_view(FlechaRuntimeString* output,
                                         const char* data, size_t length);
 void flecha_runtime_v1_string_clone(FlechaRuntimeString* output,
@@ -144,7 +278,8 @@ void flecha_runtime_v1_string_from_char(FlechaRuntimeString* output,
 
 // Parses the complete locale-independent decimal input. Every failure resets
 // output to zero. Formatting emits the shortest round-trippable representation,
-// resets written before validation, and leaves destination unchanged on failure.
+// resets written before validation, and leaves destination unchanged on
+// failure.
 int32_t flecha_runtime_v1_parse_f32(float* output, const char* data,
                                     size_t length);
 int32_t flecha_runtime_v1_parse_f64(double* output, const char* data,

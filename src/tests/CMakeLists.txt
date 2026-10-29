@@ -440,6 +440,14 @@ add_test(NAME StandardLibraryTests.FileStream
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/file_stream_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_file_stream.cmake)
 
+add_test(NAME StandardLibraryTests.StandardStream
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/standard_stream.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/standard_stream_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_standard_stream.cmake)
+
 foreach(case IN ITEMS reader_allocation_failure writer_allocation_failure)
     add_test(NAME StandardLibraryTests.BufferedIo.${case}
         COMMAND ${CMAKE_COMMAND}

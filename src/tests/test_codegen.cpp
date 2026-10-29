@@ -734,14 +734,20 @@ TEST(LlvmCodeGeneratorTests, CoercesCharactersAndExternBytePointers) {
     EXPECT_NE(ir.find("call void @native_write(ptr"), std::string::npos);
 }
 
-TEST(LlvmCodeGeneratorTests, EmitsLengthAwareStandardOutput) {
+TEST(LlvmCodeGeneratorTests, EmitsLengthAwareStandardOutputAndError) {
     GeneratedSource result = Generate(
         "i32 main() { stdout(); stdout(\"Flecha\", -42, true); "
         "stdoutln(); stdoutln(\"Language\"); stdout(1 as i8); "
         "stdout(2 as i16); stdout(3 as i64); stdout(4 as isize); "
         "stdout(5 as u8); stdout(6 as u16); stdout(7 as u32); "
         "stdout(8 as u64); stdout(9 as usize); stdout(1 as f32); "
-        "stdout(1.5); stdout(true); stdout('x'); return 42; }");
+        "stdout(1.5); stdout(true); stdout('x'); stderr(); "
+        "stderr(\"Flecha\", -42, true); stderrln(); "
+        "stderrln(\"Language\"); stderr(1 as i8); stderr(2 as i16); "
+        "stderr(3 as i64); stderr(4 as isize); stderr(5 as u8); "
+        "stderr(6 as u16); stderr(7 as u32); stderr(8 as u64); "
+        "stderr(9 as usize); stderr(1 as f32); stderr(1.5); "
+        "stderr(true); stderr('x'); return 42; }");
 
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_NE(result.module, nullptr) << result.generator->Error();
@@ -755,17 +761,20 @@ TEST(LlvmCodeGeneratorTests, EmitsLengthAwareStandardOutput) {
         EXPECT_NE(ir.find("@flecha_runtime_v1_stdout_" + suffix),
                   std::string::npos)
             << suffix;
+        EXPECT_NE(ir.find("@flecha_runtime_v1_stderr_" + suffix),
+                  std::string::npos)
+            << suffix;
     }
     EXPECT_EQ(ir.find("@write"), std::string::npos);
     EXPECT_EQ(ir.find("@snprintf"), std::string::npos);
 }
 
-TEST(LlvmCodeGeneratorTests, EmitsFormattedStandardOutput) {
+TEST(LlvmCodeGeneratorTests, EmitsFormattedStandardOutputAndError) {
     GeneratedSource result = Generate(
-        "void output_byte(u8 value) { stdoutf(\"%b\", value); } "
-        "void deferred(i32 value) { defer stdoutf(\"value: %d\", value); } "
-        "i32 main() { stdoutf(\"expected: %d, text: %s%s, ok: %b/%b, "
-        "percent: %%\", 42, \"flecha\", '!', true, 1 as u8); return 0; }");
+        "void output_byte(u8 value) { stdoutf(\"{}\", value); } "
+        "void deferred(i32 value) { defer stderrf(\"value: {}\", value); } "
+        "i32 main() { stdoutf(\"expected: {}, text: {}{}, ok: {}/{}, "
+        "braces: {{}}\", 42, \"flecha\", '!', true, 1 as u8); return 0; }");
 
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_NE(result.module, nullptr) << result.generator->Error();
@@ -776,8 +785,78 @@ TEST(LlvmCodeGeneratorTests, EmitsFormattedStandardOutput) {
               std::string::npos);
     EXPECT_NE(ir.find("@flecha_runtime_v1_stdout_char"), std::string::npos);
     EXPECT_NE(ir.find("@flecha_runtime_v1_stdout_bool"), std::string::npos);
-    EXPECT_NE(ir.find("stdoutf.byte.bool"), std::string::npos);
-    EXPECT_NE(ir.find("percent: %"), std::string::npos);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_stdout_u8"), std::string::npos);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_stderr_i32"), std::string::npos);
+    EXPECT_NE(ir.find("braces: {}"), std::string::npos);
+}
+
+TEST(LlvmCodeGeneratorTests, EmitsFallibleFormattedStringConstruction) {
+    GeneratedSource result = Generate(R"(
+        (string, error) sprintf(stringv format, values...) {
+            return __sprintf(format, values...);
+        }
+        i32 main() {
+            text, err := sprintf(
+                "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{{}}",
+                1 as i8, 2 as i16, 3, 4 as i64, 5 as isize,
+                6 as u8, 7 as u16, 8 as u32, 9 as u64, 10 as usize,
+                1.25 as f32, 1.5, true, 'x', "text"
+            );
+            if err != none { return 1; }
+            stdout(text);
+            return 0;
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    for (const std::string& suffix :
+         {"i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64",
+          "usize", "f32", "f64", "bool", "char", "string_view"}) {
+        EXPECT_NE(ir.find("@flecha_runtime_v1_format_buffer_append_" + suffix),
+                  std::string::npos)
+            << suffix;
+    }
+    EXPECT_NE(ir.find("@flecha_runtime_v1_format_buffer_finish"),
+              std::string::npos);
+    EXPECT_NE(ir.find(".flecha.error.AllocationError"), std::string::npos);
+}
+
+TEST(LlvmCodeGeneratorTests, EmitsTypedLineInputAndPreservesErrorFamilies) {
+    GeneratedSource result = Generate(R"(
+        i32 main() {
+            i8 a; i16 b; i32 c; i64 d; isize e;
+            u8 f; u16 g; u32 h; u64 i; usize j;
+            f32 k; f64 l; bool m; char n; string text = none;
+            error err = stdin("number: ", &c);
+            if err != none { return 1; }
+            stdin(&a); stdin(&b); stdin(&d); stdin(&e);
+            stdin(&f); stdin(&g); stdin(&h); stdin(&i); stdin(&j);
+            stdin(&k); stdin(&l); stdin(&m); stdin(&n);
+            stdinln("text", &text);
+            return c;
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_standard_output_flush"),
+              std::string::npos);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_standard_input_read_line"),
+              std::string::npos);
+    for (const std::string& suffix :
+         {"i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64",
+          "usize", "f32", "f64", "bool", "char"}) {
+        EXPECT_NE(ir.find("@flecha_runtime_v1_input_parse_" + suffix),
+                  std::string::npos)
+            << suffix;
+    }
+    EXPECT_NE(ir.find(".flecha.error.InputError"), std::string::npos);
+    EXPECT_NE(ir.find(".flecha.error.AllocationError"), std::string::npos);
 }
 
 TEST(NativeCompilerTests, RunsVariadicAndFormattedStandardOutput) {
@@ -787,11 +866,25 @@ TEST(NativeCompilerTests, RunsVariadicAndFormattedStandardOutput) {
         void printf(stringv format, values...) {
             stdoutf(format, values...);
         }
+        void eprint(values...) { stderr(values...); }
+        void eprintln(values...) { stderrln(values...); }
+        void eprintf(stringv format, values...) {
+            stderrf(format, values...);
+        }
+        (string, error) sprintf(stringv format, values...) {
+            return __sprintf(format, values...);
+        }
         i32 main() {
             print("answer: ", 42);
             println('!');
-            printf("expected: %d, text: %s%s, ok: %b/%b, percent: %%",
+            printf("expected: {}, text: {}{}, ok: {}/{}, braces: {{}}",
                    -7, "flecha", '.', true, 0 as u8);
+            eprint("error: ");
+            eprintln(7);
+            eprintf("detail: {} {{}}", false);
+            text, err := sprintf("|string: {} {} {{}}", -9, "ok");
+            if err != none { return 2; }
+            print(text);
             return 0;
         }
     )");
@@ -804,8 +897,11 @@ TEST(NativeCompilerTests, RunsVariadicAndFormattedStandardOutput) {
         temporaryDirectory / "flecha_formatted_stdout_test";
     const std::filesystem::path outputPath =
         temporaryDirectory / "flecha_formatted_stdout_test.txt";
+    const std::filesystem::path errorPath =
+        temporaryDirectory / "flecha_formatted_stderr_test.txt";
     std::filesystem::remove(executablePath);
     std::filesystem::remove(outputPath);
+    std::filesystem::remove(errorPath);
 
     NativeCompiler compiler;
     ASSERT_TRUE(compiler.Ready()) << compiler.Error();
@@ -816,8 +912,10 @@ TEST(NativeCompilerTests, RunsVariadicAndFormattedStandardOutput) {
     const std::string executablePathText = executablePath.string();
     const std::string outputPathText = outputPath.string();
     const llvm::StringRef arguments[] = {executablePathText};
+    const std::string errorPathText = errorPath.string();
     const std::array<std::optional<llvm::StringRef>, 3> redirects = {
-        std::nullopt, llvm::StringRef(outputPathText), std::nullopt};
+        std::nullopt, llvm::StringRef(outputPathText),
+        llvm::StringRef(errorPathText)};
     EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments,
                                         std::nullopt, redirects),
               0);
@@ -827,10 +925,100 @@ TEST(NativeCompilerTests, RunsVariadicAndFormattedStandardOutput) {
                            std::istreambuf_iterator<char>());
     EXPECT_EQ(text,
               "answer: 42!\n"
-              "expected: -7, text: flecha., ok: true/false, percent: %");
+              "expected: -7, text: flecha., ok: true/0, braces: {}"
+              "|string: -9 ok {}");
+
+    std::ifstream errorOutput(errorPath, std::ios::binary);
+    const std::string errorText((std::istreambuf_iterator<char>(errorOutput)),
+                                std::istreambuf_iterator<char>());
+    EXPECT_EQ(errorText, "error: 7\ndetail: false {}");
 
     std::filesystem::remove(executablePath);
     std::filesystem::remove(outputPath);
+    std::filesystem::remove(errorPath);
+}
+
+TEST(NativeCompilerTests, ReadsAndConvertsTypedStandardInputLines) {
+    GeneratedSource result = Generate(R"(
+        i32 main() {
+            i32 number;
+            if stdin("number: ", &number) != none or number != 42 {
+                return 1;
+            }
+            bool flag;
+            char letter;
+            string text = none;
+            f64 decimal;
+            if stdin(&flag) != none or stdin(&letter) != none or
+                stdinln("text", &text) != none or stdin(&decimal) != none {
+                return 2;
+            }
+            i32 preserved = 99;
+            if stdin(&preserved) != InputError.InvalidSyntax or
+                preserved != 99 {
+                return 3;
+            }
+            if stdin(&preserved) != InputError.EndOfFile or preserved != 99 {
+                return 4;
+            }
+            stdout(number, "|", flag, "|", letter, "|", text, "|",
+                   decimal, "|", preserved);
+            return 0;
+        }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path temporaryDirectory =
+        std::filesystem::temp_directory_path();
+    const std::filesystem::path executablePath =
+        temporaryDirectory / "flecha_standard_input_test";
+    const std::filesystem::path inputPath =
+        temporaryDirectory / "flecha_standard_input_test.txt";
+    const std::filesystem::path outputPath =
+        temporaryDirectory / "flecha_standard_input_output.txt";
+    const std::filesystem::path errorPath =
+        temporaryDirectory / "flecha_standard_input_error.txt";
+    std::filesystem::remove(executablePath);
+    std::filesystem::remove(inputPath);
+    std::filesystem::remove(outputPath);
+    std::filesystem::remove(errorPath);
+
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "standard_input_test", executablePath.string()))
+        << compiler.Error();
+
+    {
+        std::ofstream input(inputPath, std::ios::binary);
+        input << "42\ntrue\nx\nhello world\r\n1.25\nnope\n";
+    }
+    const std::string executablePathText = executablePath.string();
+    const std::string inputPathText = inputPath.string();
+    const std::string outputPathText = outputPath.string();
+    const std::string errorPathText = errorPath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    const std::array<std::optional<llvm::StringRef>, 3> redirects = {
+        llvm::StringRef(inputPathText), llvm::StringRef(outputPathText),
+        llvm::StringRef(errorPathText)};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments,
+                                        std::nullopt, redirects),
+              0);
+
+    std::ifstream output(outputPath, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(output)),
+                           std::istreambuf_iterator<char>());
+    EXPECT_EQ(text, "number: text\n42|true|x|hello world|1.25|99");
+    std::ifstream errors(errorPath, std::ios::binary);
+    const std::string errorText((std::istreambuf_iterator<char>(errors)),
+                                std::istreambuf_iterator<char>());
+    EXPECT_TRUE(errorText.empty());
+
+    std::filesystem::remove(executablePath);
+    std::filesystem::remove(inputPath);
+    std::filesystem::remove(outputPath);
+    std::filesystem::remove(errorPath);
 }
 
 TEST(LlvmCodeGeneratorTests, UsesTargetPointerWidthForSizeTypes) {
@@ -2568,10 +2756,9 @@ TEST(NativeCompilerTests, HonorsConfiguredLinkerWithoutFallback) {
     EXPECT_FALSE(std::filesystem::exists(output));
 }
 
-TEST(LlvmCodeGeneratorTests,
-     EmitsDelayedScalarsAndNullInitializedStringStorage) {
+TEST(LlvmCodeGeneratorTests, EmitsDefaultedScalarAndStringDeclarations) {
     GeneratedSource result = Generate(
-        "i32 main(bool c) { i32 value; string text; "
+        "i32 main(bool c) { i32 value; string text = none; "
         "if c { return 0; } else { value = 42; text = \"ready\"; } "
         "stdoutln(text); return value; }");
     ASSERT_FALSE(result.diagnostics.HasErrors());
@@ -2580,7 +2767,7 @@ TEST(LlvmCodeGeneratorTests,
     const std::string ir = ModuleText(*result.module);
     EXPECT_NE(ir.find("%value = alloca i32"), std::string::npos);
     EXPECT_NE(ir.find("zeroinitializer, ptr %text"), std::string::npos);
-    EXPECT_EQ(ir.find("store i32 0, ptr %value"), std::string::npos);
+    EXPECT_NE(ir.find("store i32 0, ptr %value"), std::string::npos);
 }
 
 TEST(LlvmCodeGeneratorTests, CleansLaterStringSlotsAtEarlierBackwardJumpExits) {
@@ -2638,8 +2825,12 @@ TEST(LlvmCodeGeneratorTests, EmitsTypedZeroValuesForConstInitializers) {
         "i32 identity(const i32 value) { return value; } "
         "i32 main() { const bool b = none; const char c = none; "
         "const f64 f = none; const string s = none; const stringv v = none; "
+        "const bool defaultBool; const char defaultChar; "
+        "const f64 defaultFloat; const string defaultString = none; "
+        "const stringv defaultView = none; i32 defaultInteger; "
         "i32 mutableZero = 1; mutableZero = none; "
-        "const i32 result = identity((none)) + zero(); return result; }");
+        "const i32 result = identity((none)) + zero(); "
+        "return result + defaultInteger; }");
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_NE(result.module, nullptr) << result.generator->Error();
     EXPECT_TRUE(VerifyModule(*result.module).empty());

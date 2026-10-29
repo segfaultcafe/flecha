@@ -396,9 +396,9 @@ TEST(LoweringTests, MovesGeneralizedOwnCapturesIntoEnvironments) {
               "inner");
 }
 
-TEST(LoweringTests, PreservesDelayedDeclarationsAcrossTerminatingBranches) {
+TEST(LoweringTests, MaterializesNoneForTypedDeclarations) {
     LoweredSource result = Lower(
-        "i32 main(bool c) { i32 value; string text; "
+        "i32 main(bool c) { i32 value; string text = none; "
         "if c { return 0; } else { value = 42; text = \"ready\"; } "
         "stdoutln(text); return value; }");
     ASSERT_FALSE(result.diagnostics.HasErrors());
@@ -408,7 +408,12 @@ TEST(LoweringTests, PreservesDelayedDeclarationsAcrossTerminatingBranches) {
         const auto& declaration =
             static_cast<const BoundVariableDeclarationStatement&>(
                 *function.Body().Statements()[index]);
-        EXPECT_EQ(declaration.Initializer(), nullptr);
+        ASSERT_NE(declaration.Initializer(), nullptr);
+        EXPECT_EQ(declaration.Initializer()->Kind(),
+                  BoundNodeKind::LiteralExpression);
+        EXPECT_TRUE(static_cast<const BoundLiteralExpression&>(
+                        *declaration.Initializer())
+                        .IsZeroValue());
     }
     const auto& branch =
         static_cast<const BoundIfStatement&>(*function.Body().Statements()[2]);

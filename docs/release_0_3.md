@@ -55,6 +55,7 @@ The milestone follows these rules:
 The initial public module layout is:
 
 ```text
+std::fmt                 typed console and owning-string formatting
 std::math::*              numeric, integer, bits, floating_point, constants
 std::memory::*            slices
 std::bytes::*             buffer, sequence
@@ -298,6 +299,24 @@ and buffered paths, boundary crossings, short operations, EOF, zero progress,
 error retry, allocation failure, movement, borrow conflicts, file round trips,
 and byte ordering without native buffering support.
 
+The standard-stream portion is also implemented. The `stderr` and `stderrln`
+built-ins mirror the existing printable `stdout` operations, while
+`std::io::stdio` exposes process-owned streams as non-owning fallible byte
+sources and destinations. `StandardInput` supplies a captureless
+`io::stream::Reader`; standard output and error supply captureless
+`io::stream::Writer` adapters. These views never close process resources and
+compose directly with buffered I/O.
+The root `std::fmt` facade provides `print`, `println`, `printf`, and matching
+standard-error operations through compile-time forwarding packs. Literal `{}`
+formats are checked by the compiler, and `sprintf` returns an owning string
+with explicit allocation failure. No runtime variadic ABI is introduced.
+The `stdin` and `stdinln` built-ins provide typed line input into an
+already-declared mutable destination. The compiler selects complete-line
+conversion from the referenced type, preserves the destination on failure, and
+reports EOF, read, parse, range, prompt-flush, and allocation failures
+explicitly. Formatted input is intentionally absent; formatted prompts compose
+through `std::fmt` followed by `stdin`.
+
 ### 6. Blocking networking
 
 Add an initial `net` layer containing:
@@ -349,6 +368,53 @@ Each standard-library module must include ordinary success, boundary, failure,
 and cleanup tests. Algorithms and codecs need portable reference vectors.
 Containers and resource-owning types need allocation-failure and sanitizer
 coverage.
+
+### 9. Hardening, stress, performance, and stability
+
+After the feature stages and their required Stage 8 support are complete,
+freeze the public 0.3 surface and harden the complete toolchain as one shipped
+system. This stage adds no planned feature area. Any API or language change
+discovered here requires an explicit defect or release-blocker justification
+and must restart the affected compatibility and stress gates.
+
+Hardening includes:
+
+- large deterministic compiler stress corpora covering parsing, semantic
+  analysis, ownership, borrowing, generics, module graphs, lowering, and native
+  code generation;
+- adversarial, randomized, and property-based tests for parsers, codecs,
+  collections, I/O state machines, package metadata, and runtime ABI
+  boundaries;
+- repeated allocation-failure, partial-operation, cleanup, and operating-system
+  failure injection across every owning or stateful API;
+- sanitizer, fuzz, and malformed-input campaigns that preserve every reduced
+  reproducer as a permanent regression test;
+- long-running stability and soak tests for repeated compilation, execution,
+  package resolution, cache reuse, clean rebuilds, and resource teardown;
+- performance benchmarks for compiler latency and peak memory, generated-code
+  execution, core collections, text and encoding, buffered I/O, hashing, and
+  package resolution;
+- reviewed performance baselines with explicit regression tolerances rather
+  than untracked benchmark numbers; and
+- repeated clean-install and relocated-package tests on every supported release
+  target, including deterministic output and offline dependency reuse.
+
+#### Stage 9 hardening gate
+
+| Area | Required evidence |
+| --- | --- |
+| Compiler stress | Large valid programs compile deterministically; deeply nested and invalid programs produce bounded diagnostics without crashes, hangs, stale state, or nondeterministic output. |
+| Runtime stress | Long-running and high-volume ownership, allocation, I/O, networking, and process workloads complete without leaks, double cleanup, corruption, deadlock, or descriptor exhaustion. |
+| Adversarial input | Tokenizers, parsers, manifest readers, decoders, protocol readers, and runtime boundaries reject malformed, truncated, oversized, and randomized input safely. |
+| Failure injection | Every allocation and fallible operating-system boundary is exercised at each meaningful failure point, preserving documented state and exactly-once cleanup. |
+| Sanitizers and fuzzing | Supported sanitizer suites pass; fuzz campaigns meet their recorded duration or execution budget; every discovered crash receives a minimized permanent regression. |
+| Performance | Versioned benchmark workloads record compile time, peak memory, execution time, throughput, and allocation behavior where relevant; regressions beyond the reviewed tolerance block release unless explicitly accepted. |
+| Stability | Repeated and reordered test runs, clean builds, incremental builds, offline builds, relocated packages, and soak runs remain deterministic and do not accumulate process or filesystem state. |
+| Defect closure | There are no known reproducible crashes, hangs, memory-safety violations, ownership violations, silent data corruption, or release-blocking correctness defects. Every fixed high-impact defect has a focused regression test. |
+
+The intent is a bulletproof regression boundary for the supported 0.3 surface:
+ordinary correctness tests prove individual contracts, while this stage attacks
+their composition, scale, repetition, failure behavior, and performance.
 
 ## Milestone discoveries
 
@@ -441,8 +507,8 @@ and production key management are outside this example's scope.
 
 Flecha 0.3.0 is ready when:
 
-1. Stages 1 through 7 are implemented, documented, and tested. Stage 8's test
-   helpers required by those modules are also complete.
+1. Stages 1 through 8 are implemented, documented, and tested, and the complete
+   Stage 9 hardening gate passes.
 2. The CLI, ledger, and blocking-network north-star programs
    build and run from clean, relocated release packages.
 3. The complete suite passes on Linux x86-64, Windows x86-64, macOS x86-64,
