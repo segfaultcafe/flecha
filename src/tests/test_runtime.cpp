@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -61,6 +62,34 @@ TEST(RuntimeStandardStreamTests, ValidatesBuffersAndCountOutputs) {
 
     EXPECT_EQ(flecha_runtime_v1_standard_input_read(nullptr, 0, nullptr),
               FLECHA_RUNTIME_IO_INVALID_OPTIONS);
+}
+
+TEST(RuntimeProcessArgumentTests, CapturesInitializedArguments) {
+    const char* values[] = {"flecha-test", "", "two words"};
+    flecha_runtime_v1_process_arguments_initialize(3, values);
+    EXPECT_EQ(flecha_runtime_v1_process_argument_count(), 3u);
+
+    FlechaRuntimeString output{};
+    EXPECT_EQ(flecha_runtime_v1_process_argument_capture(&output, 0),
+              FLECHA_RUNTIME_PROCESS_ARGUMENT_OK);
+    ASSERT_NE(output.data, nullptr);
+    EXPECT_EQ(std::string(output.data, output.length), "flecha-test");
+    std::free(output.data);
+
+    output = {};
+    EXPECT_EQ(flecha_runtime_v1_process_argument_capture(&output, 1),
+              FLECHA_RUNTIME_PROCESS_ARGUMENT_OK);
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.length, 0u);
+
+    EXPECT_EQ(flecha_runtime_v1_process_argument_capture(&output, 3),
+              FLECHA_RUNTIME_PROCESS_ARGUMENT_INVALID_INDEX);
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(flecha_runtime_v1_process_argument_capture(nullptr, 0),
+              FLECHA_RUNTIME_PROCESS_ARGUMENT_INVALID_INDEX);
+
+    flecha_runtime_v1_process_arguments_initialize(0, nullptr);
+    EXPECT_EQ(flecha_runtime_v1_process_argument_count(), 0u);
 }
 
 TEST(RuntimeStandardInputTests, ParsesCompleteTypedValues) {

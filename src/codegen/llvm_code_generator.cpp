@@ -1628,21 +1628,41 @@ bool LlvmCodeGenerator::DeclareFunctions(
                 type, llvm::Function::ExternalLinkage, linkName, *_module);
         ApplyExternAttributes(symbol, *function);
         _functions.emplace(&symbol, function);
-        // A Flecha void entry point has a defined successful process status.
-        // Keep its language-level signature and synthesize the C ABI wrapper.
-        if (!symbol.IsExtern() && symbol.Name() == "main" &&
-            symbol.ReturnType().Kind() == semantic::SemanticTypeKind::Void &&
-            symbol.ParameterTypes().empty()) {
+        // Keep the parameterless Flecha entry signature independent from the C
+        // ABI. The wrapper records argc/argv before invoking the source main.
+        const auto returnKind = symbol.ReturnType().Kind();
+        if (!symbol.IsExtern() && linkName == "main" &&
+            symbol.ParameterTypes().empty() &&
+            (returnKind == semantic::SemanticTypeKind::Void ||
+             returnKind == semantic::SemanticTypeKind::I32)) {
             function->setName("$flecha$main");
             auto* entryType = llvm::FunctionType::get(
-                llvm::Type::getInt32Ty(_context), false);
+                llvm::Type::getInt32Ty(_context),
+                {llvm::Type::getInt32Ty(_context),
+                 llvm::PointerType::getUnqual(_context)},
+                false);
             auto* entry = llvm::Function::Create(
                 entryType, llvm::Function::ExternalLinkage, "main", *_module);
+            entry->getArg(0)->setName("argument.count");
+            entry->getArg(1)->setName("argument.values");
             llvm::IRBuilder<> builder(
                 llvm::BasicBlock::Create(_context, "entry", entry));
-            builder.CreateCall(function);
-            builder.CreateRet(
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(_context), 0));
+            auto* initializeType = llvm::FunctionType::get(
+                llvm::Type::getVoidTy(_context),
+                {llvm::Type::getInt32Ty(_context),
+                 llvm::PointerType::getUnqual(_context)},
+                false);
+            llvm::FunctionCallee initialize = _module->getOrInsertFunction(
+                "flecha_runtime_v1_process_arguments_initialize",
+                initializeType);
+            builder.CreateCall(initialize,
+                               {entry->getArg(0), entry->getArg(1)});
+            llvm::CallInst* call = builder.CreateCall(function);
+            if (returnKind == semantic::SemanticTypeKind::Void)
+                builder.CreateRet(llvm::ConstantInt::get(
+                    llvm::Type::getInt32Ty(_context), 0));
+            else
+                builder.CreateRet(call);
         }
     }
     return true;

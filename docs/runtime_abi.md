@@ -50,6 +50,19 @@ pending in the selected C stream. Null storage is valid only with zero length;
 a successful zero-byte read is EOF. These operations do not transfer ownership
 of or close the process streams.
 
+The compiler keeps a parameterless Flecha `main` independent from the host C
+entry ABI. For a `void` or `i32` entry point it emits an `i32 main(i32, char**)`
+wrapper that first passes the host argument table to
+`flecha_runtime_v1_process_arguments_initialize` and then invokes the Flecha
+function. The runtime borrows that table without modifying or releasing it;
+the host retains ownership for the process lifetime. Argument index zero is
+the invocation name supplied by the host. Count does not allocate, and capture
+copies the selected null-terminated host argument into an independent owning
+Flecha string. Capture status is success `0`, out of memory `1`, or invalid
+index `2`; the caller supplies an empty string output, and every failure leaves
+it empty. Argument bytes are preserved exactly as supplied by the host C entry
+environment and are not normalized or validated as Unicode.
+
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the
 archive configured with the compiler. A missing archive or linker failure is
