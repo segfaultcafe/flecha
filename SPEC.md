@@ -148,6 +148,36 @@ as `<- (left, right)`, or select every named parameter with `<- ...args`.
 `args` is not a keyword; it is recognized specially only in that complete
 shorthand.
 
+A free function may declare one final, untyped forwarding pack by suffixing its
+name with `...`:
+
+```flecha
+void print(values...) {
+    stdout(values...);
+}
+
+void printf(stringv format, values...) {
+    stdoutf(format, values...);
+}
+```
+
+This is a compile-time forwarding facility, not a runtime variadic value. The
+body must consist of exactly one named call (or one returned named call for a
+non-`void` result), pass every fixed parameter unchanged and in declaration
+order, and finish with the expanded pack. Callers pass ordinary arguments:
+`print("value: ", 42)`. The pack cannot be stored, indexed, iterated, captured,
+returned, passed without expansion, or converted to a callable value. A
+forwarding declaration emits no function body or variadic ABI; its calls lower
+directly to the final target while retaining ordinary left-to-right argument
+evaluation and ownership checks.
+
+In a function with `values...`, `<- ...values` selects only arguments supplied
+through that pack. Fixed parameters are included explicitly, for example
+`<- (fallback, ...values)`. The legacy `<- ...args` all-fixed-parameter
+shorthand remains unchanged when the function does not declare `args...`; when
+it does, the spelling names that pack and therefore selects only expanded pack
+arguments.
+
 Tentative function modifiers include:
 
 - `unsafe`

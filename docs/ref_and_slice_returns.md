@@ -52,6 +52,13 @@ all named parameters in declaration order. Every selected source must be able
 to carry a borrow; use the grouped form when scalar or otherwise unrelated
 parameters must be excluded.
 
+Variadic forwarding declarations refine this rule. If the declaration has a
+pack named `values...`, `<- ...values` selects only the actual arguments in
+that expanded pack. Use a grouped contract such as
+`<- (fallback, ...values)` to select both fixed and expanded sources. A pack
+named `args...` takes precedence over the legacy shorthand, so `<- ...args`
+then means the pack only rather than every fixed parameter.
+
 For checked-reference and checked-slice results, each named source must be a
 checked-reference or checked-slice parameter. A method receiver is an ordinary
 source parameter named `self`. Raw pointers, owning pointers, value parameters,
