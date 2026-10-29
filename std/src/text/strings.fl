@@ -133,7 +133,7 @@ stringv StringBuilder::view(&const self) <-self {
 }
 
 // Copies the builder contents into an owning string.
-(string, error) StringBuilder::asString(&const self) {
+(string, error) StringBuilder::toString(&const self) {
     return string_from_bytes(self->storage.bytes());
 }
 

@@ -448,7 +448,7 @@ test string_builder_copies_an_independent_owning_string(
 ) {
     value := strings::StringBuilder::init();
     appendError := value.append("flecha");
-    text, copyError := value.asString();
+    text, copyError := value.toString();
 
     asserts::is_true(
         t,
@@ -478,7 +478,7 @@ test string_builder_copies_empty_text_without_allocation(
     &testing::UnitTest t
 ) {
     value := strings::StringBuilder::init();
-    text, err := value.asString();
+    text, err := value.toString();
 
     asserts::is_true(t, err == none, "empty string copy succeeds");
     asserts::is_true(

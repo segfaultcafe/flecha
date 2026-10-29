@@ -19,7 +19,7 @@ export (string, error) to_ascii_lowercase(stringv value) {
         }
     }
 
-    return result.asString();
+    return result.toString();
 }
 
 // Copies value while mapping ASCII lowercase letters to uppercase.
@@ -39,5 +39,5 @@ export (string, error) to_ascii_uppercase(stringv value) {
         }
     }
 
-    return result.asString();
+    return result.toString();
 }
