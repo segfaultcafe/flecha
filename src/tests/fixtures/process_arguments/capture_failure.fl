@@ -1,0 +1,14 @@
+module capture_failure;
+
+@imports :: lib::std::process::arguments;
+
+i32 main() {
+    values, captureError := arguments::capture();
+    if captureError != AllocationError.OutOfMemory {
+        return 1;
+    }
+    if values.len() != 0 {
+        return 2;
+    }
+    return 42;
+}

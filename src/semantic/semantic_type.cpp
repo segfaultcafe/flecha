@@ -78,6 +78,7 @@ bool SemanticType::IsZeroable() const {
     }
     return IsNumeric() || _kind == SemanticTypeKind::Bool ||
            _kind == SemanticTypeKind::Char ||
+           _kind == SemanticTypeKind::String ||
            _kind == SemanticTypeKind::Pointer ||
            _kind == SemanticTypeKind::OwnedBuffer ||
            _kind == SemanticTypeKind::OwnedSlice;

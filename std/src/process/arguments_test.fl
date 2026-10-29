@@ -1,0 +1,45 @@
+module arguments_test;
+
+@imports
+    :: root::process::arguments
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test capture_returns_independent_owning_arguments(&testing::UnitTest t) {
+    first, firstError := arguments::capture();
+    asserts::is_true(t, firstError == none, "the first capture succeeds");
+    asserts::is_true(
+        t,
+        first.len() != 0,
+        "the invocation name is present at index zero"
+    );
+    if firstError != none or first.len() == 0 {
+        return;
+    }
+
+    string invocation = first[0];
+    second, secondError := arguments::capture();
+    asserts::is_true(t, secondError == none, "a repeated capture succeeds");
+    asserts::is_true(
+        t,
+        second.len() == first.len(),
+        "repeated captures observe the same process argument count"
+    );
+    if secondError != none or second.len() == 0 {
+        return;
+    }
+
+    first[0] = "replaced";
+    asserts::is_true(
+        t,
+        second[0] == invocation and first[0] == "replaced",
+        "each capture owns independent strings and array storage"
+    );
+
+    moved := first;
+    asserts::is_true(
+        t,
+        moved[0] == "replaced",
+        "the captured owning array remains valid after movement"
+    );
+}

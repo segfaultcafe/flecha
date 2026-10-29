@@ -68,6 +68,10 @@ class LlvmCodeGenerator final {
     void EmitArrayElements(llvm::Value* storage, semantic::SemanticType type,
                            bool reverse,
                            const std::function<void(llvm::Value*)>& action);
+    void EmitRuntimeArrayElements(
+        llvm::Value* storage, llvm::Value* count,
+        semantic::SemanticType elementType, bool reverse,
+        const std::function<void(llvm::Value*)>& action);
     llvm::Value* LifetimeFlag(llvm::Value* storage);
     [[nodiscard]] llvm::Type* MapType(semantic::SemanticType type);
     [[nodiscard]] llvm::StructType* StringViewType();

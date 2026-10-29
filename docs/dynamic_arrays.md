@@ -28,6 +28,16 @@ owning slice. `data()` remains unsafe because it exposes a raw pointer. Adding
 `const` to the element type is a one-way permission weakening:
 `own []T` can move into `own []const T`, but not the reverse.
 
+`T` may be any sized, safely movable, semantically zeroable value type. This
+includes owning strings, raw pointers, defaultable enums, safe-tear structures,
+fixed arrays, tuples, and nested owning slices when their complete types meet
+the same rule. After allocation succeeds, every element starts at its semantic
+zero. Trivially zeroable elements use the allocator's zeroed storage directly;
+other elements run their zero construction once per slot. Destruction visits
+elements in reverse index order exactly once before releasing the allocation.
+An unsafe-tear immovable type, a borrowed value, or a type without a semantic
+zero is rejected.
+
 An empty owning slice is trivially zeroable. Structures containing owning
 slices therefore receive a generated trivial `zero()` when their other fields
 are also trivially zeroable. An equivalent explicit `zero()` override remains
@@ -38,17 +48,13 @@ not duplicate a live owner.
 The original manual form remains available for raw-memory work and backwards
 compatibility:
 
-Runtime-sized storage uses `new<[]T>(count)` in an unsafe context. `count` has type
-`usize` and is evaluated exactly once, before attempting allocation. The result is
-`(*[]T, error)`: `*[]T` is a move-only owning buffer containing the allocation
-base and its `usize` element count. Numeric, boolean,
-character, and defaultable enum elements are supported. Runtime arrays also
-accept copyable, default-constructible structures whose recursively stored
-fields are numbers, booleans, characters, enums, raw pointers, fixed arrays, or
-other supported structures. Every slot is default-constructed after allocation
-succeeds; custom `zero()` overrides therefore run once per slot. Strings, pointer
-elements, destructible/noncopyable structures, and partially initialized
-storage are not supported by this runtime-array form.
+Runtime-sized storage uses `new<[]T>(count)` in an unsafe context. `count` has
+type `usize` and is evaluated exactly once, before attempting allocation. The
+result is `(*[]T, error)`: `*[]T` is a move-only owning buffer containing the
+allocation base and its `usize` element count. It accepts the same sized,
+safely movable, semantically zeroable element types as `own []T`. Every slot is
+initialized after allocation succeeds, and `free(buffer)` destroys every
+element in reverse order before releasing the storage.
 
 ```flecha
 unsafe {
@@ -90,11 +96,12 @@ This does not add pointer arithmetic or checked references into the heap. Ordina
 raw dereference `*pointer` retains its unsafe validity
 obligations, including requiring a live element for a zero-capacity allocation.
 
-`free(pointer)` releases the complete buffer. The supported element types need no
-individual destruction. Ordinary `new<T>(value)` still allocates one value and
-runs typed destruction, including `tear`; its initializer still runs only after
-allocation succeeds. Runtime-array counts, unlike initializers, must run even
-when allocation subsequently fails.
+`free(pointer)` releases the complete buffer. Elements with owning storage or
+custom teardown are destroyed individually in reverse order. Ordinary
+`new<T>(value)` still allocates one value and runs typed destruction, including
+`tear`; its initializer still runs only after allocation succeeds.
+Runtime-array counts, unlike initializers, must run even when allocation
+subsequently fails.
 
 ## Replacing an owning field
 
@@ -125,10 +132,12 @@ can declare a local `std` dependency in `longbow.toml`, then import:
 @imports :: lib::std::containers::raw_array;
 ```
 
-Construct `raw_array::RawArray<i32>::init()` in a safe context, substituting
-any supported scalar or structure type for `i32`. Structure elements must meet
-the runtime-array restrictions above. Pointer, string, reference, owning, and
-destructible elements are not supported.
+Construct `raw_array::RawArray<i32>::init()` in a safe context, substituting a
+supported sized, movable value type for `i32`. `RawArray` uses separate
+uninitialized-capacity intrinsics and constructs only its logical prefix, so
+its element rule does not require semantic zeroability. Direct strings,
+safe-tear structures, and nested owning slices are supported; borrowed and
+unsafe-tear immovable elements remain rejected.
 
 The name reflects its unsafe API and raw allocated storage. It is not a safe
 dynamic-array abstraction. It maintains a used length and an allocated capacity,

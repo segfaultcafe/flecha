@@ -82,8 +82,9 @@ Without `PROJECT`, commands locate the nearest ancestor `longbow.toml`, so they
 also work inside `src`. A supplied project directory is used directly, including
 paths such as `test-me` and `"hi mom"`. Artifacts go to `target`. Failed compilation prevents `run` from executing
 an older binary. Arguments are passed directly without a shell. The current
-language entry-point signatures do not yet expose command-line arguments to
-Flecha code. Existing `.gitignore` files are preserved by `init`.
+language entry-point remains parameterless; programs capture the forwarded
+arguments through `lib::std::process::arguments`. Existing `.gitignore` files
+are preserved by `init`.
 
 Registry traffic uses `https://registry.flecha-lang.org/v1` by default. Set
 `LONGBOW_REGISTRY` to select a development endpoint. `longbow login` uses a

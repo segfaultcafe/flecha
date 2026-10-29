@@ -92,6 +92,12 @@ typedef enum FlechaRuntimeInputStatus {
     FLECHA_RUNTIME_INPUT_OUT_OF_MEMORY = 6,
 } FlechaRuntimeInputStatus;
 
+typedef enum FlechaRuntimeProcessArgumentStatus {
+    FLECHA_RUNTIME_PROCESS_ARGUMENT_OK = 0,
+    FLECHA_RUNTIME_PROCESS_ARGUMENT_OUT_OF_MEMORY = 1,
+    FLECHA_RUNTIME_PROCESS_ARGUMENT_INVALID_INDEX = 2,
+} FlechaRuntimeProcessArgumentStatus;
+
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.
@@ -107,6 +113,17 @@ void* flecha_runtime_v1_alloc_array(size_t count, size_t element_size,
 // Requires an allocation base returned by this runtime, or null.
 size_t flecha_runtime_v1_allocation_count(const void* data);
 void flecha_runtime_v1_free(void* data);
+
+// The compiler-generated C entry wrapper installs process-lifetime argument
+// storage before calling the Flecha main function. The runtime borrows argv;
+// it never frees or mutates host-owned argument storage.
+void flecha_runtime_v1_process_arguments_initialize(int32_t count,
+                                                    const char* const* values);
+size_t flecha_runtime_v1_process_argument_count(void);
+// Copies one argument into an empty owning Flecha string. For a non-null
+// output pointer, every failure leaves the output empty.
+int32_t flecha_runtime_v1_process_argument_capture(FlechaRuntimeString* output,
+                                                   size_t index);
 
 void flecha_runtime_v1_stdout_string_view(const char* data, size_t length);
 void flecha_runtime_v1_stdout_i8(int8_t value);

@@ -1,0 +1,8 @@
+module runtime;
+
+quiver extern unsafe usize flecha_runtime_v1_process_argument_count();
+
+quiver extern unsafe i32 flecha_runtime_v1_process_argument_capture(
+    *string output,
+    usize index
+);

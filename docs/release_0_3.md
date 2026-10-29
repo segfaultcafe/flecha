@@ -317,6 +317,17 @@ reports EOF, read, parse, range, prompt-flush, and allocation failures
 explicitly. Formatted input is intentionally absent; formatted prompts compose
 through `std::fmt` followed by `stdin`.
 
+The command-line argument portion is implemented through
+`std::process::arguments`. `capture()` returns an owning runtime-sized array of
+independent owning strings, including the host-supplied invocation name at
+index zero. Repeated captures are independent. Array allocation and individual
+argument capture failures return `AllocationError.OutOfMemory`; partial
+construction releases every completed string and the array exactly once.
+Compiler-generated entry wrappers retain parameterless Flecha `main`
+signatures while recording the host argument table before invoking the source
+entry point. Environment variables and broader process control remain separate
+Stage 5 tasks.
+
 ### 6. Blocking networking
 
 Add an initial `net` layer containing:
@@ -465,8 +476,9 @@ itself:
 
 1. Specify unsigned overflow behavior or provide explicit checked, wrapping,
    and saturating intrinsics.
-2. Support runtime-array storage for movable, destructible, and nested owning
-   element types.
+2. Runtime-array storage supports sized, safely movable, semantically zeroable
+   elements, including destructible and nested owning values, with per-element
+   reverse destruction.
 3. Provide safe construction of owning strings from validated byte buffers.
 4. Expose arguments, environment, time, randomness, processes, directories,
    and sockets through additive versioned runtime operations.
