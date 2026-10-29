@@ -24,6 +24,7 @@ module std;
     :: root::math::errors as math_errors
     :: root::memory::slices
     :: root::memory::errors as memory_errors
+    :: root::process::arguments
     :: root::text::ascii
     :: root::text::utf8
     :: root::text::strings

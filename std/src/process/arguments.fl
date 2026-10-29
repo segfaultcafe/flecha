@@ -1,0 +1,31 @@
+module arguments;
+
+@imports :: root::process::runtime;
+
+// Captures the process arguments as independent owning strings.
+// Index zero is the invocation name supplied by the host process.
+export (own []string, error) capture() {
+    usize count = 0;
+    unsafe {
+        count = runtime::flecha_runtime_v1_process_argument_count();
+    }
+
+    destination, allocationErr := new<own []string>(count);
+    if allocationErr != none {
+        return (none, allocationErr);
+    }
+
+    loop usize index = 0; index < count; index++ {
+        unsafe {
+            i32 status = runtime::flecha_runtime_v1_process_argument_capture(
+                &raw destination[index],
+                index
+            );
+            if status != 0 {
+                return (none, AllocationError.OutOfMemory);
+            }
+        }
+    }
+
+    return (destination, none);
+}
