@@ -155,6 +155,14 @@ int32_t flecha_runtime_v1_standard_error_write(const uint8_t* source,
 // Flushes bytes emitted through the corresponding process-owned C stream.
 int32_t flecha_runtime_v1_standard_output_flush(void);
 int32_t flecha_runtime_v1_standard_error_flush(void);
+
+// Performs one read from process standard input. Null storage is valid only
+// for a zero-length read. The count output is reset before validation and
+// preserves partial progress on failure. A zero count with success is EOF.
+int32_t flecha_runtime_v1_standard_input_read(uint8_t* destination,
+                                             size_t capacity,
+                                             size_t* bytes_read);
+
 // Reads one complete line, removing its LF and an immediately preceding CR.
 // EOF before any byte is distinct from a successful final unterminated line.
 // Success transfers one malloc-compatible owning string allocation.

@@ -11,6 +11,9 @@ export structure StandardOutput {};
 // Provides non-owning access to the process standard-error stream.
 export structure StandardError {};
 
+// Provides non-owning access to the process standard-input stream.
+export structure StandardInput {};
+
 // Returns a lightweight view of the process standard-output stream.
 export StandardOutput standard_output() {
     return build StandardOutput {};
@@ -19,6 +22,24 @@ export StandardOutput standard_output() {
 // Returns a lightweight view of the process standard-error stream.
 export StandardError standard_error() {
     return build StandardError {};
+}
+
+// Returns a lightweight view of the process standard-input stream.
+export StandardInput standard_input() {
+    return build StandardInput {};
+}
+
+// Reads up to destination.len() bytes from standard input.
+(usize, error) StandardInput::read(
+    &const self,
+    []u8 destination
+) {
+    return read_standard_input(destination);
+}
+
+// Returns a reusable reader for standard input.
+stream::Reader StandardInput::reader(&const self) {
+    return stream::Reader::init(read_standard_input);
 }
 
 // Writes string bytes to standard output without adding a newline.
@@ -151,6 +172,22 @@ quiver (usize, error) write_standard_output([]const u8 source) {
         }
     }
     return (bytesWritten, none);
+}
+
+quiver (usize, error) read_standard_input([]u8 destination) {
+    usize bytesRead = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_standard_input_read(
+            destination.data(),
+            destination.len(),
+            &raw bytesRead
+        );
+        err := errors::from_runtime(status, errors::IoError.ReadFailed);
+        if err != none {
+            return (bytesRead, err);
+        }
+    }
+    return (bytesRead, none);
 }
 
 quiver (usize, error) write_standard_error([]const u8 source) {

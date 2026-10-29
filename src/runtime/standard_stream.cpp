@@ -78,6 +78,37 @@ int32_t Write(FILE* stream, const uint8_t* source, size_t length,
     return FLECHA_RUNTIME_IO_OK;
 }
 
+int32_t Read(FILE* stream, uint8_t* destination, size_t capacity,
+             size_t* bytesRead) {
+    if (bytesRead == nullptr) return FLECHA_RUNTIME_IO_INVALID_OPTIONS;
+    *bytesRead = 0;
+    if (destination == nullptr && capacity != 0)
+        return FLECHA_RUNTIME_IO_INVALID_OPTIONS;
+    if (capacity == 0) return FLECHA_RUNTIME_IO_OK;
+
+#ifdef _WIN32
+    const int descriptor = _fileno(stream);
+    if (descriptor < 0) return FLECHA_RUNTIME_IO_FAILED;
+    const unsigned int amount = static_cast<unsigned int>(
+        std::min(capacity, static_cast<size_t>(UINT_MAX)));
+    errno = 0;
+    const int result = _read(descriptor, destination, amount);
+#else
+    const int descriptor = fileno(stream);
+    if (descriptor < 0) return FLECHA_RUNTIME_IO_FAILED;
+    const size_t amount = std::min(
+        capacity, static_cast<size_t>(std::numeric_limits<ssize_t>::max()));
+    ssize_t result;
+    do {
+        errno = 0;
+        result = ::read(descriptor, destination, amount);
+    } while (result < 0 && errno == EINTR);
+#endif
+    if (result < 0) return MapStreamError(errno);
+    *bytesRead = static_cast<size_t>(result);
+    return FLECHA_RUNTIME_IO_OK;
+}
+
 int32_t Flush(FILE* stream) {
     std::clearerr(stream);
     errno = 0;
@@ -140,6 +171,12 @@ int32_t flecha_runtime_v1_standard_output_flush(void) { return Flush(stdout); }
 
 int32_t flecha_runtime_v1_standard_error_flush(void) { return Flush(stderr); }
 
+int32_t flecha_runtime_v1_standard_input_read(uint8_t* destination,
+                                             size_t capacity,
+                                             size_t* bytes_read) {
+    return Read(stdin, destination, capacity, bytes_read);
+}
+
 int32_t flecha_runtime_v1_standard_input_read_line(
     FlechaRuntimeString* output) {
     *output = {nullptr, 0, 0};
@@ -147,22 +184,22 @@ int32_t flecha_runtime_v1_standard_input_read_line(
     size_t length = 0;
     size_t capacity = 0;
 
-    std::clearerr(stdin);
     for (;;) {
-        errno = 0;
-        const int value = std::fgetc(stdin);
-        if (value == EOF) {
-            if (std::ferror(stdin)) {
-                std::free(data);
-                return FLECHA_RUNTIME_INPUT_READ_FAILED;
-            }
+        uint8_t value = 0;
+        size_t bytesRead = 0;
+        const int32_t readStatus = Read(stdin, &value, 1, &bytesRead);
+        if (readStatus != FLECHA_RUNTIME_IO_OK) {
+            std::free(data);
+            return FLECHA_RUNTIME_INPUT_READ_FAILED;
+        }
+        if (bytesRead == 0) {
             if (length == 0) {
                 std::free(data);
                 return FLECHA_RUNTIME_INPUT_END_OF_FILE;
             }
             break;
         }
-        if (value == '\n') break;
+        if (value == static_cast<uint8_t>('\n')) break;
 
         if (length == SIZE_MAX - 1) {
             std::free(data);
