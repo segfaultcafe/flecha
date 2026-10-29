@@ -58,11 +58,12 @@ decoded, decodeError := hex::decode("666f6f626172");
 ```
 
 `encode` emits lowercase characters and `encode_upper` emits uppercase.
-`encode_bytes` accepts arbitrary borrowed bytes, and the `encode_btb` and
-`encode_to_bytes` variants return newly allocated hexadecimal bytes. The
-uppercase API provides matching `_bytes`, `_btb`, and `_to_bytes` variants.
-`decode_from_bytes` returns a byte-oriented `string`, while `decode_btb` and
-`decode_to_bytes` return newly allocated binary bytes.
+`encode_bytes` accepts arbitrary borrowed bytes, and the
+`encode_byte_to_byte` and `encode_to_bytes` variants return newly allocated
+hexadecimal bytes. The uppercase API provides matching `_bytes`,
+`_byte_to_byte`, and `_to_bytes` variants. `decode_from_bytes` returns a
+byte-oriented `string`, while `decode_byte_to_byte` and `decode_to_bytes`
+return newly allocated binary bytes.
 
 Decoding validates the complete source before allocation and rejects odd
 lengths and non-hexadecimal characters. Length overflow and malformed input
@@ -82,11 +83,13 @@ decoded, decodeError := base64::decode("Zm9vYmFy");
 ```
 
 `encode_bytes` accepts arbitrary borrowed bytes when the source is not already
-a `stringv`. `encode_to_bytes` returns newly allocated ASCII bytes instead of a
-`string`. On the decoding side, `decode_from_bytes` accepts borrowed Base64
-bytes and returns a byte-oriented `string`, while `decode_to_bytes` returns a
-newly allocated owned byte slice. Empty input succeeds and returns an empty
-result of the requested type.
+a `stringv`. `encode_byte_to_byte` returns newly allocated Base64 bytes from a
+borrowed byte slice, while `encode_to_bytes` provides the same output from a
+`stringv`. On the decoding side, `decode_from_bytes` accepts borrowed Base64
+bytes and returns a byte-oriented `string`. `decode_byte_to_byte` returns newly
+allocated binary bytes from a byte slice, while `decode_to_bytes` accepts a
+`stringv`. Empty input succeeds and returns an empty result of the requested
+type.
 
 Encoding is deterministic and always emits `=` padding when the final group is
 incomplete. Decoding is strict: the source length must be a multiple of four,

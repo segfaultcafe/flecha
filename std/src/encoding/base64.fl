@@ -87,6 +87,11 @@ export (string, error) encode_bytes([]const u8 source) {
     return encode(source.cast<stringv>);
 }
 
+// Encodes borrowed bytes as newly allocated Base64 bytes.
+export (own []u8, error) encode_byte_to_byte([]const u8 source) {
+    return encode_to_bytes(source.cast<stringv>);
+}
+
 // Encodes a borrowed byte string as newly allocated Base64 bytes.
 export (own []u8, error) encode_to_bytes(stringv source) {
     const usize SOURCE_LENGTH = source.len().cast<usize>;
@@ -143,6 +148,11 @@ export (string, error) decode(stringv source) {
 // Strictly decodes Base64 bytes into a byte-oriented string.
 export (string, error) decode_from_bytes([]const u8 source) {
     return decode(source.cast<stringv>);
+}
+
+// Strictly decodes Base64 bytes into newly allocated binary bytes.
+export (own []u8, error) decode_byte_to_byte([]const u8 source) {
+    return decode_to_bytes(source.cast<stringv>);
 }
 
 // Validates source before allocating and returns its decoded bytes.

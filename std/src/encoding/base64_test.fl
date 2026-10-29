@@ -56,6 +56,17 @@ void assert_encode_bytes(&testing::UnitTest t) {
     );
 }
 
+void assert_encode_byte_to_byte(&testing::UnitTest t) {
+    [6]u8 source = [0, 255, 16, 128, 127, 1];
+    encoded, err := base64::encode_byte_to_byte(source[:]);
+    asserts::is_true(
+        t,
+        err == none and encoded.len() == 8 and
+            encoded[0] == 65 and encoded[7] == 66,
+        "encode_byte_to_byte returns owned Base64 bytes"
+    );
+}
+
 void assert_decode_from_bytes(&testing::UnitTest t) {
     [8]u8 source = [65, 80, 56, 81, 103, 72, 56, 66];
     decoded, err := base64::decode_from_bytes(source[:]);
@@ -73,6 +84,19 @@ void assert_decode_from_bytes(&testing::UnitTest t) {
             THIRD == 16 and FOURTH == 128 and
             FIFTH == 127 and SIXTH == 1,
         "decode_from_bytes returns the original binary string"
+    );
+}
+
+void assert_decode_byte_to_byte(&testing::UnitTest t) {
+    [8]u8 source = [65, 80, 56, 81, 103, 72, 56, 66];
+    decoded, err := base64::decode_byte_to_byte(source[:]);
+    asserts::is_true(
+        t,
+        err == none and decoded.len() == 6 and
+            decoded[0] == 0 and decoded[1] == 255 and
+            decoded[2] == 16 and decoded[3] == 128 and
+            decoded[4] == 127 and decoded[5] == 1,
+        "decode_byte_to_byte returns the original binary bytes"
     );
 }
 
@@ -168,7 +192,9 @@ test decode_matches_rfc_4648_vectors(&testing::UnitTest t) {
 
 test byte_adapters_preserve_binary_data(&testing::UnitTest t) {
     assert_encode_bytes(t);
+    assert_encode_byte_to_byte(t);
     assert_decode_from_bytes(t);
+    assert_decode_byte_to_byte(t);
     assert_binary_string(t);
 }
 
