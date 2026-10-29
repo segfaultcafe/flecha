@@ -51,6 +51,26 @@ test standard_error_accepts_empty_operations(&testing::UnitTest t) {
     asserts::is_true(t, output.flush() == none, "standard error flushes");
 }
 
+test standard_input_accepts_empty_operations(&testing::UnitTest t) {
+    input := stdio::standard_input();
+    [0]u8 empty = none;
+
+    count, readError := input.read(empty[:]);
+    asserts::is_true(
+        t,
+        count == 0 and readError == none,
+        "an empty standard-input read is a nonblocking no-op"
+    );
+
+    reader := input.reader();
+    count, readError = reader.read(empty[:]);
+    asserts::is_true(
+        t,
+        count == 0 and readError == none,
+        "a standard-input reader accepts an empty destination"
+    );
+}
+
 test standard_stream_writers_are_independent_process_views(
     &testing::UnitTest t
 ) {

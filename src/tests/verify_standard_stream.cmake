@@ -9,8 +9,12 @@ if(NOT compileResult EQUAL 0)
     message(FATAL_ERROR "standard-stream compilation failed: ${compileError}")
 endif()
 
+set(inputFile "${FLECHA_OUTPUT}.input")
+file(WRITE "${inputFile}" "raw-input|")
+
 execute_process(
     COMMAND "${FLECHA_OUTPUT}"
+    INPUT_FILE "${inputFile}"
     RESULT_VARIABLE runResult
     OUTPUT_VARIABLE actualOutput
     ERROR_VARIABLE actualError
@@ -23,7 +27,7 @@ if(NOT runResult EQUAL 42)
 endif()
 
 set(expectedOutput
-    "builtin output|direct output|buffered|print 42|line|\nformatted true {}|"
+    "builtin output|raw-input|direct output|buffered|print 42|line|\nformatted true {}|"
 )
 if(NOT actualOutput STREQUAL expectedOutput)
     message(FATAL_ERROR
