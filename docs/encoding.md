@@ -47,29 +47,27 @@ binary::append_varint<u32>(&buffer, count);
 ## Hexadecimal
 
 The `hex` module encodes raw bytes as hexadecimal ASCII and decodes either
-letter case:
+letter case. Like Base64, its primary string API allocates the result for the
+caller:
 
 ```flecha
 @imports :: lib::std::encoding::hex;
 
-written, encodeError := hex::encode(destination, source);
-decoded, decodeError := hex::decode(binaryDestination, encodedSource);
+encoded, encodeError := hex::encode("foobar");
+decoded, decodeError := hex::decode("666f6f626172");
 ```
 
 `encode` emits lowercase characters and `encode_upper` emits uppercase.
-Decoding rejects odd lengths and non-hexadecimal characters. All operations
-are transactional and write no terminator.
+`encode_bytes` accepts arbitrary borrowed bytes, and the `encode_btb` and
+`encode_to_bytes` variants return newly allocated hexadecimal bytes. The
+uppercase API provides matching `_bytes`, `_btb`, and `_to_bytes` variants.
+`decode_from_bytes` returns a byte-oriented `string`, while `decode_btb` and
+`decode_to_bytes` return newly allocated binary bytes.
 
-Hex can also target a binary Writer without making the Writer depend on the
-codec:
-
-```flecha
-writeError := hex::write(&writer, source);
-upperError := hex::write_upper(&writer, source);
-```
-
-Length overflow, insufficient destination space, and malformed input report
-`HexError`.
+Decoding validates the complete source before allocation and rejects odd
+lengths and non-hexadecimal characters. Length overflow and malformed input
+report `HexError`; allocation failures are returned through the owning APIs'
+general `error` result.
 
 ## Base64
 
