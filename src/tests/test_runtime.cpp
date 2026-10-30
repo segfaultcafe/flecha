@@ -560,6 +560,13 @@ TEST_F(RuntimeFilesystemMutationTests, RejectsInvalidPathsAndOutputs) {
     EXPECT_EQ(present, 0);
     EXPECT_EQ(flecha_runtime_v1_path_exists(nullptr, "path", 4),
               FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+    EXPECT_EQ(flecha_runtime_v1_path_contains(nullptr, "parent", 6, "child", 5),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+    present = 99;
+    EXPECT_EQ(flecha_runtime_v1_path_contains(&present, invalid,
+                                              sizeof(invalid), "child", 5),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(present, 0);
     uint8_t type = 99;
     uint64_t size = 99;
     EXPECT_EQ(
@@ -596,6 +603,50 @@ TEST_F(RuntimeFilesystemMutationTests, RejectsInvalidPathsAndOutputs) {
               FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
     EXPECT_EQ(flecha_runtime_v1_remove_directory("path", 4, 0, 2),
               FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+}
+
+TEST_F(RuntimeFilesystemMutationTests,
+       ResolvesContainmentIncludingSymbolicLinkAliases) {
+    ASSERT_TRUE(std::filesystem::create_directory(Root()));
+    const auto sourcePath = Root() / "source";
+    const auto siblingPath = Root() / "sibling";
+    ASSERT_TRUE(std::filesystem::create_directory(sourcePath));
+    ASSERT_TRUE(std::filesystem::create_directory(siblingPath));
+
+    const std::string source = sourcePath.string();
+    const std::string child = (sourcePath / "missing-child").string();
+    const std::string sibling = (siblingPath / "missing-child").string();
+    uint8_t contained = 99;
+    EXPECT_EQ(flecha_runtime_v1_path_contains(&contained, source.data(),
+                                              source.size(), child.data(),
+                                              child.size()),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(contained, 1);
+    EXPECT_EQ(flecha_runtime_v1_path_contains(&contained, source.data(),
+                                              source.size(), sibling.data(),
+                                              sibling.size()),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(contained, 0);
+
+    std::error_code linkError;
+    const auto aliasPath = Root() / "source-alias";
+    std::filesystem::create_directory_symlink(sourcePath, aliasPath, linkError);
+    if (!linkError) {
+        const std::string aliasedChild = (aliasPath / "nested").string();
+        EXPECT_EQ(flecha_runtime_v1_path_contains(
+                      &contained, source.data(), source.size(),
+                      aliasedChild.data(), aliasedChild.size()),
+                  FLECHA_RUNTIME_FILESYSTEM_OK);
+        EXPECT_EQ(contained, 1);
+    }
+
+    const std::string missing = (Root() / "missing-parent").string();
+    contained = 99;
+    EXPECT_EQ(flecha_runtime_v1_path_contains(&contained, missing.data(),
+                                              missing.size(), child.data(),
+                                              child.size()),
+              FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND);
+    EXPECT_EQ(contained, 0);
 }
 
 TEST_F(RuntimeFilesystemMutationTests, ReportsFileAndDirectoryMetadata) {

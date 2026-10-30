@@ -325,6 +325,13 @@ int32_t flecha_runtime_v1_read_file(FlechaRuntimeString* output,
 // NOT_FOUND. Every path is validated before an operating-system call.
 int32_t flecha_runtime_v1_path_exists(uint8_t* output, const char* path,
                                       size_t path_length);
+// Resolves existing path components and reports whether child is equal to or
+// below parent. parent must exist; child may name a not-yet-created entry.
+// Symbolic links in either path are resolved. output is reset before
+// validation.
+int32_t flecha_runtime_v1_path_contains(uint8_t* output, const char* parent,
+                                        size_t parent_length, const char* child,
+                                        size_t child_length);
 // Metadata follows symbolic links. type is 0 for other entries, 1 for regular
 // files, and 2 for directories. size is the regular-file byte length and zero
 // for every other type. Both outputs are reset before path validation.
