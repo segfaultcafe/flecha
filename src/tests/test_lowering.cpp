@@ -398,7 +398,7 @@ TEST(LoweringTests, MovesGeneralizedOwnCapturesIntoEnvironments) {
 
 TEST(LoweringTests, MaterializesNoneForTypedDeclarations) {
     LoweredSource result = Lower(
-        "i32 main(bool c) { i32 value; string text = none; "
+        "i32 main(bool c) { i32 value; string text; "
         "if c { return 0; } else { value = 42; text = \"ready\"; } "
         "stdoutln(text); return value; }");
     ASSERT_FALSE(result.diagnostics.HasErrors());

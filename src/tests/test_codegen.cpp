@@ -1002,7 +1002,7 @@ TEST(LlvmCodeGeneratorTests, EmitsTypedLineInputAndPreservesErrorFamilies) {
         i32 main() {
             i8 a; i16 b; i32 c; i64 d; isize e;
             u8 f; u16 g; u32 h; u64 i; usize j;
-            f32 k; f64 l; bool m; char n; string text = none;
+            f32 k; f64 l; bool m; char n; string text;
             error err = stdin("number: ", &c);
             if err != none { return 1; }
             stdin(&a); stdin(&b); stdin(&d); stdin(&e);
@@ -2931,7 +2931,7 @@ TEST(NativeCompilerTests, HonorsConfiguredLinkerWithoutFallback) {
 
 TEST(LlvmCodeGeneratorTests, EmitsDefaultedScalarAndStringDeclarations) {
     GeneratedSource result = Generate(
-        "i32 main(bool c) { i32 value; string text = none; "
+        "i32 main(bool c) { i32 value; string text; "
         "if c { return 0; } else { value = 42; text = \"ready\"; } "
         "stdoutln(text); return value; }");
     ASSERT_FALSE(result.diagnostics.HasErrors());
@@ -2941,6 +2941,49 @@ TEST(LlvmCodeGeneratorTests, EmitsDefaultedScalarAndStringDeclarations) {
     EXPECT_NE(ir.find("%value = alloca i32"), std::string::npos);
     EXPECT_NE(ir.find("zeroinitializer, ptr %text"), std::string::npos);
     EXPECT_NE(ir.find("store i32 0, ptr %value"), std::string::npos);
+}
+
+TEST(NativeCompilerTests, RunsDefaultedStringAssignmentAndCleanup) {
+    GeneratedSource result = Generate(R"(
+        structure Text { string value; };
+
+        i32 exercise(bool early) {
+            string value;
+            (string, string) pair;
+            Text composite;
+            if value != "" { return 1; }
+            if composite.value != "" { return 6; }
+            if early { return 42; }
+
+            value = "owned";
+            if value != "owned" { return 2; }
+            composite.value = "nested";
+            if composite.value != "nested" { return 8; }
+            value = none;
+            if value != "" { return 3; }
+            return 42;
+        }
+
+        i32 main() {
+            if exercise(false) != 42 { return 4; }
+            return exercise(true);
+        }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() / "flecha_defaulted_string_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "defaulted_string_test", executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
 }
 
 TEST(LlvmCodeGeneratorTests, CleansLaterStringSlotsAtEarlierBackwardJumpExits) {
@@ -2999,7 +3042,7 @@ TEST(LlvmCodeGeneratorTests, EmitsTypedZeroValuesForConstInitializers) {
         "i32 main() { const bool b = none; const char c = none; "
         "const f64 f = none; const string s = none; const stringv v = none; "
         "const bool defaultBool; const char defaultChar; "
-        "const f64 defaultFloat; const string defaultString = none; "
+        "const f64 defaultFloat; const string defaultString; "
         "const stringv defaultView = none; i32 defaultInteger; "
         "i32 mutableZero = 1; mutableZero = none; "
         "const i32 result = identity((none)) + zero(); "

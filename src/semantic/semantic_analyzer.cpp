@@ -3772,6 +3772,7 @@ void SemanticAnalyzer::ClassifyTrivialZeros(const core::CompilationUnit& unit) {
         }
         return type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool ||
                type.Kind() == SemanticTypeKind::Char ||
+               type.Kind() == SemanticTypeKind::String ||
                type.Kind() == SemanticTypeKind::Pointer ||
                type.Kind() == SemanticTypeKind::OwnedBuffer ||
                type.Kind() == SemanticTypeKind::OwnedSlice;

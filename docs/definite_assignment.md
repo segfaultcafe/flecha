@@ -6,7 +6,7 @@ is trivially zeroable. Omission is exactly shorthand for `= none`:
 ```flecha
 i32 answer;
 *u8 pointer;
-string message = none;
+string message;
 
 answer = 42;
 message = "ready";
@@ -15,10 +15,10 @@ message = "ready";
 `answer` is immediately readable as zero and `pointer` as null. A declaration
 whose default construction performs work must spell `= none` explicitly.
 
-The shorthand supports integer and floating-point types, `bool`, `char`, raw
-pointers, and compound types whose elements have trivial zero values. It also
-supports enums whose default is represented by zero and structures whose
-canonical `zero` construction is trivial. Owning `string`, error values,
+The shorthand supports integer and floating-point types, `bool`, `char`, owning
+`string`, raw pointers, and compound types whose elements have trivial zero
+values. It also supports enums whose default is represented by zero and
+structures whose canonical `zero` construction is trivial. Error values,
 borrowed `stringv`, nonzero-default enums, and structures with nontrivial
 `zero` construction require an explicit initializer. `void` is never a
 variable type.
@@ -85,9 +85,9 @@ when a jump skips their declarations. Cleanup emission includes all slots in
 the scopes being exited, including later declarations and temporaries that
 may have executed before a backward jump to an earlier exit. Transfers of
 ownership clear the source storage so repeated execution cannot double-free
-an allocation. This does not change the requirement that owning strings and
-`stringv` declarations spell their initializers explicitly or extend
-borrow-origin analysis.
+an allocation. Owning strings may omit their initializer because their empty
+descriptor is a trivial zero. This does not permit `stringv` declarations to
+omit an initializer or extend borrow-origin analysis.
 
 ## Verification
 
