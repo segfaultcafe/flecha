@@ -135,3 +135,7 @@ quiver extern unsafe i32 flecha_runtime_v1_directory_next(
 );
 
 quiver extern unsafe i32 flecha_runtime_v1_directory_close(*void handle);
+
+quiver extern unsafe i32 flecha_runtime_v1_temporary_directory_create(
+    *string output_path
+);

@@ -346,6 +346,13 @@ int32_t flecha_runtime_v1_create_directory(const char* path,
 int32_t flecha_runtime_v1_remove_directory(const char* path, size_t path_length,
                                            uint8_t force, uint8_t recursive);
 
+// Atomically creates a private directory in the host temporary directory. On
+// success output_path owns its absolute host path (native bytes on POSIX and
+// UTF-8 on Windows). Every failure removes any partially created directory and
+// resets the output.
+int32_t flecha_runtime_v1_temporary_directory_create(
+    FlechaRuntimeString* output_path);
+
 // Opens an owning directory iterator. Paths follow read_file's platform
 // rules. Every failure leaves output null.
 int32_t flecha_runtime_v1_directory_open(void** output, const char* path,
