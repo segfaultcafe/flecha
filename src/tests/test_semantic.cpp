@@ -4894,17 +4894,66 @@ TEST(SemanticStructureTests, NoneDirectlyConstructsNonCopyableStructures) {
         "structure Factory { i32 value; }; "
         "Factory Factory::zero() override { Temporary::init(); return build "
         "Factory {}; } "
-        "Box make() { return none; } "
-        "void f() { Box value = none; value = none; }");
+        "Box make() { return none; } Temporary makeTemporary() { return none; "
+        "} "
+        "void f() { Box value = none; value = none; "
+        "Temporary temporary = none; Temporary implicit; }");
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticStructureTests,
+     GeneratesStructuralZeroIndependentlyOfInitAndTear) {
+    Analysis result = Analyze(R"(
+        structure Owner { string text; i32 number; };
+        Owner Owner::init(string text, i32 number) override {
+            return build Owner {
+                self.text = text;
+                self.number = number;
+            };
+        }
+        void Owner::tear(&self) override {}
+        Owner make() { return none; }
+        void use() {
+            Owner explicit = none;
+            Owner implicit;
+            explicit = Owner::init("value".string(), 42);
+        }
+    )");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.Structures().size(), 1);
+    const StructureType* owner = result.model.Structures()[0].get();
+    ASSERT_NE(owner->zero, nullptr);
+    EXPECT_TRUE(owner->zeroIsGenerated);
+    EXPECT_TRUE(SemanticType(owner).IsTriviallyZeroable());
+}
+
+TEST(SemanticStructureTests,
+     ComposesStructuralZeroForNestedTypesWithUnsafeTear) {
+    Analysis result = Analyze(R"(
+        structure Resource { i32 value; };
+        unsafe void Resource::tear(&self) override {}
+        structure Owner { Resource resource; string text; };
+        unsafe void use() { Owner owner = none; }
+    )");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.Structures().size(), 2);
+    for (const auto& structure : result.model.Structures()) {
+        ASSERT_NE(structure->zero, nullptr);
+        EXPECT_TRUE(structure->zeroIsGenerated);
+        EXPECT_TRUE(SemanticType(structure.get()).IsTriviallyZeroable());
+    }
+
+    EXPECT_NE(FindErrorDiagnostic(Analyze(R"(
+                  structure Resource { i32 value; };
+                  unsafe void Resource::tear(&self) override {}
+                  structure Owner { Resource resource; };
+                  void use() { Owner owner = none; }
+              )"),
+                                  DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
 TEST(SemanticStructureTests, RejectsInvalidAndRecursiveZeroConstruction) {
-    EXPECT_TRUE(
-        Analyze("structure Box { i32 value; }; Box Box::init(i32 value) "
-                "override { return build Box { self.value = value; }; } "
-                "void f() { Box box = none; }")
-            .diagnostics.HasErrors());
     EXPECT_NE(FindErrorDiagnostic(
                   Analyze("structure Box { i32 value; }; i32 noisy() { "
                           "stdoutln(1); return 0; } Box Box::zero() override { "
@@ -5717,10 +5766,9 @@ TEST(SemanticAllocationTests,
                     "unsafe void f() { Box b = Box::init(); new<Box>(b); }"),
             DiagnosticCode::NonCopyableValue),
         nullptr);
-    EXPECT_NE(
-        FindDiagnostic(Analyze(prefix + "unsafe void f() { new<Box>(none); }"),
-                       DiagnosticCode::IncompatibleArgument),
-        nullptr);
+    EXPECT_FALSE(Analyze(prefix + "unsafe void f() { p, e := new<Box>(none); "
+                                  "if e != none { return; } free(p); }")
+                     .diagnostics.HasErrors());
     EXPECT_FALSE(Analyze("unsafe i32 f() { i32 x; p, e := new<i32>(x = "
                          "42); free(p); return x; }")
                      .diagnostics.HasErrors());

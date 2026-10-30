@@ -2345,6 +2345,47 @@ TEST(NativeCompilerTests, RunsBorrowedReferenceAndSliceResults) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsGeneratedZeroWithCustomInitAndTear) {
+    GeneratedSource result = Generate(R"(
+        structure Owner { string text; i32 number; };
+        Owner Owner::init(string text, i32 number) override {
+            return build Owner {
+                self.text = text;
+                self.number = number;
+            };
+        }
+        void Owner::tear(&self) override {}
+        i32 main() {
+            Owner explicit = none;
+            Owner implicit;
+            if explicit.text.len() != 0 or implicit.text.len() != 0 {
+                return 1;
+            }
+            explicit = Owner::init("owned".string(), 42);
+            return explicit.number;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_lifecycle_zero_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_lifecycle_zero_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsMixedShortDestructuringDeclarations) {
     GeneratedSource result = Generate(R"(
         (i32, i32) pair(i32 value, i32 status) {
