@@ -2170,7 +2170,7 @@ TEST(SemanticDeclarationTests, SupportsExplicitInferenceAndLaterAssignments) {
 
 TEST(SemanticDeclarationTests, DefaultsExplicitValueTypesToNone) {
     Analysis valid = Analyze(
-        "i32 Main(bool choose) { i32 value; string text = none; "
+        "i32 Main(bool choose) { i32 value; string text; "
         "if choose { value = 40; text = \"left\"; } else { text = \"right\"; } "
         "stdoutln(text); return value; }");
     EXPECT_FALSE(valid.diagnostics.HasErrors());
@@ -2191,7 +2191,7 @@ TEST(SemanticDeclarationTests, DefaultsExplicitValueTypesToNone) {
     Analysis everyType = Analyze(
         "void Main() { i8 a; i16 b; i32 c; i64 d; isize e; "
         "u8 f; u16 g; u32 h; u64 i; usize j; f32 k; f64 l; "
-        "bool m; char n; string o = none; "
+        "bool m; char n; string o; "
         "a = 1 as i8; b = 1 as i16; c = 1; d = 1 as i64; "
         "e = 1 as isize; f = 1 as u8; g = 1 as u16; h = 1 as u32; "
         "i = 1 as u64; j = 1 as usize; k = 1.0 as f32; l = 1.0; "
@@ -2203,12 +2203,16 @@ TEST(SemanticDeclarationTests,
      RequiresOmittedInitializersToBeTriviallyZeroable) {
     const Analysis valid = Analyze(R"(
         structure Pair { i32 left; i32 right; };
+        structure Text { string value; };
         enum Zero { default Empty = 0, One = 1, }
         unsafe void valid() {
             i32 scalar;
             *u8 pointer;
             [2]bool flags;
             (i32, bool) pair;
+            string text;
+            (string, string) textPair;
+            Text compositeText;
             Pair composite;
             Zero enumeration;
         }
@@ -2224,8 +2228,8 @@ TEST(SemanticDeclarationTests,
         }
     )";
     for (const std::string& local :
-         {"string value;", "stringv value;", "error value;", "Fault value;",
-          "Offset value;", "Nontrivial value;"}) {
+         {"stringv value;", "error value;", "Fault value;", "Offset value;",
+          "Nontrivial value;"}) {
         SCOPED_TRACE(local);
         const Analysis invalid =
             Analyze(declarations + "void invalid() { " + local + " }");
@@ -2252,12 +2256,11 @@ TEST(SemanticDeclarationTests,
         i32 use() { return defaultValue<i32>(); }
     )")
                      .diagnostics.HasErrors());
-    EXPECT_NE(FindDiagnostic(Analyze(R"(
+    EXPECT_FALSE(Analyze(R"(
         T defaultValue<T>() { T value; return value; }
         string use() { return defaultValue<string>(); }
-    )"),
-                             DiagnosticCode::InvalidVariableType),
-              nullptr);
+    )")
+                     .diagnostics.HasErrors());
 }
 
 TEST(SemanticInferenceTests, InfersEverySupportedLiteralCategory) {

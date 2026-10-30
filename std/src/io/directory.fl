@@ -1,0 +1,176 @@
+module file;
+
+@imports
+    :: root::io::errors
+    :: root::io::runtime;
+
+// Classifies an entry without following symbolic links.
+export enum EntryType: u8 {
+    // Represents a filesystem entry of an unsupported or unknown kind.
+    default Other,
+
+    // Represents a regular file.
+    File,
+
+    // Represents a directory.
+    Directory,
+
+    // Represents a POSIX symbolic link or Windows reparse-point link.
+    SymbolicLink,
+}
+
+EntryType EntryType::fromNumber(u8 number) {
+    if number == 1 {
+        return EntryType.File;
+    }
+
+    if number == 2 {
+        return EntryType.Directory;
+    }
+
+    if number == 3 {
+        return EntryType.SymbolicLink;
+    }
+
+    return EntryType.Other;
+}
+
+// Owns the name and classification of one directory entry.
+export structure DirectoryEntry {
+    // The owned entry name.
+    string entryName;
+
+    // The entry classification captured during iteration.
+    EntryType entryKind;
+};
+
+// Keeps entry ownership explicit and prevents fallible implicit name copies.
+// The compiler destroys entryName after this hook runs.
+void DirectoryEntry::tear(&self) override {}
+
+// Constructs the empty entry representation used by none.
+DirectoryEntry DirectoryEntry::zero() override {
+    return build DirectoryEntry {
+        self.entryName = none;
+        self.entryKind = EntryType.Other;
+    };
+}
+
+// Borrows the entry name without allocating.
+stringv DirectoryEntry::name(&const self) <-self {
+    return self->entryName.view();
+}
+
+// Returns the captured entry classification.
+EntryType DirectoryEntry::kind(&const self) {
+    return self->entryKind;
+}
+
+// Owns an operating-system directory iterator.
+export structure Directory {
+    private *void handle;
+};
+
+// Closes a still-open iterator during deterministic destruction.
+void Directory::tear(&self) override {
+    if self->handle == null {
+        return;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        runtime::flecha_runtime_v1_directory_close(handle);
+    }
+}
+
+// Constructs the closed representation.
+Directory Directory::zero() override {
+    return build Directory {
+        self.handle = null;
+    };
+}
+
+// Opens path for directory iteration.
+(Directory, error) Directory::open(stringv path) {
+    *void handle = null;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_directory_open(
+            &raw handle,
+            path.data(),
+            path.len().cast<usize>
+        );
+
+        err := errors::from_runtime(status, errors::IoError.OpenFailed);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return (build Directory {
+        self.handle = handle;
+    }, none);
+}
+
+bool Directory::isOpen(&const self) {
+    return self->handle != null;
+}
+
+// Returns the next ordinary entry. hasEntry is false at end of iteration.
+//
+// The returned entry owns its name independently. "." and ".." are skipped.
+// A failure leaves the directory open. Allocation failure does not consume the
+// pending entry, allowing the caller to retry.
+(DirectoryEntry, bool, error) Directory::next(&self) {
+    if !self->isOpen() {
+        return (none, false, errors::IoError.Closed);
+    }
+
+    while true {
+        DirectoryEntry entry;
+        u8 entryType;
+        u8 hasEntry;
+
+        unsafe {
+            i32 status = runtime::flecha_runtime_v1_directory_next(
+                self->handle,
+                &raw entry.entryName,
+                &raw entryType,
+                &raw hasEntry
+            );
+
+            err := errors::from_runtime(status, errors::IoError.ReadFailed);
+            if err != none {
+                return (none, false, err);
+            }
+        }
+
+        if hasEntry == 0 {
+            return (none, false, none);
+        }
+
+        entry.entryKind = EntryType::fromNumber(entryType);
+        if entry.entryName == "." or entry.entryName == ".." {
+            proceed;
+        }
+
+        return (entry, true, none);
+    }
+}
+
+// Relinquishes the iterator. A close failure still leaves this value closed.
+error Directory::close(&self) {
+    if !self->isOpen() {
+        return errors::IoError.Closed;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_directory_close(handle);
+        return errors::from_runtime(status, errors::IoError.CloseFailed);
+    }
+}

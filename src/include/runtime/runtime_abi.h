@@ -339,6 +339,26 @@ int32_t flecha_runtime_v1_create_directory(const char* path,
 int32_t flecha_runtime_v1_remove_directory(const char* path, size_t path_length,
                                            uint8_t force, uint8_t recursive);
 
+// Opens an owning directory iterator. Paths follow read_file's platform
+// rules. Every failure leaves output null.
+int32_t flecha_runtime_v1_directory_open(void** output, const char* path,
+                                         size_t path_length);
+
+// Returns one entry name and its non-following type: 0 for other, 1 for a
+// regular file, 2 for a directory, and 3 for a symbolic link or Windows
+// reparse-point link. End of iteration is successful with has_entry zero.
+// output_name must point to an empty Flecha string. All outputs are reset before
+// validation. Allocation failure preserves the pending entry so a later call
+// can retry it.
+int32_t flecha_runtime_v1_directory_next(void* handle,
+                                         FlechaRuntimeString* output_name,
+                                         uint8_t* output_type,
+                                         uint8_t* output_has_entry);
+
+// Closes and destroys a handle returned by directory_open. The handle is
+// consumed even when the underlying close operation reports a failure.
+int32_t flecha_runtime_v1_directory_close(void* handle);
+
 // Opens an unbuffered binary file stream. Paths follow read_file's platform
 // rules. Every option is a byte boolean and must be zero or one. On success,
 // output receives an opaque runtime-owned handle; every failure leaves it null.

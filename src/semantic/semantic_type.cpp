@@ -99,6 +99,7 @@ bool SemanticType::IsTriviallyZeroable() const {
     }
     return IsNumeric() || _kind == SemanticTypeKind::Bool ||
            _kind == SemanticTypeKind::Char ||
+           _kind == SemanticTypeKind::String ||
            _kind == SemanticTypeKind::Pointer ||
            _kind == SemanticTypeKind::OwnedBuffer ||
            _kind == SemanticTypeKind::OwnedSlice;
@@ -208,14 +209,16 @@ std::string SemanticType::Name() const {
     if (_isConst) return "const " + WithoutConst().Name();
     switch (_kind) {
         case SemanticTypeKind::Enum:
-            return _enum->name;
+            return _enum->displayName.empty() ? _enum->name
+                                              : _enum->displayName;
         case SemanticTypeKind::Structure:
             return _structure->displayName.empty() ? _structure->name
                                                    : _structure->displayName;
         case SemanticTypeKind::ErrorValue:
             return "error";
         case SemanticTypeKind::NamedError:
-            return _family->name;
+            return _family->displayName.empty() ? _family->name
+                                                : _family->displayName;
         case SemanticTypeKind::I8:
             return "i8";
         case SemanticTypeKind::I16:

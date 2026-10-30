@@ -63,15 +63,40 @@ creates one directory level with permissions filtered through the process
 umask on POSIX. It reports `AlreadyExists` for an existing path and `NotFound`
 when a parent component is missing.
 
-`metadata` returns a `Metadata` value containing `FileType.Other`,
-`FileType.File`, or `FileType.Directory`. Symbolic links are followed. Regular
-file sizes are reported in bytes; directories and other entry types have size
-zero. A missing path reports `NotFound`.
+`metadata` returns a `Metadata` value containing `file::EntryType.Other`,
+`file::EntryType.File`, or `file::EntryType.Directory`. Symbolic links are
+followed. Regular file sizes are reported in bytes; directories and other entry
+types have size zero. A missing path reports `NotFound`.
 
 `remove_directory(path, false)` removes an empty directory and reports
 `DirectoryNotEmpty` when it still contains entries. Passing `true` recursively
 removes the directory tree and treats an already-missing path as success. A
 non-forced removal of a missing directory reports `NotFound`.
+
+## Directory iteration
+
+Import `lib::std::io::file` and call `file::Directory::open(path)` to create an
+owning directory iterator. `Directory::next` returns
+`(DirectoryEntry, bool, error)`. A true boolean accompanies one entry; a false
+boolean with no error is end of iteration. End of iteration is stable, so later
+calls continue returning no entry. The wrapper omits the host-provided `.` and
+`..` entries.
+
+Each `DirectoryEntry` owns its name independently of the iterator. `name()`
+borrows that name without allocating, while `kind()` returns an `EntryType`:
+`Other`, `File`, `Directory`, or `SymbolicLink`. Classification does not follow
+symbolic links; Windows reparse-point links are reported as `SymbolicLink`.
+The owning `entryName` and `entryKind` fields contain the same values for code
+that needs direct value access. Entries are move-only so returning or storing an
+entry transfers its owned name without an unreported allocation.
+
+`Directory` is move-only and closes its opaque host iterator during
+deterministic teardown. Explicit `close` consumes the handle even when the
+operating system reports a close failure. `next` and repeated `close` calls on
+a closed value report `IoError.Closed`. An allocation failure while creating an
+entry name leaves that entry pending, so retrying `next` cannot drop or reorder
+it. Other iteration errors leave the directory open. Opening, iteration, and
+closing may block.
 
 ## File streams
 

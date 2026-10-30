@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <string>
 
 #include "runtime/runtime_abi.h"
@@ -666,6 +667,129 @@ TEST_F(RuntimeFilesystemMutationTests, RemovesEmptyAndRecursiveDirectories) {
                                                  directory.size(), 0, 0),
               FLECHA_RUNTIME_FILESYSTEM_OK);
     EXPECT_FALSE(std::filesystem::exists(Root()));
+}
+
+TEST_F(RuntimeFilesystemMutationTests,
+       IteratesEntryNamesAndTypesWithoutFollowingLinks) {
+    ASSERT_TRUE(std::filesystem::create_directory(Root()));
+    const auto filePath = Root() / "data.bin";
+    const auto directoryPath = Root() / "nested";
+    {
+        std::ofstream file(filePath, std::ios::binary);
+        ASSERT_TRUE(file.good());
+        file << "data";
+    }
+    ASSERT_TRUE(std::filesystem::create_directory(directoryPath));
+
+#ifndef _WIN32
+    const auto linkPath = Root() / "data.link";
+    std::error_code linkError;
+    std::filesystem::create_symlink(filePath, linkPath, linkError);
+    ASSERT_FALSE(linkError);
+#endif
+
+    const std::string root = Root().string();
+    void* handle = nullptr;
+    ASSERT_EQ(
+        flecha_runtime_v1_directory_open(&handle, root.data(), root.size()),
+        FLECHA_RUNTIME_FILESYSTEM_OK);
+    ASSERT_NE(handle, nullptr);
+
+    std::map<std::string, uint8_t> entries;
+    while (true) {
+        FlechaRuntimeString name{};
+        uint8_t type = 99;
+        uint8_t hasEntry = 99;
+        ASSERT_EQ(
+            flecha_runtime_v1_directory_next(handle, &name, &type, &hasEntry),
+            FLECHA_RUNTIME_FILESYSTEM_OK);
+        if (hasEntry == 0) {
+            EXPECT_EQ(name.data, nullptr);
+            EXPECT_EQ(type, 0);
+            break;
+        }
+
+        ASSERT_NE(name.data, nullptr);
+        const auto [position, inserted] =
+            entries.emplace(std::string(name.data, name.length), type);
+        ASSERT_TRUE(inserted) << position->first;
+        flecha_runtime_v1_string_destroy(name.data);
+    }
+
+    entries.erase(".");
+    entries.erase("..");
+#ifdef _WIN32
+    EXPECT_EQ(entries.size(), 2U);
+#else
+    EXPECT_EQ(entries.size(), 3U);
+#endif
+    EXPECT_EQ(entries["data.bin"], 1);
+    EXPECT_EQ(entries["nested"], 2);
+#ifndef _WIN32
+    EXPECT_EQ(entries["data.link"], 3);
+#endif
+
+    FlechaRuntimeString name{reinterpret_cast<char*>(1), 1, 1};
+    uint8_t type = 99;
+    uint8_t hasEntry = 99;
+    EXPECT_EQ(flecha_runtime_v1_directory_next(handle, &name, &type, &hasEntry),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    EXPECT_EQ(name.data, nullptr);
+    EXPECT_EQ(type, 0);
+    EXPECT_EQ(hasEntry, 0);
+    EXPECT_EQ(flecha_runtime_v1_directory_close(handle),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+}
+
+TEST_F(RuntimeFilesystemMutationTests, ValidatesDirectoryIteratorArguments) {
+    void* handle = reinterpret_cast<void*>(1);
+    EXPECT_EQ(flecha_runtime_v1_directory_open(nullptr, "path", 4),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+    EXPECT_EQ(flecha_runtime_v1_directory_open(&handle, nullptr, 0),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(handle, nullptr);
+
+    const char invalid[] = {'a', '\0', 'b'};
+    handle = reinterpret_cast<void*>(1);
+    EXPECT_EQ(
+        flecha_runtime_v1_directory_open(&handle, invalid, sizeof(invalid)),
+        FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH);
+    EXPECT_EQ(handle, nullptr);
+
+    const std::string missing = (Root() / "missing").string();
+    EXPECT_EQ(flecha_runtime_v1_directory_open(&handle, missing.data(),
+                                               missing.size()),
+              FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND);
+    EXPECT_EQ(handle, nullptr);
+
+    ASSERT_TRUE(std::filesystem::create_directory(Root()));
+    const auto filePath = Root() / "not-a-directory";
+    {
+        std::ofstream file(filePath, std::ios::binary);
+        ASSERT_TRUE(file.good());
+    }
+    const std::string file = filePath.string();
+    EXPECT_EQ(
+        flecha_runtime_v1_directory_open(&handle, file.data(), file.size()),
+        FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND);
+    EXPECT_EQ(handle, nullptr);
+
+    FlechaRuntimeString name{reinterpret_cast<char*>(1), 1, 1};
+    uint8_t type = 99;
+    uint8_t hasEntry = 99;
+    EXPECT_EQ(
+        flecha_runtime_v1_directory_next(nullptr, &name, &type, &hasEntry),
+        FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+    EXPECT_EQ(name.data, nullptr);
+    EXPECT_EQ(type, 0);
+    EXPECT_EQ(hasEntry, 0);
+    EXPECT_EQ(flecha_runtime_v1_directory_next(reinterpret_cast<void*>(1),
+                                               nullptr, &type, &hasEntry),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+    EXPECT_EQ(type, 0);
+    EXPECT_EQ(hasEntry, 0);
+    EXPECT_EQ(flecha_runtime_v1_directory_close(nullptr),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
 }
 
 class RuntimeFileStreamTests : public ::testing::Test {

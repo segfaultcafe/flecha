@@ -1390,6 +1390,7 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     }
     auto family = std::make_shared<ErrorFamily>();
     family->name = "AllocationError";
+    family->displayName = family->name;
     family->variants = {"OutOfMemory"};
     auto error = std::make_unique<Symbol>(SymbolKind::ErrorType, family->name,
                                           SemanticType(family),
@@ -1399,6 +1400,7 @@ void SemanticAnalyzer::RegisterBuiltIns() {
 
     family = std::make_shared<ErrorFamily>();
     family->name = "InputError";
+    family->displayName = family->name;
     family->variants = {"EndOfFile", "ReadFailed", "InvalidSyntax",
                         "OutOfRange", "PromptFailed"};
     error = std::make_unique<Symbol>(SymbolKind::ErrorType, family->name,
@@ -1417,6 +1419,7 @@ void SemanticAnalyzer::RegisterErrorTypes(const core::CompilationUnit& unit) {
         SetSource(error.sourceId);
         auto family = std::make_shared<ErrorFamily>();
         family->name = TopName(error, error.Name());
+        family->displayName = error.Name();
         std::unordered_set<std::string> variants;
         for (const auto& variant : error.Variants()) {
             if (!variants.insert(variant.name).second)
@@ -1470,6 +1473,9 @@ void SemanticAnalyzer::RegisterEnums(const core::CompilationUnit& unit) {
 
         auto enumeration = std::make_unique<EnumType>();
         enumeration->name = TopName(syntax, syntax.Name());
+        enumeration->displayName = syntax.specializationName.empty()
+                                       ? syntax.Name()
+                                       : syntax.specializationName;
         enumeration->syntax = &syntax;
         if (syntax.BackingType() != nullptr) {
             enumeration->backing = ResolveType(*syntax.BackingType());
@@ -3513,7 +3519,7 @@ SemanticType SemanticAnalyzer::AnalyzeMatch(
         for (const EnumVariant& variant : enumeration->variants) {
             if (covered.contains(variant.name)) continue;
             if (!missing.empty()) missing += ", ";
-            missing += enumeration->name + "." + variant.name;
+            missing += SemanticType(enumeration).Name() + "." + variant.name;
         }
         if (!missing.empty())
             Report(diagnostics::DiagnosticCode::InvalidMatch,
@@ -3772,6 +3778,7 @@ void SemanticAnalyzer::ClassifyTrivialZeros(const core::CompilationUnit& unit) {
         }
         return type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool ||
                type.Kind() == SemanticTypeKind::Char ||
+               type.Kind() == SemanticTypeKind::String ||
                type.Kind() == SemanticTypeKind::Pointer ||
                type.Kind() == SemanticTypeKind::OwnedBuffer ||
                type.Kind() == SemanticTypeKind::OwnedSlice;
@@ -3966,6 +3973,9 @@ void SemanticAnalyzer::WarnForNontrivialDefault(SemanticType type,
     }
     if (type.Kind() != SemanticTypeKind::Structure ||
         type.IsTriviallyZeroable())
+        return;
+    if (!_entryModules.empty() &&
+        !_entryModules.contains(type.Structure()->syntax->moduleId))
         return;
     if (_warnedDefaults.insert(type.Structure()).second)
         _diagnostics.Report(
@@ -5793,7 +5803,9 @@ void SemanticAnalyzer::RegisterStructures(const core::CompilationUnit& unit) {
         SetSource(syntax.sourceId);
         auto structure = std::make_unique<StructureType>();
         structure->name = TopName(syntax, syntax.Name());
-        structure->displayName = syntax.specializationName;
+        structure->displayName = syntax.specializationName.empty()
+                                     ? syntax.Name()
+                                     : syntax.specializationName;
         structure->syntax = &syntax;
         AddSymbol(std::make_unique<Symbol>(
                       SymbolKind::StructureType, TopName(syntax, syntax.Name()),

@@ -72,7 +72,7 @@ For raw bytes rather than typed complete-line conversion, use
 of `(0, none)`.
 
 An explicit typed declaration without `=` uses `none` as its initializer when
-the resolved type is trivially zeroable, so `i32 count;` is exactly the
-shorthand for `i32 count = none;`. Types whose default construction performs
-work must spell `= none` explicitly. Inferred declarations still require an
-initializer.
+the resolved type is trivially zeroable, so both `i32 count;` and `string name;`
+are exact shorthands for their `= none` forms. Types whose default construction
+performs work must spell `= none` explicitly. Inferred declarations still
+require an initializer.

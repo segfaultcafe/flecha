@@ -1,8 +1,9 @@
 module filesystem_test;
 
 @imports
-    :: root::io::filesystem
     :: root::io::errors
+    :: root::io::file
+    :: root::io::filesystem
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
@@ -55,7 +56,7 @@ test path_operations_reject_invalid_paths(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
-        info.type == filesystem::FileType.Other and info.size == 0,
+        info.type == file::EntryType.Other and info.size == 0,
         "failed metadata is empty"
     );
 

@@ -48,6 +48,7 @@ enum class SemanticTypeKind {
 
 struct ErrorFamily final {
     std::string name;
+    std::string displayName;
     std::vector<std::string> variants;
 };
 

@@ -144,8 +144,10 @@ default construction, including indirect cycles, is rejected.
 `Position::zero()` may also be called explicitly. Exporting a structure exposes
 its default construction, while the override may initialize private fields.
 
-Custom defaults and plain defaults containing them are nontrivial. The compiler
-emits one warning per such structure, for example:
+Custom defaults and plain defaults containing them are nontrivial. When the
+structure belongs to the entry module, the compiler emits one warning per such
+structure. Imported definitions do not repeat their lifecycle warnings in each
+consumer. For example:
 
 ```text
 warning: structure 'Position' is not trivially zeroed; default construction uses 'Position::zero()'
@@ -179,14 +181,16 @@ Build bodies allow local declarations, conditionals and local loops. `return`,
 build; validate fallible preconditions before constructing. This milestone does
 not implement partial construction or unwinding an unfinished value.
 
-Structure variables require an initializer. Inline recursive layouts are
-rejected; recursive raw pointer
-fields such as `*Node next` are allowed. Fields support scalars, errors, raw
-pointers, owning strings, structures, fixed arrays of supported array elements,
-tuples of supported fields, owning slices (`own []T`), and borrowed slices
-(`[]T` or `[]const T`). Owning slices are destroyed automatically with the
-containing structure. A structure containing a mutable slice is noncopyable;
-one containing only shared `[]const T` views may be copied.
+Structure variables may omit their initializer when their canonical zero is
+trivial, including structures whose owning-string fields default to empty.
+Other structures require an explicit initializer. Inline recursive layouts are
+rejected; recursive raw pointer fields such as `*Node next` are allowed. Fields
+support scalars, errors, raw pointers, owning strings, structures, fixed arrays
+of supported array elements, tuples of supported fields, owning slices
+(`own []T`), and borrowed slices (`[]T` or `[]const T`). Owning slices are
+destroyed automatically with the containing structure. A structure containing
+a mutable slice is noncopyable; one containing only shared `[]const T` views
+may be copied.
 
 A borrowed-slice field is tied to the same source tracked by the ordinary
 borrow-result contract. Constructors and factories returning such a structure

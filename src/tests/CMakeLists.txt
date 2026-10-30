@@ -31,6 +31,25 @@ target_link_libraries(test_flecha
 include(GoogleTest)
 gtest_discover_tests(test_flecha DISCOVERY_MODE PRE_TEST)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_directory_allocation
+        fixtures/directory_allocation_harness.cpp
+    )
+    target_link_libraries(test_directory_allocation
+        PRIVATE
+            flecha_project_options
+            runtime
+    )
+    target_link_options(test_directory_allocation
+        PRIVATE
+            -Wl,--wrap=malloc
+    )
+    add_test(
+        NAME RuntimeFilesystemMutationTests.PreservesPendingEntryOnAllocationFailure
+        COMMAND test_directory_allocation
+    )
+endif()
+
 add_test(NAME CliTests.FlechaVersion COMMAND $<TARGET_FILE:flecha> --version)
 set_tests_properties(CliTests.FlechaVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^flecha ${PROJECT_VERSION}"
@@ -432,6 +451,13 @@ add_test(NAME StandardLibraryTests.FilesystemReadFile
         -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/filesystem_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_filesystem.cmake)
+
+add_test(NAME StandardLibraryTests.Directory
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/directory_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_directory.cmake)
 
 add_test(NAME StandardLibraryTests.FileStream
     COMMAND ${CMAKE_COMMAND}

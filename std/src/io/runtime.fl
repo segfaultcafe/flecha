@@ -1,4 +1,4 @@
-private module runtime;
+module runtime;
 
 quiver extern unsafe u8 flecha_runtime_v1_path_style();
 
@@ -107,3 +107,18 @@ quiver extern unsafe i32 flecha_runtime_v1_metadata(
     *const char path,
     usize path_length
 );
+
+quiver extern unsafe i32 flecha_runtime_v1_directory_open(
+    **void output,
+    *const char path,
+    usize path_length
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_directory_next(
+    *void handle,
+    *string output_name,
+    *u8 output_type,
+    *u8 output_has_entry
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_directory_close(*void handle);
