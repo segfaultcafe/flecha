@@ -188,6 +188,7 @@ struct EnumVariant final {
 
 struct EnumType final {
     std::string name;
+    std::string displayName;
     const core::EnumDeclaration* syntax = nullptr;
     SemanticType backing = SemanticType(SemanticTypeKind::U32);
     std::vector<EnumVariant> variants;

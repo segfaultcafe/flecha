@@ -1,4 +1,4 @@
-private module runtime;
+module runtime;
 
 quiver extern unsafe u8 flecha_runtime_v1_path_style();
 

@@ -81,6 +81,52 @@ TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
           "i32 main() { return calc::value() + other::value(); }");
     EXPECT_EQ(Check(), "");
 }
+
+TEST_F(ModuleTests, KeepsImportedLifecycleWarningsLocalAndNamesReadable) {
+    Write("dependency.fl", R"(module dependency;
+        export structure Imported { i32 value; };
+        Imported Imported::zero() override {
+            return build Imported { self.value = 1; };
+        }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::dependency;
+        structure Local { i32 value; };
+        Local Local::zero() override {
+            return build Local { self.value = 1; };
+        }
+        void main() {}
+    )");
+
+    const std::string messages = Check();
+    EXPECT_NE(messages.find("structure 'Local' is not trivially zeroed"),
+              std::string::npos);
+    EXPECT_EQ(messages.find("structure 'Imported' is not trivially zeroed"),
+              std::string::npos);
+    EXPECT_EQ(messages.find("$m"), std::string::npos);
+}
+
+TEST_F(ModuleTests, NominalTypeDiagnosticsNeverExposeInternalModuleNames) {
+    Write("dependency.fl", R"(module dependency;
+        export structure Record { i32 value; };
+        export enum State { default Ready, }
+        export error Failure { Broken }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::dependency;
+        void main() {
+            dependency::Record record = 1;
+            dependency::State state = 1;
+            dependency::Failure failure = 1;
+        }
+    )");
+
+    const std::string messages = Check();
+    EXPECT_NE(messages.find("Record"), std::string::npos);
+    EXPECT_NE(messages.find("State"), std::string::npos);
+    EXPECT_NE(messages.find("Failure"), std::string::npos);
+    EXPECT_EQ(messages.find("$m"), std::string::npos);
+}
 TEST_F(ModuleTests, ComposesLogicalModulesAcrossArbitraryFilenames) {
     Write("first_piece.fl", R"(module shared;
         i32 left() { return right(); }

@@ -144,8 +144,10 @@ default construction, including indirect cycles, is rejected.
 `Position::zero()` may also be called explicitly. Exporting a structure exposes
 its default construction, while the override may initialize private fields.
 
-Custom defaults and plain defaults containing them are nontrivial. The compiler
-emits one warning per such structure, for example:
+Custom defaults and plain defaults containing them are nontrivial. When the
+structure belongs to the entry module, the compiler emits one warning per such
+structure. Imported definitions do not repeat their lifecycle warnings in each
+consumer. For example:
 
 ```text
 warning: structure 'Position' is not trivially zeroed; default construction uses 'Position::zero()'
