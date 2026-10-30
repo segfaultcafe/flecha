@@ -65,6 +65,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         NAME RuntimeFileStreamTests.CleansUpTemporaryFilesOnAllocationFailure
         COMMAND test_temporary_file_allocation
     )
+
+    add_executable(test_temporary_directory_allocation
+        fixtures/temporary_directory_allocation_harness.cpp
+    )
+    target_link_libraries(test_temporary_directory_allocation
+        PRIVATE
+            flecha_project_options
+            runtime
+    )
+    target_link_options(test_temporary_directory_allocation
+        PRIVATE
+            -Wl,--wrap=malloc
+    )
+    add_test(
+        NAME RuntimeFilesystemMutationTests.CleansUpTemporaryDirectoriesOnAllocationFailure
+        COMMAND test_temporary_directory_allocation
+    )
 endif()
 
 add_test(NAME CliTests.FlechaVersion COMMAND $<TARGET_FILE:flecha> --version)
@@ -178,6 +195,13 @@ add_test(NAME CompilerDiagnostics.TemporaryFileOwnership
         -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/temporary_file_diagnostics
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_temporary_file_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.TemporaryDirectoryOwnership
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/temporary_directory_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_temporary_directory_diagnostics.cmake)
 
 add_test(NAME EditorTests.VSCodeManifest
     COMMAND ${CMAKE_COMMAND}

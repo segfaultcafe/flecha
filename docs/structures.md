@@ -113,14 +113,18 @@ contracts. Additional named static factories may also accept parameters.
 ## Default construction and `zero`
 
 `none` constructs the expected structure default in declarations,
-assignments, arguments, returns, and ordinary `==`/`!=` comparisons. A plain
+assignments, arguments, returns, and ordinary `==`/`!=` comparisons. A
 structure receives a generated `zero()` when every field can be defaulted:
 numbers become zero, booleans become false, characters become `\0`, raw
 pointers become null, fixed arrays default every element, and nested plain
 structures recursively default their fields. This is semantic initialization,
 not a bytewise memory clear.
 
-A structure with a custom `init` or `tear` must declare its default explicitly:
+A custom `init` or `tear` does not affect zeroability. `init` supplies an
+ordinary construction path, while `tear` controls destruction and movement.
+Both must accept the generated fieldwise zero as a valid value when all fields
+are zeroable. A structure declares `zero()` explicitly only when its valid
+default differs from that generated value:
 
 ```flecha
 structure Position {

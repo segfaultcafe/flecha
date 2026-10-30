@@ -1,0 +1,80 @@
+module file;
+
+@imports
+    :: root::io::errors
+    :: root::io::runtime;
+
+// Owns a private temporary directory and recursively removes it during
+// deterministic tear.
+export structure TemporaryDirectory {
+    private string directoryPath;
+};
+
+// Recursively removes a still-owned directory. Destruction cannot report
+// failure, so callers that need the result must call remove explicitly.
+void TemporaryDirectory::tear(&self) override {
+    if self->directoryPath.len() == 0 {
+        return;
+    }
+
+    unsafe {
+        runtime::flecha_runtime_v1_remove_directory(
+            self->directoryPath.data(),
+            self->directoryPath.len().cast<usize>,
+            1,
+            1
+        );
+    }
+}
+
+// Atomically creates a private directory in the host temporary directory.
+(TemporaryDirectory, error) TemporaryDirectory::create() {
+    string path;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_temporary_directory_create(&raw path);
+        err := errors::from_runtime(status, errors::IoError.CreateDirectoryFailed);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return (build TemporaryDirectory {
+        self.directoryPath = path;
+    }, none);
+}
+
+// Borrows the generated absolute path.
+stringv TemporaryDirectory::path(&const self) <-self {
+    return self->directoryPath.view();
+}
+
+// Recursively removes the directory and everything contained within it.
+// A failed removal retains ownership so the caller may retry.
+error TemporaryDirectory::remove(&self) {
+    if self->directoryPath.len() == 0 {
+        return none;
+    }
+
+    error removalErr = none;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_remove_directory(
+            self->directoryPath.data(),
+            self->directoryPath.len().cast<usize>,
+            1,
+            1
+        );
+
+        removalErr = errors::from_runtime(status, errors::IoError.RemoveDirectoryFailed);
+    }
+
+    if removalErr == errors::IoError.NotFound {
+        removalErr = none;
+    }
+
+    if removalErr == none {
+        self->directoryPath = none;
+    }
+
+    return removalErr;
+}

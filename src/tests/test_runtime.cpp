@@ -721,6 +721,48 @@ TEST_F(RuntimeFilesystemMutationTests, RemovesEmptyAndRecursiveDirectories) {
 }
 
 TEST_F(RuntimeFilesystemMutationTests,
+       CreatesPrivateTemporaryDirectoriesAtomically) {
+    FlechaRuntimeString first{reinterpret_cast<char*>(1), 1, 1};
+    ASSERT_EQ(flecha_runtime_v1_temporary_directory_create(&first),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    ASSERT_NE(first.data, nullptr);
+    ASSERT_GT(first.length, 0u);
+
+    const auto* firstBegin = reinterpret_cast<const char8_t*>(first.data);
+    const std::u8string firstEncoded(firstBegin, firstBegin + first.length);
+    const std::filesystem::path firstPath(firstEncoded);
+    EXPECT_TRUE(firstPath.is_absolute());
+    EXPECT_TRUE(std::filesystem::is_directory(firstPath));
+    EXPECT_TRUE(firstPath.filename().string().starts_with("flecha-"));
+#ifndef _WIN32
+    const auto permissions = std::filesystem::status(firstPath).permissions();
+    EXPECT_EQ(permissions & std::filesystem::perms::group_all,
+              std::filesystem::perms::none);
+    EXPECT_EQ(permissions & std::filesystem::perms::others_all,
+              std::filesystem::perms::none);
+#endif
+
+    FlechaRuntimeString second{};
+    ASSERT_EQ(flecha_runtime_v1_temporary_directory_create(&second),
+              FLECHA_RUNTIME_FILESYSTEM_OK);
+    const auto* secondBegin = reinterpret_cast<const char8_t*>(second.data);
+    const std::u8string secondEncoded(secondBegin, secondBegin + second.length);
+    const std::filesystem::path secondPath(secondEncoded);
+    EXPECT_NE(firstPath, secondPath);
+    EXPECT_TRUE(std::filesystem::is_directory(secondPath));
+
+    EXPECT_TRUE(std::filesystem::remove(firstPath));
+    EXPECT_TRUE(std::filesystem::remove(secondPath));
+    flecha_runtime_v1_string_destroy(first.data);
+    flecha_runtime_v1_string_destroy(second.data);
+}
+
+TEST_F(RuntimeFilesystemMutationTests, ValidatesTemporaryDirectoryOutput) {
+    EXPECT_EQ(flecha_runtime_v1_temporary_directory_create(nullptr),
+              FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS);
+}
+
+TEST_F(RuntimeFilesystemMutationTests,
        IteratesEntryNamesAndTypesWithoutFollowingLinks) {
     ASSERT_TRUE(std::filesystem::create_directory(Root()));
     const auto filePath = Root() / "data.bin";

@@ -5346,7 +5346,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                expression.Callee().Range(), "expression is not callable");
         return SemanticType::Error();
     }
-    if (signature->isUnsafe || signature->result.IsImmovable())
+    if (signature->isUnsafe || (signature->result.IsImmovable() && !_inZero))
         RequireUnsafe(expression.Callee().Range());
     if (_currentFunction && function)
         _functionCalls[_currentFunction].insert(function);
@@ -5956,9 +5956,7 @@ void SemanticAnalyzer::GenerateInitializers() {
         if (nested->zero) return true;
         if (const auto found = zeroable.find(nested); found != zeroable.end())
             return found->second;
-        if (nested->hasCustomInit || nested->tear ||
-            !checking.insert(nested).second)
-            return false;
+        if (!checking.insert(nested).second) return false;
         bool result = true;
         for (const auto& field : nested->fields)
             if (!canGenerateZero(field.type)) {
@@ -6006,7 +6004,8 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
          (function.EnumOwner() && CurrentEnumOwner() != function.EnumOwner())))
         Report(diagnostics::DiagnosticCode::PrivateAccess, range,
                "method '" + function.Name() + "' is private");
-    if (function.IsUnsafe() || function.ReturnType().IsImmovable())
+    if (function.IsUnsafe() ||
+        (function.ReturnType().IsImmovable() && !_inZero))
         RequireUnsafe(range);
 }
 

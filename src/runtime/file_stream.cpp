@@ -228,8 +228,14 @@ void RemoveTemporaryPath(const std::filesystem::path& path) {
 #endif
 }
 
+void RemoveTemporaryDirectoryPath(const std::filesystem::path& path) {
+    if (path.empty()) return;
+    std::error_code ignored;
+    (void)std::filesystem::remove_all(path, ignored);
+}
+
 #ifdef _WIN32
-bool RandomTemporaryName(std::wstring* output) {
+bool RandomTemporaryName(bool directory, std::wstring* output) {
     std::array<unsigned char, 16> random{};
     if (!BCRYPT_SUCCESS(BCryptGenRandom(nullptr, random.data(),
                                         static_cast<ULONG>(random.size()),
@@ -243,7 +249,7 @@ bool RandomTemporaryName(std::wstring* output) {
         output->push_back(HEX[byte >> 4]);
         output->push_back(HEX[byte & 0x0f]);
     }
-    output->append(L".tmp");
+    output->append(directory ? L".dir" : L".tmp");
     return true;
 }
 #endif
@@ -269,7 +275,7 @@ int CreateTemporaryDescriptor(std::filesystem::path* outputPath,
     constexpr unsigned int MAX_ATTEMPTS = 128;
     for (unsigned int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
         std::wstring name;
-        if (!RandomTemporaryName(&name)) {
+        if (!RandomTemporaryName(false, &name)) {
             *status = FLECHA_RUNTIME_FILE_STREAM_FAILED;
             return -1;
         }
@@ -319,6 +325,50 @@ int CreateTemporaryDescriptor(std::filesystem::path* outputPath,
         throw;
     }
     return descriptor;
+#endif
+}
+
+int32_t CreateTemporaryDirectoryPath(std::filesystem::path* outputPath) {
+    std::error_code pathError;
+    std::filesystem::path root =
+        std::filesystem::temp_directory_path(pathError);
+    if (pathError) return MapOpenError(pathError);
+    if (!root.is_absolute()) {
+        root = std::filesystem::absolute(root, pathError);
+        if (pathError) return MapOpenError(pathError);
+    }
+
+#ifdef _WIN32
+    constexpr unsigned int MAX_ATTEMPTS = 128;
+    for (unsigned int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
+        std::wstring name;
+        if (!RandomTemporaryName(true, &name))
+            return FLECHA_RUNTIME_FILESYSTEM_FAILED;
+
+        std::filesystem::path candidate = root / name;
+        std::error_code creationError;
+        if (std::filesystem::create_directory(candidate, creationError)) {
+            outputPath->swap(candidate);
+            return FLECHA_RUNTIME_FILESYSTEM_OK;
+        }
+        if (creationError &&
+            creationError.default_error_condition() != std::errc::file_exists)
+            return MapOpenError(creationError);
+    }
+    return FLECHA_RUNTIME_FILESYSTEM_ALREADY_EXISTS;
+#else
+    std::string candidate = (root / "flecha-XXXXXX").native();
+    errno = 0;
+    if (::mkdtemp(candidate.data()) == nullptr) return MapOpenError(errno);
+
+    try {
+        std::filesystem::path createdPath(candidate);
+        outputPath->swap(createdPath);
+    } catch (...) {
+        (void)::rmdir(candidate.c_str());
+        throw;
+    }
+    return FLECHA_RUNTIME_FILESYSTEM_OK;
 #endif
 }
 
@@ -397,6 +447,39 @@ extern "C" int32_t flecha_runtime_v1_temporary_file_open(
 
     *outputHandle = stream;
     return FLECHA_RUNTIME_FILE_STREAM_OK;
+}
+
+extern "C" int32_t flecha_runtime_v1_temporary_directory_create(
+    FlechaRuntimeString* outputPath) {
+    if (outputPath != nullptr) *outputPath = {nullptr, 0, 0};
+    if (outputPath == nullptr) return FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS;
+
+    std::filesystem::path path;
+    int32_t status = FLECHA_RUNTIME_FILESYSTEM_OK;
+    try {
+        status = CreateTemporaryDirectoryPath(&path);
+        if (status == FLECHA_RUNTIME_FILESYSTEM_OK) {
+            const std::u8string encodedPath = path.u8string();
+            const int32_t stringStatus =
+                flecha_runtime_v1_string_try_from_bytes(
+                    outputPath,
+                    reinterpret_cast<const uint8_t*>(encodedPath.data()),
+                    encodedPath.size());
+            if (stringStatus != FLECHA_RUNTIME_STRING_OK)
+                status = FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+        }
+    } catch (const std::bad_alloc&) {
+        status = FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    } catch (...) {
+        status = FLECHA_RUNTIME_FILESYSTEM_FAILED;
+    }
+
+    if (status != FLECHA_RUNTIME_FILESYSTEM_OK) {
+        RemoveTemporaryDirectoryPath(path);
+        flecha_runtime_v1_string_destroy(outputPath->data);
+        *outputPath = {nullptr, 0, 0};
+    }
+    return status;
 }
 
 extern "C" int32_t flecha_runtime_v1_file_stream_close(void* handle) {
