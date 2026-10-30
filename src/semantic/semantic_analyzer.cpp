@@ -5836,6 +5836,7 @@ void SemanticAnalyzer::ResolveStructureFields() {
     std::unordered_set<const StructureType*> visiting;
     std::function<bool(SemanticType)> validate = [&](SemanticType type) {
         if (type.Kind() == SemanticTypeKind::Pointer ||
+            type.Kind() == SemanticTypeKind::Reference ||
             type.Kind() == SemanticTypeKind::OwnedBuffer ||
             type.Kind() == SemanticTypeKind::OwnedSlice ||
             type.Kind() == SemanticTypeKind::Slice)
@@ -5883,8 +5884,14 @@ void SemanticAnalyzer::ResolveStructureFields() {
     // checks, including unsupported types hidden behind a pointer field.
     for (const auto& structure : _model._structures) {
         SetSource(structure->syntax->sourceId);
-        for (const auto& field : structure->fields)
+        for (const auto& field : structure->fields) {
+            if (field.syntax->Initializer() && field.type.ContainsReference())
+                Report(diagnostics::DiagnosticCode::InvalidStructure,
+                       field.syntax->Initializer()->Range(),
+                       "reference-bearing fields must be initialized in "
+                       "build from an explicit borrow source");
             (void)ResolveType(field.syntax->Type());
+        }
     }
 }
 
@@ -5907,7 +5914,9 @@ void SemanticAnalyzer::GenerateInitializers() {
         return false;
     };
     for (const auto& structure : _model._structures) {
-        if (structure->init) continue;
+        if (structure->init ||
+            SemanticType(structure.get()).ContainsReference())
+            continue;
         const auto range = structure->syntax->Range();
         std::vector<std::unique_ptr<core::Statement>> statements;
         auto body = std::make_unique<core::BlockStatement>(
@@ -6167,6 +6176,78 @@ SemanticType SemanticAnalyzer::AnalyzeBuild(
                 _functionCalls[_currentFunction].insert(type.Structure()->init);
                 break;
             }
+    std::unordered_set<const StructureField*> requiredInitializers;
+    for (const auto& field : type.Structure()->fields)
+        if (!field.syntax->Initializer() && field.type.ContainsReference())
+            requiredInitializers.insert(&field);
+    std::unordered_set<const StructureField*> initializedFields;
+    bool reportedInitializationOrder = false;
+    for (const auto& statement : expression.Body().Statements()) {
+        const core::Expression* value = nullptr;
+        if (statement->Kind() == core::AstNodeKind::ExpressionStatement)
+            value = &static_cast<const core::ExpressionStatement&>(*statement)
+                         .Value();
+        while (value &&
+               value->Kind() == core::AstNodeKind::ParenthesizedExpression)
+            value = &static_cast<const core::ParenthesizedExpression&>(*value)
+                         .Inner();
+        const core::AssignmentExpression* assignment =
+            value && value->Kind() == core::AstNodeKind::AssignmentExpression
+                ? &static_cast<const core::AssignmentExpression&>(*value)
+                : nullptr;
+        const core::Expression* target =
+            assignment && assignment->OperatorType() == TokenType::Assign
+                ? &assignment->Target()
+                : nullptr;
+        while (target &&
+               target->Kind() == core::AstNodeKind::ParenthesizedExpression)
+            target = &static_cast<const core::ParenthesizedExpression&>(*target)
+                          .Inner();
+        const core::MemberAccessExpression* member =
+            target &&
+                    target->Kind() == core::AstNodeKind::MemberAccessExpression
+                ? &static_cast<const core::MemberAccessExpression&>(*target)
+                : nullptr;
+        const core::Expression* receiver =
+            member ? &member->Receiver() : nullptr;
+        while (receiver &&
+               receiver->Kind() == core::AstNodeKind::ParenthesizedExpression)
+            receiver =
+                &static_cast<const core::ParenthesizedExpression&>(*receiver)
+                     .Inner();
+        const bool directSelf =
+            member && member->Access() == TokenType::Dot && receiver &&
+            receiver->Kind() == core::AstNodeKind::NameExpression &&
+            static_cast<const core::NameExpression&>(*receiver).Name() ==
+                "self";
+        const StructureField* initialized = nullptr;
+        if (directSelf)
+            for (const auto& field : type.Structure()->fields)
+                if (field.name == member->Member()) {
+                    initialized = &field;
+                    break;
+                }
+        if (initialized && requiredInitializers.contains(initialized) &&
+            !initializedFields.contains(initialized)) {
+            initializedFields.insert(initialized);
+            _model._buildInitializers.insert(assignment);
+            continue;
+        }
+        if (initializedFields.size() < requiredInitializers.size() &&
+            !reportedInitializationOrder) {
+            Report(diagnostics::DiagnosticCode::InvalidStructure,
+                   statement->Range(),
+                   "reference-bearing fields must be initialized before "
+                   "other build statements");
+            reportedInitializationOrder = true;
+        }
+    }
+    for (const StructureField* field : requiredInitializers)
+        if (!initializedFields.contains(field))
+            Report(diagnostics::DiagnosticCode::InvalidStructure,
+                   expression.Range(),
+                   "reference-bearing field '" + field->name +
+                       "' requires direct initialization in build");
     std::function<void(SemanticType)> checkDefault = [&](SemanticType field) {
         if (field.Kind() == SemanticTypeKind::Enum && !field.IsZeroable())
             Report(diagnostics::DiagnosticCode::InvalidStructure,
@@ -6199,7 +6280,9 @@ SemanticType SemanticAnalyzer::AnalyzeBuild(
             for (const auto& element : field.Elements()) checkDefault(element);
     };
     for (const auto& field : type.Structure()->fields)
-        if (zeroBuild || !field.syntax->Initializer()) checkDefault(field.type);
+        if (!initializedFields.contains(&field) &&
+            (zeroBuild || !field.syntax->Initializer()))
+            checkDefault(field.type);
     Scope* previousScope = _currentScope;
     const Symbol* previousSelf = _buildSelf;
     _currentScope = &AddScope(previousScope);

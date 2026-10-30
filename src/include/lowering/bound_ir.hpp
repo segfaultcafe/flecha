@@ -591,11 +591,13 @@ class BoundAssignmentExpression final : public BoundExpression {
     BoundAssignmentExpression(source::SourceRange range,
                               std::unique_ptr<BoundPlaceExpression> target,
                               std::unique_ptr<BoundExpression> value,
-                              TokenType operatorType = TokenType::Assign)
+                              TokenType operatorType = TokenType::Assign,
+                              bool initializes = false)
         : BoundExpression(range, target->Type()),
           _target(std::move(target)),
           _value(std::move(value)),
-          _operatorType(operatorType) {}
+          _operatorType(operatorType),
+          _initializes(initializes) {}
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::AssignmentExpression;
     }
@@ -604,11 +606,13 @@ class BoundAssignmentExpression final : public BoundExpression {
     }
     [[nodiscard]] const BoundExpression& Value() const { return *_value; }
     [[nodiscard]] TokenType OperatorType() const { return _operatorType; }
+    [[nodiscard]] bool Initializes() const { return _initializes; }
 
    private:
     std::unique_ptr<BoundPlaceExpression> _target;
     std::unique_ptr<BoundExpression> _value;
     TokenType _operatorType;
+    bool _initializes;
 };
 
 class BoundAllocationExpression final : public BoundExpression {

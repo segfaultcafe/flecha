@@ -341,6 +341,8 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 if (!_zeroFunction && field.syntax->Initializer())
                     defaults.push_back(LowerExpression(
                         *field.syntax->Initializer(), field.type));
+                else if (!_zeroFunction && field.type.ContainsReference())
+                    defaults.push_back(nullptr);
                 else
                     defaults.push_back(std::make_unique<BoundDefaultExpression>(
                         field.syntax->Range(), field.type, _zeroFunction));
@@ -578,7 +580,8 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             return std::make_unique<BoundAssignmentExpression>(
                 expression.Range(), std::move(target),
                 LowerExpression(assignment.Value(), targetType),
-                assignment.OperatorType());
+                assignment.OperatorType(),
+                _semanticModel->IsBuildInitializer(assignment));
         }
         case core::AstNodeKind::CallExpression: {
             const core::CallExpression& call =

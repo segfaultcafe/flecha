@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/ast.hpp"
@@ -39,6 +40,10 @@ class SemanticModel final {
     [[nodiscard]] SemanticType TypeOf(const core::Expression& expression) const;
     [[nodiscard]] TransferKind TransferOf(
         const core::Expression& expression) const;
+    [[nodiscard]] bool IsBuildInitializer(
+        const core::AssignmentExpression& expression) const {
+        return _buildInitializers.contains(&expression);
+    }
     [[nodiscard]] std::vector<const core::Expression*> ArgumentsFor(
         const core::CallExpression& expression) const;
     [[nodiscard]] std::vector<const core::Expression*> ArgumentsFor(
@@ -101,6 +106,7 @@ class SemanticModel final {
     std::unordered_map<const core::AstNode*, const Symbol*> _declarations;
     std::unordered_map<const core::Expression*, SemanticType> _types;
     std::unordered_map<const core::Expression*, TransferKind> _transfers;
+    std::unordered_set<const core::AssignmentExpression*> _buildInitializers;
     std::unordered_map<const core::Expression*,
                        std::vector<const core::Expression*>>
         _callArguments;

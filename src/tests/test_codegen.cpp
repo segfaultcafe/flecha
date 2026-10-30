@@ -585,6 +585,66 @@ TEST(NativeCompilerTests, RunsManagedSlicesStoredAsStructureBorrows) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsCheckedReferencesStoredAsStructureFields) {
+    GeneratedSource result = Generate(R"(
+        structure MutableView { &i32 value; };
+        MutableView MutableView::init(&i32 value) <- value override {
+            return build MutableView { self.value = value; };
+        }
+        void MutableView::tear(&self) override {
+            *self->value = *self->value + 2;
+        }
+        structure Owner { MutableView view; };
+        Owner Owner::init(&i32 value) <- value override {
+            return build Owner {
+                self.view = MutableView::init(value);
+            };
+        }
+        structure SharedView { &const i32 value; };
+        SharedView SharedView::init(&const i32 value) <- value override {
+            return build SharedView { self.value = value; };
+        }
+        structure Box<T> { T value; };
+        Box<T> Box<T>::init(T value) <- value override {
+            return build Box<T> { self.value = value; };
+        }
+        i32 main() {
+            i32 value = 40;
+            {
+                owner := Owner::init(&value);
+                moved := owner;
+                *moved.view.value = 40;
+            }
+            shared := SharedView::init(&value);
+            copied := shared;
+            boxed := Box<&const i32>::init(&value);
+            if *shared.value != *copied.value {
+                return 1;
+            }
+            return *boxed.value;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_member_reference_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "native_member_reference_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsGenericAndMovableDefaultArguments) {
     GeneratedSource result = Generate(R"(
         T add<T: integer>(T value, T amount = 2) {
