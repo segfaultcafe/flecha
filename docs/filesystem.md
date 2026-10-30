@@ -38,6 +38,15 @@ string before passing its address, and the runtime either transfers exactly one
 compatible allocation into that slot or leaves it empty. Generated string
 cleanup therefore owns and destroys the result exactly once.
 
+## Lexical paths
+
+Import `lib::std::io::path` for host-aware joining, normalization, filename,
+parent, and extension operations. These are lexical operations: they do not
+access the filesystem, resolve symbolic links, or make paths absolute. The
+allocating operations report allocation failure, while component queries
+return borrowed views into their source. See [Lexical paths](path.md) for the
+complete POSIX and Windows contracts.
+
 `export error write_file(stringv path, stringv contents)` creates or truncates
 a file, writes the complete string view, flushes it, and closes it. String
 literals can be written directly, and embedded null bytes are preserved.

@@ -98,6 +98,11 @@ typedef enum FlechaRuntimeProcessArgumentStatus {
     FLECHA_RUNTIME_PROCESS_ARGUMENT_INVALID_INDEX = 2,
 } FlechaRuntimeProcessArgumentStatus;
 
+typedef enum FlechaRuntimePathStyle {
+    FLECHA_RUNTIME_PATH_STYLE_POSIX = 0,
+    FLECHA_RUNTIME_PATH_STYLE_WINDOWS = 1,
+} FlechaRuntimePathStyle;
+
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.
@@ -124,6 +129,9 @@ size_t flecha_runtime_v1_process_argument_count(void);
 // output pointer, every failure leaves the output empty.
 int32_t flecha_runtime_v1_process_argument_capture(FlechaRuntimeString* output,
                                                    size_t index);
+
+// Reports the lexical path rules used by filesystem operations on this host.
+uint8_t flecha_runtime_v1_path_style(void);
 
 void flecha_runtime_v1_stdout_string_view(const char* data, size_t length);
 void flecha_runtime_v1_stdout_i8(int8_t value);

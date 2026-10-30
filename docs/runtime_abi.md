@@ -125,6 +125,12 @@ maps those codes to `IoError` or `AllocationError.OutOfMemory`.
 
 ## Filesystem paths
 
+`flecha_runtime_v1_path_style` reports which lexical grammar matches the
+runtime's filesystem operations: `0` for POSIX and `1` for Windows. It performs
+no allocation or filesystem access. Path joining, normalization, and component
+inspection remain Flecha standard-library code; the runtime supplies only this
+host-policy fact.
+
 The `flecha_runtime_v1_path_exists`, `metadata`, `remove_file`, `rename`, and
 `create_directory` entry points use the same explicit path representation and
 platform conversion as `read_file`. Existence checks report a missing path as

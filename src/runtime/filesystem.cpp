@@ -229,6 +229,14 @@ FILE* OpenBinary(const char* path, size_t path_length, int32_t* status) {
 
 }  // namespace
 
+extern "C" uint8_t flecha_runtime_v1_path_style(void) {
+#ifdef _WIN32
+    return FLECHA_RUNTIME_PATH_STYLE_WINDOWS;
+#else
+    return FLECHA_RUNTIME_PATH_STYLE_POSIX;
+#endif
+}
+
 extern "C" int32_t flecha_runtime_v1_read_file(FlechaRuntimeString* output,
                                                const char* path,
                                                size_t path_length) {
