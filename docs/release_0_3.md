@@ -323,6 +323,13 @@ reports close and removal failures and is retry-safe for a failed removal;
 deterministic destruction closes and removes best-effort. Native failure paths
 remove partially created files, including stream-handle and path-allocation
 failure, while Flecha movement transfers cleanup responsibility exactly once.
+`TemporaryDirectory::create` follows the same module and ownership model with
+an atomically created private host directory and an owned absolute path.
+Explicit removal recursively deletes its tree and reports failures, while
+failed removal retains ownership for retry and deterministic destruction
+removes best-effort. Native allocation-failure paths remove partially created
+directories, and path borrowing prevents removal or movement while a view is
+live.
 
 The standard-stream portion is also implemented. The `stderr` and `stderrln`
 built-ins mirror the existing printable `stdout` operations, while

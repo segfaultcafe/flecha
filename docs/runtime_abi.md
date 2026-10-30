@@ -154,6 +154,15 @@ Force suppresses `NotFound`; recursive traversal otherwise preserves the same
 status mapping. `DirectoryNotEmpty` is status `9`, leaving generic operation
 failure at its established status `8`.
 
+`flecha_runtime_v1_temporary_directory_create` atomically creates a new
+directory in the host temporary directory and returns its absolute path as an
+owned Flecha string. The path uses native bytes on POSIX and UTF-8 on Windows.
+POSIX creation uses mode `0700`; Windows names use operating-system
+cryptographic randomness and exclusive directory creation. Any failure removes
+the created directory, frees partial output, and resets the string descriptor.
+Recursive ownership and best-effort teardown remain in
+`std::io::file::TemporaryDirectory`.
+
 The `flecha_runtime_v1_directory_*` entry points expose owning directory
 iterators behind opaque `void*` handles. `open` clears its output before path
 validation. `next` returns one independently allocated entry name, a byte type,

@@ -184,6 +184,28 @@ cannot report errors, so it closes and removes best-effort. Moving a
 `TemporaryFile` transfers the handle, path, and cleanup responsibility exactly
 once.
 
+### Temporary directories
+
+Temporary directories also live in `lib::std::io::file`.
+`TemporaryDirectory::create()` atomically creates a private directory in the
+host temporary directory and returns its generated absolute path as an owned
+resource. POSIX creation uses owner-only permissions; Windows creation uses an
+unpredictable name and the temporary directory's inherited access rules.
+Creation can report stable filesystem or allocation errors, and every failed
+creation removes any directory created before the failure.
+
+`path()` returns a borrowed view without allocating. The borrow prevents
+moving or removing the owner until its final use. `remove()` recursively
+removes the complete directory tree, treats an already-missing path as
+success, and clears the owned path only after successful removal. A failure
+keeps the path armed so the caller can repair the cause and retry.
+
+Deterministic teardown performs the same recursive removal best-effort because
+destruction cannot report errors. Moving a `TemporaryDirectory` transfers its
+path and cleanup responsibility exactly once. A default-constructed value has
+an empty path, owns nothing, and can be removed repeatedly as a no-op. Call
+`remove()` explicitly when cleanup failure must be observed.
+
 ## Standard output and error
 
 Import `lib::std::fmt` for ordinary typed program output. Its `print`,
