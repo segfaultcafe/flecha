@@ -43,16 +43,15 @@ structure Counter {
 };
 ```
 
-## Separate declarations
+## Separate top-level declarations
 
-Leave at least one blank line and at most two blank lines between declarations.
-This includes structure fields. Do not place multiple declarations or statements
-on the same line.
+Leave at least one blank line and at most two blank lines between top-level
+declarations. Keep consecutive structure fields together without blank lines.
+Do not place multiple declarations or statements on the same line.
 
 ```flecha
 structure Position {
     i32 x;
-
     i32 y;
 };
 
