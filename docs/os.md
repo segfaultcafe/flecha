@@ -1,10 +1,10 @@
-# Process arguments
+# Operating-system context
 
-Import `lib::std::process::arguments` to capture the command-line arguments
+Import `lib::std::os::arguments` to capture the command-line arguments
 supplied to the current program:
 
 ```flecha
-@imports :: lib::std::process::arguments;
+@imports :: lib::std::os::arguments;
 
 i32 main() {
     values, captureError := arguments::capture();
@@ -51,5 +51,37 @@ runtime borrows that table for the process lifetime. Application code accesses
 only the safe owning snapshot returned by `arguments::capture`; the raw runtime
 operations remain internal to `std`.
 
-This module exposes command-line arguments only. Environment variables,
-process creation, exit-status handling, and pipes are separate Stage 5 work.
+## Environment variables
+
+Import `lib::std::os::environment` to inspect or mutate the current process
+environment. `get` returns `(string, bool, error)`: the string is an independent
+owning copy, and the boolean distinguishes an absent variable from a present
+variable containing an empty value. Failed reads return an empty string and
+false.
+
+```flecha
+@imports :: lib::std::os::environment;
+
+home, present, err := environment::get("HOME");
+if err == none and present {
+    stdoutln(home);
+}
+```
+
+`set` copies its borrowed name and value before changing the process-wide
+environment. An empty value is valid. `remove` is idempotent when the variable
+is already absent. Names must be nonempty and cannot contain `=` or a null
+byte; values cannot contain a null byte. Validation or allocation failure
+leaves the previous environment unchanged.
+
+POSIX preserves environment bytes as supplied. Windows accepts UTF-8 and uses
+the operating system's wide-character environment API. Environment mutations
+are immediately visible to later calls and to subsequently created child
+processes. Concurrent reads and mutations require external synchronization.
+
+`EnvironmentError` distinguishes invalid names, invalid values, permission
+denial, and unclassified read or write failures. Allocation failure is reported
+as `AllocationError.OutOfMemory`.
+
+Child-process creation, exit-status handling, and pipes remain separate Stage
+5 work under `std::process`.

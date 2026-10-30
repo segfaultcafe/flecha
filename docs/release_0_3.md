@@ -68,7 +68,8 @@ std::containers::errors   collection errors
 std::text::*              ascii, utf8, builder, parse, format
 std::encoding::*          binary, hex, base64
 std::io::*                errors, file, buffered, stdio, filesystem, path
-std::process::*           args, environment, command
+std::os::*                arguments, environment
+std::process::*           command
 std::time::*              duration, clock
 std::random::*            generator, secure
 std::net::*               errors, address, dns, tcp, udp
@@ -349,16 +350,23 @@ reports EOF, read, parse, range, prompt-flush, and allocation failures
 explicitly. Formatted input is intentionally absent; formatted prompts compose
 through `std::fmt` followed by `stdin`.
 
-The command-line argument portion is implemented through
-`std::process::arguments`. `capture()` returns an owning runtime-sized array of
-independent owning strings, including the host-supplied invocation name at
-index zero. Repeated captures are independent. Array allocation and individual
-argument capture failures return `AllocationError.OutOfMemory`; partial
-construction releases every completed string and the array exactly once.
+The operating-system context portion is implemented through
+`std::os::arguments` and `std::os::environment`. Argument `capture()` returns an
+owning runtime-sized array of independent owning strings, including the
+host-supplied invocation name at index zero. Repeated captures are independent.
+Array allocation and individual argument capture failures return
+`AllocationError.OutOfMemory`; partial construction releases every completed
+string and the array exactly once.
 Compiler-generated entry wrappers retain parameterless Flecha `main`
 signatures while recording the host argument table before invoking the source
-entry point. Environment variables and broader process control remain separate
-Stage 5 tasks.
+entry point. Environment `get` returns an independent owning value and a
+presence flag that distinguishes absence from a present empty value. `set`
+prepares complete native copies before mutation, while `remove` is idempotent.
+Invalid names and values, permission failures, allocation failures, and generic
+read or write failures remain distinct. POSIX preserves bytes and Windows uses
+UTF-8 conversion through its wide-character environment API. Process-wide
+mutation requires external synchronization. Child-process control remains a
+separate Stage 5 task.
 
 The lexical-path portion is implemented in `std::io::path`. Joining and
 normalization allocate owned results and expose allocation failure; filename,
