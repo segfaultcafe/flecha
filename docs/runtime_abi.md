@@ -199,6 +199,15 @@ denied `2`, invalid path `3`, already exists `4`, too large `5`, out of memory
 from the older read-file-specific status enum, whose value `4` means a generic
 read failure.
 
+`flecha_runtime_v1_temporary_file_open` atomically creates a new readable and
+writable file in the host temporary directory and returns both a file-stream
+handle and its absolute path. The path uses native bytes on POSIX and UTF-8 on
+Windows. POSIX creation uses mode `0600`; all hosts use exclusive creation and
+a non-inheritable descriptor. The caller owns both outputs on success. Any
+failure closes the descriptor, removes the path, frees partial allocations, and
+clears both outputs. Safe ownership, explicit removal, and deterministic
+best-effort cleanup remain in `std::io::file::TemporaryFile`.
+
 ## Structure values (compiler-private ABI)
 
 Flecha structures use named, non-packed LLVM structures, preserving field order

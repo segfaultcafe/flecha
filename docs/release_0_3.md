@@ -67,8 +67,7 @@ std::containers::raw_array
 std::containers::errors   collection errors
 std::text::*              ascii, utf8, builder, parse, format
 std::encoding::*          binary, hex, base64
-std::io::*                errors, file, buffered, stdio, filesystem, path,
-                          directory, temp
+std::io::*                errors, file, buffered, stdio, filesystem, path
 std::process::*           args, environment, command
 std::time::*              duration, clock
 std::random::*            generator, secure
@@ -314,6 +313,16 @@ errors remain visible, and unsupported entries are rejected. A narrow
 resolved-path runtime query prevents copying a directory into itself through
 either lexical descendants or symbolic-link aliases, while traversal, byte
 copying, flushing, allocation, and cleanup remain in Flecha.
+
+Temporary files live in the existing `std::io::file` module rather than a
+separate `temp` module. `TemporaryFile::create` performs one atomic exclusive
+creation in the host temporary directory and owns both the ordinary readable
+and writable `File` and its generated absolute path. Borrowing `file()` reuses
+the complete file-stream API without transferring ownership. Explicit `remove`
+reports close and removal failures and is retry-safe for a failed removal;
+deterministic destruction closes and removes best-effort. Native failure paths
+remove partially created files, including stream-handle and path-allocation
+failure, while Flecha movement transfers cleanup responsibility exactly once.
 
 The standard-stream portion is also implemented. The `stderr` and `stderrln`
 built-ins mirror the existing printable `stdout` operations, while

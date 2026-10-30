@@ -160,6 +160,30 @@ moved, or closed while that borrow remains live. An adapter neither owns nor
 closes the file, and a writer does not flush automatically; callers retain
 responsibility for flushing and closing after the adapter's final use.
 
+### Temporary files
+
+Temporary files are part of `lib::std::io::file`; there is no separate `temp`
+module. `TemporaryFile::create()` atomically creates a new readable and writable
+file in the host temporary directory. On success the owner contains an ordinary
+`File` plus the generated absolute path. Creation can report the same stable
+open and allocation errors as `File::open`, and every failed creation closes
+and removes any partially created file.
+
+`file()` returns a mutable borrow of the underlying `File`, so reads, writes,
+seeks, stream adapters, flushing, and explicit close follow the normal file
+contracts. The borrow prevents moving, removing, or otherwise mutating the
+`TemporaryFile` until its final use. `path()` returns a borrowed string view and
+does not allocate.
+
+`remove()` closes an open handle, then removes the path. It is idempotent, and
+an already-missing path counts as removed. If removal fails, the path remains
+owned so a later `remove()` or deterministic teardown can retry it. A close
+failure consumes the handle as with `File::close`; removal is still attempted,
+and the close error takes precedence when both operations fail. Destruction
+cannot report errors, so it closes and removes best-effort. Moving a
+`TemporaryFile` transfers the handle, path, and cleanup responsibility exactly
+once.
+
 ## Standard output and error
 
 Import `lib::std::fmt` for ordinary typed program output. Its `print`,
