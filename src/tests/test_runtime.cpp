@@ -92,6 +92,15 @@ TEST(RuntimeProcessArgumentTests, CapturesInitializedArguments) {
     EXPECT_EQ(flecha_runtime_v1_process_argument_count(), 0u);
 }
 
+TEST(RuntimePathTests, ReportsHostLexicalStyle) {
+#ifdef _WIN32
+    EXPECT_EQ(flecha_runtime_v1_path_style(),
+              FLECHA_RUNTIME_PATH_STYLE_WINDOWS);
+#else
+    EXPECT_EQ(flecha_runtime_v1_path_style(), FLECHA_RUNTIME_PATH_STYLE_POSIX);
+#endif
+}
+
 TEST(RuntimeStandardInputTests, ParsesCompleteTypedValues) {
     std::int32_t signedValue = 0;
     EXPECT_EQ(flecha_runtime_v1_input_parse_i32(&signedValue, "+42", 3),
