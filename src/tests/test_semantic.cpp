@@ -5501,7 +5501,6 @@ TEST(SemanticStructureTests,
          {"structure Box { Box value; };",
           "structure A { B b; }; structure B { A a; };",
           "structure Box { void value; };",
-          "structure Box { &i32 reference; };",
           "structure Box {}; Box Box::init() override { return build Box { "
           "copy := self; }; }",
           "structure Box {}; void Box::f(&self) {} Box Box::init() override { "
@@ -5514,6 +5513,8 @@ TEST(SemanticStructureTests,
     EXPECT_FALSE(Analyze("structure Node { *Node next; i32 value; }; void f() "
                          "{ Node n = Node::init(); }")
                      .diagnostics.HasErrors());
+    EXPECT_FALSE(
+        Analyze("structure Box { &i32 reference; };").diagnostics.HasErrors());
 }
 
 TEST(SemanticStructureTests, ReportsPreciseAccessAndLifecycleRanges) {
@@ -5626,10 +5627,13 @@ TEST(SemanticStructureTests,
                          "(Box, i32) pair = (Box::init(3), 4); *Box pointer; "
                          "}; void f() { Parent p = Parent::init(); }")
                      .diagnostics.HasErrors());
-    EXPECT_NE(FindDiagnostic(
-                  Analyze(prefix + "structure Parent { &Box reference; };"),
-                  DiagnosticCode::InvalidStructure),
-              nullptr);
+    EXPECT_FALSE(Analyze(prefix +
+                         "structure Parent { &Box reference; }; "
+                         "Parent Parent::init(&Box reference) <- reference "
+                         "override { return build Parent { self.reference = "
+                         "reference; }; } void use() { Box box = Box::init(1); "
+                         "Parent parent = Parent::init(&box); }")
+                     .diagnostics.HasErrors());
 }
 
 TEST(SemanticAllocationTests, TypesNewFreeAndAllocationErrors) {
@@ -6428,6 +6432,188 @@ TEST(SemanticReferenceTests, StructuresCanStoreSliceBorrows) {
                     "Writer escape([]u8 destination) <- destination { "
                     "[1]u8 local = none; return Writer::init(local[:]); }"),
             DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+}
+
+TEST(SemanticReferenceTests,
+     StructuresCarryCheckedReferencesWithoutBecomingZeroable) {
+    Analysis result = Analyze(R"(
+        structure MutableView { &i32 value; };
+        MutableView MutableView::init(&i32 value) <- value override {
+            return build MutableView { self.value = value; };
+        }
+        structure SharedView { &const i32 value; };
+        SharedView SharedView::init(&const i32 value) <- value override {
+            return build SharedView { self.value = value; };
+        }
+        structure NestedMutable { MutableView view; };
+        NestedMutable NestedMutable::init(&i32 value) <- value override {
+            return build NestedMutable {
+                self.view = MutableView::init(value);
+            };
+        }
+        structure NestedShared { SharedView view; };
+        NestedShared NestedShared::init(&const i32 value) <- value override {
+            return build NestedShared {
+                self.view = SharedView::init(value);
+            };
+        }
+        structure PointerSlot { &*i32 slot; };
+        PointerSlot PointerSlot::init(&*i32 slot) <- slot override {
+            return build PointerSlot { self.slot = slot; };
+        }
+        structure Unconstructed { &i32 value; };
+        structure SharedTearView { &const i32 value; };
+        SharedTearView SharedTearView::init(&const i32 value) <- value override {
+            return build SharedTearView { self.value = value; };
+        }
+        void SharedTearView::tear(&self) override {}
+        structure PinnedView { &i32 value; };
+        unsafe PinnedView PinnedView::init(&i32 value) <- value override {
+            return build PinnedView { self.value = value; };
+        }
+        unsafe void PinnedView::tear(&self) override {}
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.Structures().size(), 8);
+
+    for (const auto& structure : result.model.Structures()) {
+        const SemanticType type(structure.get());
+        EXPECT_TRUE(type.ContainsReference());
+        EXPECT_FALSE(type.IsZeroable());
+        EXPECT_FALSE(type.IsTriviallyZeroable());
+        EXPECT_EQ(structure->zero, nullptr);
+    }
+    EXPECT_FALSE(SemanticType(result.model.Structures()[0].get()).IsCopyable());
+    EXPECT_TRUE(SemanticType(result.model.Structures()[1].get()).IsCopyable());
+    EXPECT_FALSE(SemanticType(result.model.Structures()[2].get()).IsCopyable());
+    EXPECT_TRUE(SemanticType(result.model.Structures()[3].get()).IsCopyable());
+    EXPECT_FALSE(SemanticType(result.model.Structures()[4].get()).IsCopyable());
+    EXPECT_EQ(result.model.Structures()[5]->init, nullptr);
+    EXPECT_FALSE(SemanticType(result.model.Structures()[6].get()).IsCopyable());
+    EXPECT_FALSE(
+        SemanticType(result.model.Structures()[6].get()).IsImmovable());
+    EXPECT_FALSE(SemanticType(result.model.Structures()[7].get()).IsCopyable());
+    EXPECT_TRUE(SemanticType(result.model.Structures()[7].get()).IsImmovable());
+    for (std::size_t index = 0; index < 7; ++index)
+        EXPECT_FALSE(
+            SemanticType(result.model.Structures()[index].get()).IsImmovable());
+}
+
+TEST(SemanticReferenceTests,
+     ReferenceFieldsPreserveBorrowCopyAndMoveContracts) {
+    const std::string declarations = R"(
+        structure MutableView { &i32 value; };
+        MutableView MutableView::init(&i32 value) <- value override {
+            return build MutableView { self.value = value; };
+        }
+        structure SharedView { &const i32 value; };
+        SharedView SharedView::init(&const i32 value) <- value override {
+            return build SharedView { self.value = value; };
+        }
+    )";
+
+    Analysis valid = Analyze(declarations + R"(
+        i32 use() {
+            i32 value = 21;
+            mutable := MutableView::init(&value);
+            moved := mutable;
+            *moved.value = 21;
+            shared := SharedView::init(&value);
+            copied := shared;
+            return *shared.value + *copied.value;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_NE(FindErrorDiagnostic(Analyze(declarations + R"(
+                  void use() {
+                      i32 value = 0;
+                      first := MutableView::init(&value);
+                      second := first;
+                      *first.value = 1;
+                  }
+              )"),
+                                  DiagnosticCode::MovedValue),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(declarations + R"(
+                  i32 use() {
+                      i32 value = 0;
+                      view := MutableView::init(&value);
+                      value = 1;
+                      return *view.value;
+                  }
+              )"),
+                                  DiagnosticCode::BorrowConflict),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(declarations + R"(
+                  MutableView escape(&i32 source) <- source {
+                      i32 local = 0;
+                      return MutableView::init(&local);
+                  }
+              )"),
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(declarations + R"(
+                  MutableView missing(&i32 source) {
+                      return MutableView::init(source);
+                  }
+              )"),
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+}
+
+TEST(SemanticReferenceTests,
+     ReferenceFieldsRequireExplicitNonzeroConstruction) {
+    const std::string declarations = R"(
+        structure View { &i32 value; i32 tag; };
+        View View::init(&i32 value) <- value override {
+            return build View { self.value = value; self.tag = 1; };
+        }
+    )";
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze(declarations + "void use() { View value; }"),
+                  DiagnosticCode::InvalidVariableType),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze(declarations + "void use() { View value = none; }"),
+                  DiagnosticCode::IncompatibleType),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(R"(
+                  structure View { &i32 value; };
+                  View make(&i32 value) <- value {
+                      return build View {};
+                  }
+              )"),
+                                  DiagnosticCode::InvalidStructure),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(R"(
+                  structure View { i32 tag; &i32 value; };
+                  View make(&i32 value) <- value {
+                      return build View {
+                          self.tag = 1;
+                          self.value = value;
+                      };
+                  }
+              )"),
+                                  DiagnosticCode::InvalidStructure),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(R"(
+                  structure View { &i32 value; };
+                  View View::zero() override {
+                      i32 local = 0;
+                      return build View { self.value = &local; };
+                  }
+              )"),
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+    EXPECT_NE(
+        FindErrorDiagnostic(Analyze("structure View { &i32 value = none; };"),
+                            DiagnosticCode::InvalidStructure),
         nullptr);
 }
 

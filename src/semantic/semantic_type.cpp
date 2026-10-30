@@ -66,6 +66,24 @@ bool SemanticType::ContainsOwnedSlice() const {
     return false;
 }
 
+bool SemanticType::ContainsReference() const {
+    if (_kind == SemanticTypeKind::Reference) return true;
+    if (_kind == SemanticTypeKind::Structure) {
+        if (!_structure->validLayout) return false;
+        for (const auto& field : _structure->fields)
+            if (field.type.ContainsReference()) return true;
+    }
+    if (_kind == SemanticTypeKind::Array ||
+        _kind == SemanticTypeKind::OwnedBuffer ||
+        _kind == SemanticTypeKind::OwnedSlice ||
+        _kind == SemanticTypeKind::Slice)
+        return Target()->ContainsReference();
+    if (_kind == SemanticTypeKind::Tuple)
+        for (const auto& element : Elements())
+            if (element.ContainsReference()) return true;
+    return false;
+}
+
 bool SemanticType::IsZeroable() const {
     if (_kind == SemanticTypeKind::Enum) return _enum->defaultValue.has_value();
     if (_kind == SemanticTypeKind::Structure)

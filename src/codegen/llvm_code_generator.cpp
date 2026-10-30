@@ -3613,6 +3613,13 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                     expression);
             llvm::Value* storage = EmitAddress(assignment.Target());
             if (storage == nullptr) return nullptr;
+            if (assignment.Initializes()) {
+                if (!EmitInto(assignment.Value(), storage,
+                              assignment.Target().Type()))
+                    return nullptr;
+                return _builder.CreateLoad(MapType(assignment.Target().Type()),
+                                           storage, "initialized.value");
+            }
             llvm::Value* value = EmitExpression(assignment.Value());
             if (value == nullptr) return nullptr;
             value = CoerceValue(value, assignment.Value().Type(),
@@ -4106,6 +4113,7 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
         const auto& build =
             static_cast<const lowering::BoundBuildExpression&>(expression);
         for (std::size_t i = 0; i < build.Defaults().size(); ++i) {
+            if (!build.Defaults()[i]) continue;
             llvm::Value* field =
                 _builder.CreateStructGEP(MapType(type), destination, i);
             if (!EmitInto(*build.Defaults()[i], field,
