@@ -273,7 +273,7 @@ int CreateTemporaryDescriptor(std::filesystem::path* outputPath,
             *status = FLECHA_RUNTIME_FILE_STREAM_FAILED;
             return -1;
         }
-        const std::filesystem::path candidate = root / name;
+        std::filesystem::path candidate = root / name;
         errno = 0;
         const int descriptor =
             _wopen(candidate.c_str(),
