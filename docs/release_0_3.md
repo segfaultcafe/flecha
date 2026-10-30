@@ -328,6 +328,15 @@ signatures while recording the host argument table before invoking the source
 entry point. Environment variables and broader process control remain separate
 Stage 5 tasks.
 
+The lexical-path portion is implemented in `std::io::path`. Joining and
+normalization allocate owned results and expose allocation failure; filename,
+parent, and extension queries return checked borrowed views into their source.
+POSIX and Windows grammars are exercised on every host, including drive and
+UNC roots, mixed Windows separators, dot components, relative leading parents,
+and attempts to traverse above an absolute root. The runtime contributes only
+the host path-style query; all parsing and transformation remain in Flecha and
+perform no filesystem access.
+
 ### 6. Blocking networking
 
 Add an initial `net` layer containing:

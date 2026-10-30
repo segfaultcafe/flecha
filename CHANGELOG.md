@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added `std::io::path` with allocating lexical join and normalization plus
+  borrowed filename, parent, and extension views for host POSIX or Windows
+  path rules.
 - Free functions can declare an allocation-free forwarding pack with
   `values...` and expand it in their single forwarding call with `values...`.
   Forwarding aliases emit no runtime function or variadic ABI, and borrow
