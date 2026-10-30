@@ -99,6 +99,13 @@ File File::zero() override {
     };
 }
 
+// Wraps a runtime file-stream handle for other declarations in this module.
+File File::fromHandle(*void handle) {
+    return build File {
+        self.handle = handle;
+    };
+}
+
 // Opens path with opts and returns an owning file handle.
 (File, error) File::open(stringv path, OpenOptions opts) {
     err := validate_options(opts);

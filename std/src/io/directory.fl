@@ -44,10 +44,6 @@ export structure DirectoryEntry {
     EntryType entryKind;
 };
 
-// Keeps entry ownership explicit and prevents fallible implicit name copies.
-// The compiler destroys entryName after this hook runs.
-void DirectoryEntry::tear(&self) override {}
-
 // Constructs the empty entry representation used by none.
 DirectoryEntry DirectoryEntry::zero() override {
     return build DirectoryEntry {

@@ -1,0 +1,105 @@
+module file;
+
+@imports
+    :: root::io::errors
+    :: root::io::runtime;
+
+// Owns a readable and writable temporary file and removes its path during
+// deterministic teardown.
+export structure TemporaryFile {
+    private File resource;
+    private string filePath;
+};
+
+// Closes and removes a still-owned temporary file. Destruction cannot report
+// either failure, so callers that need the result must call remove explicitly.
+void TemporaryFile::tear(&self) override {
+    if self->resource.isOpen() {
+        self->resource.close();
+    }
+    if self->filePath.len() == 0 {
+        return;
+    }
+
+    unsafe {
+        runtime::flecha_runtime_v1_remove_file(
+            self->filePath.data(),
+            self->filePath.len().cast<usize>
+        );
+    }
+}
+
+// Constructs the empty representation used by none.
+TemporaryFile TemporaryFile::zero() override {
+    return build TemporaryFile {};
+}
+
+// Atomically creates a private temporary file in the host temporary directory.
+(TemporaryFile, error) TemporaryFile::create() {
+    *void handle = null;
+    string path = none;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_temporary_file_open(
+            &raw handle,
+            &raw path
+        );
+        err := errors::from_runtime(status, errors::IoError.OpenFailed);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return (build TemporaryFile {
+        self.resource = File::fromHandle(handle);
+        self.filePath = path;
+    }, none);
+}
+
+// Borrows the readable and writable file without transferring ownership.
+&File TemporaryFile::file(&self) <-self {
+    return &self->resource;
+}
+
+// Borrows the generated absolute path.
+stringv TemporaryFile::path(&const self) <-self {
+    return self->filePath.view();
+}
+
+// Reports whether the underlying file handle is still open.
+bool TemporaryFile::isOpen(&const self) {
+    return self->resource.isOpen();
+}
+
+// Closes and removes the temporary file. Missing paths count as removed.
+// A failed removal remains armed for a best-effort teardown retry.
+error TemporaryFile::remove(&self) {
+    error closeError = none;
+    if self->resource.isOpen() {
+        closeError = self->resource.close();
+    }
+
+    error removeError = none;
+    if self->filePath.len() > 0 {
+        unsafe {
+            i32 status = runtime::flecha_runtime_v1_remove_file(
+                self->filePath.data(),
+                self->filePath.len().cast<usize>
+            );
+            removeError = errors::from_runtime(
+                status,
+                errors::IoError.RemoveFailed
+            );
+        }
+        if removeError == errors::IoError.NotFound {
+            removeError = none;
+        }
+        if removeError == none {
+            self->filePath = none;
+        }
+    }
+
+    if closeError != none {
+        return closeError;
+    }
+    return removeError;
+}

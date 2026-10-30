@@ -20,6 +20,11 @@ quiver extern unsafe i32 flecha_runtime_v1_file_stream_open(
     u8 create_new
 );
 
+quiver extern unsafe i32 flecha_runtime_v1_temporary_file_open(
+    **void output_handle,
+    *string output_path
+);
+
 quiver extern unsafe i32 flecha_runtime_v1_file_stream_close(
     *void handle
 );
