@@ -63,6 +63,25 @@ index `2`; the caller supplies an empty string output, and every failure leaves
 it empty. Argument bytes are preserved exactly as supplied by the host C entry
 environment and are not normalized or validated as Unicode.
 
+The environment ABI reads and mutates the current process environment through
+explicit name and value byte ranges. `environment_get` clears its owning
+string and presence outputs before validation. Success with presence zero
+means that the variable is absent; success with presence one and an empty
+string means that the variable exists with an empty value. A present value is
+copied into independent owning storage. `environment_set` prepares complete
+native name and value copies before mutation, and `environment_remove` treats
+an absent variable as success. Allocation failure therefore leaves the
+existing environment unchanged, while every failed lookup leaves both outputs
+empty.
+
+Names must be nonempty and cannot contain `=` or a null byte. Values may be
+empty but cannot contain a null byte. POSIX hosts preserve name and value bytes
+as supplied. Windows validates UTF-8 and uses the wide-character environment
+API. Status values are success `0`, out of memory `1`, invalid name `2`,
+invalid value `3`, permission denied `4`, and operation failure `5`.
+Environment mutation is process-wide; callers must not concurrently read and
+mutate the environment without external synchronization.
+
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the
 archive configured with the compiler. A missing archive or linker failure is

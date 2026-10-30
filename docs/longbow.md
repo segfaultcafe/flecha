@@ -83,7 +83,7 @@ also work inside `src`. A supplied project directory is used directly, including
 paths such as `test-me` and `"hi mom"`. Artifacts go to `target`. Failed compilation prevents `run` from executing
 an older binary. Arguments are passed directly without a shell. The current
 language entry-point remains parameterless; programs capture the forwarded
-arguments through `lib::std::process::arguments`. Existing `.gitignore` files
+arguments through `lib::std::os::arguments`. Existing `.gitignore` files
 are preserved by `init`.
 
 Registry traffic uses `https://registry.flecha-lang.org/v1` by default. Set

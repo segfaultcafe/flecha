@@ -1,6 +1,6 @@
 module arguments;
 
-@imports :: root::process::runtime;
+@imports :: root::os::runtime;
 
 // Captures the process arguments as independent owning strings.
 // Index zero is the invocation name supplied by the host process.

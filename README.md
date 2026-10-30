@@ -163,7 +163,7 @@ Functions place the return type before the function name. Local type inference u
 The standard formatting facade, `{}` replacement syntax, and console-output
 behavior are documented in [`docs/formatting.md`](docs/formatting.md).
 Command-line argument capture is documented in
-[`docs/process.md`](docs/process.md).
+[`docs/os.md`](docs/os.md).
 
 ## Projects and packages with Longbow
 
@@ -320,7 +320,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/bytes.md`](docs/bytes.md) — raw byte storage and sequence operations
 - [`docs/encoding.md`](docs/encoding.md) — binary and hexadecimal encoding
 - [`docs/hashing.md`](docs/hashing.md) — structural non-cryptographic hashing
-- [`docs/process.md`](docs/process.md) — owning command-line argument capture
+- [`docs/os.md`](docs/os.md) — command-line arguments and environment variables
 - [`docs/path.md`](docs/path.md) — lexical POSIX and Windows path operations
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation
 - [`docs/enums.md`](docs/enums.md) — nominal enums, defaults, discriminants, and member functions

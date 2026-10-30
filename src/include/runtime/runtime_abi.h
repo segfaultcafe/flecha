@@ -98,6 +98,15 @@ typedef enum FlechaRuntimeProcessArgumentStatus {
     FLECHA_RUNTIME_PROCESS_ARGUMENT_INVALID_INDEX = 2,
 } FlechaRuntimeProcessArgumentStatus;
 
+typedef enum FlechaRuntimeEnvironmentStatus {
+    FLECHA_RUNTIME_ENVIRONMENT_OK = 0,
+    FLECHA_RUNTIME_ENVIRONMENT_OUT_OF_MEMORY = 1,
+    FLECHA_RUNTIME_ENVIRONMENT_INVALID_NAME = 2,
+    FLECHA_RUNTIME_ENVIRONMENT_INVALID_VALUE = 3,
+    FLECHA_RUNTIME_ENVIRONMENT_PERMISSION_DENIED = 4,
+    FLECHA_RUNTIME_ENVIRONMENT_FAILED = 5,
+} FlechaRuntimeEnvironmentStatus;
+
 typedef enum FlechaRuntimePathStyle {
     FLECHA_RUNTIME_PATH_STYLE_POSIX = 0,
     FLECHA_RUNTIME_PATH_STYLE_WINDOWS = 1,
@@ -129,6 +138,21 @@ size_t flecha_runtime_v1_process_argument_count(void);
 // output pointer, every failure leaves the output empty.
 int32_t flecha_runtime_v1_process_argument_capture(FlechaRuntimeString* output,
                                                    size_t index);
+
+// Copies the current value into an empty owning Flecha string. A successful
+// missing lookup sets present to zero; a successful empty value sets present
+// to one and leaves output empty. Every failure clears both outputs.
+int32_t flecha_runtime_v1_environment_get(FlechaRuntimeString* output,
+                                          uint8_t* present, const char* name,
+                                          size_t name_length);
+// Mutates the process-wide environment. Names must be nonempty and may not
+// contain '=' or a null byte. Values may be empty but may not contain null.
+int32_t flecha_runtime_v1_environment_set(const char* name, size_t name_length,
+                                          const char* value,
+                                          size_t value_length);
+// Removing an absent variable succeeds.
+int32_t flecha_runtime_v1_environment_remove(const char* name,
+                                             size_t name_length);
 
 // Reports the lexical path rules used by filesystem operations on this host.
 uint8_t flecha_runtime_v1_path_style(void);
