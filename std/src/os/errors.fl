@@ -1,0 +1,29 @@
+module errors;
+
+// Reports stable environment failures independently of platform error codes
+export error EnvironmentError {
+    InvalidName,
+    InvalidValue,
+    PermissionDenied,
+    ReadFailed,
+    WriteFailed,
+}
+
+quiver error from_runtime(i32 status, EnvironmentError fallback) {
+    if status == 0 {
+        return none;
+    }
+    if status == 1 {
+        return AllocationError.OutOfMemory;
+    }
+    if status == 2 {
+        return EnvironmentError.InvalidName;
+    }
+    if status == 3 {
+        return EnvironmentError.InvalidValue;
+    }
+    if status == 4 {
+        return EnvironmentError.PermissionDenied;
+    }
+    return fallback;
+}

@@ -1,7 +1,7 @@
 module arguments_test;
 
 @imports
-    :: root::process::arguments
+    :: root::os::arguments
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 

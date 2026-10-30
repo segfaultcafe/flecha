@@ -11,9 +11,52 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 
 #include "runtime/runtime_abi.h"
+
+namespace {
+
+class ScopedRuntimeEnvironment final {
+   public:
+    explicit ScopedRuntimeEnvironment(std::string name)
+        : name_(std::move(name)) {
+        FlechaRuntimeString value{};
+        uint8_t present = 0;
+        const int32_t status = flecha_runtime_v1_environment_get(
+            &value, &present, name_.data(), name_.size());
+        if (status != FLECHA_RUNTIME_ENVIRONMENT_OK) std::abort();
+        if (present != 0) {
+            if (value.length == 0)
+                previous_.emplace();
+            else
+                previous_.emplace(value.data, value.length);
+        }
+        flecha_runtime_v1_string_destroy(value.data);
+    }
+
+    ~ScopedRuntimeEnvironment() {
+        if (previous_.has_value()) {
+            (void)flecha_runtime_v1_environment_set(name_.data(), name_.size(),
+                                                    previous_->data(),
+                                                    previous_->size());
+        } else {
+            (void)flecha_runtime_v1_environment_remove(name_.data(),
+                                                       name_.size());
+        }
+    }
+
+    ScopedRuntimeEnvironment(const ScopedRuntimeEnvironment&) = delete;
+    ScopedRuntimeEnvironment& operator=(const ScopedRuntimeEnvironment&) =
+        delete;
+
+   private:
+    std::string name_;
+    std::optional<std::string> previous_;
+};
+
+}  // namespace
 
 TEST(RuntimeStringViewTests, ReturnsCharactersWithinBounds) {
     const char text[] = "flecha";
@@ -91,6 +134,103 @@ TEST(RuntimeProcessArgumentTests, CapturesInitializedArguments) {
 
     flecha_runtime_v1_process_arguments_initialize(0, nullptr);
     EXPECT_EQ(flecha_runtime_v1_process_argument_count(), 0u);
+}
+
+TEST(RuntimeEnvironmentTests, DistinguishesMissingEmptyAndPresentValues) {
+    const std::string name = "FLECHA_RUNTIME_ENVIRONMENT_ROUND_TRIP";
+    ScopedRuntimeEnvironment restore(name);
+
+    ASSERT_EQ(flecha_runtime_v1_environment_remove(name.data(), name.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_OK);
+
+    FlechaRuntimeString output{reinterpret_cast<char*>(1), 1, 1};
+    uint8_t present = 9;
+    EXPECT_EQ(flecha_runtime_v1_environment_get(&output, &present, name.data(),
+                                                name.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_OK);
+    EXPECT_EQ(present, 0);
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.length, 0u);
+    EXPECT_EQ(output.capacity, 0u);
+
+    const std::string value = "ol\xC3\xA1=flecha";
+    ASSERT_EQ(flecha_runtime_v1_environment_set(name.data(), name.size(),
+                                                value.data(), value.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_OK);
+    EXPECT_EQ(flecha_runtime_v1_environment_get(&output, &present, name.data(),
+                                                name.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_OK);
+    EXPECT_EQ(present, 1);
+    EXPECT_EQ(std::string(output.data, output.length), value);
+    flecha_runtime_v1_string_destroy(output.data);
+
+    ASSERT_EQ(
+        flecha_runtime_v1_environment_set(name.data(), name.size(), nullptr, 0),
+        FLECHA_RUNTIME_ENVIRONMENT_OK);
+    output = {reinterpret_cast<char*>(1), 1, 1};
+    present = 9;
+    EXPECT_EQ(flecha_runtime_v1_environment_get(&output, &present, name.data(),
+                                                name.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_OK);
+    EXPECT_EQ(present, 1);
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.length, 0u);
+
+    EXPECT_EQ(flecha_runtime_v1_environment_remove(name.data(), name.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_OK);
+    EXPECT_EQ(flecha_runtime_v1_environment_remove(name.data(), name.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_OK);
+}
+
+TEST(RuntimeEnvironmentTests, RejectsInvalidNamesAndValuesTransactionally) {
+    const std::string name = "FLECHA_RUNTIME_ENVIRONMENT_VALIDATION";
+    ScopedRuntimeEnvironment restore(name);
+    const std::string original = "preserved";
+    ASSERT_EQ(flecha_runtime_v1_environment_set(
+                  name.data(), name.size(), original.data(), original.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_OK);
+
+    FlechaRuntimeString output{reinterpret_cast<char*>(1), 1, 1};
+    uint8_t present = 9;
+    EXPECT_EQ(flecha_runtime_v1_environment_get(&output, &present, nullptr, 0),
+              FLECHA_RUNTIME_ENVIRONMENT_INVALID_NAME);
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.length, 0u);
+    EXPECT_EQ(present, 0);
+
+    const char equalsName[] = "INVALID=NAME";
+    EXPECT_EQ(flecha_runtime_v1_environment_set(
+                  equalsName, sizeof(equalsName) - 1, "value", 5),
+              FLECHA_RUNTIME_ENVIRONMENT_INVALID_NAME);
+    const std::array<char, 3> nullName{'A', '\0', 'B'};
+    EXPECT_EQ(
+        flecha_runtime_v1_environment_remove(nullName.data(), nullName.size()),
+        FLECHA_RUNTIME_ENVIRONMENT_INVALID_NAME);
+
+    const std::array<char, 3> nullValue{'A', '\0', 'B'};
+    EXPECT_EQ(flecha_runtime_v1_environment_set(
+                  name.data(), name.size(), nullValue.data(), nullValue.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_INVALID_VALUE);
+
+    output = {};
+    EXPECT_EQ(flecha_runtime_v1_environment_get(&output, &present, name.data(),
+                                                name.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_OK);
+    EXPECT_EQ(present, 1);
+    EXPECT_EQ(std::string(output.data, output.length), original);
+    flecha_runtime_v1_string_destroy(output.data);
+}
+
+TEST(RuntimeEnvironmentTests, RejectsInvalidOutputPointers) {
+    const std::string name = "FLECHA_RUNTIME_ENVIRONMENT_POINTERS";
+    FlechaRuntimeString output{};
+    uint8_t present = 0;
+    EXPECT_EQ(flecha_runtime_v1_environment_get(nullptr, &present, name.data(),
+                                                name.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_FAILED);
+    EXPECT_EQ(flecha_runtime_v1_environment_get(&output, nullptr, name.data(),
+                                                name.size()),
+              FLECHA_RUNTIME_ENVIRONMENT_FAILED);
 }
 
 TEST(RuntimePathTests, ReportsHostLexicalStyle) {

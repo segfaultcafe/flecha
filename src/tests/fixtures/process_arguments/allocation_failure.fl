@@ -1,6 +1,6 @@
 module allocation_failure;
 
-@imports :: lib::std::process::arguments;
+@imports :: lib::std::os::arguments;
 
 i32 main() {
     values, captureError := arguments::capture();
