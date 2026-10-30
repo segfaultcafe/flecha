@@ -5,14 +5,69 @@ set(emptyPath "${dataDirectory}/empty.bin")
 set(missingPath "${dataDirectory}/missing.txt")
 set(writePath "${dataDirectory}/written.bin")
 set(createdDirectory "${dataDirectory}/created")
+set(recursiveRoot "${dataDirectory}/recursive")
+set(recursiveDirectory "${recursiveRoot}/first/second")
+set(normalizedDirectory "${recursiveRoot}/first/../normalized")
+set(fileParentDirectory "${textPath}/child")
+set(copiedFilePath "${dataDirectory}/copied.bin")
+set(copySource "${dataDirectory}/copy-source")
+set(copyNestedSource "${copySource}/nested")
+set(copyDestination "${dataDirectory}/copy-destination")
+set(copyDescendant "${copySource}/descendant")
+set(copyMissingParent "${dataDirectory}/missing-parent/copy")
+set(copySourceAlias "${dataDirectory}/copy-source-alias")
+set(copyAliasedDescendant "${copySourceAlias}/descendant")
+set(linkSource "${dataDirectory}/link-source")
+set(linkDestination "${dataDirectory}/link-destination")
 set(renameSource "${createdDirectory}/source.bin")
 set(renameDestination "${createdDirectory}/destination.bin")
 set(missingParentDirectory "${createdDirectory}/missing/child")
 set(missingRenameSource "${createdDirectory}/missing.bin")
 file(REMOVE_RECURSE "${createdDirectory}")
+file(REMOVE_RECURSE "${recursiveRoot}")
+file(REMOVE_RECURSE
+    "${copySource}"
+    "${copyDestination}"
+    "${linkSource}"
+    "${linkDestination}"
+)
+file(REMOVE "${copySourceAlias}")
+file(MAKE_DIRECTORY "${copyNestedSource}")
+file(WRITE "${copySource}/root.txt" "root contents")
+file(WRITE "${copyNestedSource}/nested.bin" "nested contents")
+file(WRITE "${copyNestedSource}/empty.bin" "")
+string(REPEAT "0123456789abcdef" 4096 largeContents)
+file(WRITE "${copyNestedSource}/large.bin" "${largeContents}")
+file(WRITE "${copiedFilePath}" "stale trailing bytes")
 file(WRITE "${textPath}" "flecha\n")
 file(WRITE "${emptyPath}" "")
 file(WRITE "${writePath}" "stale trailing contents")
+
+set(linkCopyCase "")
+if(UNIX)
+    file(MAKE_DIRECTORY "${linkSource}")
+    file(WRITE "${linkSource}/ordinary.txt" "ordinary")
+    file(CREATE_LINK "${textPath}" "${linkSource}/linked.txt" SYMBOLIC
+        RESULT linkResult)
+    if(linkResult STREQUAL "0")
+        set(linkCopyCase "
+    if filesystem::copy_directory(\"${linkSource}\", \"${linkDestination}\") !=
+        errors::IoError.UnsupportedFileType {
+        return 53;
+    }")
+    endif()
+    file(CREATE_LINK "${copySource}" "${copySourceAlias}" SYMBOLIC
+        RESULT copyAliasResult)
+    if(copyAliasResult STREQUAL "0")
+        string(APPEND linkCopyCase "
+    if filesystem::copy_directory(
+        \"${copySource}\",
+        \"${copyAliasedDescendant}\"
+    ) != errors::IoError.InvalidPath {
+        return 54;
+    }")
+    endif()
+endif()
 
 set(sourceDirectory "${FLECHA_OUTPUT}_project")
 file(MAKE_DIRECTORY "${sourceDirectory}")
@@ -116,6 +171,87 @@ i32 main() {
         errors::IoError.NotFound {
         return 21;
     }
+    if filesystem::create_directories(\"${recursiveDirectory}\") != none or
+        filesystem::create_directories(\"${recursiveDirectory}\") != none {
+        return 37;
+    }
+    recursive_info, recursive_metadata_error := filesystem::metadata(
+        \"${recursiveDirectory}\"
+    );
+    if recursive_metadata_error != none or
+        recursive_info.type != file::EntryType.Directory {
+        return 38;
+    }
+    if filesystem::create_directories(\"${normalizedDirectory}\") != none {
+        return 39;
+    }
+    if filesystem::create_directories(\"${fileParentDirectory}\") !=
+        errors::IoError.AlreadyExists {
+        return 40;
+    }
+
+    if filesystem::copy_file(\"${textPath}\", \"${copiedFilePath}\") !=
+        errors::IoError.AlreadyExists {
+        return 41;
+    }
+    if filesystem::remove_file(\"${copiedFilePath}\") != none or
+        filesystem::copy_file(\"${textPath}\", \"${copiedFilePath}\") != none {
+        return 55;
+    }
+    copied_file, copied_file_error := filesystem::read_file(\"${copiedFilePath}\");
+    if copied_file_error != none or copied_file != \"flecha\\n\" {
+        return 42;
+    }
+    if filesystem::copy_file(\"${textPath}\", \"${textPath}\") !=
+        errors::IoError.AlreadyExists {
+        return 43;
+    }
+    preserved_source, preserved_source_error := filesystem::read_file(\"${textPath}\");
+    if preserved_source_error != none or preserved_source != \"flecha\\n\" {
+        return 44;
+    }
+    if filesystem::copy_file(\"${copySource}\", \"${copiedFilePath}\") !=
+        errors::IoError.UnsupportedFileType {
+        return 45;
+    }
+    if filesystem::copy_file(\"${missingPath}\", \"${copiedFilePath}\") !=
+        errors::IoError.NotFound {
+        return 46;
+    }
+
+    if filesystem::copy_directory(\"${copySource}\", \"${copyDestination}\") != none {
+        return 47;
+    }
+    copied_root, copied_root_error := filesystem::read_file(
+        \"${copyDestination}/root.txt\"
+    );
+    copied_nested, copied_nested_error := filesystem::read_file(
+        \"${copyDestination}/nested/nested.bin\"
+    );
+    copied_empty_info, copied_empty_error := filesystem::metadata(
+        \"${copyDestination}/nested/empty.bin\"
+    );
+    if copied_root_error != none or copied_root != \"root contents\" or
+        copied_nested_error != none or copied_nested != \"nested contents\" or
+        copied_empty_error != none or copied_empty_info.size != 0 {
+        return 48;
+    }
+    if filesystem::copy_directory(\"${copySource}\", \"${copyDestination}\") !=
+        errors::IoError.AlreadyExists {
+        return 49;
+    }
+    if filesystem::copy_directory(\"${textPath}\", \"${copyDescendant}\") !=
+        errors::IoError.UnsupportedFileType {
+        return 50;
+    }
+    if filesystem::copy_directory(\"${copySource}\", \"${copyDescendant}\") !=
+        errors::IoError.InvalidPath {
+        return 51;
+    }
+    if filesystem::copy_directory(\"${copySource}\", \"${copyMissingParent}\") !=
+        errors::IoError.NotFound {
+        return 52;
+    }${linkCopyCase}
     present, exists_error = filesystem::exists(\"${createdDirectory}\");
     if exists_error != none or !present {
         return 13;
@@ -203,4 +339,20 @@ execute_process(COMMAND "${FLECHA_OUTPUT}" RESULT_VARIABLE runResult TIMEOUT 10)
 if(NOT runResult EQUAL 42)
     message(FATAL_ERROR "filesystem program returned ${runResult}, expected 42")
 endif()
+file(SHA256 "${copyNestedSource}/large.bin" sourceLargeHash)
+file(SHA256 "${copyDestination}/nested/large.bin" destinationLargeHash)
+file(SIZE "${copyDestination}/nested/large.bin" destinationLargeSize)
+if(NOT sourceLargeHash STREQUAL destinationLargeHash OR
+   NOT destinationLargeSize EQUAL 65536)
+    message(FATAL_ERROR
+        "recursive copy changed bytes across copy-buffer boundaries")
+endif()
 file(REMOVE_RECURSE "${createdDirectory}")
+file(REMOVE_RECURSE "${recursiveRoot}")
+file(REMOVE_RECURSE
+    "${copySource}"
+    "${copyDestination}"
+    "${linkSource}"
+    "${linkDestination}"
+)
+file(REMOVE "${copySourceAlias}")

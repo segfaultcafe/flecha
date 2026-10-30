@@ -306,8 +306,14 @@ EOF is stable, and deterministic teardown closes each iterator exactly once.
 Allocation failure preserves the pending entry for retry. Native and Flecha
 tests cover empty and populated directories, file and directory types, symbolic
 links, invalid and missing paths, regular-file rejection, movement, explicit
-close, repeated EOF, and allocation failure. Recursive directory creation and
-copying remain separate Stage 5 work.
+close, repeated EOF, and allocation failure. Recursive creation lexically
+normalizes paths, accepts existing directories, and reports blocking file
+components. File and directory copying use a single Flecha-owned byte buffer
+and the existing stream adapters; destinations must be new, partial-operation
+errors remain visible, and unsupported entries are rejected. A narrow
+resolved-path runtime query prevents copying a directory into itself through
+either lexical descendants or symbolic-link aliases, while traversal, byte
+copying, flushing, allocation, and cleanup remain in Flecha.
 
 The standard-stream portion is also implemented. The `stderr` and `stderrln`
 built-ins mirror the existing printable `stdout` operations, while

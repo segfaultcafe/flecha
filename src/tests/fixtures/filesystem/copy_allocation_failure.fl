@@ -1,0 +1,45 @@
+module copy_allocation_failure;
+
+@imports
+    :: lib::std::io::errors
+    :: lib::std::io::filesystem;
+
+i32 main() {
+    const stringv SOURCE = "flecha-copy-allocation-source.bin";
+    const stringv DESTINATION = "flecha-copy-allocation-destination.bin";
+
+    sourcePresent, sourceExistsError := filesystem::exists(SOURCE);
+    if sourceExistsError != none {
+        return 1;
+    }
+    if sourcePresent and filesystem::remove_file(SOURCE) != none {
+        return 2;
+    }
+    destinationPresent, destinationExistsError :=
+        filesystem::exists(DESTINATION);
+    if destinationExistsError != none {
+        return 3;
+    }
+    if destinationPresent and filesystem::remove_file(DESTINATION) != none {
+        return 4;
+    }
+    if filesystem::write_file(SOURCE, "preserved") != none {
+        return 5;
+    }
+
+    copyError := filesystem::copy_file(SOURCE, DESTINATION);
+    if copyError != AllocationError.OutOfMemory {
+        return 6;
+    }
+    destinationPresent, destinationExistsError =
+        filesystem::exists(DESTINATION);
+    sourceContents, sourceReadError := filesystem::read_file(SOURCE);
+    if destinationExistsError != none or destinationPresent or
+        sourceReadError != none or sourceContents != "preserved" {
+        return 7;
+    }
+    if filesystem::remove_file(SOURCE) != none {
+        return 8;
+    }
+    return 42;
+}

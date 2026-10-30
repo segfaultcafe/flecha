@@ -64,6 +64,9 @@ export error IoError {
 
     // Path metadata could not be read.
     MetadataFailed,
+
+    // The encountered filesystem entry kind is unsupported by the operation.
+    UnsupportedFileType,
 }
 
 quiver error from_runtime(i32 status, IoError fallback) {
