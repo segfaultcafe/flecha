@@ -12,7 +12,6 @@ const u64 NANOSECONDS_PER_MICROSECOND = 1000;
 // nanoseconds, independently of any clock.
 export structure Duration {
     private u64 seconds;
-
     private u32 nanoseconds;
 };
 
