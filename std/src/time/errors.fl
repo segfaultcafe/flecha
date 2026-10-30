@@ -1,0 +1,28 @@
+module errors;
+
+// Reports stable time failures independently of platform clocks and wait APIs.
+export error TimeError {
+    // A seconds-plus-nanoseconds value is not normalized.
+    InvalidNanoseconds,
+
+    // A portable conversion or arithmetic result is not representable.
+    Overflow,
+
+    // Subtraction would produce a negative duration or instant.
+    NegativeResult,
+
+    // An instant was not produced by the monotonic clock in this execution.
+    InvalidInstant,
+
+    // The requested host clock could not provide an observation.
+    ClockUnavailable,
+
+    // A wall-clock result cannot be represented by Timestamp.
+    TimestampOutOfRange,
+
+    // A valid Duration cannot be represented by the host sleep primitive.
+    DurationOutOfRange,
+
+    // The host wait failed for another reason.
+    SleepFailed,
+}

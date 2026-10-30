@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -13,8 +15,14 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "runtime/runtime_abi.h"
+
+#ifndef _WIN32
+#include <pthread.h>
+#include <signal.h>
+#endif
 
 namespace {
 
@@ -55,6 +63,10 @@ class ScopedRuntimeEnvironment final {
     std::string name_;
     std::optional<std::string> previous_;
 };
+
+#ifndef _WIN32
+void IgnoreSignal(int) {}
+#endif
 
 }  // namespace
 
@@ -232,6 +244,111 @@ TEST(RuntimeEnvironmentTests, RejectsInvalidOutputPointers) {
                                                 name.size()),
               FLECHA_RUNTIME_ENVIRONMENT_FAILED);
 }
+
+TEST(RuntimeTimeTests, ReturnsNormalizedClockObservations) {
+    uint64_t firstSeconds = 0;
+    uint32_t firstNanoseconds = 0;
+    ASSERT_EQ(
+        flecha_runtime_v1_monotonic_clock_now(&firstSeconds, &firstNanoseconds),
+        FLECHA_RUNTIME_TIME_OK);
+    EXPECT_LT(firstNanoseconds, 1000000000u);
+
+    uint64_t secondSeconds = 0;
+    uint32_t secondNanoseconds = 0;
+    ASSERT_EQ(flecha_runtime_v1_monotonic_clock_now(&secondSeconds,
+                                                    &secondNanoseconds),
+              FLECHA_RUNTIME_TIME_OK);
+    EXPECT_TRUE(secondSeconds > firstSeconds ||
+                (secondSeconds == firstSeconds &&
+                 secondNanoseconds >= firstNanoseconds));
+
+    int64_t unixSeconds = 0;
+    uint32_t wallNanoseconds = 0;
+    ASSERT_EQ(flecha_runtime_v1_wall_clock_now(&unixSeconds, &wallNanoseconds),
+              FLECHA_RUNTIME_TIME_OK);
+    EXPECT_LT(wallNanoseconds, 1000000000u);
+}
+
+TEST(RuntimeTimeTests, ClearsOutputsWhenPointersAreInvalid) {
+    uint64_t monotonicSeconds = 99;
+    uint32_t monotonicNanoseconds = 99;
+    EXPECT_EQ(
+        flecha_runtime_v1_monotonic_clock_now(nullptr, &monotonicNanoseconds),
+        FLECHA_RUNTIME_TIME_FAILED);
+    EXPECT_EQ(monotonicNanoseconds, 0u);
+    EXPECT_EQ(flecha_runtime_v1_monotonic_clock_now(&monotonicSeconds, nullptr),
+              FLECHA_RUNTIME_TIME_FAILED);
+    EXPECT_EQ(monotonicSeconds, 0u);
+
+    int64_t unixSeconds = 99;
+    uint32_t wallNanoseconds = 99;
+    EXPECT_EQ(flecha_runtime_v1_wall_clock_now(nullptr, &wallNanoseconds),
+              FLECHA_RUNTIME_TIME_FAILED);
+    EXPECT_EQ(wallNanoseconds, 0u);
+    EXPECT_EQ(flecha_runtime_v1_wall_clock_now(&unixSeconds, nullptr),
+              FLECHA_RUNTIME_TIME_FAILED);
+    EXPECT_EQ(unixSeconds, 0);
+}
+
+TEST(RuntimeTimeTests, ValidatesAndWaitsForRelativeDurations) {
+    EXPECT_EQ(flecha_runtime_v1_sleep(0, 1000000000u),
+              FLECHA_RUNTIME_TIME_INVALID_DURATION);
+    EXPECT_EQ(flecha_runtime_v1_sleep(0, 0), FLECHA_RUNTIME_TIME_OK);
+    EXPECT_EQ(flecha_runtime_v1_sleep(std::numeric_limits<uint64_t>::max(), 0),
+              FLECHA_RUNTIME_TIME_OUT_OF_RANGE);
+
+    uint64_t startSeconds = 0;
+    uint32_t startNanoseconds = 0;
+    ASSERT_EQ(
+        flecha_runtime_v1_monotonic_clock_now(&startSeconds, &startNanoseconds),
+        FLECHA_RUNTIME_TIME_OK);
+    ASSERT_EQ(flecha_runtime_v1_sleep(0, 5000000), FLECHA_RUNTIME_TIME_OK);
+    uint64_t endSeconds = 0;
+    uint32_t endNanoseconds = 0;
+    ASSERT_EQ(
+        flecha_runtime_v1_monotonic_clock_now(&endSeconds, &endNanoseconds),
+        FLECHA_RUNTIME_TIME_OK);
+
+    const uint64_t elapsedSeconds = endSeconds - startSeconds;
+    const int64_t elapsedNanoseconds =
+        static_cast<int64_t>(elapsedSeconds * 1000000000) +
+        static_cast<int64_t>(endNanoseconds) -
+        static_cast<int64_t>(startNanoseconds);
+    EXPECT_GE(elapsedNanoseconds, 5000000);
+}
+
+#ifndef _WIN32
+TEST(RuntimeTimeTests, ResumesTheRemainingDurationAfterInterruption) {
+    struct sigaction action{};
+    action.sa_handler = IgnoreSignal;
+    ASSERT_EQ(sigemptyset(&action.sa_mask), 0);
+    struct sigaction previous{};
+    ASSERT_EQ(sigaction(SIGUSR1, &action, &previous), 0);
+
+    std::atomic<bool> started = false;
+    std::atomic<int32_t> status = FLECHA_RUNTIME_TIME_FAILED;
+    std::chrono::steady_clock::duration elapsed{};
+    std::thread sleeper([&] {
+        started.store(true, std::memory_order_release);
+        const std::chrono::steady_clock::time_point start =
+            std::chrono::steady_clock::now();
+        status.store(flecha_runtime_v1_sleep(0, 30000000),
+                     std::memory_order_release);
+        elapsed = std::chrono::steady_clock::now() - start;
+    });
+
+    while (!started.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const int signalResult = pthread_kill(sleeper.native_handle(), SIGUSR1);
+    sleeper.join();
+    const int restoreResult = sigaction(SIGUSR1, &previous, nullptr);
+
+    EXPECT_EQ(signalResult, 0);
+    EXPECT_EQ(restoreResult, 0);
+    EXPECT_EQ(status.load(std::memory_order_acquire), FLECHA_RUNTIME_TIME_OK);
+    EXPECT_GE(elapsed, std::chrono::milliseconds(30));
+}
+#endif
 
 TEST(RuntimePathTests, ReportsHostLexicalStyle) {
 #ifdef _WIN32

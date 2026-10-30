@@ -82,6 +82,32 @@ invalid value `3`, permission denied `4`, and operation failure `5`.
 Environment mutation is process-wide; callers must not concurrently read and
 mutate the environment without external synchronization.
 
+## Time
+
+The version 1 time ABI exposes monotonic and wall-clock observations as
+normalized seconds plus nanoseconds. Monotonic seconds are unsigned and have
+no public epoch. Wall-clock seconds are signed Unix time; times before the Unix
+epoch use a nonnegative subsecond component. The nanosecond output is always
+less than `1_000_000_000` on success.
+
+Both clock queries clear every non-null output before validation, require both
+outputs, and leave both outputs zero on failure. Runtime values are converted
+from host clocks before crossing the ABI; platform ticks, frequencies, clock
+identifiers, and native error codes are never exposed.
+
+Relative sleep accepts normalized unsigned seconds and nanoseconds and blocks
+the current operating-system thread. It rejects an invalid nanosecond
+component or a duration outside the host wait range before blocking. POSIX
+interruptions resume the unelapsed remainder instead of producing shortened
+success. Wall-clock adjustments do not change the relative interval.
+
+The shared status table is success `0`, unavailable `1`, out of range `2`,
+invalid duration `3`, and operation failure `4`. The safe `std::time::clock`
+wrapper maps these values contextually to `TimeError`. Clock and sleep calls
+perform no allocation, transfer no ownership, and are safe for concurrent use.
+The complete public value and error contracts are specified in
+[`time.md`](time.md).
+
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the
 archive configured with the compiler. A missing archive or linker failure is

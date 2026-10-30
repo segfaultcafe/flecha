@@ -1,0 +1,215 @@
+module clock_test;
+
+@imports
+    :: root::time::clock
+    :: root::time::duration
+    :: root::time::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test monotonic_instants_reject_the_default_sentinel(&testing::UnitTest t) {
+    clock::Instant invalid;
+    asserts::is_false(t, invalid.isValid(), "a default instant is not an observation");
+
+    elapsed, elapsedError := invalid.elapsed();
+    asserts::is_true(
+        t,
+        elapsedError == errors::TimeError.InvalidInstant and elapsed.isZero(),
+        "elapsed rejects an invalid instant"
+    );
+
+    now, nowError := clock::Instant::now();
+    asserts::is_true(
+        t,
+        nowError == none and now.isValid(),
+        "the monotonic clock returns a valid observation"
+    );
+
+    difference, differenceError := now.durationSince(invalid);
+    asserts::is_true(
+        t,
+        differenceError == errors::TimeError.InvalidInstant and
+            difference.isZero(),
+        "durationSince rejects an invalid operand"
+    );
+}
+
+test monotonic_instant_arithmetic_preserves_exact_durations(
+    &testing::UnitTest t
+) {
+    start, startError := clock::Instant::now();
+    asserts::is_true(t, startError == none, "the start instant is available");
+    if startError != none {
+        return;
+    }
+
+    offset, offsetError :=
+        duration::Duration::fromParts(1, 500000000);
+    asserts::is_true(t, offsetError == none, "the instant offset is valid");
+
+    later, addError := start.checkedAdd(offset);
+    measured, measuredError := later.durationSince(start);
+    asserts::is_true(
+        t,
+        addError == none and measuredError == none and measured == offset,
+        "checkedAdd changes an instant by the exact duration"
+    );
+
+    restored, subtractError := later.checkedSub(offset);
+    asserts::is_true(
+        t,
+        subtractError == none and restored == start,
+        "checkedSub reverses checkedAdd"
+    );
+}
+
+test timestamps_validate_and_expose_unix_parts(&testing::UnitTest t) {
+    beforeEpoch, beforeError :=
+        clock::Timestamp::fromUnixParts(-1, 500000000);
+    asserts::is_true(
+        t,
+        beforeError == none and beforeEpoch.unixSeconds() == -1 and
+            beforeEpoch.subsecondNanoseconds() == 500000000,
+        "a pre-epoch timestamp uses floor-style normalized parts"
+    );
+
+    invalid, invalidError :=
+        clock::Timestamp::fromUnixParts(0, 1000000000);
+    asserts::is_true(
+        t,
+        invalidError == errors::TimeError.InvalidNanoseconds and
+            invalid.unixSeconds() == 0 and
+            invalid.subsecondNanoseconds() == 0,
+        "an unnormalized timestamp returns the epoch sentinel and an error"
+    );
+
+    now, nowError := clock::Timestamp::now();
+    asserts::is_true(
+        t,
+        nowError == none and now.subsecondNanoseconds() < 1000000000,
+        "the wall clock returns a normalized Unix timestamp"
+    );
+}
+
+test timestamp_duration_since_crosses_the_epoch_and_signed_range(
+    &testing::UnitTest t
+) {
+    earlier, earlierError :=
+        clock::Timestamp::fromUnixParts(-1, 750000000);
+    later, laterError := clock::Timestamp::fromUnixParts(1, 250000000);
+    asserts::is_true(
+        t,
+        earlierError == none and laterError == none,
+        "timestamp fixtures are valid"
+    );
+
+    difference, differenceError := later.durationSince(earlier);
+    asserts::is_true(
+        t,
+        differenceError == none and difference.wholeSeconds() == 1 and
+            difference.subsecondNanoseconds() == 500000000,
+        "durationSince handles negative and positive Unix seconds"
+    );
+
+    minimum, minimumError := clock::Timestamp::fromUnixParts(i64.min_value, 0);
+    maximum, maximumError :=
+        clock::Timestamp::fromUnixParts(i64.max_value, 999999999);
+    fullRange, fullRangeError := maximum.durationSince(minimum);
+    asserts::is_true(
+        t,
+        minimumError == none and maximumError == none and
+            fullRangeError == none and
+            fullRange.wholeSeconds() == u64.max_value and
+            fullRange.subsecondNanoseconds() == 999999999,
+        "durationSince represents the complete signed timestamp range"
+    );
+
+    reversed, reversedError := earlier.durationSince(later);
+    asserts::is_true(
+        t,
+        reversedError == errors::TimeError.NegativeResult and
+            reversed.isZero(),
+        "durationSince rejects reversed timestamps"
+    );
+}
+
+test timestamp_checked_arithmetic_carries_borrows_and_checks_bounds(
+    &testing::UnitTest t
+) {
+    initial, initialError :=
+        clock::Timestamp::fromUnixParts(-1, 750000000);
+    offset, offsetError :=
+        duration::Duration::fromParts(0, 500000000);
+    asserts::is_true(
+        t,
+        initialError == none and offsetError == none,
+        "timestamp arithmetic fixtures are valid"
+    );
+
+    added, addError := initial.checkedAdd(offset);
+    asserts::is_true(
+        t,
+        addError == none and added.unixSeconds() == 0 and
+            added.subsecondNanoseconds() == 250000000,
+        "checkedAdd carries across the Unix epoch"
+    );
+
+    restored, subtractError := added.checkedSub(offset);
+    asserts::is_true(
+        t,
+        subtractError == none and restored == initial,
+        "checkedSub borrows and reverses checkedAdd"
+    );
+
+    maximum, maximumError := clock::Timestamp::fromUnixParts(i64.max_value, 0);
+    oneSecond := duration::Duration::fromSeconds(1);
+    overflow, overflowError := maximum.checkedAdd(oneSecond);
+    asserts::is_true(t, maximumError == none, "the maximum timestamp is valid");
+    asserts::is_true(
+        t,
+        overflowError == errors::TimeError.Overflow and
+            overflow.unixSeconds() == 0,
+        "checkedAdd reports signed timestamp overflow"
+    );
+
+    minimum, minimumError := clock::Timestamp::fromUnixParts(i64.min_value, 0);
+    underflow, underflowError := minimum.checkedSub(oneSecond);
+    asserts::is_true(t, minimumError == none, "the minimum timestamp is valid");
+    asserts::is_true(
+        t,
+        underflowError == errors::TimeError.Overflow and
+            underflow.unixSeconds() == 0,
+        "checkedSub reports signed timestamp overflow"
+    );
+}
+
+test sleep_uses_a_monotonic_interval_and_validates_host_range(
+    &testing::UnitTest t
+) {
+    zeroError := clock::sleep(duration::Duration::zero());
+    asserts::is_true(t, zeroError == none, "zero sleep succeeds immediately");
+
+    start, startError := clock::Instant::now();
+    asserts::is_true(t, startError == none, "the sleep start instant is available");
+    if startError != none {
+        return;
+    }
+
+    requested := duration::Duration::fromMilliseconds(2);
+    sleepError := clock::sleep(requested);
+    elapsed, elapsedError := start.elapsed();
+    asserts::is_true(
+        t,
+        sleepError == none and elapsedError == none and
+            elapsed.greaterOrEqual(requested),
+        "successful sleep spans at least its requested monotonic interval"
+    );
+
+    tooLarge := duration::Duration::fromSeconds(u64.max_value);
+    rangeError := clock::sleep(tooLarge);
+    asserts::is_true(
+        t,
+        rangeError == errors::TimeError.DurationOutOfRange,
+        "sleep rejects a duration outside the native wait range"
+    );
+}
