@@ -85,10 +85,14 @@ Concrete type arguments can include pointers, arrays, slices, tuples, and named
 types, subject to the ordinary rules at each substituted use.
 
 Generic functions can take `&T` and `&const T` parameters. Reference storage rules
-are unchanged: a structure field cannot store a reference, so a `Box<&const i32>`
-whose field is `T` is invalid. References take neither `own` nor `lend`.
-Raw pointers alone still carry no ownership contract; generic `own *T` and
-`lend *T` declarations undergo the existing ownership analysis.
+apply after specialization. A `Box<&const i32>` whose field is `T` carries a
+shared borrow, is nonzeroable, and may be copied when its other fields permit.
+A `Box<&i32>` carries an exclusive borrow, is nonzeroable and noncopyable, but
+remains movable. Its constructor or factory must return with `<- source>` and
+initialize the specialized reference-bearing field first in `build`.
+References take neither `own` nor `lend`. Raw pointers alone still carry no
+ownership contract; generic `own *T` and `lend *T` declarations undergo the
+existing ownership analysis.
 
 `const` controls mutation. It does not make a resource copyable. Structures with
 unsafe `tear` remain immovable and noncopyable, and `tear` remains callable only

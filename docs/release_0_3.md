@@ -509,6 +509,25 @@ adapters, and relocation of an owner while an adapter remains live. `own` in a
 capture describes transfer of the captured value; when that value is a
 reference, it never implies ownership of the referent.
 
+### Checked-reference structure fields
+
+Structures may now store checked references directly or through nested
+structure fields. Constructors and factories expose the lifetime with the
+existing `<- source>` result contract and initialize every reference-bearing
+field directly at the beginning of `build`. The compiler carries borrow origins
+through field access, returns, whole-value moves, nested aggregates, and shared
+copies without adding runtime ownership or cleanup.
+
+Zeroability, copying, and movement remain independent. Any contained reference
+makes the complete structure nonzeroable. Mutable `&T` fields additionally make
+it noncopyable but do not prevent whole-value movement. Shared `&const T` fields
+remain copyable when the rest of the structure is copyable. Existing lifecycle
+rules still apply afterward: a safe custom `tear` prevents copying but permits
+movement, while an unsafe `tear` makes the structure immovable. Native and
+semantic regressions cover nested initialization without fake zero storage,
+exactly-once movement, shared copies, local escape rejection, borrow conflicts,
+missing result contracts, and rejected default construction.
+
 ## Minimal compiler and runtime enablement
 
 The milestone should otherwise avoid new surface syntax. The anticipated

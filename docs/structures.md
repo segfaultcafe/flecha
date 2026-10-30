@@ -107,8 +107,10 @@ privacy, and unsafe checks apply. `Box::init()` is an error if the override
 requires arguments. Nested value fields need explicit declaration defaults in
 that case, for example `Box box = Box::init(2, 40);`. The same applies to arrays
 and tuples containing Box. Raw pointer fields need no constructor arguments;
-they default to null. Reference fields remain unsupported pending lifetime
-contracts. Additional named static factories may also accept parameters.
+they default to null. A structure containing a reference receives no generated
+no-argument `init`; its explicit constructor or factory must initialize the
+reference from a named `<- source>` borrow. Additional named static factories
+may also accept parameters.
 
 ## Default construction and `zero`
 
@@ -119,6 +121,12 @@ numbers become zero, booleans become false, characters become `\0`, raw
 pointers become null, fixed arrays default every element, and nested plain
 structures recursively default their fields. This is semantic initialization,
 not a bytewise memory clear.
+
+Checked references have no zero value. A structure containing one, directly or
+through another field, is therefore nonzeroable: it receives no generated
+`zero()`, cannot use `none`, and cannot omit a variable initializer. A custom
+`zero()` cannot manufacture a valid source for its returned borrow and is
+rejected by the borrow-result contract.
 
 A custom `init` or `tear` does not affect zeroability. `init` supplies an
 ordinary construction path, while `tear` controls destruction and movement.
@@ -192,9 +200,11 @@ rejected; recursive raw pointer fields such as `*Node next` are allowed. Fields
 support scalars, errors, raw pointers, owning strings, structures, fixed arrays
 of supported array elements, tuples of supported fields, owning slices
 (`own []T`), and borrowed slices (`[]T` or `[]const T`). Owning slices are
-destroyed automatically with the containing structure. A structure containing
-a mutable slice is noncopyable; one containing only shared `[]const T` views
-may be copied.
+destroyed automatically with the containing structure. Checked references
+(`&T` or `&const T`) are also supported fields. A structure containing a
+mutable slice or mutable reference is noncopyable; one containing only shared
+`[]const T` views and `&const T` references may be copied when its other fields
+are copyable.
 
 A borrowed-slice field is tied to the same source tracked by the ordinary
 borrow-result contract. Constructors and factories returning such a structure
@@ -215,7 +225,28 @@ Writer Writer::init([]u8 destination) <- destination override {
 }
 ```
 
-Reference and `stringv` fields remain unsupported.
+Reference fields use the same returned-borrow contract:
+
+```flecha
+structure View {
+    &i32 value;
+    i32 tag;
+};
+
+View View::init(&i32 value, i32 tag) <- value override {
+    return build View {
+        self.value = value;
+        self.tag = tag;
+    };
+}
+```
+
+Every direct field whose type contains a reference must be assigned directly at
+the beginning of each `build` block, before other statements. This applies
+recursively when the field is another reference-bearing structure. The
+compiler constructs that first assignment directly in the field's storage;
+there is no temporary zero reference and no cleanup of uninitialized storage.
+`stringv` fields remain unsupported.
 
 ## Destruction, copying, and stable storage
 
@@ -263,6 +294,12 @@ accesses for borrow checking, so a value cannot move while a reference, slice,
 returned loan, or deferred borrow still protects it. Moving an individual
 field or indexed element out of an aggregate is not supported; move the whole
 named value or use a type-specific replacement API.
+
+A structure carrying checked references is movable unless another field or an
+unsafe `tear` makes it immovable. Moving it transfers every borrow origin and
+invalidates a noncopyable source. Shared-reference structures may instead be
+copied; mutable-reference structures may not, preventing duplicate exclusive
+aliases. References themselves are non-owning fields and receive no teardown.
 
 An **unsafe tear additionally makes the type immovable**. Creating a value of
 that type requires unsafe permission, including through an otherwise safe
