@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added `std::time::duration` and `std::time::clock` with checked normalized
+  durations, opaque monotonic instants, Unix wall-clock timestamps, and
+  interruption-safe blocking sleep over a versioned native time ABI.
 - Added `std::io::path` with allocating lexical join and normalization plus
   borrowed filename, parent, and extension views for host POSIX or Windows
   path rules.

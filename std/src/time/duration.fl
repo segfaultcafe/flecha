@@ -1,0 +1,245 @@
+module duration;
+
+@imports :: root::time::errors;
+
+const u64 NANOSECONDS_PER_SECOND = 1000000000;
+const u64 MILLISECONDS_PER_SECOND = 1000;
+const u64 MICROSECONDS_PER_SECOND = 1000000;
+const u64 NANOSECONDS_PER_MILLISECOND = 1000000;
+const u64 NANOSECONDS_PER_MICROSECOND = 1000;
+
+// Represents a nonnegative amount of time as normalized seconds and
+// nanoseconds, independently of any clock.
+export structure Duration {
+    private u64 seconds;
+
+    private u32 nanoseconds;
+};
+
+// Returns the zero duration.
+Duration Duration::zero() override {
+    return build Duration {
+        self.seconds = 0;
+        self.nanoseconds = 0;
+    };
+}
+
+// Constructs a normalized duration or reports an invalid nanosecond component.
+(Duration, error) Duration::fromParts(u64 seconds, u32 nanoseconds) {
+    if nanoseconds.cast<u64> >= NANOSECONDS_PER_SECOND {
+        return (none, errors::TimeError.InvalidNanoseconds);
+    }
+
+    return (build Duration {
+        self.seconds = seconds;
+        self.nanoseconds = nanoseconds;
+    }, none);
+}
+
+// Constructs a duration from a whole number of seconds.
+Duration Duration::fromSeconds(u64 value) {
+    return build Duration {
+        self.seconds = value;
+        self.nanoseconds = 0;
+    };
+}
+
+// Constructs a duration from a whole number of milliseconds.
+Duration Duration::fromMilliseconds(u64 value) {
+    return build Duration {
+        self.seconds = value / MILLISECONDS_PER_SECOND;
+        self.nanoseconds = (
+            (value % MILLISECONDS_PER_SECOND) *
+                NANOSECONDS_PER_MILLISECOND
+        ).cast<u32>;
+    };
+}
+
+// Constructs a duration from a whole number of microseconds.
+Duration Duration::fromMicroseconds(u64 value) {
+    return build Duration {
+        self.seconds = value / MICROSECONDS_PER_SECOND;
+        self.nanoseconds = (
+            (value % MICROSECONDS_PER_SECOND) *
+                NANOSECONDS_PER_MICROSECOND
+        ).cast<u32>;
+    };
+}
+
+// Constructs a duration from a whole number of nanoseconds.
+Duration Duration::fromNanoseconds(u64 value) {
+    return build Duration {
+        self.seconds = value / NANOSECONDS_PER_SECOND;
+        self.nanoseconds = (value % NANOSECONDS_PER_SECOND).cast<u32>;
+    };
+}
+
+// Returns the complete seconds component.
+u64 Duration::wholeSeconds(&const self) {
+    return self->seconds;
+}
+
+// Returns the normalized subsecond nanosecond component.
+u32 Duration::subsecondNanoseconds(&const self) {
+    return self->nanoseconds;
+}
+
+// Returns the complete millisecond count, truncating a sub-millisecond
+// remainder, or reports overflow.
+(u64, error) Duration::totalMilliseconds(&const self) {
+    return self->totalUnits(
+        MILLISECONDS_PER_SECOND,
+        NANOSECONDS_PER_MILLISECOND
+    );
+}
+
+// Returns the complete microsecond count, truncating a sub-microsecond
+// remainder, or reports overflow.
+(u64, error) Duration::totalMicroseconds(&const self) {
+    return self->totalUnits(
+        MICROSECONDS_PER_SECOND,
+        NANOSECONDS_PER_MICROSECOND
+    );
+}
+
+// Returns the complete nanosecond count or reports overflow.
+(u64, error) Duration::totalNanoseconds(&const self) {
+    return self->totalUnits(NANOSECONDS_PER_SECOND, 1);
+}
+
+// Reports whether the duration is zero.
+bool Duration::isZero(&const self) {
+    return self->seconds == 0 and self->nanoseconds == 0;
+}
+
+// Reports whether this duration is shorter than other.
+bool Duration::lessThan(&const self, Duration other) {
+    return self->seconds < other.seconds or (
+        self->seconds == other.seconds and
+            self->nanoseconds < other.nanoseconds
+    );
+}
+
+// Reports whether this duration is no longer than other.
+bool Duration::lessOrEqual(&const self, Duration other) {
+    return self->lessThan(other) or *self == other;
+}
+
+// Reports whether this duration is longer than other.
+bool Duration::greaterThan(&const self, Duration other) {
+    return other.lessThan(*self);
+}
+
+// Reports whether this duration is no shorter than other.
+bool Duration::greaterOrEqual(&const self, Duration other) {
+    return other.lessOrEqual(*self);
+}
+
+// Returns the exact sum or reports overflow.
+(Duration, error) Duration::checkedAdd(&const self, Duration other) {
+    seconds, secondsOverflowed := self->seconds.overflow_add(other.seconds);
+    if secondsOverflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+
+    u64 nanoseconds =
+        self->nanoseconds.cast<u64> + other.nanoseconds.cast<u64>;
+    if nanoseconds >= NANOSECONDS_PER_SECOND {
+        nanoseconds = nanoseconds - NANOSECONDS_PER_SECOND;
+        seconds, secondsOverflowed = seconds.overflow_add(1);
+        if secondsOverflowed {
+            return (none, errors::TimeError.Overflow);
+        }
+    }
+
+    return (build Duration {
+        self.seconds = seconds;
+        self.nanoseconds = nanoseconds.cast<u32>;
+    }, none);
+}
+
+// Returns the exact nonnegative difference or reports a negative result.
+(Duration, error) Duration::checkedSub(&const self, Duration other) {
+    if self->lessThan(other) {
+        return (none, errors::TimeError.NegativeResult);
+    }
+
+    u64 seconds = self->seconds - other.seconds;
+    u32 nanoseconds = 0;
+    if self->nanoseconds >= other.nanoseconds {
+        nanoseconds = self->nanoseconds - other.nanoseconds;
+    } else {
+        seconds--;
+        nanoseconds = (
+            NANOSECONDS_PER_SECOND + self->nanoseconds.cast<u64> -
+                other.nanoseconds.cast<u64>
+        ).cast<u32>;
+    }
+
+    return (build Duration {
+        self.seconds = seconds;
+        self.nanoseconds = nanoseconds;
+    }, none);
+}
+
+// Returns the exact product or reports overflow.
+(Duration, error) Duration::checkedMul(&const self, u64 factor) {
+    if factor == 0 or self->isZero() {
+        return (Duration::zero(), none);
+    }
+
+    seconds, overflowed := self->seconds.overflow_mul(factor);
+    if overflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+
+    const u64 FACTOR_SECONDS = factor / NANOSECONDS_PER_SECOND;
+    const u64 FACTOR_NANOSECONDS = factor % NANOSECONDS_PER_SECOND;
+
+    carriedSeconds, carriedOverflowed :=
+        self->nanoseconds.cast<u64>.overflow_mul(FACTOR_SECONDS);
+    if carriedOverflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+
+    seconds, overflowed = seconds.overflow_add(carriedSeconds);
+    if overflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+
+    const u64 NANOSECOND_PRODUCT =
+        self->nanoseconds.cast<u64> * FACTOR_NANOSECONDS;
+    seconds, overflowed = seconds.overflow_add(
+        NANOSECOND_PRODUCT / NANOSECONDS_PER_SECOND
+    );
+    if overflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+
+    return (build Duration {
+        self.seconds = seconds;
+        self.nanoseconds = (
+            NANOSECOND_PRODUCT % NANOSECONDS_PER_SECOND
+        ).cast<u32>;
+    }, none);
+}
+
+// Converts the duration to complete units using a checked seconds scale.
+(u64, error) Duration::totalUnits(
+    &const self,
+    u64 unitsPerSecond,
+    u64 nanosecondsPerUnit
+) {
+    total, overflowed := self->seconds.overflow_mul(unitsPerSecond);
+    if overflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+
+    u64 subsecond = self->nanoseconds.cast<u64> / nanosecondsPerUnit;
+    total, overflowed = total.overflow_add(subsecond);
+    if overflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+
+    return (total, none);
+}

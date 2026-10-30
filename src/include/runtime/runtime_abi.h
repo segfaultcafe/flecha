@@ -107,6 +107,14 @@ typedef enum FlechaRuntimeEnvironmentStatus {
     FLECHA_RUNTIME_ENVIRONMENT_FAILED = 5,
 } FlechaRuntimeEnvironmentStatus;
 
+typedef enum FlechaRuntimeTimeStatus {
+    FLECHA_RUNTIME_TIME_OK = 0,
+    FLECHA_RUNTIME_TIME_UNAVAILABLE = 1,
+    FLECHA_RUNTIME_TIME_OUT_OF_RANGE = 2,
+    FLECHA_RUNTIME_TIME_INVALID_DURATION = 3,
+    FLECHA_RUNTIME_TIME_FAILED = 4,
+} FlechaRuntimeTimeStatus;
+
 typedef enum FlechaRuntimePathStyle {
     FLECHA_RUNTIME_PATH_STYLE_POSIX = 0,
     FLECHA_RUNTIME_PATH_STYLE_WINDOWS = 1,
@@ -153,6 +161,17 @@ int32_t flecha_runtime_v1_environment_set(const char* name, size_t name_length,
 // Removing an absent variable succeeds.
 int32_t flecha_runtime_v1_environment_remove(const char* name,
                                              size_t name_length);
+
+// Returns one normalized observation of the host monotonic clock. Every
+// failure leaves both outputs zero.
+int32_t flecha_runtime_v1_monotonic_clock_now(uint64_t* seconds,
+                                              uint32_t* nanoseconds);
+// Returns normalized Unix time. Every failure leaves both outputs zero.
+int32_t flecha_runtime_v1_wall_clock_now(int64_t* unix_seconds,
+                                         uint32_t* nanoseconds);
+// Blocks the current thread for the normalized relative duration, retrying
+// host interruptions. A duration outside the host range fails before waiting.
+int32_t flecha_runtime_v1_sleep(uint64_t seconds, uint32_t nanoseconds);
 
 // Reports the lexical path rules used by filesystem operations on this host.
 uint8_t flecha_runtime_v1_path_style(void);

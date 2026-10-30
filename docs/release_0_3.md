@@ -288,6 +288,14 @@ existing `File` model. Blocking operations must be identified in their API
 documentation. Platform errors map to stable Flecha error families without
 discarding partial byte counts or child-process status.
 
+The time portion follows the contracts in [`time.md`](time.md). Duration
+construction, conversion, and checked arithmetic are implemented entirely in
+Flecha. Opaque monotonic instants are process-local and are distinct from
+serializable Unix wall-clock timestamps. The runtime exposes only normalized
+seconds and nanoseconds, never host ticks or clock identifiers. Blocking sleep
+retries host interruptions, rejects durations outside the native wait range,
+and never reports a shortened wait as success.
+
 The buffered-I/O portion of Stage 5 is implemented in Flecha over the existing
 stream adapters. Buffered readers preserve read-ahead bytes and defer a partial
 read error until its final buffered byte. Buffered writers require explicit
