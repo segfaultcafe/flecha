@@ -16,11 +16,15 @@
 #include "runtime/runtime_abi.h"
 
 #ifdef _WIN32
+// BCrypt declarations depend on base Win32 types. Keep this order even when
+// formatting the translation unit.
+// clang-format off
+#include <windows.h>
 #include <bcrypt.h>
+// clang-format on
 #include <fcntl.h>
 #include <io.h>
 #include <sys/stat.h>
-#include <windows.h>
 #else
 #include <fcntl.h>
 #include <sys/stat.h>
