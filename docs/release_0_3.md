@@ -275,7 +275,7 @@ Expand the current file and filesystem modules with:
 - buffered readers and writers;
 - standard input, standard output, and standard error handles;
 - path joining, normalization, filename, parent, and extension operations;
-- directory iteration and recursive creation and copying;
+- directory iteration, recursive directory creation, and recursive copying;
 - temporary files and directories;
 - command-line argument access;
 - environment-variable access;
@@ -298,6 +298,16 @@ on success or allocation failure. Focused tests cover empty operations, direct
 and buffered paths, boundary crossings, short operations, EOF, zero progress,
 error retry, allocation failure, movement, borrow conflicts, file round trips,
 and byte ordering without native buffering support.
+
+Directory iteration is implemented through the owning `std::io::file::Directory`
+and `DirectoryEntry` values. Entries own their names, symbolic-link
+classification does not follow links, host `.` and `..` records are filtered,
+EOF is stable, and deterministic teardown closes each iterator exactly once.
+Allocation failure preserves the pending entry for retry. Native and Flecha
+tests cover empty and populated directories, file and directory types, symbolic
+links, invalid and missing paths, regular-file rejection, movement, explicit
+close, repeated EOF, and allocation failure. Recursive directory creation and
+copying remain separate Stage 5 work.
 
 The standard-stream portion is also implemented. The `stderr` and `stderrln`
 built-ins mirror the existing printable `stdout` operations, while

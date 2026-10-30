@@ -21,8 +21,9 @@ file(WRITE "${source}"
 "module main;
 
 @imports
-    :: lib::std::io::filesystem
-    :: lib::std::io::errors;
+    :: lib::std::io::errors
+    :: lib::std::io::file
+    :: lib::std::io::filesystem;
 
 i32 main() {
     text, text_error := filesystem::read_file(\"${textPath}\");
@@ -31,7 +32,7 @@ i32 main() {
     }
     text_info, text_metadata_error := filesystem::metadata(\"${textPath}\");
     if text_metadata_error != none or
-        text_info.type != filesystem::FileType.File or text_info.size != 7 {
+        text_info.type != file::EntryType.File or text_info.size != 7 {
         return 32;
     }
 
@@ -103,7 +104,7 @@ i32 main() {
         \"${createdDirectory}\"
     );
     if directory_metadata_error != none or
-        directory_info.type != filesystem::FileType.Directory or
+        directory_info.type != file::EntryType.Directory or
         directory_info.size != 0 {
         return 33;
     }
@@ -183,7 +184,7 @@ i32 main() {
 
     missing_info, missing_metadata_error := filesystem::metadata(\"${missingPath}\");
     if missing_metadata_error != errors::IoError.NotFound or
-        missing_info.type != filesystem::FileType.Other or missing_info.size != 0 {
+        missing_info.type != file::EntryType.Other or missing_info.size != 0 {
         return 34;
     }
 

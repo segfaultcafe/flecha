@@ -6,43 +6,10 @@ module filesystem;
     :: root::io::utils
     :: root::io::runtime;
 
-// Classifies the kind of a filesystem entry.
-export enum FileType: u8 {
-    // Represents an entry that is neither a regular file nor a directory.
-    default Other,
-
-    // Represents a regular file.
-    File,
-
-    // Represents a directory.
-    Directory,
-}
-
-// Returns the runtime representation of this entry kind.
-u8 FileType::number(&const self) {
-    return match *self {
-        FileType.Other => 0,
-        FileType.File => 1,
-        FileType.Directory => 2,
-    };
-}
-
-// Converts a runtime entry-kind number, mapping unknown values to Other.
-FileType FileType::fromNumber(u8 number) {
-    if number == 1 {
-        return FileType.File;
-    }
-    if number == 2 {
-        return FileType.Directory;
-    }
-
-    return FileType.Other;
-}
-
 // Describes the kind and byte size of a filesystem entry.
 export structure Metadata {
     // The classified entry kind.
-    FileType type;
+    file::EntryType type;
 
     // The regular-file byte length, or zero for other entry kinds.
     u64 size;
@@ -146,7 +113,7 @@ export (Metadata, error) metadata(stringv path) {
             return (none, err);
         }
 
-        meta.type = FileType::fromNumber(typeNumber);
+        meta.type = file::EntryType::fromNumber(typeNumber);
         meta.size = size;
     }
 

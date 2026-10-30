@@ -154,6 +154,22 @@ Force suppresses `NotFound`; recursive traversal otherwise preserves the same
 status mapping. `DirectoryNotEmpty` is status `9`, leaving generic operation
 failure at its established status `8`.
 
+The `flecha_runtime_v1_directory_*` entry points expose owning directory
+iterators behind opaque `void*` handles. `open` clears its output before path
+validation. `next` returns one independently allocated entry name, a byte type,
+and a byte presence flag. Types are `0` for other entries, `1` for regular
+files, `2` for directories, and `3` for symbolic links or Windows reparse-point
+links; classification does not follow the entry link. Successful end of
+iteration has a zero presence flag and empty outputs. The caller must provide
+an empty owning-string descriptor.
+
+An entry-name allocation failure leaves the current entry pending so a later
+`next` call can retry it without dropping or reordering entries. Other entry
+errors consume that entry and leave the iterator open. `close` always consumes
+the iterator handle, including when the operating system reports a close
+failure. The runtime returns `.` and `..` when the host iterator provides them;
+the safe Flecha wrapper filters those names.
+
 ## File streams
 
 The `flecha_runtime_v1_file_stream_*` entry points expose unbuffered binary file

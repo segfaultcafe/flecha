@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <limits>
 #include <new>
@@ -18,6 +19,8 @@
 #include <sys/stat.h>
 #include <windows.h>
 #else
+#include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -127,8 +130,48 @@ int32_t MapFilesystemError(const std::error_code& error) {
 
 #ifdef _WIN32
 using NativePathCharacter = wchar_t;
+
+struct DirectoryIterator final {
+    HANDLE search;
+    WIN32_FIND_DATAW pending;
+    bool hasPending;
+    bool exhausted;
+};
+
+int32_t MapWindowsFilesystemError(DWORD error) {
+    switch (error) {
+        case ERROR_FILE_NOT_FOUND:
+        case ERROR_PATH_NOT_FOUND:
+        case ERROR_INVALID_DRIVE:
+        case ERROR_DIRECTORY:
+            return FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND;
+        case ERROR_ACCESS_DENIED:
+        case ERROR_SHARING_VIOLATION:
+        case ERROR_LOCK_VIOLATION:
+            return FLECHA_RUNTIME_FILESYSTEM_PERMISSION_DENIED;
+        case ERROR_FILE_EXISTS:
+        case ERROR_ALREADY_EXISTS:
+            return FLECHA_RUNTIME_FILESYSTEM_ALREADY_EXISTS;
+        case ERROR_INVALID_NAME:
+        case ERROR_BAD_PATHNAME:
+        case ERROR_FILENAME_EXCED_RANGE:
+        case ERROR_NO_UNICODE_TRANSLATION:
+            return FLECHA_RUNTIME_FILESYSTEM_INVALID_PATH;
+        case ERROR_NOT_ENOUGH_MEMORY:
+        case ERROR_OUTOFMEMORY:
+            return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+        default:
+            return FLECHA_RUNTIME_FILESYSTEM_FAILED;
+    }
+}
 #else
 using NativePathCharacter = char;
+
+struct DirectoryIterator final {
+    DIR* directory;
+    dirent* pending;
+    bool exhausted;
+};
 #endif
 
 int32_t CopyNativePath(const char* path, size_t pathLength,
@@ -522,4 +565,252 @@ extern "C" int32_t flecha_runtime_v1_remove_directory(const char* path,
     }
     std::free(nativePath);
     return resultStatus;
+}
+
+extern "C" int32_t flecha_runtime_v1_directory_open(void** output,
+                                                    const char* path,
+                                                    size_t pathLength) {
+    if (output == nullptr) return FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS;
+    *output = nullptr;
+
+    NativePathCharacter* nativePath = nullptr;
+    const int32_t pathStatus = CopyNativePath(path, pathLength, &nativePath);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) return pathStatus;
+
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(nativePath);
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        const int32_t status = MapWindowsFilesystemError(GetLastError());
+        std::free(nativePath);
+        return status;
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        std::free(nativePath);
+        return FLECHA_RUNTIME_FILESYSTEM_NOT_FOUND;
+    }
+
+    const size_t length = std::wcslen(nativePath);
+    const bool hasTrailingSeparator =
+        nativePath[length - 1] == L'\\' || nativePath[length - 1] == L'/';
+    const bool isBareDrive = length == 2 && nativePath[1] == L':';
+    const bool needsSeparator = !hasTrailingSeparator && !isBareDrive;
+    const size_t additional = needsSeparator ? 3 : 2;
+    if (length > std::numeric_limits<size_t>::max() - additional ||
+        (length + additional) >
+            std::numeric_limits<size_t>::max() / sizeof(wchar_t)) {
+        std::free(nativePath);
+        return FLECHA_RUNTIME_FILESYSTEM_TOO_LARGE;
+    }
+
+    auto* pattern = static_cast<wchar_t*>(
+        std::malloc((length + additional) * sizeof(wchar_t)));
+    if (pattern == nullptr) {
+        std::free(nativePath);
+        return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    }
+    std::memcpy(pattern, nativePath, length * sizeof(wchar_t));
+    size_t patternLength = length;
+    if (needsSeparator) pattern[patternLength++] = L'\\';
+    pattern[patternLength++] = L'*';
+    pattern[patternLength] = L'\0';
+
+    auto* iterator =
+        static_cast<DirectoryIterator*>(std::malloc(sizeof(DirectoryIterator)));
+    if (iterator == nullptr) {
+        std::free(pattern);
+        std::free(nativePath);
+        return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    }
+
+    WIN32_FIND_DATAW first{};
+    SetLastError(ERROR_SUCCESS);
+    const HANDLE search = FindFirstFileW(pattern, &first);
+    const DWORD findError = GetLastError();
+    std::free(pattern);
+    std::free(nativePath);
+
+    if (search == INVALID_HANDLE_VALUE) {
+        if (findError == ERROR_FILE_NOT_FOUND) {
+            *iterator = {INVALID_HANDLE_VALUE, {}, false, true};
+            *output = iterator;
+            return FLECHA_RUNTIME_FILESYSTEM_OK;
+        }
+        std::free(iterator);
+        return MapWindowsFilesystemError(findError);
+    }
+
+    *iterator = {search, first, true, false};
+    *output = iterator;
+    return FLECHA_RUNTIME_FILESYSTEM_OK;
+#else
+    errno = 0;
+    DIR* directory = ::opendir(nativePath);
+    const int openError = errno;
+    std::free(nativePath);
+    if (directory == nullptr) return MapFilesystemError(openError);
+
+    auto* iterator =
+        static_cast<DirectoryIterator*>(std::malloc(sizeof(DirectoryIterator)));
+    if (iterator == nullptr) {
+        (void)::closedir(directory);
+        return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    }
+
+    *iterator = {directory, nullptr, false};
+    *output = iterator;
+    return FLECHA_RUNTIME_FILESYSTEM_OK;
+#endif
+}
+
+extern "C" int32_t flecha_runtime_v1_directory_next(
+    void* handle, FlechaRuntimeString* outputName, uint8_t* outputType,
+    uint8_t* outputHasEntry) {
+    if (outputName != nullptr) *outputName = {nullptr, 0, 0};
+    if (outputType != nullptr) *outputType = 0;
+    if (outputHasEntry != nullptr) *outputHasEntry = 0;
+    if (handle == nullptr || outputName == nullptr || outputType == nullptr ||
+        outputHasEntry == nullptr)
+        return FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS;
+
+    auto* iterator = static_cast<DirectoryIterator*>(handle);
+
+#ifdef _WIN32
+    if (!iterator->hasPending) {
+        if (iterator->exhausted) return FLECHA_RUNTIME_FILESYSTEM_OK;
+
+        SetLastError(ERROR_SUCCESS);
+        if (FindNextFileW(iterator->search, &iterator->pending) == 0) {
+            const DWORD findError = GetLastError();
+            if (findError == ERROR_NO_MORE_FILES) {
+                iterator->exhausted = true;
+                return FLECHA_RUNTIME_FILESYSTEM_OK;
+            }
+            return MapWindowsFilesystemError(findError);
+        }
+        iterator->hasPending = true;
+    }
+
+    const wchar_t* name = iterator->pending.cFileName;
+    const size_t wideLength = std::wcslen(name);
+    if (wideLength > static_cast<size_t>(INT_MAX)) {
+        iterator->hasPending = false;
+        return FLECHA_RUNTIME_FILESYSTEM_TOO_LARGE;
+    }
+
+    SetLastError(ERROR_SUCCESS);
+    const int utf8Length = WideCharToMultiByte(
+        CP_UTF8, WC_ERR_INVALID_CHARS, name, static_cast<int>(wideLength),
+        nullptr, 0, nullptr, nullptr);
+    if (utf8Length <= 0) {
+        iterator->hasPending = false;
+        return MapWindowsFilesystemError(GetLastError());
+    }
+
+    auto* owned =
+        static_cast<char*>(std::malloc(static_cast<size_t>(utf8Length) + 1));
+    if (owned == nullptr) return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, name,
+                            static_cast<int>(wideLength), owned, utf8Length,
+                            nullptr, nullptr) != utf8Length) {
+        const DWORD conversionError = GetLastError();
+        std::free(owned);
+        iterator->hasPending = false;
+        return MapWindowsFilesystemError(conversionError);
+    }
+    owned[utf8Length] = '\0';
+
+    const DWORD attributes = iterator->pending.dwFileAttributes;
+    if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        *outputType = 3;
+    else if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        *outputType = 2;
+    else
+        *outputType = 1;
+
+    *outputName = {owned, static_cast<size_t>(utf8Length),
+                   static_cast<size_t>(utf8Length)};
+    *outputHasEntry = 1;
+    iterator->hasPending = false;
+    return FLECHA_RUNTIME_FILESYSTEM_OK;
+#else
+    if (iterator->pending == nullptr) {
+        if (iterator->exhausted) return FLECHA_RUNTIME_FILESYSTEM_OK;
+
+        do {
+            errno = 0;
+            iterator->pending = ::readdir(iterator->directory);
+        } while (iterator->pending == nullptr && errno == EINTR);
+        if (iterator->pending == nullptr) {
+            if (errno != 0) return MapFilesystemError(errno);
+            iterator->exhausted = true;
+            return FLECHA_RUNTIME_FILESYSTEM_OK;
+        }
+    }
+
+    const int descriptor = ::dirfd(iterator->directory);
+    if (descriptor < 0) {
+        const int directoryError = errno;
+        iterator->pending = nullptr;
+        return MapFilesystemError(directoryError);
+    }
+
+    struct stat information{};
+    int result = 0;
+    do {
+        errno = 0;
+        result = ::fstatat(descriptor, iterator->pending->d_name, &information,
+                           AT_SYMLINK_NOFOLLOW);
+    } while (result != 0 && errno == EINTR);
+    if (result != 0) {
+        const int metadataError = errno;
+        iterator->pending = nullptr;
+        return MapFilesystemError(metadataError);
+    }
+
+    uint8_t type = 0;
+    if (S_ISREG(information.st_mode))
+        type = 1;
+    else if (S_ISDIR(information.st_mode))
+        type = 2;
+    else if (S_ISLNK(information.st_mode))
+        type = 3;
+
+    const size_t nameLength = std::strlen(iterator->pending->d_name);
+    const int32_t stringStatus = flecha_runtime_v1_string_try_from_bytes(
+        outputName, reinterpret_cast<const uint8_t*>(iterator->pending->d_name),
+        nameLength);
+    if (stringStatus != FLECHA_RUNTIME_STRING_OK)
+        return FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+
+    *outputType = type;
+    *outputHasEntry = 1;
+    iterator->pending = nullptr;
+    return FLECHA_RUNTIME_FILESYSTEM_OK;
+#endif
+}
+
+extern "C" int32_t flecha_runtime_v1_directory_close(void* handle) {
+    if (handle == nullptr) return FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS;
+
+    auto* iterator = static_cast<DirectoryIterator*>(handle);
+
+#ifdef _WIN32
+    BOOL result = TRUE;
+    DWORD closeError = ERROR_SUCCESS;
+    if (iterator->search != INVALID_HANDLE_VALUE) {
+        SetLastError(ERROR_SUCCESS);
+        result = FindClose(iterator->search);
+        closeError = GetLastError();
+    }
+    std::free(iterator);
+    return result != 0 ? FLECHA_RUNTIME_FILESYSTEM_OK
+                       : MapWindowsFilesystemError(closeError);
+#else
+    errno = 0;
+    const int result = ::closedir(iterator->directory);
+    const int closeError = errno;
+    std::free(iterator);
+    return result == 0 ? FLECHA_RUNTIME_FILESYSTEM_OK
+                       : MapFilesystemError(closeError);
+#endif
 }
