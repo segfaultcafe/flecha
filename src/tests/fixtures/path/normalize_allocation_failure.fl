@@ -1,0 +1,14 @@
+module normalize_allocation_failure;
+
+@imports :: lib::std::io::path;
+
+i32 main() {
+    normalized, normalizeError := path::normalize("alpha/../beta");
+    if normalizeError != AllocationError.OutOfMemory {
+        return 1;
+    }
+    if normalized != "" {
+        return 2;
+    }
+    return 42;
+}

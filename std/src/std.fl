@@ -16,6 +16,7 @@ module std;
     :: root::fmt
     :: root::io::filesystem
     :: root::io::file
+    :: root::io::path
     :: root::io::errors as io_errors
     :: root::math::math
     :: root::math::integer

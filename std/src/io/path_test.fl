@@ -1,0 +1,256 @@
+module path_test;
+
+@imports
+    :: root::io::path
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+void assert_join(
+    &testing::UnitTest t,
+    stringv base,
+    stringv child,
+    stringv expected,
+    bool windows,
+    stringv message
+) {
+    actual, joinError := path::join_with_style(base, child, windows);
+    asserts::is_true(
+        t,
+        joinError == none and actual == expected,
+        message
+    );
+}
+
+void assert_normalized(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    bool windows,
+    stringv message
+) {
+    actual, normalizeError := path::normalize_with_style(source, windows);
+    asserts::is_true(
+        t,
+        normalizeError == none and actual == expected,
+        message
+    );
+}
+
+test join_uses_each_platform_grammar(&testing::UnitTest t) {
+    assert_join(t, "", "child", "child", false, "an empty base is omitted");
+    assert_join(t, "base", "", "base", false, "an empty child is omitted");
+    assert_join(t, "", "", "", false, "two empty paths join without bytes");
+    assert_join(
+        t,
+        "base",
+        "child",
+        "base/child",
+        false,
+        "POSIX paths use a forward slash"
+    );
+    assert_join(
+        t,
+        "base/",
+        "child",
+        "base/child",
+        false,
+        "an existing separator is reused"
+    );
+    assert_join(
+        t,
+        "base",
+        "/rooted",
+        "/rooted",
+        false,
+        "an absolute POSIX child replaces its base"
+    );
+    assert_join(
+        t,
+        "C:\\base",
+        "child",
+        "C:\\base\\child",
+        true,
+        "Windows paths use a backslash"
+    );
+    assert_join(
+        t,
+        "C:\\base",
+        "D:child",
+        "D:child",
+        true,
+        "a child with its own drive replaces its base"
+    );
+    assert_join(
+        t,
+        "C:",
+        "child",
+        "C:child",
+        true,
+        "joining a bare drive preserves drive-relative meaning"
+    );
+    assert_join(
+        t,
+        "C:\\base",
+        "\\rooted",
+        "\\rooted",
+        true,
+        "a rooted Windows child replaces its base"
+    );
+}
+
+test normalize_resolves_posix_components_lexically(&testing::UnitTest t) {
+    assert_normalized(t, "", ".", false, "an empty path names the current path");
+    assert_normalized(t, ".", ".", false, "a dot names the current path");
+    assert_normalized(t, "/", "/", false, "the POSIX root is preserved");
+    assert_normalized(
+        t,
+        "//alpha///beta/./gamma/",
+        "/alpha/beta/gamma",
+        false,
+        "separators and dot components are collapsed"
+    );
+    assert_normalized(
+        t,
+        "alpha/beta/../gamma",
+        "alpha/gamma",
+        false,
+        "parent components remove ordinary components"
+    );
+    assert_normalized(
+        t,
+        "../../alpha/../beta",
+        "../../beta",
+        false,
+        "leading parents remain in a relative path"
+    );
+    assert_normalized(
+        t,
+        "/../../alpha",
+        "/alpha",
+        false,
+        "parents cannot escape an absolute root"
+    );
+}
+
+test normalize_resolves_windows_components_lexically(&testing::UnitTest t) {
+    assert_normalized(t, "\\", "\\", true, "a Windows root is preserved");
+    assert_normalized(
+        t,
+        "C:/alpha//beta/.\\gamma\\",
+        "C:\\alpha\\beta\\gamma",
+        true,
+        "both Windows separators normalize to backslashes"
+    );
+    assert_normalized(
+        t,
+        "C:\\alpha\\beta\\..\\gamma",
+        "C:\\alpha\\gamma",
+        true,
+        "a drive-absolute path resolves parent components"
+    );
+    assert_normalized(
+        t,
+        "C:alpha\\..\\beta",
+        "C:beta",
+        true,
+        "a drive-relative path remains drive-relative"
+    );
+    assert_normalized(
+        t,
+        "\\\\server\\share\\alpha\\..\\beta",
+        "\\\\server\\share\\beta",
+        true,
+        "a UNC share is an indivisible root"
+    );
+    assert_normalized(
+        t,
+        "\\\\server\\share\\..\\..\\beta",
+        "\\\\server\\share\\beta",
+        true,
+        "parents cannot escape a UNC share"
+    );
+}
+
+test component_views_follow_posix_rules(&testing::UnitTest t) {
+    asserts::is_true(
+        t,
+        path::file_name_with_style("/alpha/beta/", false) == "beta",
+        "file_name ignores trailing POSIX separators"
+    );
+    asserts::is_true(
+        t,
+        path::file_name_with_style("/", false) == "",
+        "a POSIX root has no filename"
+    );
+    asserts::is_true(
+        t,
+        path::parent_with_style("/alpha/beta/", false) == "/alpha",
+        "parent removes the final POSIX component"
+    );
+    asserts::is_true(
+        t,
+        path::parent_with_style("/alpha", false) == "/" and
+            path::parent_with_style("/", false) == "/",
+        "a direct child has the root parent and root is its own parent"
+    );
+    asserts::is_true(
+        t,
+        path::parent_with_style("alpha", false) == "",
+        "a single relative component has no parent"
+    );
+    asserts::is_true(
+        t,
+        path::extension_with_style("archive.tar.gz", false) == ".gz" and
+            path::extension_with_style(".profile", false) == "" and
+            path::extension_with_style("name.", false) == "",
+        "extensions exclude leading and trailing dots"
+    );
+}
+
+test component_views_follow_windows_rules(&testing::UnitTest t) {
+    asserts::is_true(
+        t,
+        path::file_name_with_style("C:\\alpha\\beta\\", true) == "beta",
+        "file_name ignores trailing Windows separators"
+    );
+    asserts::is_true(
+        t,
+        path::parent_with_style("C:\\alpha", true) == "C:\\" and
+            path::parent_with_style("C:\\", true) == "C:\\",
+        "drive roots are stable parents"
+    );
+    asserts::is_true(
+        t,
+        path::parent_with_style(
+            "\\\\server\\share\\alpha",
+            true
+        ) == "\\\\server\\share",
+        "a UNC share is the parent of its direct children"
+    );
+    asserts::is_true(
+        t,
+        path::extension_with_style("C:\\alpha\\name.txt", true) == ".txt",
+        "extension examines only the Windows filename"
+    );
+}
+
+test public_operations_use_the_host_style(&testing::UnitTest t) {
+    joined, joinError := path::join("alpha", "beta");
+    expected, expectedError := path::join_with_style(
+        "alpha",
+        "beta",
+        path::host_uses_windows_paths()
+    );
+    normalized, normalizeError := path::normalize("./alpha/../beta");
+
+    asserts::is_true(
+        t,
+        joinError == none and expectedError == none and joined == expected,
+        "join selects the host grammar"
+    );
+    asserts::is_true(
+        t,
+        normalizeError == none and normalized == "beta",
+        "normalize selects the host grammar"
+    );
+}

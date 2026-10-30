@@ -1,0 +1,14 @@
+module join_allocation_failure;
+
+@imports :: lib::std::io::path;
+
+i32 main() {
+    joined, joinError := path::join("alpha", "beta");
+    if joinError != AllocationError.OutOfMemory {
+        return 1;
+    }
+    if joined != "" {
+        return 2;
+    }
+    return 42;
+}
