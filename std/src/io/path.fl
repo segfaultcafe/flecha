@@ -7,29 +7,19 @@ module path;
 
 structure PathPrefix {
     u32 boundary;
-
     u32 scanStart;
-
     u32 serverStart;
-
     u32 serverLength;
-
     u32 shareStart;
-
     u32 shareLength;
-
     bool absolute;
-
     bool drive;
-
     bool unc;
 };
 
 structure PathSegment {
     u32 start;
-
     u32 length;
-
     bool parent;
 };
 
@@ -141,15 +131,11 @@ bool join_requires_separator(stringv base, bool windows) {
     }
 
     // A bare Windows drive is relative to that drive's current directory.
-    // Inserting a separator would silently change C:child into C:\child.
+    // Inserting a separator would silently change C:child into C:\child
     return !windows or base.len() != 2 or !has_drive_prefix(base);
 }
 
-(string, error) join_with_style(
-    stringv base,
-    stringv child,
-    bool windows
-) {
+(string, error) join_with_style(stringv base, stringv child, bool windows) {
     if base.len() == 0 {
         return copy_path(child);
     }
@@ -346,15 +332,12 @@ error append_prefix(
     return none;
 }
 
-(string, error) normalize_with_style(
-    stringv value,
-    bool windows
-) {
+(string, error) normalize_with_style(stringv value, bool windows) {
     prefix := read_prefix(value, windows);
 
     // A path can contain at most one component for every two bytes, rounded
     // up. Keep one slot for the empty input so construction still follows the
-    // same explicit allocation path.
+    // same explicit allocation path
     usize segmentCapacity = value.len().cast<usize> / 2;
     segmentCapacity++;
 
@@ -452,10 +435,7 @@ error append_prefix(
     return builder.toString();
 }
 
-stringv file_name_with_style(
-    stringv value,
-    bool windows
-) <-value {
+stringv file_name_with_style(stringv value, bool windows) <-value {
     prefix := read_prefix(value, windows);
     u32 end = value.len();
     while end > prefix.boundary and
@@ -475,10 +455,7 @@ stringv file_name_with_style(
     return value.substr(start, end - start);
 }
 
-stringv parent_with_style(
-    stringv value,
-    bool windows
-) <-value {
+stringv parent_with_style(stringv value, bool windows) <-value {
     prefix := read_prefix(value, windows);
     u32 end = value.len();
     while end > prefix.boundary and
@@ -514,10 +491,7 @@ stringv parent_with_style(
     return value.substr(0, parentEnd);
 }
 
-stringv extension_with_style(
-    stringv value,
-    bool windows
-) <-value {
+stringv extension_with_style(stringv value, bool windows) <-value {
     name := file_name_with_style(value, windows);
     if name.len() < 2 {
         return name.substr(name.len(), 0);
