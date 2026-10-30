@@ -905,6 +905,66 @@ TEST_F(RuntimeFileStreamTests, WritesReadsSeeksAndFlushesBinaryData) {
               FLECHA_RUNTIME_FILE_STREAM_OK);
 }
 
+TEST_F(RuntimeFileStreamTests, CreatesPrivateTemporaryFilesAtomically) {
+    void* handle = reinterpret_cast<void*>(1);
+    FlechaRuntimeString path{reinterpret_cast<char*>(1), 1, 1};
+    ASSERT_EQ(flecha_runtime_v1_temporary_file_open(&handle, &path),
+              FLECHA_RUNTIME_FILE_STREAM_OK);
+    ASSERT_NE(handle, nullptr);
+    ASSERT_NE(path.data, nullptr);
+    ASSERT_GT(path.length, 0u);
+
+    const auto* pathBegin = reinterpret_cast<const char8_t*>(path.data);
+    const std::u8string encodedPath(pathBegin, pathBegin + path.length);
+    const std::filesystem::path nativePath(encodedPath);
+    EXPECT_TRUE(nativePath.is_absolute());
+    EXPECT_TRUE(std::filesystem::is_regular_file(nativePath));
+    EXPECT_EQ(nativePath.filename().string().starts_with("flecha-"), true);
+#ifndef _WIN32
+    const auto permissions = std::filesystem::status(nativePath).permissions();
+    EXPECT_EQ(permissions & std::filesystem::perms::group_all,
+              std::filesystem::perms::none);
+    EXPECT_EQ(permissions & std::filesystem::perms::others_all,
+              std::filesystem::perms::none);
+#endif
+
+    const std::array<uint8_t, 4> source{'t', 'e', 'm', 'p'};
+    size_t written = 0;
+    ASSERT_EQ(flecha_runtime_v1_file_stream_write(handle, source.data(),
+                                                  source.size(), &written),
+              FLECHA_RUNTIME_FILE_STREAM_OK);
+    ASSERT_EQ(written, source.size());
+
+    uint64_t position = 99;
+    ASSERT_EQ(flecha_runtime_v1_file_stream_seek(handle, 0, 0, &position),
+              FLECHA_RUNTIME_FILE_STREAM_OK);
+    std::array<uint8_t, 4> destination{};
+    size_t read = 0;
+    ASSERT_EQ(flecha_runtime_v1_file_stream_read(handle, destination.data(),
+                                                 destination.size(), &read),
+              FLECHA_RUNTIME_FILE_STREAM_OK);
+    EXPECT_EQ(read, destination.size());
+    EXPECT_EQ(destination, source);
+
+    EXPECT_EQ(flecha_runtime_v1_file_stream_close(handle),
+              FLECHA_RUNTIME_FILE_STREAM_OK);
+    EXPECT_TRUE(std::filesystem::remove(nativePath));
+    flecha_runtime_v1_string_destroy(path.data);
+}
+
+TEST_F(RuntimeFileStreamTests, ValidatesTemporaryFileOutputs) {
+    FlechaRuntimeString path{reinterpret_cast<char*>(1), 1, 1};
+    EXPECT_EQ(flecha_runtime_v1_temporary_file_open(nullptr, &path),
+              FLECHA_RUNTIME_FILE_STREAM_INVALID_OPTIONS);
+    EXPECT_EQ(path.data, nullptr);
+    EXPECT_EQ(path.length, 0u);
+
+    void* handle = reinterpret_cast<void*>(1);
+    EXPECT_EQ(flecha_runtime_v1_temporary_file_open(&handle, nullptr),
+              FLECHA_RUNTIME_FILE_STREAM_INVALID_OPTIONS);
+    EXPECT_EQ(handle, nullptr);
+}
+
 TEST_F(RuntimeFileStreamTests, CreatesExclusivelyAppendsAndTruncates) {
     const std::string path = NativePath();
     void* handle = nullptr;

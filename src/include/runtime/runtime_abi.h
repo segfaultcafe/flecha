@@ -185,8 +185,8 @@ int32_t flecha_runtime_v1_standard_error_flush(void);
 // for a zero-length read. The count output is reset before validation and
 // preserves partial progress on failure. A zero count with success is EOF.
 int32_t flecha_runtime_v1_standard_input_read(uint8_t* destination,
-                                             size_t capacity,
-                                             size_t* bytes_read);
+                                              size_t capacity,
+                                              size_t* bytes_read);
 
 // Reads one complete line, removing its LF and an immediately preceding CR.
 // EOF before any byte is distinct from a successful final unterminated line.
@@ -354,9 +354,9 @@ int32_t flecha_runtime_v1_directory_open(void** output, const char* path,
 // Returns one entry name and its non-following type: 0 for other, 1 for a
 // regular file, 2 for a directory, and 3 for a symbolic link or Windows
 // reparse-point link. End of iteration is successful with has_entry zero.
-// output_name must point to an empty Flecha string. All outputs are reset before
-// validation. Allocation failure preserves the pending entry so a later call
-// can retry it.
+// output_name must point to an empty Flecha string. All outputs are reset
+// before validation. Allocation failure preserves the pending entry so a later
+// call can retry it.
 int32_t flecha_runtime_v1_directory_next(void* handle,
                                          FlechaRuntimeString* output_name,
                                          uint8_t* output_type,
@@ -374,6 +374,14 @@ int32_t flecha_runtime_v1_file_stream_open(void** output, const char* path,
                                            uint8_t write, uint8_t append,
                                            uint8_t truncate, uint8_t create,
                                            uint8_t create_new);
+
+// Atomically creates a private temporary file in the host temporary directory.
+// On success output_handle owns a readable and writable file stream and
+// output_path owns its absolute host path (native bytes on POSIX and UTF-8 on
+// Windows). Every failure closes and removes any partially created file and
+// resets both outputs.
+int32_t flecha_runtime_v1_temporary_file_open(void** output_handle,
+                                              FlechaRuntimeString* output_path);
 
 // Closes and destroys a handle returned by file_stream_open. The handle is
 // consumed even when the underlying close operation reports a failure.

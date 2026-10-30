@@ -1,16 +1,22 @@
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <limits>
+#include <new>
+#include <string>
+#include <system_error>
 #include <utility>
 
 #include "runtime/runtime_abi.h"
 
 #ifdef _WIN32
+#include <bcrypt.h>
 #include <fcntl.h>
 #include <io.h>
 #include <sys/stat.h>
@@ -61,6 +67,27 @@ int32_t MapOpenError(int error) {
         default:
             return FLECHA_RUNTIME_FILE_STREAM_FAILED;
     }
+}
+
+int32_t MapOpenError(const std::error_code& error) {
+    const std::error_condition condition = error.default_error_condition();
+    if (condition == std::errc::no_such_file_or_directory ||
+        condition == std::errc::not_a_directory)
+        return FLECHA_RUNTIME_FILE_STREAM_NOT_FOUND;
+    if (condition == std::errc::permission_denied ||
+        condition == std::errc::read_only_file_system)
+        return FLECHA_RUNTIME_FILE_STREAM_PERMISSION_DENIED;
+    if (condition == std::errc::file_exists)
+        return FLECHA_RUNTIME_FILE_STREAM_ALREADY_EXISTS;
+    if (condition == std::errc::invalid_argument ||
+        condition == std::errc::filename_too_long)
+        return FLECHA_RUNTIME_FILE_STREAM_INVALID_PATH;
+    if (condition == std::errc::file_too_large ||
+        condition == std::errc::value_too_large)
+        return FLECHA_RUNTIME_FILE_STREAM_TOO_LARGE;
+    if (condition == std::errc::not_enough_memory)
+        return FLECHA_RUNTIME_FILE_STREAM_OUT_OF_MEMORY;
+    return FLECHA_RUNTIME_FILE_STREAM_FAILED;
 }
 
 int32_t MapOperationError(int error) {
@@ -188,6 +215,109 @@ int CloseDescriptor(int descriptor) {
 #endif
 }
 
+void RemoveTemporaryPath(const std::filesystem::path& path) {
+    if (path.empty()) return;
+#ifdef _WIN32
+    (void)_wunlink(path.c_str());
+#else
+    (void)::unlink(path.c_str());
+#endif
+}
+
+#ifdef _WIN32
+bool RandomTemporaryName(std::wstring* output) {
+    std::array<unsigned char, 16> random{};
+    if (!BCRYPT_SUCCESS(BCryptGenRandom(nullptr, random.data(),
+                                        static_cast<ULONG>(random.size()),
+                                        BCRYPT_USE_SYSTEM_PREFERRED_RNG)))
+        return false;
+
+    constexpr wchar_t HEX[] = L"0123456789abcdef";
+    *output = L"flecha-";
+    output->reserve(7 + random.size() * 2 + 4);
+    for (const unsigned char byte : random) {
+        output->push_back(HEX[byte >> 4]);
+        output->push_back(HEX[byte & 0x0f]);
+    }
+    output->append(L".tmp");
+    return true;
+}
+#endif
+
+int CreateTemporaryDescriptor(std::filesystem::path* outputPath,
+                              int32_t* status) {
+    std::error_code pathError;
+    std::filesystem::path root =
+        std::filesystem::temp_directory_path(pathError);
+    if (pathError) {
+        *status = MapOpenError(pathError);
+        return -1;
+    }
+    if (!root.is_absolute()) {
+        root = std::filesystem::absolute(root, pathError);
+        if (pathError) {
+            *status = MapOpenError(pathError);
+            return -1;
+        }
+    }
+
+#ifdef _WIN32
+    constexpr unsigned int MAX_ATTEMPTS = 128;
+    for (unsigned int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
+        std::wstring name;
+        if (!RandomTemporaryName(&name)) {
+            *status = FLECHA_RUNTIME_FILE_STREAM_FAILED;
+            return -1;
+        }
+        const std::filesystem::path candidate = root / name;
+        errno = 0;
+        const int descriptor =
+            _wopen(candidate.c_str(),
+                   _O_BINARY | _O_NOINHERIT | _O_RDWR | _O_CREAT | _O_EXCL,
+                   _S_IREAD | _S_IWRITE);
+        if (descriptor >= 0) {
+            outputPath->swap(candidate);
+            return descriptor;
+        }
+        if (errno != EEXIST) {
+            *status = MapOpenError(errno);
+            return -1;
+        }
+    }
+    *status = FLECHA_RUNTIME_FILE_STREAM_ALREADY_EXISTS;
+    return -1;
+#else
+    std::string candidate = (root / "flecha-XXXXXX").native();
+    errno = 0;
+    const int descriptor = ::mkstemp(candidate.data());
+    if (descriptor < 0) {
+        *status = MapOpenError(errno);
+        return -1;
+    }
+
+    errno = 0;
+    const int descriptorFlags = ::fcntl(descriptor, F_GETFD);
+    if (descriptorFlags < 0 ||
+        ::fcntl(descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) < 0) {
+        const int flagError = errno;
+        (void)CloseDescriptor(descriptor);
+        (void)::unlink(candidate.c_str());
+        *status = MapOperationError(flagError);
+        return -1;
+    }
+
+    try {
+        std::filesystem::path createdPath(candidate);
+        outputPath->swap(createdPath);
+    } catch (...) {
+        (void)CloseDescriptor(descriptor);
+        (void)::unlink(candidate.c_str());
+        throw;
+    }
+    return descriptor;
+#endif
+}
+
 }  // namespace
 
 extern "C" int32_t flecha_runtime_v1_file_stream_open(
@@ -214,6 +344,54 @@ extern "C" int32_t flecha_runtime_v1_file_stream_open(
     }
     *stream = {descriptor, read != 0, write != 0};
     *output = stream;
+    return FLECHA_RUNTIME_FILE_STREAM_OK;
+}
+
+extern "C" int32_t flecha_runtime_v1_temporary_file_open(
+    void** outputHandle, FlechaRuntimeString* outputPath) {
+    if (outputHandle != nullptr) *outputHandle = nullptr;
+    if (outputPath != nullptr) *outputPath = {nullptr, 0, 0};
+    if (outputHandle == nullptr || outputPath == nullptr)
+        return FLECHA_RUNTIME_FILE_STREAM_INVALID_OPTIONS;
+
+    int descriptor = -1;
+    std::filesystem::path path;
+    int32_t status = FLECHA_RUNTIME_FILE_STREAM_OK;
+    FileStream* stream = nullptr;
+    try {
+        descriptor = CreateTemporaryDescriptor(&path, &status);
+        if (descriptor < 0) return status;
+
+        stream = static_cast<FileStream*>(std::malloc(sizeof(FileStream)));
+        if (stream == nullptr) {
+            status = FLECHA_RUNTIME_FILE_STREAM_OUT_OF_MEMORY;
+        } else {
+            *stream = {descriptor, true, true};
+            const std::u8string encodedPath = path.u8string();
+            const int32_t stringStatus =
+                flecha_runtime_v1_string_try_from_bytes(
+                    outputPath,
+                    reinterpret_cast<const uint8_t*>(encodedPath.data()),
+                    encodedPath.size());
+            if (stringStatus != FLECHA_RUNTIME_STRING_OK)
+                status = FLECHA_RUNTIME_FILE_STREAM_OUT_OF_MEMORY;
+        }
+    } catch (const std::bad_alloc&) {
+        status = FLECHA_RUNTIME_FILE_STREAM_OUT_OF_MEMORY;
+    } catch (...) {
+        status = FLECHA_RUNTIME_FILE_STREAM_FAILED;
+    }
+
+    if (status != FLECHA_RUNTIME_FILE_STREAM_OK) {
+        std::free(stream);
+        if (descriptor >= 0) (void)CloseDescriptor(descriptor);
+        RemoveTemporaryPath(path);
+        flecha_runtime_v1_string_destroy(outputPath->data);
+        *outputPath = {nullptr, 0, 0};
+        return status;
+    }
+
+    *outputHandle = stream;
     return FLECHA_RUNTIME_FILE_STREAM_OK;
 }
 
