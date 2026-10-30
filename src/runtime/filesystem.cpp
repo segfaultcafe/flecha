@@ -128,6 +128,37 @@ int32_t MapFilesystemError(const std::error_code& error) {
     return FLECHA_RUNTIME_FILESYSTEM_FAILED;
 }
 
+bool PathComponentsEqual(const std::filesystem::path& left,
+                         const std::filesystem::path& right) {
+#ifdef _WIN32
+    const std::wstring leftValue = left.native();
+    const std::wstring rightValue = right.native();
+    if (leftValue.size() > static_cast<size_t>(INT_MAX) ||
+        rightValue.size() > static_cast<size_t>(INT_MAX))
+        return false;
+    return CompareStringOrdinal(
+               leftValue.data(), static_cast<int>(leftValue.size()),
+               rightValue.data(), static_cast<int>(rightValue.size()),
+               TRUE) == CSTR_EQUAL;
+#else
+    return left == right;
+#endif
+}
+
+bool PathContains(const std::filesystem::path& parent,
+                  const std::filesystem::path& child) {
+    auto parentPart = parent.begin();
+    auto childPart = child.begin();
+    while (parentPart != parent.end()) {
+        if (childPart == child.end() ||
+            !PathComponentsEqual(*parentPart, *childPart))
+            return false;
+        ++parentPart;
+        ++childPart;
+    }
+    return true;
+}
+
 #ifdef _WIN32
 using NativePathCharacter = wchar_t;
 
@@ -384,6 +415,53 @@ extern "C" int32_t flecha_runtime_v1_path_exists(uint8_t* output,
     }
     return IsMissingError(operationError) ? FLECHA_RUNTIME_FILESYSTEM_OK
                                           : MapFilesystemError(operationError);
+}
+
+extern "C" int32_t flecha_runtime_v1_path_contains(uint8_t* output,
+                                                   const char* parent,
+                                                   size_t parentLength,
+                                                   const char* child,
+                                                   size_t childLength) {
+    if (output == nullptr) return FLECHA_RUNTIME_FILESYSTEM_INVALID_OPTIONS;
+    *output = 0;
+
+    NativePathCharacter* nativeParent = nullptr;
+    int32_t pathStatus = CopyNativePath(parent, parentLength, &nativeParent);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) return pathStatus;
+
+    NativePathCharacter* nativeChild = nullptr;
+    pathStatus = CopyNativePath(child, childLength, &nativeChild);
+    if (pathStatus != FLECHA_RUNTIME_FILESYSTEM_OK) {
+        std::free(nativeParent);
+        return pathStatus;
+    }
+
+    int32_t resultStatus = FLECHA_RUNTIME_FILESYSTEM_FAILED;
+    try {
+        std::error_code error;
+        const std::filesystem::path resolvedParent =
+            std::filesystem::canonical(nativeParent, error);
+        if (error) {
+            resultStatus = MapFilesystemError(error);
+        } else {
+            const std::filesystem::path resolvedChild =
+                std::filesystem::weakly_canonical(nativeChild, error);
+            if (error) {
+                resultStatus = MapFilesystemError(error);
+            } else {
+                *output = PathContains(resolvedParent, resolvedChild) ? 1 : 0;
+                resultStatus = FLECHA_RUNTIME_FILESYSTEM_OK;
+            }
+        }
+    } catch (const std::bad_alloc&) {
+        resultStatus = FLECHA_RUNTIME_FILESYSTEM_OUT_OF_MEMORY;
+    } catch (...) {
+        resultStatus = FLECHA_RUNTIME_FILESYSTEM_FAILED;
+    }
+
+    std::free(nativeChild);
+    std::free(nativeParent);
+    return resultStatus;
 }
 
 extern "C" int32_t flecha_runtime_v1_metadata(uint8_t* outputType,

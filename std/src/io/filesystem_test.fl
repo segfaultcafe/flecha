@@ -78,6 +78,41 @@ test path_operations_reject_invalid_paths(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
+        filesystem::create_directories("") == errors::IoError.InvalidPath,
+        "create_directories rejects an empty path"
+    );
+    asserts::is_true(
+        t,
+        filesystem::create_directories(embeddedNullPath.view()) ==
+            errors::IoError.InvalidPath,
+        "create_directories rejects an embedded null"
+    );
+    asserts::is_true(
+        t,
+        filesystem::copy_file("", "destination") ==
+            errors::IoError.InvalidPath,
+        "copy_file rejects an empty source"
+    );
+    asserts::is_true(
+        t,
+        filesystem::copy_file("source", embeddedNullPath.view()) ==
+            errors::IoError.InvalidPath,
+        "copy_file rejects an embedded null destination"
+    );
+    asserts::is_true(
+        t,
+        filesystem::copy_directory("source", "") ==
+            errors::IoError.InvalidPath,
+        "copy_directory rejects an empty destination"
+    );
+    asserts::is_true(
+        t,
+        filesystem::copy_directory(embeddedNullPath.view(), "destination") ==
+            errors::IoError.InvalidPath,
+        "copy_directory rejects an embedded null source"
+    );
+    asserts::is_true(
+        t,
         filesystem::remove_directory(embeddedNullPath.view(), false) ==
             errors::IoError.InvalidPath,
         "remove_directory rejects an embedded null"

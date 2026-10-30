@@ -3,8 +3,12 @@ module filesystem;
 @imports
     :: root::io::errors
     :: root::io::file
+    :: root::io::path
+    :: root::io::stream
     :: root::io::utils
     :: root::io::runtime;
+
+const usize COPY_BUFFER_CAPACITY = 32768;
 
 // Describes the kind and byte size of a filesystem entry.
 export structure Metadata {
@@ -156,6 +160,279 @@ export error create_directory(stringv path) {
 
         return errors::from_runtime(status, errors::IoError.CreateDirectoryFailed);
     }
+}
+
+// Creates path and every missing parent directory. Existing directories
+// succeed, while an existing non-directory reports IoError.AlreadyExists.
+export error create_directories(stringv value) {
+    if !valid_path(value) {
+        return errors::IoError.InvalidPath;
+    }
+
+    normalized, normalizeError := path::normalize(value);
+    if normalizeError != none {
+        return normalizeError;
+    }
+
+    return create_normalized_directories(normalized.view());
+}
+
+// Copies one regular file to a new destination. Existing destinations are
+// rejected. The source follows ordinary open semantics, including links.
+// A failure after creation may leave a partial destination file.
+export error copy_file(stringv source, stringv destination) {
+    if !valid_path(source) or !valid_path(destination) {
+        return errors::IoError.InvalidPath;
+    }
+
+    normalizedSource, sourcePathError := path::normalize(source);
+    if sourcePathError != none {
+        return sourcePathError;
+    }
+    normalizedDestination, destinationPathError := path::normalize(destination);
+    if destinationPathError != none {
+        return destinationPathError;
+    }
+    sourceInfo, sourceMetadataError := metadata(normalizedSource.view());
+    if sourceMetadataError != none {
+        return sourceMetadataError;
+    }
+    if sourceInfo.type != file::EntryType.File {
+        return errors::IoError.UnsupportedFileType;
+    }
+
+    storage, allocationError := new<own []u8>(COPY_BUFFER_CAPACITY);
+    if allocationError != none {
+        return allocationError;
+    }
+    return copy_regular_file(
+        normalizedSource.view(),
+        normalizedDestination.view(),
+        storage[:]
+    );
+}
+
+// Recursively copies a directory to a new destination. Existing destinations
+// are rejected. Symbolic links and unsupported entry kinds are not copied.
+// A failure may leave the newly created destination partially populated.
+export error copy_directory(stringv source, stringv destination) {
+    if !valid_path(source) or !valid_path(destination) {
+        return errors::IoError.InvalidPath;
+    }
+
+    normalizedSource, sourcePathError := path::normalize(source);
+    if sourcePathError != none {
+        return sourcePathError;
+    }
+    normalizedDestination, destinationPathError := path::normalize(destination);
+    if destinationPathError != none {
+        return destinationPathError;
+    }
+    destinationWithinSource, containmentError := resolved_path_contains(
+        normalizedSource.view(),
+        normalizedDestination.view()
+    );
+    if containmentError != none {
+        return containmentError;
+    }
+    if destinationWithinSource {
+        return errors::IoError.InvalidPath;
+    }
+
+    sourceInfo, sourceMetadataError := metadata(normalizedSource.view());
+    if sourceMetadataError != none {
+        return sourceMetadataError;
+    }
+    if sourceInfo.type != file::EntryType.Directory {
+        return errors::IoError.UnsupportedFileType;
+    }
+
+    destinationPresent, destinationExistsError := exists(
+        normalizedDestination.view()
+    );
+    if destinationExistsError != none {
+        return destinationExistsError;
+    }
+    if destinationPresent {
+        return errors::IoError.AlreadyExists;
+    }
+
+    storage, allocationError := new<own []u8>(COPY_BUFFER_CAPACITY);
+    if allocationError != none {
+        return allocationError;
+    }
+    return copy_directory_tree(
+        normalizedSource.view(),
+        normalizedDestination.view(),
+        storage[:]
+    );
+}
+
+error copy_regular_file(
+    stringv source,
+    stringv destination,
+    []u8 buffer,
+) {
+    input, inputError := file::File::open(source, file::OpenOptions::readOnly());
+    if inputError != none {
+        return inputError;
+    }
+    file::OpenOptions outputOptions = none;
+    outputOptions.write = true;
+    outputOptions.createNew = true;
+    output, outputError := file::File::open(destination, outputOptions);
+    if outputError != none {
+        return outputError;
+    }
+
+    error copyError = none;
+    {
+        reader := input.reader();
+        writer := output.writer();
+        _, copyError = stream::copy(&reader, &writer, buffer);
+    }
+    if copyError != none {
+        return copyError;
+    }
+
+    flushError := output.flush();
+    if flushError != none {
+        return flushError;
+    }
+    outputCloseError := output.close();
+    if outputCloseError != none {
+        return outputCloseError;
+    }
+    return input.close();
+}
+
+error copy_directory_tree(
+    stringv source,
+    stringv destination,
+    []u8 buffer,
+) {
+    directory, openError := file::Directory::open(source);
+    if openError != none {
+        return openError;
+    }
+    creationError := create_directory(destination);
+    if creationError != none {
+        return creationError;
+    }
+
+    while true {
+        entry, hasEntry, nextError := directory.next();
+        if nextError != none {
+            return nextError;
+        }
+        if !hasEntry {
+            break;
+        }
+
+        sourceChild, sourceJoinError := path::join(source, entry.name());
+        if sourceJoinError != none {
+            return sourceJoinError;
+        }
+        destinationChild, destinationJoinError := path::join(
+            destination,
+            entry.name()
+        );
+        if destinationJoinError != none {
+            return destinationJoinError;
+        }
+
+        if entry.kind() == file::EntryType.File {
+            childError := copy_regular_file(
+                sourceChild.view(),
+                destinationChild.view(),
+                buffer
+            );
+            if childError != none {
+                return childError;
+            }
+        } else {
+            if entry.kind() == file::EntryType.Directory {
+                childError := copy_directory_tree(
+                    sourceChild.view(),
+                    destinationChild.view(),
+                    buffer
+                );
+                if childError != none {
+                    return childError;
+                }
+            } else {
+                return errors::IoError.UnsupportedFileType;
+            }
+        }
+    }
+
+    return directory.close();
+}
+
+error create_normalized_directories(stringv value) {
+    info, metadataError := metadata(value);
+    if metadataError == none {
+        if info.type == file::EntryType.Directory {
+            return none;
+        }
+        return errors::IoError.AlreadyExists;
+    }
+    if metadataError != errors::IoError.NotFound {
+        return metadataError;
+    }
+
+    parent := path::parent(value);
+    if parent.len() > 0 and parent != value {
+        parentError := create_normalized_directories(parent);
+        if parentError != none {
+            return parentError;
+        }
+    }
+
+    creationError := create_directory(value);
+    if creationError != errors::IoError.AlreadyExists {
+        return creationError;
+    }
+
+    // Another creator may have won the race. Accept only a directory.
+    concurrentInfo, concurrentError := metadata(value);
+    if concurrentError != none {
+        return concurrentError;
+    }
+    if concurrentInfo.type != file::EntryType.Directory {
+        return errors::IoError.AlreadyExists;
+    }
+    return none;
+}
+
+(bool, error) resolved_path_contains(stringv parent, stringv child) {
+    u8 contained = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_path_contains(
+            &raw contained,
+            parent.data(),
+            parent.len().cast<usize>,
+            child.data(),
+            child.len().cast<usize>
+        );
+        err := errors::from_runtime(status, errors::IoError.MetadataFailed);
+        if err != none {
+            return (false, err);
+        }
+    }
+    return (contained != 0, none);
+}
+
+bool valid_path(stringv value) {
+    if value.len() == 0 {
+        return false;
+    }
+    loop u32 index = 0; index < value.len(); index++ {
+        if value[index].cast<char> == '\0' {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Removes an empty directory. Force recursively removes its tree and treats a

@@ -68,6 +68,40 @@ when a parent component is missing.
 followed. Regular file sizes are reported in bytes; directories and other entry
 types have size zero. A missing path reports `NotFound`.
 
+`create_directories` creates every missing component of a path. It succeeds
+when the final path is already a directory and reports `AlreadyExists` when an
+existing component is not a directory. The path is lexically normalized before
+the first mutation, so normalization allocation failure creates nothing.
+Failure during creation may leave successfully created parent directories in
+place. As with `metadata`, an existing symbolic link to a directory is followed.
+
+`copy_file(source, destination)` copies the bytes of one regular file to a new
+destination. It never replaces an existing entry; that case reports
+`AlreadyExists`. The source follows ordinary open semantics, including a
+symbolic link to a regular file. One 32 KiB byte buffer is allocated in Flecha
+before destination creation, then `stream::copy` handles partial reads and
+writes without dropping, duplicating, or reordering bytes. The destination is
+explicitly flushed and both files are closed. An allocation failure creates no
+destination, while a later read, write, flush, or close failure may leave a
+partial destination file.
+
+`copy_directory(source, destination)` recursively copies a directory into a
+new destination whose parent must already exist. The root source follows a
+symbolic link to a directory, but symbolic links and unsupported entry kinds
+encountered inside the tree report `UnsupportedFileType` rather than being
+followed or recreated. Empty directories and empty files are preserved.
+Existing destinations report `AlreadyExists`. File permissions, timestamps,
+link identity, and other metadata are not copied.
+
+Directory copying allocates one shared 32 KiB Flecha buffer before creating the
+destination. Entry-name and joined-path allocations can still fail later, and
+any error may leave a partially populated destination for the caller to inspect
+or remove. Before creation, a narrow runtime query resolves existing path
+components and rejects a destination equal to or below the source, including a
+path reached through a symbolic-link alias. Like ordinary filesystem APIs, this
+check is not a synchronization primitive: callers must not concurrently replace
+path components or move the source while copying.
+
 `remove_directory(path, false)` removes an empty directory and reports
 `DirectoryNotEmpty` when it still contains entries. Passing `true` recursively
 removes the directory tree and treats an already-missing path as success. A
