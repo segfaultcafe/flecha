@@ -14,7 +14,7 @@
 #include <bcrypt.h>
 // clang-format on
 #elif defined(__APPLE__)
-#include <unistd.h>
+#include <sys/random.h>
 #elif defined(__linux__)
 #include <sys/random.h>
 #include <sys/types.h>
