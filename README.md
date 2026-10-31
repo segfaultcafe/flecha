@@ -320,8 +320,11 @@ Makefile                Convenient build, test, and example targets
 - [`docs/bytes.md`](docs/bytes.md) — raw byte storage and sequence operations
 - [`docs/encoding.md`](docs/encoding.md) — binary and hexadecimal encoding
 - [`docs/hashing.md`](docs/hashing.md) — structural non-cryptographic hashing
+- [`docs/generics.md`](docs/generics.md) — generic specialization and direct-call inference
 - [`docs/os.md`](docs/os.md) — command-line arguments and environment variables
 - [`docs/path.md`](docs/path.md) — lexical POSIX and Windows path operations
+- [`docs/time.md`](docs/time.md) — durations, clocks, timestamps, and blocking sleep
+- [`docs/random.md`](docs/random.md) — secure host randomness and deterministic generation
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation
 - [`docs/enums.md`](docs/enums.md) — nominal enums, defaults, discriminants, and member functions
 - [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting setup

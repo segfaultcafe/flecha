@@ -296,6 +296,17 @@ seconds and nanoseconds, never host ticks or clock identifiers. Blocking sleep
 retries host interruptions, rejects durations outside the native wait range,
 and never reports a shortened wait as success.
 
+The randomness portion follows the contracts in [`random.md`](random.md).
+`std::random::secure::fill` obtains complete caller-owned byte ranges directly
+from the host cryptographically secure source without allocation or a userspace
+fallback. `std::random::generator::Generator` provides reproducible xoshiro256**
+streams with stable seeded vectors, unbiased integer ranges, unit-interval
+floating-point values, booleans, deterministic byte filling, and Fisher-Yates
+shuffling. Secure-source errors and invalid ranges remain distinct, and a
+generator seeded securely is still explicitly non-cryptographic. Native,
+Flecha, deterministic failure-injection, full-suite, and cross-platform tests
+form the randomness gate.
+
 The buffered-I/O portion of Stage 5 is implemented in Flecha over the existing
 stream adapters. Buffered readers preserve read-ahead bytes and defer a partial
 read error until its final buffered byte. Buffered writers require explicit
@@ -373,8 +384,9 @@ prepares complete native copies before mutation, while `remove` is idempotent.
 Invalid names and values, permission failures, allocation failures, and generic
 read or write failures remain distinct. POSIX preserves bytes and Windows uses
 UTF-8 conversion through its wide-character environment API. Process-wide
-mutation requires external synchronization. Child-process control remains a
-separate Stage 5 task.
+mutation requires external synchronization. Secure randomness and deterministic
+generation are implemented. Child-process control remains the final separate
+Stage 5 operating-system task.
 
 The lexical-path portion is implemented in `std::io::path`. Joining and
 normalization allocate owned results and expose allocation failure; filename,

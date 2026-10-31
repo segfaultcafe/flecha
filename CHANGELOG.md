@@ -4,6 +4,13 @@
 
 ### Added
 
+- Direct generic method calls can infer omitted type arguments from supplied
+  arguments and expected results, including known tuple-destructuring
+  destinations, with the same rules across exported, quiver, internal, and
+  private declarations.
+- Added `std::random::secure` for allocation-free operating-system secure bytes
+  and `std::random::generator::Generator` for reproducible integers, unbiased
+  ranges, unit floats, booleans, byte streams, and shuffling.
 - Added `std::time::duration` and `std::time::clock` with checked normalized
   durations, opaque monotonic instants, Unix wall-clock timestamps, and
   interruption-safe blocking sleep over a versioned native time ABI.
