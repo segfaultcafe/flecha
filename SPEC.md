@@ -1190,13 +1190,15 @@ parameters and arguments:
 callable specializations remain structural. All specializations are checked on
 use.
 
-Direct free-function calls may omit their type arguments when every parameter
-can be inferred uniquely from supplied call arguments and, when present, the
-explicit type of a variable initializer or the declared result type of the
-enclosing function. These sources must agree. Omitted default arguments and
-inferred destinations provide no evidence. Calls with missing or conflicting
-inference require explicit type arguments. Generic types, callable aliases,
-generic function values, and generic methods remain explicit.
+Direct function and method calls may omit their type arguments when every
+parameter can be inferred uniquely from supplied call arguments and, when
+present, an expected result type. Expected results include explicitly typed
+initializers, declared function results, and known destinations in tuple
+destructuring; unknown destructuring destinations provide no evidence. These
+sources must agree. Omitted default arguments and inferred destinations provide
+no evidence. Calls with missing or conflicting inference require explicit type
+arguments. Generic types, callable aliases, and generic function values remain
+explicit. Declaration visibility does not change call inference.
 References remain valid function parameters and cannot be stored in structure
 fields. Existing ownership, const, visibility, and lifecycle rules apply.
 See [generics](docs/generics.md) for the implemented rules and limits.

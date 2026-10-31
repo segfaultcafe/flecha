@@ -3,8 +3,8 @@
 Flecha implements compile-time specialization of functions, structures, and
 callable signatures. Type parameters are ordinary identifiers declared between
 `<` and `>`; `T` is not a keyword or a wildcard type. Generic types and callable
-aliases use explicit concrete type arguments. Free-function calls may infer them
-from arguments or an explicit expected result type.
+aliases use explicit concrete type arguments. Direct function and method calls
+may infer them from arguments or an expected result type.
 
 ```flecha
 T identity<T>(T value) { return value; }
@@ -26,15 +26,25 @@ i32 main() {
 
 Explicit specialization works both at a call (`identity<i32>(42)`) and when a
 generic function is retained as a callable value (`mapper = identity<i32>`).
-At a direct free-function call, type arguments may be omitted when every type
-parameter has one consistent inference:
+At a direct function or method call, type arguments may be omitted when every
+type parameter has one consistent inference:
 
 ```flecha
 T identity<T>(T value) { return value; }
 T parse<T>(stringv value) { return none; }
 
+structure Generator {};
+T Generator::integer<T: integer>(&self) { return none; }
+(T, error) Generator::integerIn<T: integer>(&self, T low, T high) {
+    return (low, none);
+}
+
 i32 copied = identity(42);       // T is i32 from the argument.
 i32 parsed = parse("42");        // T is i32 from the declared result type.
+generator := Generator::init();
+i32 generated = generator.integer();
+i32 bounded;
+bounded, err := generator.integerIn(8, 32);
 ```
 
 Supplied arguments and an available expected result type are combined. If they
@@ -44,15 +54,18 @@ An inferred declaration such as `value := parse("42")` has no expected result
 type and therefore cannot infer `T`. Numeric and floating literals use their
 ordinary default types, `i32` and `f64`, when they are the evidence.
 
-Inference applies only to direct free-function calls. Generic function values,
-generic types, callable aliases, and generic methods keep explicit arguments.
-Type-set constraints are checked after inference exactly as for an explicit
-specialization.
+Known tuple-destructuring destinations contribute their corresponding expected
+result elements. New inferred destinations and `_` provide no evidence. Export,
+quiver, module-private, and private-member visibility affect lookup and access,
+not inference. Generic function values, generic types, and callable aliases keep
+explicit arguments. Type-set constraints are checked after inference exactly as
+for an explicit specialization.
 
 A method repeats its owner's parameter names in the same order. It may declare
-additional parameters: `U Box<T>::convert<U>(&const self)`. Such a method is called
-as `box.convert<i32>()`. Lifecycle methods cannot add type parameters of their
-own. Method declarations remain outside the structure body.
+additional parameters: `U Box<T>::convert<U>(&const self)`. Calls may use
+`box.convert<i32>()` explicitly or omit `<i32>` when arguments or the expected
+result determine `U`. Lifecycle methods cannot add type parameters of their own.
+Method declarations remain outside the structure body.
 
 ## Callable signatures
 
@@ -110,8 +123,8 @@ constraint](type_sets.md), such as `T: integer`. The constraint is checked
 before specialization, and ordinary body checking still follows. Type sets
 restrict identity; they do not grant operations or provide dynamic dispatch.
 Instantiating a structure also checks its ordinary methods. Methods with
-additional type parameters are checked when explicitly instantiated on their
-actual receiver.
+additional type parameters are checked when explicitly or inferentially
+instantiated on their actual receiver.
 
 Export and import rules match ordinary declarations. A specialization resolves
 helpers in the defining module, while argument types retain their identity from
