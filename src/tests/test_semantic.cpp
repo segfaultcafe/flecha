@@ -6943,6 +6943,88 @@ TEST(SemanticGenericTests, InfersFreeFunctionArgumentsFromCallsAndResults) {
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticGenericTests,
+     InfersGenericMethodsFromArgumentsAndExpectedResults) {
+    auto result = Analyze(R"(
+        export structure PublicBox<T> { T value; };
+        U PublicBox<T>::identity<U>(&const self, U value) { return value; }
+        U PublicBox<T>::parse<U>(&const self) { return none; }
+        (U, error) PublicBox<T>::parse_pair<U>(&const self) {
+            return (none, none);
+        }
+        private U PublicBox<T>::hidden<U>(&const self, U value) {
+            return value;
+        }
+        U PublicBox<T>::through_hidden<U>(&const self, U value) {
+            return self->hidden(value);
+        }
+
+        quiver structure SharedBox { i32 value; };
+        U SharedBox::identity<U>(&const self, U value) { return value; }
+
+        structure InternalBox { i32 value; };
+        U InternalBox::identity<U>(&const self, U value) { return value; }
+        U InternalBox::static_identity<U>(U value) { return value; }
+
+        export T exported_identity<T>(T value) { return value; }
+        quiver T shared_identity<T>(T value) { return value; }
+        T internal_identity<T>(T value) { return value; }
+
+        i32 main() {
+            publicBox := PublicBox<i64>::init();
+            sharedBox := SharedBox::init();
+            internalBox := InternalBox::init();
+            i16 small = 7;
+            i16 fromArgument = publicBox.identity(small);
+            i32 secondSpecialization = publicBox.identity(42);
+            i64 fromResult = publicBox.parse();
+            i32 paired;
+            paired, pairError := publicBox.parse_pair();
+            i32 hidden = publicBox.through_hidden(42);
+            i32 shared = sharedBox.identity(42);
+            i32 internal = internalBox.identity(42);
+            i32 staticValue = InternalBox::static_identity(42);
+            return fromArgument.cast<i32> + secondSpecialization +
+                fromResult.cast<i32> + paired + hidden + shared + internal +
+                staticValue + exported_identity(1) + shared_identity(1) +
+                internal_identity(1);
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests, DiagnosesMissingAndConflictingMethodInference) {
+    auto missing = Analyze(R"(
+        structure Box {};
+        T Box::make<T>() { return none; }
+        void main() { Box::make(); }
+    )");
+    const auto* missingDiagnostic =
+        FindDiagnostic(missing, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(missingDiagnostic, nullptr);
+    EXPECT_NE(missingDiagnostic->message.find(
+                  "cannot infer type argument 'T' for generic method 'make'"),
+              std::string::npos);
+
+    auto conflicting = Analyze(R"(
+        structure Box {};
+        T Box::choose<T>(&const self, T value) { return value; }
+        void main() {
+            box := Box::init();
+            i16 small = 1;
+            i32 result = box.choose(small);
+        }
+    )");
+    const auto* conflictDiagnostic =
+        FindDiagnostic(conflicting, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(conflictDiagnostic, nullptr);
+    EXPECT_NE(conflictDiagnostic->message.find(
+                  "conflicting inferred type arguments for 'T'"),
+              std::string::npos);
+}
+
 TEST(SemanticGenericTests, DiagnosesMissingAndConflictingCallInference) {
     auto missing = Analyze(R"(
         T parse<T>(stringv value) { return none; }

@@ -108,6 +108,37 @@ perform no allocation, transfer no ownership, and are safe for concurrent use.
 The complete public value and error contracts are specified in
 [`time.md`](time.md).
 
+## Randomness
+
+The version 1 randomness ABI fills caller-owned storage directly from the
+host's cryptographically secure random source:
+
+```c
+typedef enum FlechaRuntimeRandomStatus {
+    FLECHA_RUNTIME_RANDOM_OK = 0,
+    FLECHA_RUNTIME_RANDOM_UNAVAILABLE = 1,
+    FLECHA_RUNTIME_RANDOM_FAILED = 2,
+} FlechaRuntimeRandomStatus;
+
+int32_t flecha_runtime_v1_secure_random_fill(uint8_t* destination,
+                                             size_t length);
+```
+
+A zero length succeeds even when `destination` is null. A nonzero length
+requires non-null storage. Success means the complete destination was filled;
+failure may leave any prefix modified, and callers must discard all destination
+contents. The operation allocates no memory, transfers no ownership, maintains
+no userspace state, and is safe for concurrent calls. It may block while the
+host initializes its entropy source.
+
+Linux uses blocking `getrandom` semantics with flags zero, retrying `EINTR` and
+continuing after short reads. macOS uses interruption-safe `getentropy` calls in
+chunks of at most 256 bytes. Windows uses `BCryptGenRandom` with
+`BCRYPT_USE_SYSTEM_PREFERRED_RNG` and chunks lengths to `ULONG`. Unsupported
+host APIs map to status `1`; other host failures map to status `2`. No platform
+error code or deterministic fallback crosses the ABI. The safe standard-library
+contract and deterministic generator are specified in [`random.md`](random.md).
+
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the
 archive configured with the compiler. A missing archive or linker failure is

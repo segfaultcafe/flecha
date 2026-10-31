@@ -319,8 +319,8 @@ symbols link from an installed or relocated release package. Sleep tests use a
 generous upper timeout only to detect hangs; scheduler delay is not a contract
 failure.
 
-After this gate, the remaining Stage 5 operating-system work proceeds with
-secure randomness followed by child-process creation, exit status, and pipes.
-Blocking networking depends on these Stage 5 foundations; hashing and security,
-expanded testing infrastructure, and the Stage 9 hardening gate follow in the
-milestone sequence.
+Secure randomness and deterministic generation now follow this gate through
+the contracts in [`random.md`](random.md). Child-process creation, exit status,
+and pipes remain the final Stage 5 operating-system work. Blocking networking
+depends on these foundations; hashing and security, expanded testing
+infrastructure, and the Stage 9 hardening gate follow in the milestone sequence.

@@ -1252,6 +1252,44 @@ TEST_F(ModuleTests, QuiverGenericDeclarationsRespectInstantiationBoundary) {
               std::string::npos);
 }
 
+TEST_F(ModuleTests, GenericMethodInferencePreservesVisibilityBoundaries) {
+    Write("api.fl", R"(module api;
+        export structure PublicBox {};
+        U PublicBox::identity<U>(&const self, U value) { return value; }
+        U PublicBox::parse<U>(&const self) { return none; }
+        private U PublicBox::hidden<U>(&const self, U value) { return value; }
+        U PublicBox::through_hidden<U>(&const self, U value) {
+            return self->hidden(value);
+        }
+
+        quiver structure SharedBox {};
+        U SharedBox::identity<U>(&const self, U value) { return value; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::api;
+        i32 main() {
+            publicBox := api::PublicBox::init();
+            sharedBox := api::SharedBox::init();
+            i16 small = 7;
+            i16 argument = publicBox.identity(small);
+            i32 expected = publicBox.parse();
+            i32 privateResult = publicBox.through_hidden(42);
+            i32 shared = sharedBox.identity(42);
+            return argument.cast<i32> + expected + privateResult + shared;
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("nested/main.fl", R"(module main; @imports :: root::api;
+        i32 main() {
+            box := api::SharedBox::init();
+            return box.identity(42);
+        }
+    )");
+    const std::string errors = CheckAt("nested/main.fl");
+    EXPECT_NE(errors.find("unknown method 'init'"), std::string::npos)
+        << errors;
+}
+
 TEST_F(ModuleTests, RejectsVisibilityModifiersOnMemberFunctions) {
     Write("main.fl", R"(module main;
         quiver structure Box { i32 value; };

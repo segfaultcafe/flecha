@@ -120,6 +120,12 @@ typedef enum FlechaRuntimePathStyle {
     FLECHA_RUNTIME_PATH_STYLE_WINDOWS = 1,
 } FlechaRuntimePathStyle;
 
+typedef enum FlechaRuntimeRandomStatus {
+    FLECHA_RUNTIME_RANDOM_OK = 0,
+    FLECHA_RUNTIME_RANDOM_UNAVAILABLE = 1,
+    FLECHA_RUNTIME_RANDOM_FAILED = 2,
+} FlechaRuntimeRandomStatus;
+
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.
@@ -146,6 +152,12 @@ size_t flecha_runtime_v1_process_argument_count(void);
 // output pointer, every failure leaves the output empty.
 int32_t flecha_runtime_v1_process_argument_capture(FlechaRuntimeString* output,
                                                    size_t index);
+
+// Fills the complete destination from the host cryptographically secure random
+// source. A null destination is valid only when length is zero. On failure,
+// any prefix may already have been overwritten and must not be used.
+int32_t flecha_runtime_v1_secure_random_fill(uint8_t* destination,
+                                             size_t length);
 
 // Copies the current value into an empty owning Flecha string. A successful
 // missing lookup sets present to zero; a successful empty value sets present

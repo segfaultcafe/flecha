@@ -28,6 +28,9 @@ module std;
     :: root::os::arguments
     :: root::os::environment
     :: root::os::errors as os_errors
+    :: root::random::generator
+    :: root::random::secure
+    :: root::random::errors as random_errors
     :: root::time::duration
     :: root::time::clock
     :: root::time::errors as time_errors

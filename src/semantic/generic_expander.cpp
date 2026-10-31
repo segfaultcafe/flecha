@@ -1172,6 +1172,13 @@ class Expander {
         std::string module;
         int extraPointers = 0;
     };
+    TypeView LocalType(const std::string& name) const {
+        for (auto scope = localTypes.rbegin(); scope != localTypes.rend();
+             ++scope)
+            if (const auto found = scope->find(name); found != scope->end())
+                return found->second;
+        return {};
+    }
     TypeView Element(TypeView value) {
         if (value.extraPointers > 0) {
             --value.extraPointers;
@@ -1423,6 +1430,11 @@ class Expander {
                            const FunctionDeclaration& origin,
                            std::map<std::string, Tokens>& inferred,
                            std::string& conflict) {
+        // Partial expected tuples use void elements for destinations whose
+        // type is not known yet. They provide no inference evidence.
+        if (actual.TypeForm() == TypeKind::Primitive &&
+            actual.Type() == PrimitiveType::Void)
+            return true;
         if (pattern.TypeForm() == TypeKind::Named &&
             pattern.typeArguments.empty() &&
             IsGenericParameter(origin, pattern.Name())) {
@@ -1504,6 +1516,57 @@ class Expander {
         }
         return false;
     }
+    bool InferCallArguments(
+        const FunctionDeclaration& origin,
+        const std::vector<std::unique_ptr<Expression>>& supplied,
+        std::size_t parameterOffset, const Expression& call,
+        const std::string& declarationKind, Arguments& arguments) {
+        std::map<std::string, Tokens> inferred;
+        std::string conflict;
+        const std::size_t parameterCount =
+            origin.Parameters().size() > parameterOffset
+                ? origin.Parameters().size() - parameterOffset
+                : 0;
+        const std::size_t count = std::min(supplied.size(), parameterCount);
+        for (std::size_t index = 0; index < count; ++index) {
+            const TypeNode& pattern =
+                origin.Parameters()[index + parameterOffset]->Type();
+            if (!ContainsGenericParameter(pattern, origin)) continue;
+            auto actual = CopyView(ExpressionType(*supplied[index]),
+                                   supplied[index]->Range());
+            if (!actual) continue;
+            InferTypeArgument(pattern, *actual, origin, inferred, conflict);
+            if (!conflict.empty()) break;
+        }
+        if (conflict.empty()) {
+            const auto expected = contextualTypes.find(&call);
+            if (expected != contextualTypes.end() &&
+                ContainsGenericParameter(origin.ReturnType(), origin)) {
+                auto actual = CopyView(expected->second, call.Range());
+                if (actual)
+                    InferTypeArgument(origin.ReturnType(), *actual, origin,
+                                      inferred, conflict);
+            }
+        }
+        if (!conflict.empty()) {
+            Error(call.Range(), "conflicting inferred type arguments for '" +
+                                    conflict + "' in call to '" +
+                                    origin.Name() + "'");
+            return false;
+        }
+        for (const auto& parameter : origin.genericParameters) {
+            const auto found = inferred.find(parameter);
+            if (found == inferred.end()) {
+                Error(call.Range(), "cannot infer type argument '" + parameter +
+                                        "' for generic " + declarationKind +
+                                        " '" + origin.Name() +
+                                        "'; specify it explicitly");
+                return false;
+            }
+            arguments.push_back(found->second);
+        }
+        return true;
+    }
     void PrepareCallInference(CallExpression& call) {
         if (call.Callee().Kind() != AstNodeKind::NameExpression) return;
         auto& callee = const_cast<NameExpression&>(
@@ -1527,47 +1590,10 @@ class Expander {
         const auto request = inferredCalls.find(&callee);
         if (request == inferredCalls.end()) return;
         const auto& origin = *request->second;
-        std::map<std::string, Tokens> inferred;
-        std::string conflict;
-        const std::size_t count =
-            std::min(call.Arguments().size(), origin.Parameters().size());
-        for (std::size_t index = 0; index < count; ++index) {
-            const TypeNode& pattern = origin.Parameters()[index]->Type();
-            if (!ContainsGenericParameter(pattern, origin)) continue;
-            auto actual = CopyView(ExpressionType(*call.Arguments()[index]),
-                                   call.Arguments()[index]->Range());
-            if (!actual) continue;
-            InferTypeArgument(pattern, *actual, origin, inferred, conflict);
-            if (!conflict.empty()) break;
-        }
-        if (conflict.empty()) {
-            const auto expected = contextualTypes.find(&call);
-            if (expected != contextualTypes.end() &&
-                ContainsGenericParameter(origin.ReturnType(), origin)) {
-                auto actual = CopyView(expected->second, call.Range());
-                if (actual)
-                    InferTypeArgument(origin.ReturnType(), *actual, origin,
-                                      inferred, conflict);
-            }
-        }
-        if (!conflict.empty()) {
-            Error(call.Range(), "conflicting inferred type arguments for '" +
-                                    conflict + "' in call to '" +
-                                    origin.Name() + "'");
-            return;
-        }
         Arguments arguments;
-        for (const auto& parameter : origin.genericParameters) {
-            const auto found = inferred.find(parameter);
-            if (found == inferred.end()) {
-                Error(call.Range(), "cannot infer type argument '" + parameter +
-                                        "' for generic function '" +
-                                        origin.Name() +
-                                        "'; specify it explicitly");
-                return;
-            }
-            arguments.push_back(found->second);
-        }
+        if (!InferCallArguments(origin, call.Arguments(), 0, call, "function",
+                                arguments))
+            return;
         if (auto* concrete = Instantiate(origin, arguments, call.Range()))
             callee.Rename(Alias(*concrete));
     }
@@ -1605,12 +1631,7 @@ class Expander {
             case AstNodeKind::NameExpression: {
                 const auto& name =
                     static_cast<const NameExpression&>(expression).Name();
-                for (auto scope = localTypes.rbegin();
-                     scope != localTypes.rend(); ++scope)
-                    if (const auto found = scope->find(name);
-                        found != scope->end())
-                        return found->second;
-                return {};
+                return LocalType(name);
             }
             case AstNodeKind::ArrayExpression:
             case AstNodeKind::TupleExpression: {
@@ -1809,6 +1830,31 @@ class Expander {
                       "a local value cannot be a generic type argument");
         });
     }
+    void PrepareDestructureContext(DestructureStatement& destructure) {
+        std::vector<std::unique_ptr<TypeNode>> elements;
+        bool hasEvidence = false;
+        for (const auto& binding : destructure.Bindings()) {
+            std::unique_ptr<TypeNode> type;
+            if (binding->ExplicitType()) {
+                type = CopyType(*binding->ExplicitType());
+            } else if (binding->Name() != "_") {
+                type = CopyView(LocalType(binding->Name()), binding->Range());
+            }
+            if (type)
+                hasEvidence = true;
+            else
+                type = std::make_unique<TypeNode>(binding->Range(),
+                                                  PrimitiveType::Void);
+            elements.push_back(std::move(type));
+        }
+        if (!hasEvidence) return;
+        contextualTypeStorage[&destructure.Value()] =
+            std::make_unique<TypeNode>(destructure.Value().Range(),
+                                       std::move(elements));
+        contextualTypes[&destructure.Value()] = {
+            contextualTypeStorage[&destructure.Value()].get(),
+            current->moduleId};
+    }
     void Rewrite(AstNode& node, bool enter) {
         if (failedBudget) return;
         if (node.Kind() == AstNodeKind::FunctionDeclaration) {
@@ -1834,6 +1880,8 @@ class Expander {
                     &functionContexts.back()->ReturnType(),
                     functionContexts.back()->moduleId};
         }
+        if (enter && node.Kind() == AstNodeKind::DestructureStatement)
+            PrepareDestructureContext(static_cast<DestructureStatement&>(node));
         if (enter && node.Kind() == AstNodeKind::ParenthesizedExpression) {
             const auto& parenthesized =
                 static_cast<const ParenthesizedExpression&>(node);
@@ -1968,11 +2016,6 @@ class Expander {
         const bool explicitArguments = !call.typeArguments.empty();
         for (const auto& argument : call.typeArguments)
             CheckTypeNames(*argument);
-        const auto arguments =
-            explicitArguments
-                ? ResolveArguments(call.typeArguments, current->moduleId)
-                : Arguments{};
-        const auto key = call.Member() + Key(arguments);
         const auto* owner = Receiver(call);
         if (!owner) {
             if (explicitArguments)
@@ -1984,20 +2027,48 @@ class Expander {
         if (!explicitArguments &&
             concreteMethods.contains({owner, call.Member()}))
             return;
+        const Instance* receiverInstance = nullptr;
+        for (const auto& instance : instances)
+            if (instance.concrete == owner) {
+                receiverInstance = &instance;
+                break;
+            }
+        const FunctionDeclaration* origin = nullptr;
+        if (receiverInstance)
+            for (const auto* method : genericMethods[receiverInstance->origin])
+                if (method->Name() == call.Member()) {
+                    origin = method;
+                    break;
+                }
+        Arguments arguments =
+            explicitArguments
+                ? ResolveArguments(call.typeArguments, current->moduleId)
+                : Arguments{};
+        if (!explicitArguments && origin &&
+            !origin->genericParameters.empty()) {
+            const std::size_t parameterOffset =
+                !origin->Parameters().empty() &&
+                        origin->Parameters().front()->Name() == "self"
+                    ? 1
+                    : 0;
+            if (!InferCallArguments(*origin, call.Arguments(), parameterOffset,
+                                    call, "method", arguments))
+                return;
+        }
+        const auto key = call.Member() + Key(arguments);
+        const bool specialized = explicitArguments || !arguments.empty();
         if (!requestNames.contains(key))
             requestNames[key] =
-                explicitArguments
+                specialized
                     ? "$generic_method" + std::to_string(requestNames.size())
                     : call.Member();
         const MethodRequest request{call.Member(), requestNames[key], arguments,
                                     call.Range()};
         bool found = false;
-        for (const auto& instance : instances)
-            if (instance.concrete == owner) {
-                MaterializeMethod(instance, request);
-                found = concreteMethods.contains({owner, request.concreteName});
-                break;
-            }
+        if (receiverInstance) {
+            MaterializeMethod(*receiverInstance, request);
+            found = concreteMethods.contains({owner, request.concreteName});
+        }
         if (!found && explicitArguments)
             Error(call.Range(),
                   "unknown generic method or wrong type argument count for '" +
@@ -2029,6 +2100,8 @@ class Expander {
         concreteMethods;
     std::map<const Declaration*, std::unique_ptr<TypeNode>> ownerTypes;
     std::map<const Expression*, std::unique_ptr<TypeNode>> expressionTypes;
+    std::map<const Expression*, std::unique_ptr<TypeNode>>
+        contextualTypeStorage;
     std::map<const NameExpression*, const FunctionDeclaration*> inferredCalls;
     std::map<const Expression*, TypeView> contextualTypes;
     std::vector<const FunctionDeclaration*> functionContexts;
