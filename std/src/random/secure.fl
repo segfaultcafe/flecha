@@ -1,0 +1,21 @@
+module secure;
+
+@imports
+    :: root::random::errors
+    :: root::random::runtime;
+
+// Fills destination with bytes from the operating system's cryptographically
+// secure random source. The operation may block while the host initializes its
+// entropy source. An empty destination succeeds. On failure, destination may
+// be partially modified and its contents must not be used. The operation does
+// not allocate and does not fall back to a userspace generator.
+export errors::RandomError fill([]u8 destination) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_secure_random_fill(
+            destination.data(),
+            destination.len().cast<usize>
+        );
+
+        return errors::from_runtime(status);
+    }
+}

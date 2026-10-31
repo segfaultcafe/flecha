@@ -1,0 +1,193 @@
+module generator;
+
+@imports
+    :: root::math::bits
+    :: root::random::errors
+    :: root::random::secure;
+
+const u64 SPLIT_MIX_INCREMENT = 11400714819323198485;
+const u64 SPLIT_MIX_FACTOR_ONE = 13787848793156543929;
+const u64 SPLIT_MIX_FACTOR_TWO = 10723151780598845931;
+const u64 SIGN_BIT = 9223372036854775808;
+
+// Generates a deterministic sequence using xoshiro256**. Generator is not
+// suitable for cryptographic keys, nonces, salts, or other secrets.
+export structure Generator {
+    private {
+        u64 state0;
+        u64 state1;
+        u64 state2;
+        u64 state3;
+    }
+};
+
+// Creates a reproducible generator from seed.
+Generator Generator::fromSeed(u64 seed) {
+    u64 state = seed;
+    const u64 STATE_ZERO = split_mix(&state);
+    const u64 STATE_ONE = split_mix(&state);
+    const u64 STATE_TWO = split_mix(&state);
+    const u64 STATE_THREE = split_mix(&state);
+
+    return build Generator {
+        self.state0 = STATE_ZERO;
+        self.state1 = STATE_ONE;
+        self.state2 = STATE_TWO;
+        self.state3 = STATE_THREE;
+    };
+}
+
+// Creates a generator from 256 bits supplied by the secure host source. The
+// resulting generator remains unsuitable for cryptographic use.
+(Generator, errors::RandomError) Generator::fromSecure() {
+    [32]u8 bytes = none;
+    fillError := secure::fill(bytes[:]);
+    if fillError != none {
+        return (none, fillError);
+    }
+
+    Generator result = build Generator {
+        self.state0 = little_word(bytes[:], 0);
+        self.state1 = little_word(bytes[:], 8);
+        self.state2 = little_word(bytes[:], 16);
+        self.state3 = little_word(bytes[:], 24);
+    };
+
+    if (
+        result.state0 | result.state1 | result.state2 | result.state3
+    ) == 0 {
+        result.state0 = SPLIT_MIX_INCREMENT;
+    }
+
+    return (result, none);
+}
+
+// Generates uniformly across every representable value of T.
+T Generator::integer<T: integer>(&self) {
+    return self->drawBits().cast<T>;
+}
+
+// Generates uniformly in the half-open interval [lower, upper). An invalid
+// interval returns InvalidRange without advancing the generator.
+(T, errors::RandomError) Generator::integerIn<T: integer>(
+    &self,
+    T lower,
+    T upper
+) {
+    if lower >= upper {
+        return (none, errors::RandomError.InvalidRange);
+    }
+
+    const u64 LOWER = ordered_integer<T>(lower);
+    const u64 UPPER = ordered_integer<T>(upper);
+    const u64 OFFSET = self->drawBelow(UPPER - LOWER);
+    return (integer_from_ordered<T>(LOWER + OFFSET), none);
+}
+
+// Generates a uniformly distributed floating-point value in [0, 1).
+T Generator::float<T: floating_point>(&self) {
+    if T.isof<f32> {
+        const u64 VALUE = self->drawBits() >> 40;
+        const f32 DENOMINATOR = 16777216.cast<f32>;
+        return (VALUE.cast<f32> / DENOMINATOR).cast<T>;
+    }
+
+    const u64 VALUE = self->drawBits() >> 11;
+    const f64 DENOMINATOR = 9007199254740992.0;
+    return (VALUE.cast<f64> / DENOMINATOR).cast<T>;
+}
+
+// Generates false or true with equal probability.
+bool Generator::boolean(&self) {
+    return (self->drawBits() & 1) != 0;
+}
+
+// Fills destination deterministically, least-significant byte first within
+// each generated word. An empty destination does not advance the generator.
+void Generator::fill(&self, []u8 destination) {
+    usize index = 0;
+    while index < destination.len() {
+        u64 word = self->drawBits();
+        usize byte = 0;
+
+        while byte < 8 and index < destination.len() {
+            destination[index] = (word & 255).cast<u8>;
+            word = word >> 8;
+            index++;
+            byte++;
+        }
+    }
+}
+
+// Randomly permutes copyable elements using unbiased Fisher-Yates sampling.
+// Empty and single-element slices do not advance the generator.
+void Generator::shuffle<T>(&self, []T values) {
+    usize remaining = values.len();
+    while remaining > 1 {
+        const usize INDEX =
+            self->drawBelow(remaining.cast<u64>).cast<usize>;
+        remaining--;
+
+        T temporary = values[remaining];
+        values[remaining] = values[INDEX];
+        values[INDEX] = temporary;
+    }
+}
+
+private u64 Generator::drawBits(&self) {
+    const u64 RESULT = bits::rotate_left<u64>(self->state1 * 5, 7) * 9;
+    const u64 SHIFTED = self->state1 << 17;
+
+    self->state2 = self->state2 ^ self->state0;
+    self->state3 = self->state3 ^ self->state1;
+    self->state1 = self->state1 ^ self->state2;
+    self->state0 = self->state0 ^ self->state3;
+    self->state2 = self->state2 ^ SHIFTED;
+    self->state3 = bits::rotate_left<u64>(self->state3, 45);
+
+    return RESULT;
+}
+
+private u64 Generator::drawBelow(&self, u64 upper) {
+    const u64 THRESHOLD = (0 - upper) % upper;
+
+    while true {
+        const u64 VALUE = self->drawBits();
+        if VALUE >= THRESHOLD {
+            return VALUE % upper;
+        }
+    }
+
+    return none;
+}
+
+quiver u64 split_mix(&u64 state) {
+    *state = *state + SPLIT_MIX_INCREMENT;
+
+    u64 value = *state;
+    value = (value ^ (value >> 30)) * SPLIT_MIX_FACTOR_ONE;
+    value = (value ^ (value >> 27)) * SPLIT_MIX_FACTOR_TWO;
+    return value ^ (value >> 31);
+}
+
+quiver u64 little_word([]const u8 bytes, usize offset) {
+    u64 result = 0;
+    loop usize index = 0; index < 8; index++ {
+        result = result | (bytes[offset + index].cast<u64> << (index * 8));
+    }
+    return result;
+}
+
+quiver u64 ordered_integer<T: integer>(T value) {
+    if T.isof<signed_integer> {
+        return value.cast<i64>.cast<u64> ^ SIGN_BIT;
+    }
+    return value.cast<u64>;
+}
+
+quiver T integer_from_ordered<T: integer>(u64 value) {
+    if T.isof<signed_integer> {
+        return (value ^ SIGN_BIT).cast<i64>.cast<T>;
+    }
+    return value.cast<T>;
+}

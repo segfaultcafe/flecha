@@ -1,0 +1,26 @@
+module errors;
+
+// Reports stable random-source and range failures independently of platform
+// APIs and generator implementation details.
+export error RandomError {
+    // The host cannot provide a cryptographically secure random source.
+    Unavailable,
+
+    // The host random source failed while servicing the request.
+    GenerationFailed,
+
+    // A requested interval is empty or reversed.
+    InvalidRange,
+}
+
+quiver RandomError from_runtime(i32 status) {
+    if status == 0 {
+        return none;
+    }
+
+    if status == 1 {
+        return RandomError.Unavailable;
+    }
+
+    return RandomError.GenerationFailed;
+}

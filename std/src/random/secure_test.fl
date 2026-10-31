@@ -1,0 +1,45 @@
+module secure_test;
+
+@imports
+    :: root::random::secure
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test secure_fill_accepts_an_empty_destination(&testing::UnitTest t) {
+    [0]u8 empty = none;
+
+    asserts::is_true(
+        t,
+        secure::fill(empty[:]) == none,
+        "an empty secure-random fill succeeds"
+    );
+}
+
+test secure_fill_accepts_a_nonempty_destination(&testing::UnitTest t) {
+    [32]u8 destination = none;
+
+    asserts::is_true(
+        t,
+        secure::fill(destination[:]) == none,
+        "a nonempty destination is filled successfully"
+    );
+}
+
+test secure_fill_modifies_only_the_destination_slice(
+    &testing::UnitTest t
+) {
+    [515]u8 storage = [165; 515];
+
+    err := secure::fill(storage[1:514]);
+
+    asserts::is_true(
+        t,
+        err == none,
+        "a request larger than the macOS getentropy limit succeeds"
+    );
+    asserts::is_true(
+        t,
+        storage[0] == 165 and storage[514] == 165,
+        "secure fill preserves bytes outside the destination slice"
+    );
+}
