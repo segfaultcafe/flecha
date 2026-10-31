@@ -245,6 +245,26 @@ TEST(RuntimeEnvironmentTests, RejectsInvalidOutputPointers) {
               FLECHA_RUNTIME_ENVIRONMENT_FAILED);
 }
 
+TEST(RuntimeRandomTests, AcceptsAnEmptyDestination) {
+    EXPECT_EQ(flecha_runtime_v1_secure_random_fill(nullptr, 0),
+              FLECHA_RUNTIME_RANDOM_OK);
+}
+
+TEST(RuntimeRandomTests, RejectsNullStorageForANonemptyDestination) {
+    EXPECT_EQ(flecha_runtime_v1_secure_random_fill(nullptr, 1),
+              FLECHA_RUNTIME_RANDOM_FAILED);
+}
+
+TEST(RuntimeRandomTests, FillsOnlyTheRequestedRegion) {
+    std::array<uint8_t, 515> storage{};
+    storage.fill(165);
+
+    ASSERT_EQ(flecha_runtime_v1_secure_random_fill(storage.data() + 1, 513),
+              FLECHA_RUNTIME_RANDOM_OK);
+    EXPECT_EQ(storage.front(), 165);
+    EXPECT_EQ(storage.back(), 165);
+}
+
 TEST(RuntimeTimeTests, ReturnsNormalizedClockObservations) {
     uint64_t firstSeconds = 0;
     uint32_t firstNanoseconds = 0;
