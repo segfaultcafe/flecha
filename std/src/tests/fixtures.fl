@@ -1,0 +1,158 @@
+module fixtures;
+
+@imports
+    :: root::fmt
+    :: root::io::errors as io_errors
+    :: root::io::file
+    :: root::io::path
+    :: root::random::errors
+    :: root::random::generator
+    :: root::tests::testing;
+
+// Owns a private temporary directory for one test fixture. Moving the fixture
+// transfers cleanup responsibility; deterministic teardown recursively removes
+// every child that remains in the directory.
+export structure TemporaryDirectory {
+    private file::TemporaryDirectory storage;
+};
+
+// Creates an empty private directory in the host temporary directory.
+(TemporaryDirectory, error) TemporaryDirectory::create() {
+    storage, creationError := file::TemporaryDirectory::create();
+    if creationError != none {
+        return (none, creationError);
+    }
+
+    return (build TemporaryDirectory {
+        self.storage = storage;
+    }, none);
+}
+
+// Borrows the generated absolute directory path.
+stringv TemporaryDirectory::path(&const self) <-self {
+    return self->storage.path();
+}
+
+// Allocates a normalized path lexically beneath the fixture directory. Empty,
+// absolute, volume-qualified, NUL-containing, and escaping parent paths return
+// IoError.InvalidPath. The path is not created by this operation.
+(string, error) TemporaryDirectory::childPath(
+    &const self,
+    stringv relative
+) {
+    if relative.len() == 0 {
+        return (none, io_errors::IoError.InvalidPath);
+    }
+    loop u32 index = 0; index < relative.len(); index++ {
+        if relative[index].cast<char> == '\0' {
+            return (none, io_errors::IoError.InvalidPath);
+        }
+    }
+
+    normalized, normalizeError := path::normalize(relative);
+    if normalizeError != none {
+        return (none, normalizeError);
+    }
+    if !safe_fixture_child(normalized.view()) {
+        return (none, io_errors::IoError.InvalidPath);
+    }
+
+    return path::join(self->storage.path(), normalized.view());
+}
+
+// Recursively removes the fixture contents. Failure preserves ownership so the
+// caller may repair the cause and retry; success disarms deterministic teardown.
+error TemporaryDirectory::remove(&self) {
+    return self->storage.remove();
+}
+
+// Generates reproducible non-cryptographic test data and retains the seed
+// needed to reproduce a failing case.
+export structure RandomData {
+    private {
+        u64 sourceSeed;
+        generator::Generator source;
+    }
+};
+
+// Creates a deterministic data source from seed.
+RandomData RandomData::fromSeed(u64 seed) {
+    return build RandomData {
+        self.sourceSeed = seed;
+        self.source = generator::Generator::fromSeed(seed);
+    };
+}
+
+// Returns the seed that reproduces this source's complete sequence.
+u64 RandomData::seed(&const self) {
+    return self->sourceSeed;
+}
+
+// Appends the reproducible seed to the test's deferred output. Formatting
+// allocation failure leaves the output unchanged and is returned to the caller.
+error RandomData::logSeed(
+    &const self,
+    &testing::UnitTest ut
+) {
+    message, formatError := fmt::sprintf("random seed: {}", self->sourceSeed);
+    if formatError != none {
+        return formatError;
+    }
+
+    ut->log(message.view());
+    return none;
+}
+
+// Generates uniformly across every representable value of T.
+T RandomData::integer<T: integer>(&self) {
+    return self->source.integer<T>();
+}
+
+// Generates uniformly in [lower, upper). Invalid ranges do not advance the
+// source and return RandomError.InvalidRange.
+(T, errors::RandomError) RandomData::integerIn<T: integer>(
+    &self,
+    T lower,
+    T upper
+) {
+    return self->source.integerIn<T>(lower, upper);
+}
+
+// Generates a uniformly distributed floating-point value in [0, 1).
+T RandomData::float<T: floating_point>(&self) {
+    return self->source.float<T>();
+}
+
+// Generates false or true with equal probability.
+bool RandomData::boolean(&self) {
+    return self->source.boolean();
+}
+
+// Fills destination with the deterministic byte sequence for this seed.
+void RandomData::fill(&self, []u8 destination) {
+    self->source.fill(destination);
+}
+
+// Randomly permutes copyable elements using deterministic unbiased sampling.
+void RandomData::shuffle<T>(&self, []T values) {
+    self->source.shuffle<T>(values);
+}
+
+bool safe_fixture_child(stringv value) {
+    if value.len() == 0 {
+        return false;
+    }
+
+    const char FIRST = value[0].cast<char>;
+    if FIRST == '/' or FIRST == '\\' {
+        return false;
+    }
+    if value.len() >= 2 and value[1].cast<char> == ':' {
+        return false;
+    }
+    if value == ".." {
+        return false;
+    }
+    return value.len() < 3 or value[0] != '.' or value[1] != '.' or
+        (value[2].cast<char> != '/' and value[2].cast<char> != '\\');
+}

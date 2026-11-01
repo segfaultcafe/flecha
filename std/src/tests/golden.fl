@@ -1,0 +1,121 @@
+module golden;
+
+@imports
+    :: root::fmt
+    :: root::io::filesystem
+    :: root::tests::asserts
+    :: root::tests::testing;
+
+// Selects whether a golden helper verifies checked-in data or explicitly
+// replaces it with the supplied actual value.
+export enum Mode: u8 {
+    // Reads and compares without modifying the golden file.
+    default Verify,
+
+    // Creates or replaces the golden file before recording the assertion.
+    Update,
+}
+
+// Verifies actual against the byte-oriented text stored at goldenPath. Update
+// mode must be passed explicitly and replaces the file. Every outcome records
+// exactly one assertion; an I/O failure is also returned to the caller.
+export error text(
+    &testing::UnitTest ut,
+    stringv actual,
+    stringv goldenPath,
+    stringv message,
+    Mode mode = Mode.Verify,
+) {
+    if mode == Mode.Update {
+        updateError := filesystem::write_file(goldenPath, actual);
+        ut->recordAssertion(
+            updateError == none,
+            "golden text file updated",
+            message
+        );
+        return updateError;
+    }
+
+    expected, readError := filesystem::read_file(goldenPath);
+    if readError != none {
+        ut->recordAssertion(false, "golden text file is readable", message);
+        return readError;
+    }
+
+    asserts::string_equal(ut, actual, expected.view(), message);
+    return none;
+}
+
+// Verifies actual against the bytes stored at goldenPath. Update mode must be
+// passed explicitly and replaces the file. Every outcome records exactly one
+// assertion; an I/O failure is also returned to the caller.
+export error bytes(
+    &testing::UnitTest ut,
+    []const u8 actual,
+    stringv goldenPath,
+    stringv message,
+    Mode mode = Mode.Verify,
+) {
+    if mode == Mode.Update {
+        updateError := filesystem::write_bytes(goldenPath, actual);
+        ut->recordAssertion(
+            updateError == none,
+            "golden byte file updated",
+            message
+        );
+        return updateError;
+    }
+
+    expected, readError := filesystem::read_file(goldenPath);
+    if readError != none {
+        ut->recordAssertion(false, "golden byte file is readable", message);
+        return readError;
+    }
+
+    record_byte_comparison(ut, actual, expected.view(), message);
+    return none;
+}
+
+void record_byte_comparison(
+    &testing::UnitTest ut,
+    []const u8 actual,
+    stringv expected,
+    stringv message
+) {
+    if actual.len() != expected.len().cast<usize> {
+        formatted, formatError := fmt::sprintf(
+            "actual bytes == golden bytes (actual length={}, golden length={})",
+            actual.len(),
+            expected.len()
+        );
+        if formatError != none {
+            ut->recordAssertion(false, "actual bytes == golden bytes", message);
+            return;
+        }
+
+        ut->recordAssertion(false, formatted.view(), message);
+        return;
+    }
+
+    loop usize index = 0; index < actual.len(); index++ {
+        if actual[index] == expected[index.cast<u32>].cast<u8> {
+            proceed;
+        }
+
+        formatted, formatError := fmt::sprintf(
+            "actual bytes == golden bytes (index={}, actual={}, golden={})",
+            index,
+            actual[index],
+            expected[index.cast<u32>].cast<u8>
+        );
+        if formatError != none {
+            ut->recordAssertion(false, "actual bytes == golden bytes", message);
+            return;
+        }
+
+        ut->recordAssertion(false, formatted.view(), message);
+        return;
+    }
+
+    ut->recordAssertion(true, "actual bytes == golden bytes", message);
+}
