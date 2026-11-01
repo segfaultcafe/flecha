@@ -1,0 +1,205 @@
+module golden_test;
+
+@imports
+    :: root::tests::golden as paired_golden
+    :: lib::std::io::errors
+    :: lib::std::io::filesystem
+    :: lib::std::tests::asserts
+    :: lib::std::tests::fixtures
+    :: lib::std::tests::golden
+    :: lib::std::tests::testing;
+
+test text_goldens_require_explicit_update_and_verify_without_writing(
+    &testing::UnitTest t
+) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    asserts::is_true(t, creationError == none, "fixture creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    goldenPath, pathError := temporary.childPath("message.golden");
+    asserts::is_true(t, pathError == none, "the golden path allocates");
+    if pathError != none {
+        return;
+    }
+
+    result := testing::UnitTest::init("text golden", false);
+    updateError := golden::text(
+        &result,
+        "expected text",
+        goldenPath.view(),
+        "text update succeeds",
+        golden::Mode.Update
+    );
+    verifyError := golden::text(
+        &result,
+        "expected text",
+        goldenPath.view(),
+        "text verification succeeds"
+    );
+    mismatchError := golden::text(
+        &result,
+        "different text",
+        goldenPath.view(),
+        "text mismatch is retained"
+    );
+
+    contents, readError := filesystem::read_file(goldenPath.view());
+    asserts::is_true(
+        t,
+        updateError == none and verifyError == none and mismatchError == none,
+        "comparison mismatches are assertion failures rather than I/O errors"
+    );
+    asserts::is_true(
+        t,
+        readError == none and contents == "expected text",
+        "verify mode never changes the golden file"
+    );
+    usize expectedAssertions = 3;
+    usize expectedFailures = 1;
+    actualAssertions := result.assertionCount();
+    actualFailures := result.failureCount();
+    asserts::equal<usize>(
+        t,
+        &expectedAssertions,
+        &actualAssertions,
+        "every golden operation records one assertion"
+    );
+    asserts::equal<usize>(
+        t,
+        &expectedFailures,
+        &actualFailures,
+        "the mismatch remains in deferred output"
+    );
+}
+
+test byte_goldens_compare_arbitrary_binary_data(&testing::UnitTest t) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    asserts::is_true(t, creationError == none, "fixture creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    goldenPath, pathError := temporary.childPath("bytes.golden");
+    asserts::is_true(t, pathError == none, "the golden path allocates");
+    if pathError != none {
+        return;
+    }
+
+    [5]u8 expected = [255, 0, 65, 10, 127];
+    [5]u8 different = [255, 0, 66, 10, 127];
+    result := testing::UnitTest::init("byte golden", false);
+
+    updateError := golden::bytes(
+        &result,
+        expected[:],
+        goldenPath.view(),
+        "byte update succeeds",
+        golden::Mode.Update
+    );
+    verifyError := golden::bytes(
+        &result,
+        expected[:],
+        goldenPath.view(),
+        "byte verification succeeds"
+    );
+    mismatchError := golden::bytes(
+        &result,
+        different[:],
+        goldenPath.view(),
+        "byte mismatch is retained"
+    );
+
+    asserts::is_true(
+        t,
+        updateError == none and verifyError == none and mismatchError == none,
+        "binary golden operations complete"
+    );
+    usize expectedAssertions = 3;
+    usize expectedFailures = 1;
+    actualAssertions := result.assertionCount();
+    actualFailures := result.failureCount();
+    asserts::equal<usize>(
+        t,
+        &expectedAssertions,
+        &actualAssertions,
+        "binary golden operations each record one assertion"
+    );
+    asserts::equal<usize>(
+        t,
+        &expectedFailures,
+        &actualFailures,
+        "binary mismatch diagnostics remain deferred"
+    );
+}
+
+test missing_and_invalid_goldens_report_io_failures(&testing::UnitTest t) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    asserts::is_true(t, creationError == none, "fixture creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    missingPath, pathError := temporary.childPath("missing.golden");
+    asserts::is_true(t, pathError == none, "the missing path allocates");
+    if pathError != none {
+        return;
+    }
+
+    result := testing::UnitTest::init("I/O failures", false);
+    missingError := golden::text(
+        &result,
+        "actual",
+        missingPath.view(),
+        "missing golden data is reported"
+    );
+    updateError := golden::text(
+        &result,
+        "actual",
+        temporary.path(),
+        "a directory cannot be replaced as a golden file",
+        golden::Mode.Update
+    );
+    string invalidPath = "invalid" + '\0'.string() + "path";
+    invalidError := golden::text(
+        &result,
+        "actual",
+        invalidPath.view(),
+        "malformed golden paths are reported"
+    );
+
+    asserts::is_true(
+        t,
+        missingError == errors::IoError.NotFound,
+        "missing goldens preserve the filesystem error"
+    );
+    asserts::is_true(t, updateError != none, "update I/O failure is returned");
+    asserts::is_true(
+        t,
+        invalidError == errors::IoError.InvalidPath,
+        "malformed paths preserve their stable error"
+    );
+    usize expectedCount = 3;
+    actualAssertions := result.assertionCount();
+    actualFailures := result.failureCount();
+    asserts::equal<usize>(
+        t,
+        &expectedCount,
+        &actualAssertions,
+        "every I/O failure records one assertion"
+    );
+    asserts::equal<usize>(
+        t,
+        &expectedCount,
+        &actualFailures,
+        "every I/O failure records one deferred diagnostic"
+    );
+
+    present, existsError := filesystem::exists(missingPath.view());
+    asserts::is_true(
+        t,
+        existsError == none and !present,
+        "verify mode does not create a missing golden"
+    );
+}

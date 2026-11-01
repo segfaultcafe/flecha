@@ -1,0 +1,192 @@
+module fixtures_test;
+
+@imports
+    :: root::tests::fixtures as paired_fixtures
+    :: lib::std::io::errors as io_errors
+    :: lib::std::io::filesystem
+    :: lib::std::random::errors
+    :: lib::std::tests::asserts
+    :: lib::std::tests::fixtures
+    :: lib::std::tests::testing;
+
+test temporary_fixture_recursively_cleans_populated_trees(
+    &testing::UnitTest t
+) {
+    string ownedPath = none;
+    {
+        temporary, creationError := fixtures::TemporaryDirectory::create();
+        asserts::is_true(t, creationError == none, "fixture creation succeeds");
+        if creationError != none {
+            return;
+        }
+
+        ownedPath = temporary.path().string();
+        nestedPath, nestedPathError := temporary.childPath("first/second");
+        filePath, filePathError := temporary.childPath("first/second/data.bin");
+        asserts::is_true(
+            t,
+            nestedPathError == none and filePathError == none,
+            "fixture child paths allocate"
+        );
+        if nestedPathError != none or filePathError != none {
+            return;
+        }
+
+        asserts::is_true(
+            t,
+            filesystem::create_directories(nestedPath.view()) == none,
+            "nested fixture directories are created"
+        );
+        asserts::is_true(
+            t,
+            filesystem::write_file(filePath.view(), "fixture contents") == none,
+            "fixture contents are written"
+        );
+    }
+
+    present, existsError := filesystem::exists(ownedPath.view());
+    asserts::is_true(
+        t,
+        existsError == none and !present,
+        "fixture teardown removes the populated tree"
+    );
+}
+
+test moved_and_explicitly_removed_fixtures_clean_up_once(
+    &testing::UnitTest t
+) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    asserts::is_true(t, creationError == none, "fixture creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    string ownedPath = temporary.path().string();
+    moved := temporary;
+    asserts::is_true(t, moved.path() == ownedPath.view(), "the move keeps the path");
+    asserts::is_true(t, moved.remove() == none, "explicit cleanup succeeds");
+    asserts::is_true(t, moved.path().len() == 0, "explicit cleanup is disarmed");
+    asserts::is_true(t, moved.remove() == none, "cleanup remains idempotent");
+
+    present, existsError := filesystem::exists(ownedPath.view());
+    asserts::is_true(
+        t,
+        existsError == none and !present,
+        "the moved owner removes its directory exactly once"
+    );
+}
+
+test failed_fixture_cleanup_preserves_ownership_for_retry(
+    &testing::UnitTest t
+) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    asserts::is_true(t, creationError == none, "fixture creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    string ownedPath = temporary.path().string();
+    asserts::is_true(
+        t,
+        filesystem::remove_directory(ownedPath.view(), false) == none,
+        "the fixture directory can be removed externally"
+    );
+    asserts::is_true(
+        t,
+        filesystem::write_file(ownedPath.view(), "blocking file") == none,
+        "a regular file can occupy the fixture path"
+    );
+
+    removalError := temporary.remove();
+    asserts::is_true(t, removalError != none, "invalid cleanup is reported");
+    asserts::is_true(
+        t,
+        temporary.path() == ownedPath.view(),
+        "failed cleanup retains fixture ownership"
+    );
+
+    asserts::is_true(
+        t,
+        filesystem::remove_file(ownedPath.view()) == none,
+        "the blocking file can be removed"
+    );
+    asserts::is_true(
+        t,
+        temporary.remove() == none and temporary.path().len() == 0,
+        "cleanup can be retried and disarmed"
+    );
+}
+
+test fixture_child_paths_cannot_escape_the_owned_directory(
+    &testing::UnitTest t
+) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    asserts::is_true(t, creationError == none, "fixture creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    _, parentError := temporary.childPath("../outside");
+    _, absoluteError := temporary.childPath("/outside");
+    _, volumeError := temporary.childPath("C:\\outside");
+    string invalid = "bad" + '\0'.string() + "path";
+    _, nulError := temporary.childPath(invalid.view());
+
+    asserts::is_true(
+        t,
+        parentError == io_errors::IoError.InvalidPath and
+            absoluteError == io_errors::IoError.InvalidPath and
+            volumeError == io_errors::IoError.InvalidPath and
+            nulError == io_errors::IoError.InvalidPath,
+        "unsafe fixture child paths are rejected"
+    );
+}
+
+test seeded_test_data_is_reproducible_and_reports_its_seed(
+    &testing::UnitTest t
+) {
+    first := fixtures::RandomData::fromSeed(42);
+    second := fixtures::RandomData::fromSeed(42);
+    [12]u8 firstBytes = none;
+    [12]u8 secondBytes = none;
+
+    first.fill(firstBytes[:]);
+    second.fill(secondBytes[:]);
+
+    asserts::bytes_equal(
+        t,
+        firstBytes[:],
+        secondBytes[:],
+        "the same seed produces the same bytes"
+    );
+    asserts::is_true(t, first.seed() == 42, "the reproducible seed is retained");
+    logError := first.logSeed(t);
+    asserts::is_true(t, logError == none, "the seed can be logged");
+}
+
+test seeded_test_data_exposes_bounded_and_shuffle_operations(
+    &testing::UnitTest t
+) {
+    data := fixtures::RandomData::fromSeed(7);
+    bounded, boundedError := data.integerIn<i32>(-5, 6);
+    _, invalidError := data.integerIn<i32>(3, 3);
+    [5]i32 values = [1, 2, 3, 4, 5];
+
+    data.shuffle(values[:]);
+
+    asserts::is_true(
+        t,
+        boundedError == none and bounded >= -5 and bounded < 6,
+        "bounded values use the requested interval"
+    );
+    asserts::is_true(
+        t,
+        invalidError == errors::RandomError.InvalidRange,
+        "invalid intervals are reported"
+    );
+    asserts::is_true(
+        t,
+        values[0] != 0 and data.float<f64>() >= 0.0,
+        "shuffle and floating generation are available"
+    );
+}

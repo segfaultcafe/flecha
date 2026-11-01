@@ -143,3 +143,63 @@ formatting cannot allocate, the assertion still records exactly one assertion
 and one failure, preserves the caller's message, and falls back to its stable
 expression label. Allocation failure never turns a failed assertion into a
 successful one and never exposes a partial diagnostic.
+
+## Temporary fixtures and deterministic data
+
+`lib::std::tests::fixtures` provides test support implemented in Flecha. A
+`TemporaryDirectory` owns an isolated directory tree and removes it recursively
+when it leaves scope. Moving the value transfers cleanup responsibility. Call
+`remove()` for explicit cleanup; if cleanup fails, the fixture retains its path
+so the cause can be repaired and cleanup retried.
+
+Use `childPath` to allocate a normalized path inside the fixture. It rejects
+empty, absolute, volume-qualified, NUL-containing, and escaping parent paths:
+
+```flecha
+temporary, creationError := fixtures::TemporaryDirectory::create();
+asserts::is_none<error>(t, &creationError, "the fixture is created");
+if creationError != none {
+    return;
+}
+
+inputPath, pathError := temporary.childPath("inputs/example.txt");
+asserts::is_none<error>(t, &pathError, "the input path is safe");
+```
+
+`RandomData::fromSeed` creates reproducible non-cryptographic input. It exposes
+integer, bounded-integer, unit-float, Boolean, byte-fill, and shuffle operations.
+Retain the value returned by `seed()`, or call `logSeed(t)` to append
+`random seed: N` to deferred test output so a failing run can be reproduced.
+
+## Golden files
+
+`lib::std::tests::golden` compares text or arbitrary bytes with a checked-in
+golden file and records the result in an existing `UnitTest`:
+
+```flecha
+verifyError := golden::text(
+    t,
+    rendered.view(),
+    "tests/golden/rendered.txt",
+    "rendered output matches"
+);
+```
+
+Verification is the default and never creates or changes a file. Updating is a
+per-call, explicit opt-in:
+
+```flecha
+updateError := golden::text(
+    t,
+    rendered.view(),
+    "tests/golden/rendered.txt",
+    "replace the rendered golden",
+    golden::Mode.Update
+);
+```
+
+Use `golden::bytes` for intentionally binary data. Text is also byte-oriented;
+invalid UTF-8 and control bytes compare exactly and are escaped in mismatch
+diagnostics. A mismatch is recorded as an assertion failure and returns `none`;
+file I/O and malformed-path failures are both recorded and returned to the
+caller. Every golden operation records exactly one assertion.

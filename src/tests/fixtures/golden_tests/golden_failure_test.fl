@@ -1,0 +1,95 @@
+module golden_failure_test;
+
+@imports
+    :: root::golden_failure
+    :: lib::std::io::filesystem
+    :: lib::std::tests::fixtures
+    :: lib::std::tests::golden
+    :: lib::std::tests::testing;
+
+test reports_text_golden_mismatch(&testing::UnitTest t) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    if creationError != none {
+        t->reportError("temporary fixture creation failed");
+        return;
+    }
+    goldenPath, pathError := temporary.childPath("text.golden");
+    if pathError != none or
+        filesystem::write_file(goldenPath.view(), "expected") != none {
+        t->reportError("text golden setup failed");
+        return;
+    }
+
+    golden::text(
+        t,
+        "actual",
+        goldenPath.view(),
+        "expected text golden mismatch"
+    );
+}
+
+test reports_byte_golden_content_mismatch(&testing::UnitTest t) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    if creationError != none {
+        t->reportError("temporary fixture creation failed");
+        return;
+    }
+    goldenPath, pathError := temporary.childPath("content.golden");
+    [3]u8 expected = [1, 2, 3];
+    if pathError != none or
+        filesystem::write_bytes(goldenPath.view(), expected[:]) != none {
+        t->reportError("byte golden setup failed");
+        return;
+    }
+
+    [3]u8 actual = [1, 9, 3];
+    golden::bytes(
+        t,
+        actual[:],
+        goldenPath.view(),
+        "expected byte golden content mismatch"
+    );
+}
+
+test reports_byte_golden_length_mismatch(&testing::UnitTest t) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    if creationError != none {
+        t->reportError("temporary fixture creation failed");
+        return;
+    }
+    goldenPath, pathError := temporary.childPath("length.golden");
+    [3]u8 expected = [1, 2, 3];
+    if pathError != none or
+        filesystem::write_bytes(goldenPath.view(), expected[:]) != none {
+        t->reportError("byte golden setup failed");
+        return;
+    }
+
+    [2]u8 actual = [1, 2];
+    golden::bytes(
+        t,
+        actual[:],
+        goldenPath.view(),
+        "expected byte golden length mismatch"
+    );
+}
+
+test reports_missing_golden_file(&testing::UnitTest t) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    if creationError != none {
+        t->reportError("temporary fixture creation failed");
+        return;
+    }
+    goldenPath, pathError := temporary.childPath("missing.golden");
+    if pathError != none {
+        t->reportError("missing golden path setup failed");
+        return;
+    }
+
+    golden::text(
+        t,
+        "actual",
+        goldenPath.view(),
+        "expected missing golden failure"
+    );
+}
