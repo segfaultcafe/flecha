@@ -31,6 +31,7 @@ syntax match flechaSelf /\%(<-\s*\.\.\.\s*\)\@<=args\>/
 syntax keyword flechaWordOperator and or
 
 syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>\|<=\|>=\|&&\|||\|[&|~=+*\/%^!<>-]/
+syntax match flechaCrashableBang /\%([A-Za-z0-9_>]\)\@<=!\ze\s*(/
 syntax match flechaRawAddress /\%(&\s*\)\@<=raw\>/
 syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?(/
 syntax match flechaAllocation /\<new\>\ze\s*</
@@ -62,6 +63,7 @@ highlight default flechaFuncKeyword guifg=#569CD6 ctermfg=68
 highlight default flechaBuiltinTypeSet guifg=#87CEFA ctermfg=117
 highlight default flechaFloatConstant guifg=#C49A00 ctermfg=178
 highlight default flechaIntegerLimit guifg=#C49A00 ctermfg=178
+highlight default flechaCrashableBang guifg=#FF8C00 ctermfg=208
 highlight default link flechaType Type
 highlight default link flechaTypeSetKeyword Statement
 highlight default link flechaTypeSetName Type

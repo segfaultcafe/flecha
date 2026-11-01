@@ -73,6 +73,12 @@
             "settings": {
               "foreground": "#C49A00"
             }
+          },
+          {
+            "scope": "keyword.operator.crashable.flecha",
+            "settings": {
+              "foreground": "#FF8C00"
+            }
           }
         ]
       }
