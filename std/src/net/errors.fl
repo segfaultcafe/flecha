@@ -1,0 +1,11 @@
+module errors;
+
+export error NetworkError {
+    InvalidAddress,
+    InvalidPort,
+    InvalidName,
+    NameNotFound,
+    TemporaryFailure,
+    UnsupportedFamily,
+    ResolutionFailed,
+}
