@@ -15,10 +15,16 @@ if(DEFINED STANDARD_LIBRARY)
             "STANDARD_LIBRARY is not a directory: ${STANDARD_LIBRARY}")
     endif()
     set(ENV{FLECHA_STANDARD_LIBRARY} "${STANDARD_LIBRARY}")
-    set(testSupportLibraryArguments --lib "std=${STANDARD_LIBRARY}")
 else()
-    set(testSupportLibraryArguments)
+    get_filename_component(compilerDirectory "${FLECHA_COMPILER}" DIRECTORY)
+    get_filename_component(installRoot "${compilerDirectory}" DIRECTORY)
+    set(STANDARD_LIBRARY "${installRoot}/share/flecha/std/src")
+    if(NOT IS_DIRECTORY "${STANDARD_LIBRARY}")
+        message(FATAL_ERROR
+            "installed standard library is not a directory: ${STANDARD_LIBRARY}")
+    endif()
 endif()
+set(testSupportLibraryArguments --lib "std=${STANDARD_LIBRARY}")
 
 execute_process(
     COMMAND "${FLECHA_COMPILER}" --version
