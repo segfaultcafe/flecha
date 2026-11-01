@@ -1,0 +1,120 @@
+module address_test;
+
+@imports
+    :: root::net::address
+    :: root::net::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+void assert_parses(
+    &testing::UnitTest t,
+    stringv text,
+    u8 octet1,
+    u8 octet2,
+    u8 octet3,
+    u8 octet4,
+    stringv message
+) {
+    actual, err := address::Ipv4Address::parse(text);
+    expected := address::Ipv4Address::fromOctets(
+        octet1,
+        octet2,
+        octet3,
+        octet4
+    );
+    formatted, formatError := actual.toString();
+    asserts::is_true(
+        t,
+        err == none and actual == expected and
+            formatError == none and formatted.view() == text,
+        message
+    );
+}
+
+void assert_invalid(
+    &testing::UnitTest t,
+    stringv text,
+    stringv message
+) {
+    value, err := address::Ipv4Address::parse(text);
+    asserts::is_true(
+        t,
+        err == errors::NetworkError.InvalidAddress and value == none,
+        message
+    );
+}
+
+test ipv4_parsing_accepts_canonical_boundaries(&testing::UnitTest t) {
+    assert_parses(t, "0.0.0.0", 0, 0, 0, 0, "the zero address parses");
+    assert_parses(t, "1.2.3.4", 1, 2, 3, 4, "all components are packed");
+    assert_parses(
+        t,
+        "127.0.0.1",
+        127,
+        0,
+        0,
+        1,
+        "the loopback address parses"
+    );
+    assert_parses(
+        t,
+        "255.255.255.255",
+        255,
+        255,
+        255,
+        255,
+        "maximum components parse"
+    );
+}
+
+test ipv4_constructors_classify_and_expose_octets(&testing::UnitTest t) {
+    wildcard := address::Ipv4Address::wildcard();
+    expectedWildcard := address::Ipv4Address::fromOctets(0, 0, 0, 0);
+    asserts::is_true(
+        t,
+        wildcard == expectedWildcard and wildcard.isWildcard() and
+            !wildcard.isLoopback(),
+        "wildcard constructs the unspecified address"
+    );
+
+    loopback := address::Ipv4Address::loopback();
+    expectedLoopback := address::Ipv4Address::fromOctets(127, 0, 0, 1);
+    alternateLoopback := address::Ipv4Address::fromOctets(127, 255, 1, 2);
+    ordinary := address::Ipv4Address::fromOctets(126, 255, 1, 2);
+    asserts::is_true(
+        t,
+        loopback == expectedLoopback and loopback.isLoopback() and
+            alternateLoopback.isLoopback() and !ordinary.isLoopback(),
+        "the complete 127/8 block is loopback"
+    );
+
+    value := address::Ipv4Address::fromOctets(1, 2, 128, 255);
+    octets := value.octets();
+    asserts::is_true(
+        t,
+        octets[0] == 1 and octets[1] == 2 and
+            octets[2] == 128 and octets[3] == 255,
+        "octets preserve network byte order"
+    );
+}
+
+test ipv4_parsing_rejects_invalid_component_counts(&testing::UnitTest t) {
+    assert_invalid(t, "", "an empty address is rejected");
+    assert_invalid(t, "1", "one component is rejected");
+    assert_invalid(t, "1.2.3", "three components are rejected");
+    assert_invalid(t, "1.2.3.4.5", "five components are rejected");
+    assert_invalid(t, ".1.2.3", "a missing first component is rejected");
+    assert_invalid(t, "1..2.3", "an empty middle component is rejected");
+    assert_invalid(t, "1.2.3.", "a missing final component is rejected");
+}
+
+test ipv4_parsing_rejects_invalid_components(&testing::UnitTest t) {
+    assert_invalid(t, "256.0.0.1", "components above 255 are rejected");
+    assert_invalid(t, "1.2.3.999", "oversized final components are rejected");
+    assert_invalid(t, "01.2.3.4", "leading zeroes are rejected");
+    assert_invalid(t, "1.02.3.4", "middle leading zeroes are rejected");
+    assert_invalid(t, "1.2.3.x", "letters are rejected");
+    assert_invalid(t, "1.2.3.-1", "signed components are rejected");
+    assert_invalid(t, " 1.2.3.4", "leading whitespace is rejected");
+    assert_invalid(t, "1.2.3.4 ", "trailing whitespace is rejected");
+}
