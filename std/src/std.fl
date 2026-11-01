@@ -39,4 +39,5 @@ module std;
     :: root::text::strings
     :: root::text::errors as text_errors
     :: root::tests::testing
-    :: root::tests::asserts;
+    :: root::tests::asserts
+    :: root::tests::benchmark;

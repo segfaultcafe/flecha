@@ -449,6 +449,10 @@ and cleanup tests. Algorithms and codecs need portable reference vectors.
 Containers and resource-owning types need allocation-failure and sanitizer
 coverage.
 
+The Stage 8 support surface is implemented: assertion diagnostics, fixtures,
+golden files, reproducible random data, and the deterministic benchmark runner
+compose through `std::tests` with installed-package and failure-path coverage.
+
 ### 9. Hardening, stress, performance, and stability
 
 After the feature stages and their required Stage 8 support are complete,
