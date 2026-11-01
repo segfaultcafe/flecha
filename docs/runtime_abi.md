@@ -28,6 +28,14 @@ allocation to an owning Flecha string. Failure releases partial storage and
 produces `AllocationError.OutOfMemory`. No variadic C ABI or runtime type-erased
 argument pack is exposed by any of these language-level facilities.
 
+`__sprintf_crash` uses the same buffer ABI but lowers a failed finish to
+`flecha_runtime_v1_crash`. The crash ABI borrows exact message, file, and
+function byte ranges plus one-based source line and column. It prints the
+Flecha source location, the native stack trace, and a host register snapshot
+where supported, flushes standard error, and terminates with `SIGABRT` on POSIX
+hosts. Explicit crashes are not synthesized segmentation faults, and ordinary
+interrupts such as `SIGINT` are not reclassified as crashes.
+
 `stdin` and `stdinln` lower their prompt values to typed stdout operations,
 flush stdout, and call `flecha_runtime_v1_standard_input_read_line`. The line
 reader consumes the same descriptor-level primitive exposed by

@@ -82,6 +82,7 @@ enum class DiagnosticCode {
     InvalidFormat,
     InvalidDefaultArgument,
     InvalidVariadic,
+    InvalidCrashable,
     NativeTargetUnavailable,
     ObjectEmissionFailed,
     RuntimeUnavailable,

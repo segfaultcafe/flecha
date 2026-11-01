@@ -32,6 +32,15 @@ include(GoogleTest)
 gtest_discover_tests(test_flecha DISCOVERY_MODE PRE_TEST)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(
+        NAME CrashableFunctionTests.NativeCrashReport
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crash_report.fl
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/crash_report_test
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crash_report.cmake
+    )
+
     add_executable(test_directory_allocation
         fixtures/directory_allocation_harness.cpp
     )
@@ -108,6 +117,16 @@ set_tests_properties(CliTests.FlechaVersion PROPERTIES
 add_test(NAME CliTests.LongbowVersion COMMAND $<TARGET_FILE:longbow> --version)
 set_tests_properties(CliTests.LongbowVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^longbow ${PROJECT_VERSION}"
+)
+
+add_test(
+    NAME CrashableFunctionTests.SprintfSuccess
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crashable/sprintf.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/crashable_sprintf_test
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_sprintf.cmake
 )
 
 add_test(

@@ -27,3 +27,9 @@ export void eprintf(stringv format, values...) {
 export (string, error) sprintf(stringv format, values...) {
     return __sprintf(format, values...);
 }
+
+// Formats an owning string and crashes with a diagnostic report if the
+// allocation cannot be completed.
+export string sprintf!(stringv format, values...) {
+    return __sprintf_crash!(format, values...);
+}

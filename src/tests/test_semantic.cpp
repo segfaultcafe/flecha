@@ -110,6 +110,103 @@ TEST(SemanticTests, AcceptsTrailingDefaultArgumentsAtDirectCallsAndMethods) {
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
+TEST(SemanticTests, EnforcesCrashableFunctionEffects) {
+    Analysis valid = Analyze(R"(
+        void terminal!() { crash("boom"); }
+        void forward!() { terminal!(); }
+        void main!() { forward!(); }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+    EXPECT_EQ(FindDiagnostic(valid, DiagnosticCode::InvalidCrashable), nullptr);
+
+    Analysis crashFromNormal = Analyze(
+        "void main() { crash(\"boom\"); }");
+    EXPECT_NE(FindErrorDiagnostic(crashFromNormal,
+                                  DiagnosticCode::InvalidCrashable),
+              nullptr);
+
+    Analysis missingBang = Analyze(R"(
+        void terminal!() { crash("boom"); }
+        void caller!() { terminal(); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(missingBang, DiagnosticCode::UnknownName),
+              nullptr);
+
+    Analysis bangOnNormal = Analyze(R"(
+        void ordinary() {}
+        void caller!() { ordinary!(); crash("boom"); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(bangOnNormal, DiagnosticCode::UnknownName),
+              nullptr);
+
+    Analysis crashableFromNormal = Analyze(R"(
+        void terminal!() { crash("boom"); }
+        void caller() { terminal!(); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(crashableFromNormal,
+                                  DiagnosticCode::InvalidCrashable),
+              nullptr);
+}
+
+TEST(SemanticTests, ResolvesNormalAndCrashableFunctionsAsDistinctOverloads) {
+    Analysis analysis = Analyze(R"(
+        i32 choose() { return 42; }
+        i32 choose!() { crash("no choice"); }
+
+        structure Worker {};
+        i32 Worker::run(&const self) { return 42; }
+        i32 Worker::run!(&const self) { crash("worker failed"); }
+
+        void main!() {
+            value := choose();
+            worker := Worker::init();
+            value = worker.run();
+            if value == 0 { choose!(); }
+            if value == 1 { worker.run!(); }
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+    EXPECT_EQ(FindDiagnostic(analysis, DiagnosticCode::DuplicateDeclaration),
+              nullptr);
+}
+
+TEST(SemanticTests, ResolvesNormalAndCrashableGenericFunctionsIndependently) {
+    Analysis analysis = Analyze(R"(
+        T choose<T>(T value) { return value; }
+        T choose<T>!(T value) { crash("no generic choice"); }
+
+        void main!() {
+            value := choose(42);
+            if value == 0 { choose!(7); }
+            if value == 1 { choose<i32>!(8); }
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+    EXPECT_EQ(FindDiagnostic(analysis, DiagnosticCode::DuplicateDeclaration),
+              nullptr);
+}
+
+TEST(SemanticTests, WarnsWhenCrashableFunctionHasNoCrashPath) {
+    Analysis analysis = Analyze(R"(
+        void first!() { second!(); }
+        void second!() { first!(); }
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    std::size_t warnings = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics()) {
+        if (diagnostic.code == DiagnosticCode::InvalidCrashable &&
+            diagnostic.severity == DiagnosticSeverity::Warning) {
+            ++warnings;
+            EXPECT_NE(diagnostic.message.find("no path leads to a crashable state"),
+                      std::string::npos);
+        }
+    }
+    EXPECT_EQ(warnings, 2);
+}
+
 TEST(SemanticTests, AcceptsVariadicForwardingToFormattingBuiltIns) {
     Analysis analysis = Analyze(R"(
         void print(values...) { stdout(values...); }

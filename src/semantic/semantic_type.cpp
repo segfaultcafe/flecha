@@ -187,7 +187,8 @@ bool CallableSignature::operator==(const CallableSignature& other) const {
            parameterContracts == other.parameterContracts &&
            resultContracts == other.resultContracts &&
            borrowSourceIndices == other.borrowSourceIndices &&
-           isUnsafe == other.isUnsafe && isOnce == other.isOnce;
+           isUnsafe == other.isUnsafe && isOnce == other.isOnce &&
+           isCrashable == other.isCrashable;
 }
 
 SemanticType SemanticType::FromSyntax(const core::TypeNode& type) {

@@ -22,6 +22,10 @@
 namespace flecha::semantic {
 namespace {
 
+std::string EffectName(std::string_view name, bool crashable) {
+    return std::string(name) + (crashable ? "!" : "");
+}
+
 std::string TypeMismatch(SemanticType expected, SemanticType actual) {
     return "expected '" + std::string(expected.Name()) + "', found '" +
            std::string(actual.Name()) + "'";
@@ -555,7 +559,8 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                         static_cast<const core::FunctionDeclaration&>(
                             *declaration);
                     if (!function.Owner().empty()) continue;
-                    name = function.Name();
+                    name = EffectName(function.Name(),
+                                      function.IsCrashable());
                 } else if (declaration->Kind() ==
                            core::AstNodeKind::StructureDeclaration)
                     name = static_cast<const core::StructureDeclaration&>(
@@ -768,7 +773,8 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
     else if (declaration.Kind() == core::AstNodeKind::FunctionDeclaration) {
         const auto& function =
             static_cast<const core::FunctionDeclaration&>(declaration);
-        if (function.Owner().empty()) localName = function.Name();
+        if (function.Owner().empty())
+            localName = EffectName(function.Name(), function.IsCrashable());
     }
     Scope* declarationScope = _currentScope;
     const bool topLevel =
@@ -867,6 +873,7 @@ void SemanticAnalyzer::ResolveCallableTypes(const core::CompilationUnit& unit) {
         CallableSignature signature;
         signature.isUnsafe = syntax.IsUnsafe();
         signature.isOnce = syntax.IsOnce();
+        signature.isCrashable = syntax.IsCrashable();
         std::unordered_set<std::string> parameterNames;
         for (const auto& parameter : syntax.Parameters()) {
             const SemanticType type = ResolveType(parameter->Type());
@@ -1348,6 +1355,15 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     registerOutput("stderr", BuiltInFunction::Stderr);
     registerOutput("stderrln", BuiltInFunction::StderrLine);
     registerOutput("stderrf", BuiltInFunction::StderrFormat);
+    {
+        auto function = std::make_unique<FunctionSymbol>(
+            "crash", SemanticType(SemanticTypeKind::Void),
+            std::vector<SemanticType>{
+                SemanticType(SemanticTypeKind::StringView)},
+            source::SourceRange{}, BuiltInFunction::Crash);
+        (void)_currentScope->Declare(*function);
+        _model._symbols.push_back(std::move(function));
+    }
     for (const auto& [name, builtIn] :
          {std::pair{"stdin", BuiltInFunction::Stdin},
           std::pair{"stdinln", BuiltInFunction::StdinLine}}) {
@@ -1369,6 +1385,18 @@ void SemanticAnalyzer::RegisterBuiltIns() {
                 SemanticType(SemanticTypeKind::StringView)},
             source::SourceRange{}, BuiltInFunction::StringFormat);
         (void)_currentScope->Declare(*function);
+        _model._symbols.push_back(std::move(function));
+    }
+    {
+        auto signature = std::make_shared<CallableSignature>();
+        signature->result = SemanticType(SemanticTypeKind::String);
+        signature->parameters = {
+            SemanticType(SemanticTypeKind::StringView)};
+        signature->isCrashable = true;
+        auto function = std::make_unique<FunctionSymbol>(
+            "__sprintf_crash", std::move(signature), source::SourceRange{},
+            BuiltInFunction::StringFormatCrash);
+        (void)_currentScope->DeclareAs("__sprintf_crash!", *function);
         _model._symbols.push_back(std::move(function));
     }
     for (const auto& [name, intrinsic] :
@@ -1847,7 +1875,7 @@ void SemanticAnalyzer::RegisterFunction(
                    function.NameRange(),
                    "extern declarations using raw pointers must be unsafe");
     }
-    const bool lifecycle =
+    const bool lifecycle = !function.IsCrashable() &&
         owner && (function.Name() == "init" || function.Name() == "zero" ||
                   function.Name() == "tear");
     if (function.HasModifier(core::FunctionModifier::Override) !=
@@ -1860,30 +1888,31 @@ void SemanticAnalyzer::RegisterFunction(
         !enumOwner)
         Report(diagnostics::DiagnosticCode::InvalidMember, function.NameRange(),
                "private requires a structure or enum method");
-    if (owner && function.Name() == "init" &&
+    if (lifecycle && function.Name() == "init" &&
         (receiver || returnType.WithoutConst() != SemanticType(owner)))
         Report(diagnostics::DiagnosticCode::InvalidLifecycle, function.Range(),
                "init must be static and return its structure type");
-    if (owner && function.Name() == "zero" &&
+    if (lifecycle && function.Name() == "zero" &&
         (function.IsUnsafe() || receiver || !parameterTypes.empty() ||
          returnType.WithoutConst() != SemanticType(owner)))
         Report(diagnostics::DiagnosticCode::InvalidLifecycle, function.Range(),
                "zero must be safe, static, take no parameters, and return its "
                "structure type");
-    if (owner && function.Name() == "zero" &&
+    if (lifecycle && function.Name() == "zero" &&
         function.HasModifier(core::FunctionModifier::Private))
         Report(diagnostics::DiagnosticCode::InvalidLifecycle, function.Range(),
                "zero cannot be private because structure default "
                "construction is part of the type's API");
-    if (owner && function.Name() == "tear" &&
+    if (lifecycle && function.Name() == "tear" &&
         (returnType.Kind() != SemanticTypeKind::Void ||
          parameterTypes.size() != 1 || !receiver ||
          parameterTypes[0].Kind() != SemanticTypeKind::Reference ||
          parameterTypes[0].Target()->IsConst()))
         Report(diagnostics::DiagnosticCode::InvalidLifecycle, function.Range(),
                "tear must return void and take only &self");
-    if (enumOwner && (function.Name() == "init" || function.Name() == "zero" ||
-                      function.Name() == "tear"))
+    if (enumOwner && !function.IsCrashable() &&
+        (function.Name() == "init" || function.Name() == "zero" ||
+         function.Name() == "tear"))
         Report(diagnostics::DiagnosticCode::InvalidLifecycle, function.Range(),
                "enum lifecycle is compiler-defined; init, zero, and tear are "
                "reserved");
@@ -1900,15 +1929,16 @@ void SemanticAnalyzer::RegisterFunction(
     if (enumOwner && enumOwner->syntax->moduleId != function.moduleId)
         Report(diagnostics::DiagnosticCode::PrivateAccess, function.Range(),
                "methods must be defined in their enum's module");
-    const std::string name = owner ? owner->name + "::" + function.Name()
-                             : enumOwner
-                                 ? enumOwner->name + "::" + function.Name()
-                                 : TopName(function, function.Name());
+    std::string name = owner ? owner->name + "::" + function.Name()
+                       : enumOwner ? enumOwner->name + "::" + function.Name()
+                                   : TopName(function, function.Name());
+    if (function.IsCrashable() && name != "main") name += "!";
     auto signature = std::make_shared<const CallableSignature>(
         CallableSignature{returnType, parameterTypes, parameterContracts,
                           ResultContracts(function.ReturnType()),
                           borrowSourceIndices, function.IsUnsafe(),
-                          function.HasModifier(core::FunctionModifier::Once)});
+                          function.HasModifier(core::FunctionModifier::Once),
+                          function.IsCrashable()});
     const auto* symbol = static_cast<const FunctionSymbol*>(AddSymbol(
         std::make_unique<FunctionSymbol>(
             name, std::move(signature), function.NameRange(),
@@ -1920,22 +1950,29 @@ void SemanticAnalyzer::RegisterFunction(
     if (symbol && function.HasModifier(core::FunctionModifier::Extern))
         _forbiddenZeroEffects.insert(symbol);
     if (owner && symbol) {
-        owner->methods.emplace(function.Name(), symbol);
-        if (function.Name() == "init") {
+        const std::string methodName =
+            EffectName(function.Name(), function.IsCrashable());
+        if (!owner->methods.emplace(methodName, symbol).second)
+            Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                   function.NameRange(),
+                   "duplicate method '" + methodName + "'");
+        if (lifecycle && function.Name() == "init") {
             owner->init = symbol;
             owner->hasCustomInit = !generated;
         }
-        if (function.Name() == "zero") {
+        if (lifecycle && function.Name() == "zero") {
             owner->zero = symbol;
             owner->zeroIsGenerated = generated;
         }
-        if (function.Name() == "tear") owner->tear = symbol;
+        if (lifecycle && function.Name() == "tear") owner->tear = symbol;
     }
     if (enumOwner && symbol) {
-        if (!enumOwner->methods.emplace(function.Name(), symbol).second)
+        const std::string methodName =
+            EffectName(function.Name(), function.IsCrashable());
+        if (!enumOwner->methods.emplace(methodName, symbol).second)
             Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
                    function.NameRange(),
-                   "duplicate enum method '" + function.Name() + "'");
+                   "duplicate enum method '" + methodName + "'");
         for (const EnumVariant& variant : enumOwner->variants)
             if (variant.name == function.Name())
                 Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
@@ -1963,12 +2000,15 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     _warnedDefaults.clear();
     _zeroDependencies.clear();
     _functionCalls.clear();
+    _crashableCalls.clear();
+    _directCrashFunctions.clear();
     _forbiddenZeroEffects.clear();
     _implicitDefaults.clear();
     _buildSelf = nullptr;
     _allowBuildSelf = false;
     _buildDepth = 0;
     _analyzingCallCallee = false;
+    _callCalleeCrashable = false;
     _currentScope = &AddScope(nullptr);
     RegisterBuiltIns();
     _moduleScopes.clear();
@@ -2039,8 +2079,15 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     }
     const auto bindGenericAliases = [&] {
         for (const auto& [alias, declaration] : unit.genericAliases)
-            if (const auto* symbol = _model.DeclaredSymbol(*declaration))
-                (void)_model._scopes.front()->DeclareAs(alias, *symbol);
+            if (const auto* symbol = _model.DeclaredSymbol(*declaration)) {
+                const bool crashable =
+                    declaration->Kind() ==
+                        core::AstNodeKind::FunctionDeclaration &&
+                    static_cast<const core::FunctionDeclaration&>(*declaration)
+                        .IsCrashable();
+                (void)_model._scopes.front()->DeclareAs(
+                    EffectName(alias, crashable), *symbol);
+            }
     };
     RegisterErrorTypes(unit);
     RegisterEnums(unit);
@@ -2162,6 +2209,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                                      structure->syntax->NameRange());
     ValidateZeroCycles();
     ValidateZeroEffects();
+    WarnForCrashlessFunctions();
     if (!_diagnostics.HasErrors())
         AnalyzeAllocations(unit, _model, _diagnostics);
     ReportGenericOrigins(unit, _diagnostics);
@@ -2369,13 +2417,16 @@ void SemanticAnalyzer::AnalyzeVariadicFunction(
 
     const auto& callee =
         static_cast<const core::NameExpression&>(call.Callee());
-    const Symbol* targetBase = _currentScope->Lookup(callee.Name());
+    const Symbol* targetBase = _currentScope->Lookup(
+        EffectName(callee.Name(), call.IsCrashable()));
     if (targetBase == nullptr || targetBase->Kind() != SymbolKind::Function) {
         invalid(callee.Range(), "variadic forwarding target '" + callee.Name() +
                                     "' is not a function");
         return;
     }
     const auto* target = static_cast<const FunctionSymbol*>(targetBase);
+    ValidateCrashableCall(call.IsCrashable(), target->Signature(), target,
+                          call.Range());
     if (target == _currentFunction) {
         invalid(callee.Range(), "a variadic function cannot forward to itself");
         return;
@@ -4017,13 +4068,16 @@ SemanticType SemanticAnalyzer::AnalyzeCast(
 
 SemanticType SemanticAnalyzer::AnalyzeName(
     const core::NameExpression& expression) {
-    if (ReportAmbiguousImport(expression.Name(), expression.Range()))
+    const std::string lookupName =
+        EffectName(expression.Name(),
+                   _analyzingCallCallee && _callCalleeCrashable);
+    if (ReportAmbiguousImport(lookupName, expression.Range()))
         return SemanticType::Error();
-    const Symbol* symbol = _currentScope->Lookup(expression.Name());
+    const Symbol* symbol = _currentScope->Lookup(lookupName);
     if (symbol == nullptr) {
-        if (!ReportInaccessibleImport(expression.Name(), expression.Range()))
+        if (!ReportInaccessibleImport(lookupName, expression.Range()))
             Report(diagnostics::DiagnosticCode::UnknownName, expression.Range(),
-                   "unknown name '" + expression.Name() + "'");
+                   "unknown name '" + lookupName + "'");
         return SemanticType::Error();
     }
     if (symbol == _buildSelf && !_allowBuildSelf)
@@ -5119,6 +5173,81 @@ SemanticType SemanticAnalyzer::AnalyzeHashCall(
     return result;
 }
 
+void SemanticAnalyzer::ValidateCrashableCall(
+    bool markedCrashable, const CallableSignature& signature,
+    const FunctionSymbol* function, source::SourceRange range) {
+    if (function && function->BuiltIn() == BuiltInFunction::Crash) {
+        if (markedCrashable)
+            Report(diagnostics::DiagnosticCode::InvalidCrashable, range,
+                   "crash is an explicit terminal operation and is called "
+                   "as crash(), without a bang");
+        if (!_currentFunction || !_currentFunction->IsCrashable()) {
+            Report(diagnostics::DiagnosticCode::InvalidCrashable, range,
+                   "crash() may only be called from a crashable function");
+        } else {
+            _directCrashFunctions.insert(_currentFunction);
+        }
+        return;
+    }
+
+    if (signature.isCrashable != markedCrashable) {
+        if (signature.isCrashable)
+            Report(diagnostics::DiagnosticCode::InvalidCrashable, range,
+                   "a crashable function must be called with '!'");
+        else
+            Report(diagnostics::DiagnosticCode::InvalidCrashable, range,
+                   "a non-crashable function cannot be called with '!'");
+        return;
+    }
+    if (!markedCrashable) return;
+
+    if (!_currentFunction || !_currentFunction->IsCrashable()) {
+        Report(diagnostics::DiagnosticCode::InvalidCrashable, range,
+               "a crashable call may only appear in a crashable function");
+        return;
+    }
+
+    if (!function ||
+        function->BuiltIn() == BuiltInFunction::StringFormatCrash)
+        _directCrashFunctions.insert(_currentFunction);
+    else
+        _crashableCalls[_currentFunction].insert(function);
+}
+
+void SemanticAnalyzer::WarnForCrashlessFunctions() {
+    std::unordered_set<const FunctionSymbol*> canCrash =
+        _directCrashFunctions;
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const auto& [caller, callees] : _crashableCalls) {
+            if (canCrash.contains(caller)) continue;
+            if (std::ranges::any_of(callees, [&](const FunctionSymbol* callee) {
+                    return canCrash.contains(callee);
+                })) {
+                canCrash.insert(caller);
+                changed = true;
+            }
+        }
+    }
+
+    for (const auto& symbol : _model._symbols) {
+        if (symbol->Kind() != SymbolKind::Function) continue;
+        const auto* function = static_cast<const FunctionSymbol*>(symbol.get());
+        if (!function->IsCrashable() || function->Declaration() == nullptr ||
+            !function->Declaration()->IsCrashable() ||
+            canCrash.contains(function))
+            continue;
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::InvalidCrashable,
+            function->DeclarationRange(),
+            "method '" + function->Declaration()->Name() +
+                "' is marked as crashable, while no path leads to a "
+                "crashable state",
+            diagnostics::DiagnosticSeverity::Warning);
+    }
+}
+
 SemanticType SemanticAnalyzer::AnalyzeCall(
     const core::CallExpression& expression) {
     if (expression.Callee().Kind() == core::AstNodeKind::NameExpression &&
@@ -5187,9 +5316,12 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         return type;
     }
     const bool previousCallee = _analyzingCallCallee;
+    const bool previousCrashableCallee = _callCalleeCrashable;
     _analyzingCallCallee = true;
+    _callCalleeCrashable = expression.IsCrashable();
     SemanticType calleeType = AnalyzeExpression(expression.Callee());
     _analyzingCallCallee = previousCallee;
+    _callCalleeCrashable = previousCrashableCallee;
     const FunctionSymbol* function = nullptr;
     if (expression.Callee().Kind() == core::AstNodeKind::NameExpression) {
         const Symbol* symbol = _model.SymbolFor(
@@ -5357,6 +5489,8 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                expression.Callee().Range(), "expression is not callable");
         return SemanticType::Error();
     }
+    ValidateCrashableCall(expression.IsCrashable(), *signature, function,
+                          expression.Range());
     if (signature->isUnsafe || (signature->result.IsImmovable() && !_inZero))
         RequireUnsafe(expression.Callee().Range());
     if (_currentFunction && function)
@@ -5410,9 +5544,12 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                      function->BuiltIn() == BuiltInFunction::Stderr ||
                      function->BuiltIn() == BuiltInFunction::StderrLine ||
                      function->BuiltIn() == BuiltInFunction::StderrFormat ||
-                     function->BuiltIn() == BuiltInFunction::StringFormat)) {
+                     function->BuiltIn() == BuiltInFunction::StringFormat ||
+                     function->BuiltIn() ==
+                         BuiltInFunction::StringFormatCrash)) {
         const bool stringFormat =
-            function->BuiltIn() == BuiltInFunction::StringFormat;
+            function->BuiltIn() == BuiltInFunction::StringFormat ||
+            function->BuiltIn() == BuiltInFunction::StringFormatCrash;
         if (_inZero && !stringFormat)
             Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                    expression.Range(),
@@ -6379,7 +6516,9 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
     const auto* methods = owner       ? &owner->methods
                           : enumOwner ? &enumOwner->methods
                                       : nullptr;
-    if (!methods || !methods->contains(expression.Member())) {
+    const std::string methodName =
+        EffectName(expression.Member(), expression.IsCrashable());
+    if (!methods || !methods->contains(methodName)) {
         if (owner && expression.Member() == "tear") {
             Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                    expression.MemberRange(),
@@ -6388,11 +6527,13 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
         }
         Report(diagnostics::DiagnosticCode::InvalidMember,
                expression.MemberRange(),
-               "unknown method '" + expression.Member() + "'");
+               "unknown method '" + methodName + "'");
         return SemanticType::Error();
     }
-    const FunctionSymbol* function = methods->at(expression.Member());
+    const FunctionSymbol* function = methods->at(methodName);
     _model._methods[&expression] = function;
+    ValidateCrashableCall(expression.IsCrashable(), function->Signature(),
+                          function, expression.Range());
     if (_currentFunction) _functionCalls[_currentFunction].insert(function);
     CheckMethodAccess(*function, expression.MemberRange());
     if (owner && function == owner->zero)

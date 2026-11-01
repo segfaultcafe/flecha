@@ -102,6 +102,43 @@ TEST(ParserTests, ParsesCompleteFunctionWithReturnStatement) {
     EXPECT_EQ(unit->Range().end.offset, 24);
 }
 
+TEST(ParserTests, ParsesCrashableDeclarationsAndCalls) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        void fail!() { crash("boom"); }
+        void forward!() { fail!(); }
+        structure Worker {};
+        void Worker::run!(&const self) { fail!(); }
+        void invoke!(Worker worker) { worker.run!(); }
+    )", diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 5);
+    const auto& fail = static_cast<const FunctionDeclaration&>(
+        *unit->Declarations()[0]);
+    const auto& forward = static_cast<const FunctionDeclaration&>(
+        *unit->Declarations()[1]);
+    const auto& run = static_cast<const FunctionDeclaration&>(
+        *unit->Declarations()[3]);
+    const auto& invoke = static_cast<const FunctionDeclaration&>(
+        *unit->Declarations()[4]);
+    EXPECT_TRUE(fail.IsCrashable());
+    EXPECT_TRUE(forward.IsCrashable());
+    EXPECT_TRUE(run.IsCrashable());
+    EXPECT_TRUE(invoke.IsCrashable());
+
+    const auto& directStatement = static_cast<const ExpressionStatement&>(
+        *forward.Body().Statements()[0]);
+    const auto& direct = static_cast<const CallExpression&>(
+        directStatement.Value());
+    EXPECT_TRUE(direct.IsCrashable());
+    const auto& memberStatement = static_cast<const ExpressionStatement&>(
+        *invoke.Body().Statements()[0]);
+    const auto& member = static_cast<const MemberCallExpression&>(
+        memberStatement.Value());
+    EXPECT_TRUE(member.IsCrashable());
+}
+
 TEST(ParserTests, ParsesModuleConstantsWithoutConfusingConstFunctions) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

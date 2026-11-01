@@ -1197,6 +1197,32 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInStringFormat(
     llvm::Value* failed = _builder.CreateICmpNE(
         status, llvm::ConstantInt::get(statusType, 0), "sprintf.failed");
 
+    if (expression.Function().BuiltIn() ==
+        semantic::BuiltInFunction::StringFormatCrash) {
+        auto* crashBlock = llvm::BasicBlock::Create(
+            _context, "sprintf.crash", _currentFunction);
+        auto* successBlock = llvm::BasicBlock::Create(
+            _context, "sprintf.success", _currentFunction);
+        _builder.CreateCondBr(failed, crashBlock, successBlock);
+        _builder.SetInsertPoint(crashBlock);
+        const lowering::BoundLiteralExpression message(
+            expression.Range(),
+            semantic::SemanticType(semantic::SemanticTypeKind::StringView),
+            "string formatting failed: out of memory");
+        llvm::Value* messageValue = EmitLiteral(message);
+        if (messageValue == nullptr) return nullptr;
+        (void)EmitCrash(messageValue, expression.Range());
+        _builder.SetInsertPoint(successBlock);
+
+        auto* owned = CreateOwnedStringTemporary("sprintf.owned.result");
+        llvm::Value* value = _builder.CreateLoad(
+            StringType(), output, "sprintf.string");
+        _builder.CreateStore(value, owned);
+        value = _builder.CreateLoad(StringType(), owned, "sprintf.owned");
+        _freshOwnedStrings.emplace(value, owned);
+        return value;
+    }
+
     llvm::GlobalVariable* identity =
         _module->getNamedGlobal(".flecha.error.AllocationError");
     if (identity == nullptr) {
@@ -1232,6 +1258,54 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInStringFormat(
         _builder.CreateLoad(MapType(expression.Type()), owned, "sprintf.owned");
     _freshOwnedValues.emplace(value, owned);
     return value;
+}
+
+llvm::Value* LlvmCodeGenerator::EmitCrash(llvm::Value* message,
+                                          source::SourceRange range) {
+    const std::string functionName =
+        _currentFunctionSymbol == nullptr ? "<unknown>"
+                                          : _currentFunctionSymbol->Name();
+    const lowering::BoundLiteralExpression fileLiteral(
+        range,
+        semantic::SemanticType(semantic::SemanticTypeKind::StringView),
+        range.start.file);
+    const lowering::BoundLiteralExpression functionLiteral(
+        range,
+        semantic::SemanticType(semantic::SemanticTypeKind::StringView),
+        functionName);
+    llvm::Value* file = EmitLiteral(fileLiteral);
+    llvm::Value* function = EmitLiteral(functionLiteral);
+    if (file == nullptr || function == nullptr) return nullptr;
+
+    auto* sizeType =
+        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
+    auto* pointerType = llvm::PointerType::getUnqual(_context);
+    auto* lineType = llvm::Type::getInt32Ty(_context);
+    llvm::FunctionType* crashType = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(_context),
+        {pointerType, sizeType, pointerType, sizeType, pointerType, sizeType,
+         lineType, lineType},
+        false);
+    llvm::FunctionCallee crash = _module->getOrInsertFunction(
+        "flecha_runtime_v1_crash", crashType);
+    if (auto* functionValue =
+            llvm::dyn_cast<llvm::Function>(crash.getCallee())) {
+        functionValue->addFnAttr(llvm::Attribute::NoReturn);
+        functionValue->addFnAttr(llvm::Attribute::Cold);
+    }
+    llvm::CallInst* call = _builder.CreateCall(
+        crash,
+        {_builder.CreateExtractValue(message, 0),
+         _builder.CreateExtractValue(message, 1),
+         _builder.CreateExtractValue(file, 0),
+         _builder.CreateExtractValue(file, 1),
+         _builder.CreateExtractValue(function, 0),
+         _builder.CreateExtractValue(function, 1),
+         llvm::ConstantInt::get(lineType, range.start.line),
+         llvm::ConstantInt::get(lineType, range.start.column)});
+    call->setDoesNotReturn();
+    _builder.CreateUnreachable();
+    return call;
 }
 
 llvm::Value* LlvmCodeGenerator::EmitBuiltInInput(
@@ -1958,6 +2032,7 @@ llvm::AllocaInst* LlvmCodeGenerator::CreateEntryStorage(llvm::Type* type,
 bool LlvmCodeGenerator::EmitFunction(
     const lowering::BoundFunction& boundFunction) {
     _currentFunction = _functions.at(&boundFunction.Symbol());
+    _currentFunctionSymbol = &boundFunction.Symbol();
     _variables.clear();
     _lifetimeFlags.clear();
     _ownedCaptureStorage.clear();
@@ -2084,6 +2159,7 @@ bool LlvmCodeGenerator::EmitFunction(
     _cleanupRequests.clear();
     _cleanupScopes.clear();
     _currentFunction = nullptr;
+    _currentFunctionSymbol = nullptr;
     return true;
 }
 
@@ -3789,8 +3865,13 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                     semantic::BuiltInFunction::StderrFormat)
                 return EmitBuiltInOutput(call, arguments);
             if (call.Function().BuiltIn() ==
-                semantic::BuiltInFunction::StringFormat)
+                    semantic::BuiltInFunction::StringFormat ||
+                call.Function().BuiltIn() ==
+                    semantic::BuiltInFunction::StringFormatCrash)
                 return EmitBuiltInStringFormat(call, arguments);
+            if (call.Function().BuiltIn() ==
+                semantic::BuiltInFunction::Crash)
+                return EmitCrash(arguments.front(), call.Range());
             if (call.Function().BuiltIn() == semantic::BuiltInFunction::Stdin ||
                 call.Function().BuiltIn() ==
                     semantic::BuiltInFunction::StdinLine)
