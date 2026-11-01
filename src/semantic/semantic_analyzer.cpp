@@ -2863,10 +2863,14 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
             AnalyzeBlock(range.Expansion(), true);
             const SemanticType source =
                 _model.TypeOf(*range.Source().Initializer());
-            if (!source.IsError() && !source.IsSequence())
+            const bool stringRange =
+                source.Kind() == SemanticTypeKind::StringView ||
+                source.Kind() == SemanticTypeKind::String;
+            if (!source.IsError() && !source.IsSequence() && !stringRange)
                 Report(diagnostics::DiagnosticCode::IncompatibleType,
                        range.Source().Range(),
-                       "range requires a fixed array or slice value");
+                       "range requires a fixed array, slice, string, or "
+                       "stringv value");
             if (range.IndexBinding() != nullptr) {
                 const Symbol* symbol =
                     _model.DeclaredSymbol(*range.IndexBinding());
@@ -2876,6 +2880,12 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                         Report(diagnostics::DiagnosticCode::IncompatibleType,
                                range.IndexBinding()->NameRange(),
                                "range index must have an integer type");
+                    } else if (stringRange &&
+                               index.Kind() != SemanticTypeKind::U32) {
+                        Report(diagnostics::DiagnosticCode::IncompatibleType,
+                               range.IndexBinding()->NameRange(),
+                               "string range indices must use u32 because "
+                               "string lengths are u32");
                     } else if (source.Kind() == SemanticTypeKind::Slice &&
                                index.Kind() != SemanticTypeKind::USize) {
                         Report(diagnostics::DiagnosticCode::IncompatibleType,
@@ -5537,6 +5547,31 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
     if (expression.Access() == TokenType::Scope)
         return AnalyzeStructureCall(expression, SemanticType::Error());
     const SemanticType receiver = AnalyzeExpression(expression.Receiver());
+    if (expression.Member() == "$range_index") {
+        if (expression.Arguments().size() != 1) {
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "internal range index expects one cursor argument");
+            for (const auto& argument : expression.Arguments())
+                AnalyzeExpression(*argument);
+            return SemanticType::Error();
+        }
+        const SemanticType cursor = AnalyzeExpression(
+            *expression.Arguments()[0],
+            SemanticType(SemanticTypeKind::USize));
+        if (!cursor.IsError() &&
+            cursor.Kind() != SemanticTypeKind::USize) {
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Arguments()[0]->Range(),
+                   "internal range cursor must have type 'usize'");
+        }
+        if (receiver.Kind() == SemanticTypeKind::StringView ||
+            receiver.Kind() == SemanticTypeKind::String)
+            return SemanticType(SemanticTypeKind::U32);
+        if (receiver.IsSequence())
+            return SemanticType(SemanticTypeKind::USize);
+        return SemanticType::Error();
+    }
     if (receiver.Kind() == SemanticTypeKind::Structure ||
         receiver.Kind() == SemanticTypeKind::Enum ||
         ((receiver.Kind() == SemanticTypeKind::Pointer ||

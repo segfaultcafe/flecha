@@ -3284,6 +3284,78 @@ TEST(CodeGeneratorTests, EmitsLoopUpdateTargetsAndSingleEvaluationIncrements) {
     EXPECT_NE(ir.find("increment.old = load i32"), std::string::npos);
 }
 
+TEST(CodeGeneratorTests, EmitsStringAndStringViewRanges) {
+    GeneratedSource result = Generate(R"(
+        u32 from_view(stringv value) {
+            u32 total = 0;
+            for (index, character) := range value {
+                u8 byte = character;
+                total = total + index + byte.cast<u32>;
+            }
+            return total;
+        }
+        u32 from_string(string value) {
+            u32 total = 0;
+            for (u32 index, char character) = range value {
+                u8 byte = character;
+                total = total + index + byte.cast<u32>;
+            }
+            return total;
+        }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("flecha_runtime_v1_string_view_at"), std::string::npos);
+    EXPECT_NE(ir.find("trunc i64"), std::string::npos);
+}
+
+TEST(NativeCompilerTests, RunsStringAndStringViewRanges) {
+    GeneratedSource result = Generate(R"(
+        string make_text(&i32 calls) {
+            (*calls)++;
+            return "xy";
+        }
+
+        i32 main() {
+            stringv view = "abc";
+            u32 total = 0;
+            for (index, character) := range view {
+                u8 byte = character;
+                total = total + index + byte.cast<u32>;
+            }
+
+            i32 calls = 0;
+            for (u32 index, char character) = range make_text(&calls) {
+                u8 byte = character;
+                total = total + index + byte.cast<u32>;
+            }
+
+            u32 visits = 0;
+            for (_, _) := range "" { visits++; }
+            if total != 539 or calls != 1 or visits != 0 { return 1; }
+            return 42;
+        }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_string_range_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "string_range_test", executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(CodeGeneratorTests, EmitsSingleEvaluationCompoundUpdates) {
     GeneratedSource result = Generate(
         "usize index() { return 0; } "
