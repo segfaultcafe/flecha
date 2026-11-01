@@ -42,7 +42,23 @@ err := builder.append("value=");
 if err == none {
     err = builder.appendFloat<f64>(1.25);
 }
+
+text, copyError := builder.toString();
 ```
 
 Failed numeric conversion or allocation preserves the builder's existing
-contents.
+contents. `view()` borrows the accumulated bytes without allocating, while
+`toString()` copies them into an independent owning string and reports
+`AllocationError.OutOfMemory`.
+
+When allocation failure is intentionally unrecoverable, a crashable caller can
+select the paired method:
+
+```flecha
+string finish!(&const strings::StringBuilder builder) {
+    return builder.toString!();
+}
+```
+
+`toString!()` returns the same owning copy directly. If the copy cannot be
+allocated, it emits the standard crash report instead of returning an error.

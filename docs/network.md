@@ -1,8 +1,8 @@
 # Networking
 
-The initial networking surface provides portable IPv4 and IPv6 address values.
-Socket addresses, hostname resolution, and blocking sockets remain later parts
-of the Stage 6 networking work.
+The initial networking surface provides portable IPv4 and IPv6 address and
+socket-address values. Hostname resolution and blocking sockets remain later
+parts of the Stage 6 networking work.
 
 ## IPv4 addresses
 
@@ -30,6 +30,7 @@ Ipv4Address Ipv4Address::fromOctets(
 );
 (Ipv4Address, error) Ipv4Address::parse(stringv text);
 (string, error) Ipv4Address::toString(&const self);
+string Ipv4Address::toString!(&const self);
 [4]u8 Ipv4Address::octets(&const self);
 
 Ipv4Address Ipv4Address::wildcard();
@@ -50,7 +51,8 @@ letters, empty components, missing components, and trailing separators with
 zeroes. Parsing a canonical string and formatting the result therefore
 reproduces the input. Formatting allocates an owning string. Allocation failure
 returns an empty string with `AllocationError.OutOfMemory`; partial output is
-never exposed.
+never exposed. `toString!()` returns the owning string directly and produces a
+crash report on allocation failure.
 
 ## Wildcard and loopback
 
@@ -84,6 +86,7 @@ Ipv6Address Ipv6Address::fromSegments(
 );
 (Ipv6Address, error) Ipv6Address::parse(stringv text);
 (string, error) Ipv6Address::toString(&const self);
+string Ipv6Address::toString!(&const self);
 [8]u16 Ipv6Address::segments(&const self);
 
 Ipv6Address Ipv6Address::wildcard();
@@ -113,7 +116,9 @@ string parses back to the same address.
 
 Formatting allocates an owning string with at most
 `MAX_IPV6_STRING_LENGTH` bytes. Allocation failure returns an empty string with
-`AllocationError.OutOfMemory`; partial output is never exposed.
+`AllocationError.OutOfMemory`; partial output is never exposed. `toString!()`
+returns the canonical owning string directly and produces a crash report on
+allocation failure.
 
 ### Wildcard and loopback
 
@@ -122,3 +127,52 @@ IPv6 interfaces. `isWildcard()` recognizes only that value.
 
 `loopback()` returns `::1`. Unlike IPv4 loopback classification,
 `isLoopback()` recognizes only that exact IPv6 address.
+
+## Socket addresses
+
+`Ipv4SocketAddress` and `Ipv6SocketAddress` pair an address value with an
+explicit `u16` port. Their private representation prevents invalid ports, and
+their zero values are the wildcard address on port zero. Construction and
+access do not allocate:
+
+```flecha
+Ipv4SocketAddress Ipv4SocketAddress::fromParts(
+    Ipv4Address address,
+    u16 port
+);
+Ipv4Address Ipv4SocketAddress::address(&const self);
+u16 Ipv4SocketAddress::port(&const self);
+(Ipv4SocketAddress, error) Ipv4SocketAddress::parse(stringv text);
+(string, error) Ipv4SocketAddress::toString(&const self);
+string Ipv4SocketAddress::toString!(&const self);
+
+Ipv6SocketAddress Ipv6SocketAddress::fromParts(
+    Ipv6Address address,
+    u16 port
+);
+Ipv6Address Ipv6SocketAddress::address(&const self);
+u16 Ipv6SocketAddress::port(&const self);
+(Ipv6SocketAddress, error) Ipv6SocketAddress::parse(stringv text);
+(string, error) Ipv6SocketAddress::toString(&const self);
+string Ipv6SocketAddress::toString!(&const self);
+```
+
+IPv4 text uses `address:port`, such as `192.0.2.1:8080`. IPv6 text requires
+brackets around the address so its colons remain distinct from the port:
+`[2001:db8::1]:443`. Formatting always uses these canonical forms, including
+`0.0.0.0:0`, `[::]:0`, and `[::1]:65535`.
+
+The port parser accepts decimal values from `0` through `65535`. It rejects an
+empty port, signs, non-decimal bytes, overflow, and leading zeroes on a
+multi-digit value with `NetworkError.InvalidPort`. IPv4 delegates the address
+prefix to `Ipv4Address::parse`. IPv6 requires an opening bracket, a closing
+bracket, and a colon immediately after that bracket before delegating the
+interior to `Ipv6Address::parse`. A malformed address reports
+`NetworkError.InvalidAddress`; a missing or malformed port reports
+`NetworkError.InvalidPort`.
+
+`toString()` allocates one complete owning string and propagates
+`AllocationError.OutOfMemory` without exposing partial output. `toString!()`
+returns the same canonical result directly and emits the standard crash report
+if either address or socket formatting cannot allocate. Choose the recoverable
+or crashable spelling deliberately; the bang is part of the method identity.

@@ -7,7 +7,8 @@ server.
 
 Both editors render the `!` in a crashable declaration or call, such as
 `load!()`, in orange. Logical negation such as `!ready` keeps the ordinary
-operator style.
+operator style. The terminal `crash(...)` builtin is blue to distinguish it
+from ordinary function calls.
 
 ## Visual Studio Code
 
