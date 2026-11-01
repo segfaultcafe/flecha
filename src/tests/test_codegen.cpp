@@ -875,6 +875,23 @@ TEST(LlvmCodeGeneratorTests,
     EXPECT_EQ(ir.find("unsupported LLVM cast"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, EmitsUnsignedCharacterOrdering) {
+    GeneratedSource result = Generate(
+        "bool less(char left, char right) { return left < right; } "
+        "bool less_equal(char left, char right) { return left <= right; } "
+        "bool greater(char left, char right) { return left > right; } "
+        "bool greater_equal(char left, char right) { return left >= right; }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("icmp ult i8"), std::string::npos);
+    EXPECT_NE(ir.find("icmp ule i8"), std::string::npos);
+    EXPECT_NE(ir.find("icmp ugt i8"), std::string::npos);
+    EXPECT_NE(ir.find("icmp uge i8"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsShortCircuitBooleanLogic) {
     GeneratedSource result =
         Generate("bool both(bool left, bool right) { return left and right; }");
@@ -3349,6 +3366,41 @@ TEST(NativeCompilerTests, RunsStringAndStringViewRanges) {
     ASSERT_TRUE(compiler.Ready()) << compiler.Error();
     ASSERT_TRUE(compiler.BuildExecutable(
         *result.boundProgram, "string_range_test", executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsUnsignedCharacterOrdering) {
+    GeneratedSource result = Generate(R"(
+        i32 main() {
+            if !('0' < '9') { return 1; }
+            if !('0' <= '0') { return 2; }
+            if !('9' > '0') { return 3; }
+            if !('9' >= '9') { return 4; }
+
+            u8 high_byte = 255;
+            u8 low_byte = 1;
+            char high = high_byte.cast<char>;
+            char low = low_byte.cast<char>;
+            if !(high > low) { return 5; }
+            return 42;
+        }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_character_ordering_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "character_ordering_test",
+                                         executablePath.string()))
         << compiler.Error();
     const std::string executablePathText = executablePath.string();
     const llvm::StringRef arguments[] = {executablePathText};

@@ -1669,6 +1669,15 @@ TEST(SemanticConversionTests, ConvertsCharactersToBytesImplicitly) {
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticOperatorTests, OrdersCharacters) {
+    Analysis result = Analyze(
+        "bool less(char left, char right) { return left < right; } "
+        "bool less_equal(char left, char right) { return left <= right; } "
+        "bool greater(char left, char right) { return left > right; } "
+        "bool greater_equal(char left, char right) { return left >= right; }");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
 TEST(SemanticExternTests, DoesNotBypassTrackedAllocationContracts) {
     Analysis result = Analyze(
         "extern unsafe void native_use(*i32 value); "

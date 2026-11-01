@@ -31,6 +31,7 @@ bool IsUnsigned(semantic::SemanticType type) {
         case semantic::SemanticTypeKind::U32:
         case semantic::SemanticTypeKind::U64:
         case semantic::SemanticTypeKind::USize:
+        case semantic::SemanticTypeKind::Char:
             return true;
         default:
             return false;

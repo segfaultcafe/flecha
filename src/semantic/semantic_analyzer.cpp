@@ -4653,7 +4653,8 @@ SemanticType SemanticAnalyzer::AnalyzeBinary(
                operation == TokenType::LessEqual ||
                operation == TokenType::Greater ||
                operation == TokenType::GreaterEqual) {
-        if (same && left.IsNumeric()) {
+        if (same &&
+            (left.IsNumeric() || left.Kind() == SemanticTypeKind::Char)) {
             return SemanticType(SemanticTypeKind::Bool);
         }
     } else if (operation == TokenType::Equal ||
