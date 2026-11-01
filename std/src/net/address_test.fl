@@ -104,6 +104,70 @@ void assert_ipv6_formats(
     );
 }
 
+void assert_ipv4_socket_parses(
+    &testing::UnitTest t,
+    stringv text,
+    address::Ipv4Address expectedAddress,
+    u16 expectedPort,
+    stringv message
+) {
+    actual, parseError := address::Ipv4SocketAddress::parse(text);
+    formatted, formatError := actual.toString();
+    asserts::is_true(
+        t,
+        parseError == none and actual.address() == expectedAddress and
+            actual.port() == expectedPort and formatError == none and
+            formatted.view() == text,
+        message
+    );
+}
+
+void assert_ipv6_socket_parses(
+    &testing::UnitTest t,
+    stringv text,
+    address::Ipv6Address expectedAddress,
+    u16 expectedPort,
+    stringv message
+) {
+    actual, parseError := address::Ipv6SocketAddress::parse(text);
+    formatted, formatError := actual.toString();
+    asserts::is_true(
+        t,
+        parseError == none and actual.address() == expectedAddress and
+            actual.port() == expectedPort and formatError == none and
+            formatted.view() == text,
+        message
+    );
+}
+
+void assert_ipv4_socket_invalid(
+    &testing::UnitTest t,
+    stringv text,
+    error expectedError,
+    stringv message
+) {
+    value, parseError := address::Ipv4SocketAddress::parse(text);
+    asserts::is_true(
+        t,
+        parseError == expectedError and value == none,
+        message
+    );
+}
+
+void assert_ipv6_socket_invalid(
+    &testing::UnitTest t,
+    stringv text,
+    error expectedError,
+    stringv message
+) {
+    value, parseError := address::Ipv6SocketAddress::parse(text);
+    asserts::is_true(
+        t,
+        parseError == expectedError and value == none,
+        message
+    );
+}
+
 test ipv4_parsing_accepts_canonical_boundaries(&testing::UnitTest t) {
     assert_parses(t, "0.0.0.0", 0, 0, 0, 0, "the zero address parses");
     assert_parses(t, "1.2.3.4", 1, 2, 3, 4, "all components are packed");
@@ -443,5 +507,157 @@ test ipv6_formatting_uses_canonical_zero_compression(&testing::UnitTest t) {
         "1:0:0:2:0:0:0:3",
         "1:0:0:2::3",
         "a longer run wins over an earlier shorter run"
+    );
+}
+
+test ipv4_socket_addresses_construct_parse_and_format(
+    &testing::UnitTest t
+) {
+    expected := address::Ipv4Address::fromOctets(192, 0, 2, 1);
+    constructed := address::Ipv4SocketAddress::fromParts(expected, 8080);
+    asserts::is_true(
+        t,
+        constructed.address() == expected and constructed.port() == 8080,
+        "IPv4 socket parts remain observable"
+    );
+
+    assert_ipv4_socket_parses(
+        t,
+        "192.0.2.1:8080",
+        expected,
+        8080,
+        "an IPv4 address and ordinary port round trip"
+    );
+    assert_ipv4_socket_parses(
+        t,
+        "0.0.0.0:0",
+        address::Ipv4Address::wildcard(),
+        0,
+        "the wildcard address accepts port zero"
+    );
+    assert_ipv4_socket_parses(
+        t,
+        "255.255.255.255:65535",
+        address::Ipv4Address::fromOctets(255, 255, 255, 255),
+        65535,
+        "the maximum IPv4 address and port parse"
+    );
+}
+
+test ipv4_socket_parsing_distinguishes_address_and_port_errors(
+    &testing::UnitTest t
+) {
+    assert_ipv4_socket_invalid(
+        t, ":80", errors::NetworkError.InvalidAddress,
+        "a missing IPv4 address is an address error"
+    );
+    assert_ipv4_socket_invalid(
+        t, "256.0.0.1:80", errors::NetworkError.InvalidAddress,
+        "an invalid IPv4 component is an address error"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1", errors::NetworkError.InvalidPort,
+        "a missing IPv4 port is a port error"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:", errors::NetworkError.InvalidPort,
+        "an empty IPv4 port is rejected"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:080", errors::NetworkError.InvalidPort,
+        "IPv4 socket ports reject leading zeroes"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:+80", errors::NetworkError.InvalidPort,
+        "IPv4 socket ports reject signs"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:65536", errors::NetworkError.InvalidPort,
+        "IPv4 socket ports reject overflow"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:80:90", errors::NetworkError.InvalidPort,
+        "IPv4 socket ports reject extra separators"
+    );
+}
+
+test ipv6_socket_addresses_construct_parse_and_format(
+    &testing::UnitTest t
+) {
+    expected := address::Ipv6Address::fromSegments(
+        8193, 3512, 0, 0, 0, 0, 0, 1
+    );
+    constructed := address::Ipv6SocketAddress::fromParts(expected, 8080);
+    asserts::is_true(
+        t,
+        constructed.address() == expected and constructed.port() == 8080,
+        "IPv6 socket parts remain observable"
+    );
+
+    assert_ipv6_socket_parses(
+        t,
+        "[2001:db8::1]:8080",
+        expected,
+        8080,
+        "a bracketed IPv6 address and ordinary port round trip"
+    );
+    assert_ipv6_socket_parses(
+        t,
+        "[::]:0",
+        address::Ipv6Address::wildcard(),
+        0,
+        "the IPv6 wildcard address accepts port zero"
+    );
+    assert_ipv6_socket_parses(
+        t,
+        "[::1]:65535",
+        address::Ipv6Address::loopback(),
+        65535,
+        "IPv6 loopback accepts the maximum port"
+    );
+}
+
+test ipv6_socket_parsing_requires_brackets_and_valid_ports(
+    &testing::UnitTest t
+) {
+    assert_ipv6_socket_invalid(
+        t, "::1:80", errors::NetworkError.InvalidAddress,
+        "an unbracketed IPv6 socket address is rejected"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1:80", errors::NetworkError.InvalidAddress,
+        "a missing closing bracket is an address error"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[]:80", errors::NetworkError.InvalidAddress,
+        "an empty bracketed address is rejected"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[gggg::1]:80", errors::NetworkError.InvalidAddress,
+        "an invalid bracketed IPv6 value is an address error"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]", errors::NetworkError.InvalidPort,
+        "a missing IPv6 port is a port error"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]:", errors::NetworkError.InvalidPort,
+        "an empty IPv6 port is rejected"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]:01", errors::NetworkError.InvalidPort,
+        "IPv6 socket ports reject leading zeroes"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]:-1", errors::NetworkError.InvalidPort,
+        "IPv6 socket ports reject signs"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]:65536", errors::NetworkError.InvalidPort,
+        "IPv6 socket ports reject overflow"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]x80", errors::NetworkError.InvalidPort,
+        "the closing bracket must be followed by a colon"
     );
 }

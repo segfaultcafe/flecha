@@ -124,5 +124,42 @@ i32 main() {
         return 16;
     }
 
+    ipv4Socket, ipv4SocketError :=
+        address::Ipv4SocketAddress::parse("192.0.2.1:8080");
+    ipv4SocketText, ipv4SocketFormatError := ipv4Socket.toString();
+    if ipv4SocketError != none or
+        ipv4Socket.address() != address::Ipv4Address::fromOctets(192, 0, 2, 1) or
+        ipv4Socket.port() != 8080 or ipv4SocketFormatError != none or
+        ipv4SocketText.view() != "192.0.2.1:8080" {
+        return 17;
+    }
+
+    invalidIpv4Socket, invalidIpv4SocketError :=
+        address::Ipv4SocketAddress::parse("192.0.2.1:65536");
+    if invalidIpv4SocketError != errors::NetworkError.InvalidPort or
+        invalidIpv4Socket != none {
+        return 18;
+    }
+
+    ipv6Socket, ipv6SocketError :=
+        address::Ipv6SocketAddress::parse("[2001:db8::1]:443");
+    ipv6SocketText, ipv6SocketFormatError := ipv6Socket.toString();
+    expectedIpv6SocketAddress := address::Ipv6Address::fromSegments(
+        8193, 3512, 0, 0, 0, 0, 0, 1
+    );
+    if ipv6SocketError != none or
+        ipv6Socket.address() != expectedIpv6SocketAddress or
+        ipv6Socket.port() != 443 or ipv6SocketFormatError != none or
+        ipv6SocketText.view() != "[2001:db8::1]:443" {
+        return 19;
+    }
+
+    invalidIpv6Socket, invalidIpv6SocketError :=
+        address::Ipv6SocketAddress::parse("::1:443");
+    if invalidIpv6SocketError != errors::NetworkError.InvalidAddress or
+        invalidIpv6Socket != none {
+        return 20;
+    }
+
     return 42;
 }

@@ -1,0 +1,167 @@
+module address;
+
+@imports 
+    :: root::fmt
+    :: root::net::errors;
+
+export structure Ipv4SocketAddress {
+    private Ipv4Address address;
+    private u16 port;
+};
+
+export structure Ipv6SocketAddress {
+    private Ipv6Address address;
+    private u16 port;
+};
+
+Ipv4SocketAddress Ipv4SocketAddress::fromParts(
+    Ipv4Address address,
+    u16 port
+) {
+    return build Ipv4SocketAddress {
+        self.address = address;
+        self.port = port;
+    };
+}
+
+Ipv4Address Ipv4SocketAddress::address(&const self) {
+    return self->address;
+}
+
+u16 Ipv4SocketAddress::port(&const self) {
+    return self->port;
+}
+
+(Ipv4SocketAddress, error) Ipv4SocketAddress::parse(stringv text) {
+    u32 separator = text.len();
+
+    for (u32 index, char c) = range text {
+        if c == ':' {
+            separator = index;
+            break;
+        }
+    }
+
+    if separator == text.len() {
+        return (none, errors::NetworkError.InvalidPort);
+    }
+
+    address, addressError :=
+        Ipv4Address::parse(text.substr(0, separator));
+    if addressError != none {
+        return (none, addressError);
+    }
+
+    u32 portStart = separator + 1;
+    port, portError := parse_socket_port(
+        text.substr(portStart, text.len() - portStart)
+    );
+    if portError != none {
+        return (none, portError);
+    }
+
+    return (Ipv4SocketAddress::fromParts(address, port), none);
+}
+
+(string, error) Ipv4SocketAddress::toString(&const self) {
+    addressText, addressError := self->address.toString();
+    if addressError != none {
+        return (none, addressError);
+    }
+
+    return fmt::sprintf("{}:{}", addressText, self->port);
+}
+
+Ipv6SocketAddress Ipv6SocketAddress::fromParts(
+    Ipv6Address address,
+    u16 port
+) {
+    return build Ipv6SocketAddress {
+        self.address = address;
+        self.port = port;
+    };
+}
+
+Ipv6Address Ipv6SocketAddress::address(&const self) {
+    return self->address;
+}
+
+u16 Ipv6SocketAddress::port(&const self) {
+    return self->port;
+}
+
+(Ipv6SocketAddress, error) Ipv6SocketAddress::parse(stringv text) {
+    if text.len() == 0 or text[0].cast<char> != '[' {
+        return (none, errors::NetworkError.InvalidAddress);
+    }
+
+    u32 closingBracket = text.len();
+
+    for (u32 index, char c) = range text {
+        if index > 0 and c == ']' {
+            closingBracket = index;
+            break;
+        }
+    }
+
+    if closingBracket == text.len() {
+        return (none, errors::NetworkError.InvalidAddress);
+    }
+
+    address, addressError := Ipv6Address::parse(
+        text.substr(1, closingBracket - 1)
+    );
+    if addressError != none {
+        return (none, addressError);
+    }
+
+    u32 separator = closingBracket + 1;
+    if separator >= text.len() or text[separator].cast<char> != ':' {
+        return (none, errors::NetworkError.InvalidPort);
+    }
+
+    u32 portStart = separator + 1;
+    port, portError := parse_socket_port(
+        text.substr(portStart, text.len() - portStart)
+    );
+    if portError != none {
+        return (none, portError);
+    }
+
+    return (Ipv6SocketAddress::fromParts(address, port), none);
+}
+
+(string, error) Ipv6SocketAddress::toString(&const self) {
+    addressText, addressError := self->address.toString();
+    if addressError != none {
+        return (none, addressError);
+    }
+
+    return fmt::sprintf("[{}]:{}", addressText, self->port);
+}
+
+(u16, error) parse_socket_port(stringv text) {
+    if text.len() == 0 {
+        return (none, errors::NetworkError.InvalidPort);
+    }
+
+    if text.len() > 1 and text[0].cast<char> == '0' {
+        return (none, errors::NetworkError.InvalidPort);
+    }
+
+    u32 value = 0;
+    for (u32 _, char c) = range text {
+        if c < '0' or c > '9' {
+            return (none, errors::NetworkError.InvalidPort);
+        }
+
+        u32 digit = (c.cast<u8> - 48).cast<u32>;
+        value = value * 10 + digit;
+
+        if value > 65535 {
+            return (none, errors::NetworkError.InvalidPort);
+        }
+    }
+
+    return (value.cast<u16>, none);
+}
