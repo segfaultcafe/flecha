@@ -1,0 +1,50 @@
+module address_runtime;
+
+@imports
+    :: lib::std::net::address
+    :: lib::std::net::errors;
+
+i32 main() {
+    loopback, loopbackError := address::Ipv4Address::parse("127.0.0.1");
+    expectedLoopback := address::Ipv4Address::loopback();
+    if loopbackError != none or loopback != expectedLoopback or
+        !loopback.isLoopback() {
+        return 1;
+    }
+    loopbackText, formatError := loopback.toString();
+    if formatError != none or loopbackText.view() != "127.0.0.1" {
+        return 2;
+    }
+
+    broadcast, broadcastError :=
+        address::Ipv4Address::parse("255.255.255.255");
+    expectedBroadcast :=
+        address::Ipv4Address::fromOctets(255, 255, 255, 255);
+    if broadcastError != none or broadcast != expectedBroadcast {
+        return 3;
+    }
+
+    invalid, invalidError := address::Ipv4Address::parse("256.0.0.1");
+    if invalidError != errors::NetworkError.InvalidAddress or invalid != none {
+        return 4;
+    }
+
+    wildcard := address::Ipv4Address::wildcard();
+    if !wildcard.isWildcard() or wildcard.isLoopback() {
+        return 5;
+    }
+
+    alternateLoopback := address::Ipv4Address::fromOctets(127, 255, 1, 2);
+    ordinary := address::Ipv4Address::fromOctets(126, 255, 1, 2);
+    if !alternateLoopback.isLoopback() or ordinary.isLoopback() {
+        return 6;
+    }
+
+    octets := broadcast.octets();
+    if octets[0] != 255 or octets[1] != 255 or
+        octets[2] != 255 or octets[3] != 255 {
+        return 7;
+    }
+
+    return 42;
+}

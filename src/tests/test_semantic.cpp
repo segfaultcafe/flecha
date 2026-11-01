@@ -1669,6 +1669,15 @@ TEST(SemanticConversionTests, ConvertsCharactersToBytesImplicitly) {
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticOperatorTests, OrdersCharacters) {
+    Analysis result = Analyze(
+        "bool less(char left, char right) { return left < right; } "
+        "bool less_equal(char left, char right) { return left <= right; } "
+        "bool greater(char left, char right) { return left > right; } "
+        "bool greater_equal(char left, char right) { return left >= right; }");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
 TEST(SemanticExternTests, DoesNotBypassTrackedAllocationContracts) {
     Analysis result = Analyze(
         "extern unsafe void native_use(*i32 value); "
@@ -3910,10 +3919,37 @@ TEST(SemanticAnalyzerTests, AcceptsRangeBindingsEmptyArraysAndCountedLoops) {
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticAnalyzerTests, AcceptsStringAndStringViewRanges) {
+    Analysis result = Analyze(R"(
+        void from_view(stringv value) {
+            for (index, character) := range value {
+                u32 exposed_index = index;
+                char exposed_character = character;
+            }
+        }
+        void from_string(string value) {
+            for (u32 index, char character) = range value {
+                if index == 0 { character = 'x'; }
+            }
+        }
+    )");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticAnalyzerTests, RequiresU32StringRangeIndices) {
+    for (const std::string& source :
+         {"void f(stringv value) { for (usize i, char c) = range value {} }",
+          "void f(string value) { for (i32 i, char c) = range value {} }"}) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(FindDiagnostic(Analyze(source),
+                                 DiagnosticCode::IncompatibleType),
+                  nullptr);
+    }
+}
+
 TEST(SemanticAnalyzerTests, ChecksRangeSourceBindingTypesAndIndexCapacity) {
     for (const std::string& source :
          {"void f() { for i := range 4 {} }",
-          "void f() { for i := range \"abc\" {} }",
           "void f() { a := [1]; for (u32 i, u8 v) = range a {} }",
           "void f() { a := [1]; for (f64 i, i32 v) = range a {} }",
           "void f() { a := [1]; for (f64 _, i32 v) = range a {} }",

@@ -1545,6 +1545,13 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
     const auto Name = [&](const std::string& name) {
         return std::make_unique<NameExpression>(sourceRange, name);
     };
+    const auto RangeIndex = [&]() {
+        std::vector<std::unique_ptr<Expression>> arguments;
+        arguments.push_back(Name(cursorName));
+        return std::make_unique<MemberCallExpression>(
+            sourceRange, Name(sourceName), "$range_index", sourceRange,
+            std::move(arguments));
+    };
     std::vector<std::unique_ptr<Statement>> outer;
     auto snapshot = std::make_unique<VariableDeclarationStatement>(
         sourceRange, nullptr, sourceName, std::move(source), sourceRange, true);
@@ -1561,9 +1568,10 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
     for (std::size_t binding = 0; binding < names.size(); ++binding) {
         std::unique_ptr<Expression> value;
         if (binding == 0) {
-            value = Name(cursorName);
+            value = RangeIndex();
             // A typed index uses a checked-at-analysis conversion. The cursor
-            // itself remains usize even when the exposed index is narrower.
+            // itself remains usize even when the source exposes another index
+            // type or the explicit binding is narrower.
             if (types[binding] != nullptr) {
                 value = std::make_unique<CastExpression>(
                     names[binding]->range, std::move(value),
@@ -1571,7 +1579,7 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
             }
         } else {
             value = std::make_unique<IndexExpression>(
-                sourceRange, Name(sourceName), Name(cursorName), true);
+                sourceRange, Name(sourceName), RangeIndex(), true);
         }
         auto declaration = std::make_unique<VariableDeclarationStatement>(
             names[binding]->range, std::move(types[binding]),
@@ -1583,11 +1591,14 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
         iteration.push_back(std::move(declaration));
     }
     iteration.push_back(std::move(body));
+    auto length = std::make_unique<MemberCallExpression>(
+        sourceRange, Name(sourceName), "len", sourceRange,
+        std::vector<std::unique_ptr<Expression>>{});
     auto condition = std::make_unique<BinaryExpression>(
         range, Name(cursorName), TokenType::Less,
-        std::make_unique<MemberCallExpression>(
-            sourceRange, Name(sourceName), "len", sourceRange,
-            std::vector<std::unique_ptr<Expression>>{}));
+        std::make_unique<CastExpression>(
+            sourceRange, std::move(length),
+            std::make_unique<TypeNode>(sourceRange, PrimitiveType::USize)));
     auto update = std::make_unique<UnaryExpression>(range, TokenType::Increment,
                                                     Name(cursorName));
     outer.push_back(std::make_unique<WhileStatement>(

@@ -569,6 +569,18 @@ TEST(LoweringTests, PreservesLoopUpdateAndSnapshotsRangeSources) {
               std::string::npos);
 }
 
+TEST(LoweringTests, UsesU32IndicesAndCharactersForStringRanges) {
+    LoweredSource result = Lower(
+        "void f(stringv value) { for (index, character) := range value { "
+        "u32 i = index; char c = character; } }");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const std::string dump = DumpBoundProgram(*result.program);
+    EXPECT_NE(dump.find("(cast u32 load $cursor0)"), std::string::npos);
+    EXPECT_NE(dump.find("(string.at load $range0 (cast u32 load $cursor0))"),
+              std::string::npos);
+}
+
 TEST(LoweringTests, PreservesPostfixDecrementAndCompoundAssignments) {
     LoweredSource result = Lower(
         "void f() { i := 8; i--; i += 2; i -= 1; i *= 3; i /= 2; i ^= 4; }");

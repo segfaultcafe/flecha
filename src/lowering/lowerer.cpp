@@ -637,6 +637,14 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
         case core::AstNodeKind::MemberCallExpression: {
             const core::MemberCallExpression& member =
                 static_cast<const core::MemberCallExpression&>(expression);
+            if (member.Member() == "$range_index") {
+                std::unique_ptr<BoundExpression> cursor =
+                    LowerExpression(*member.Arguments()[0]);
+                if (type.Kind() == semantic::SemanticTypeKind::U32)
+                    return std::make_unique<BoundCastExpression>(
+                        expression.Range(), type, std::move(cursor));
+                return cursor;
+            }
             if (const auto* method = _semanticModel->MethodFor(member)) {
                 std::vector<std::unique_ptr<BoundExpression>> arguments;
                 if (method->HasReceiver()) {

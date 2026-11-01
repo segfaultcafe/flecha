@@ -25,6 +25,8 @@ module std;
     :: root::math::errors as math_errors
     :: root::memory::slices
     :: root::memory::errors as memory_errors
+    :: root::net::address
+    :: root::net::errors as network_errors
     :: root::os::arguments
     :: root::os::environment
     :: root::os::errors as os_errors
