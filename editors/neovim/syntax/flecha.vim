@@ -33,7 +33,7 @@ syntax keyword flechaWordOperator and or
 syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>\|<=\|>=\|&&\|||\|[&|~=+*\/%^!<>-]/
 syntax match flechaCrashableBang /\%([A-Za-z0-9_>]\)\@<=!\ze\s*(/
 syntax match flechaRawAddress /\%(&\s*\)\@<=raw\>/
-syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?(/
+syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?!\?\s*(/
 syntax match flechaAllocation /\<new\>\ze\s*</
 syntax match flechaAllocation /\<take\>\ze\s*(/
 syntax match flechaCastMethod /\.cast\>\ze\s*</
