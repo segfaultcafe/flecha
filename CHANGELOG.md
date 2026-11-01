@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added `std::tests::benchmark` with validated warmup and sample configuration,
+  monotonic in-process timing, setup/teardown hooks, integer summary statistics,
+  and deterministic versioned JSON output for CI baselines.
 - Flecha tests can now own self-cleaning temporary directory fixtures, compare
   text or binary golden files through an explicit update workflow, and generate
   deterministic random test data with reproducible seed reporting.

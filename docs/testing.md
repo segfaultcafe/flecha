@@ -203,3 +203,102 @@ invalid UTF-8 and control bytes compare exactly and are escaped in mismatch
 diagnostics. A mismatch is recorded as an assertion failure and returns `none`;
 file I/O and malformed-path failures are both recorded and returned to the
 caller. Every golden operation records exactly one assertion.
+
+## Deterministic benchmarks
+
+`lib::std::tests::benchmark` measures in-process workloads with the monotonic
+clock. Configuration is explicit and validated:
+
+```flecha
+config, configError := benchmark::Config::create(
+    10,   // untimed warmup iterations
+    100,  // workload iterations in each timed sample
+    20    // timed samples
+);
+```
+
+Zero warmup iterations are valid. Zero iterations per sample return
+`BenchmarkError.InvalidIterations`, and zero samples return
+`BenchmarkError.InvalidSamples`. Benchmark names are stable machine keys. They
+must be nonempty ASCII letters, digits, `.`, `_`, `-`, `/`, or `:`; other bytes
+return `BenchmarkError.InvalidName`.
+
+### Library workload
+
+Pass an error-returning reusable callback to `run`. Warmup calls are never
+recorded as samples:
+
+```flecha
+result, runError := benchmark::run(
+    "std.bytes.equal",
+    config,
+    [&left, &right]() => (error) {
+        bool same = sequence::equal(left[:], right[:]);
+        if !same {
+            return WorkError.UnexpectedMismatch;
+        }
+        return none;
+    }
+);
+```
+
+Each sample measures the complete configured group of workload iterations.
+`minimumDuration`, `medianDuration`, `meanDuration`, and `maximumDuration`
+therefore describe whole samples. The runner reports integer nanoseconds. An
+even median uses the integer midpoint and the mean truncates a remainder below
+one nanosecond; it does not print decimal digits that the clock cannot justify.
+
+### Allocation-sensitive workload
+
+Allocation can be included deliberately in the timed callback:
+
+```flecha
+result, runError := benchmark::run(
+    "std.array.reserve",
+    config,
+    () => (error) {
+        values := collections::Array<u8>::init();
+        return values.reserve(4096);
+    }
+);
+```
+
+When allocation or input preparation must be excluded, use `run_with_hooks`.
+Its setup and teardown callbacks surround each timed sample without joining the
+measured interval. A nonzero warmup count forms one additional untimed
+setup/work/teardown phase. Teardown still runs after a workload or clock error;
+the earlier error is returned.
+
+### Compiler and CI workloads
+
+Host tooling can time external compiler commands and pass the complete sample
+durations to `summarize`. This is useful before Flecha process execution is
+available to an in-process benchmark:
+
+```flecha
+[5]u64 compilerCheckNanoseconds = [
+    82100000, 80400000, 80900000, 81700000, 80600000
+];
+compilerConfig, configError := benchmark::Config::create(0, 1, 5);
+result, summaryError := benchmark::summarize(
+    "compiler.check",
+    compilerConfig,
+    compilerCheckNanoseconds[:]
+);
+```
+
+`summary()` produces a deterministic human-readable line. `machineLine()`
+produces one JSON object without a trailing newline. Its format identifier is
+`flecha-benchmark-v1`; keys have a fixed order and all measurements are integer
+nanoseconds:
+
+```json
+{"format":"flecha-benchmark-v1","name":"compiler.check","warmup_iterations":0,"iterations_per_sample":1,"sample_count":5,"sample_min_ns":80400000,"sample_median_ns":80900000,"sample_mean_ns":81140000,"sample_max_ns":82100000}
+```
+
+The runner does not subtract an estimated clock, loop, or indirect-call cost.
+A no-op benchmark measures that floor on the current host. Workloads close to
+that floor should increase their iterations per sample rather than treating a
+subtracted estimate as real precision. CI should compare versioned workloads
+under controlled hosts and reviewed tolerances; one sample is not a regression
+gate by itself.
