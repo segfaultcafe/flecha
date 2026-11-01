@@ -666,7 +666,7 @@ add_test(NAME StandardLibraryTests.RandomGeneratorRuntimeFixture
         -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_random_generator.cmake)
 
-add_test(NAME StandardLibraryTests.Ipv4AddressRuntimeFixture
+add_test(NAME StandardLibraryTests.NetworkAddressRuntimeFixture
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/address_runtime.fl
@@ -676,6 +676,19 @@ add_test(NAME StandardLibraryTests.Ipv4AddressRuntimeFixture
         -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
         -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_network_address.cmake)
+
+add_test(NAME StandardLibraryTests.NetworkAddressAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/address_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_address_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_ARRAY_FAIL_CALL=1
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
 
 foreach(case IN ITEMS reader_allocation_failure writer_allocation_failure)
     add_test(NAME StandardLibraryTests.BufferedIo.${case}

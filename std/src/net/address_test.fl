@@ -44,6 +44,66 @@ void assert_invalid(
     );
 }
 
+void assert_ipv6_parses(
+    &testing::UnitTest t,
+    stringv text,
+    u16 segment1,
+    u16 segment2,
+    u16 segment3,
+    u16 segment4,
+    u16 segment5,
+    u16 segment6,
+    u16 segment7,
+    u16 segment8,
+    stringv message
+) {
+    actual, err := address::Ipv6Address::parse(text);
+    expected := address::Ipv6Address::fromSegments(
+        segment1,
+        segment2,
+        segment3,
+        segment4,
+        segment5,
+        segment6,
+        segment7,
+        segment8
+    );
+    asserts::is_true(
+        t,
+        err == none and actual == expected,
+        message
+    );
+}
+
+void assert_ipv6_invalid(
+    &testing::UnitTest t,
+    stringv text,
+    stringv message
+) {
+    value, err := address::Ipv6Address::parse(text);
+    asserts::is_true(
+        t,
+        err == errors::NetworkError.InvalidAddress and value == none,
+        message
+    );
+}
+
+void assert_ipv6_formats(
+    &testing::UnitTest t,
+    stringv input,
+    stringv expected,
+    stringv message
+) {
+    value, parseError := address::Ipv6Address::parse(input);
+    formatted, formatError := value.toString();
+    asserts::is_true(
+        t,
+        parseError == none and formatError == none and
+            formatted.view() == expected,
+        message
+    );
+}
+
 test ipv4_parsing_accepts_canonical_boundaries(&testing::UnitTest t) {
     assert_parses(t, "0.0.0.0", 0, 0, 0, 0, "the zero address parses");
     assert_parses(t, "1.2.3.4", 1, 2, 3, 4, "all components are packed");
@@ -117,4 +177,271 @@ test ipv4_parsing_rejects_invalid_components(&testing::UnitTest t) {
     assert_invalid(t, "1.2.3.-1", "signed components are rejected");
     assert_invalid(t, " 1.2.3.4", "leading whitespace is rejected");
     assert_invalid(t, "1.2.3.4 ", "trailing whitespace is rejected");
+}
+
+test ipv6_parsing_accepts_expanded_addresses(&testing::UnitTest t) {
+    assert_ipv6_parses(
+        t,
+        "2001:db8:0:1:2:3:4:5",
+        8193,
+        3512,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        "eight explicit segments parse"
+    );
+    assert_ipv6_parses(
+        t,
+        "2001:0DB8:0000:0001:0002:0003:0004:0005",
+        8193,
+        3512,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        "uppercase digits and leading zeroes parse"
+    );
+    assert_ipv6_parses(
+        t,
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        "maximum segments parse"
+    );
+}
+
+test ipv6_parsing_expands_compressed_addresses(&testing::UnitTest t) {
+    assert_ipv6_parses(
+        t,
+        "::",
+        0, 0, 0, 0, 0, 0, 0, 0,
+        "the wildcard address parses"
+    );
+    assert_ipv6_parses(
+        t,
+        "::1",
+        0, 0, 0, 0, 0, 0, 0, 1,
+        "the loopback address parses"
+    );
+    assert_ipv6_parses(
+        t,
+        "2001:db8::",
+        8193, 3512, 0, 0, 0, 0, 0, 0,
+        "suffix compression expands"
+    );
+    assert_ipv6_parses(
+        t,
+        "2001:db8::ff00:42:8329",
+        8193, 3512, 0, 0, 0, 65280, 66, 33577,
+        "middle compression expands"
+    );
+    assert_ipv6_parses(
+        t,
+        "1:2:3:4:5:6::8",
+        1, 2, 3, 4, 5, 6, 0, 8,
+        "compression may represent one segment"
+    );
+}
+
+test ipv6_constructors_classify_and_expose_segments(&testing::UnitTest t) {
+    wildcard := address::Ipv6Address::wildcard();
+    expectedWildcard :=
+        address::Ipv6Address::fromSegments(0, 0, 0, 0, 0, 0, 0, 0);
+    asserts::is_true(
+        t,
+        wildcard == expectedWildcard and wildcard.isWildcard() and
+            !wildcard.isLoopback(),
+        "wildcard constructs the unspecified address"
+    );
+
+    loopback := address::Ipv6Address::loopback();
+    expectedLoopback :=
+        address::Ipv6Address::fromSegments(0, 0, 0, 0, 0, 0, 0, 1);
+    ordinary :=
+        address::Ipv6Address::fromSegments(0, 0, 0, 0, 0, 0, 0, 2);
+    asserts::is_true(
+        t,
+        loopback == expectedLoopback and loopback.isLoopback() and
+            !loopback.isWildcard() and !ordinary.isLoopback(),
+        "loopback recognizes only the exact ::1 address"
+    );
+
+    value := address::Ipv6Address::fromSegments(
+        291,
+        17767,
+        35243,
+        52719,
+        65244,
+        47768,
+        30292,
+        12816
+    );
+    segments := value.segments();
+    asserts::is_true(
+        t,
+        segments[0] == 291 and segments[1] == 17767 and
+            segments[2] == 35243 and segments[3] == 52719 and
+            segments[4] == 65244 and segments[5] == 47768 and
+            segments[6] == 30292 and segments[7] == 12816,
+        "segments preserve network order"
+    );
+}
+
+test ipv6_parsing_rejects_invalid_structure(&testing::UnitTest t) {
+    assert_ipv6_invalid(t, "", "an empty address is rejected");
+    assert_ipv6_invalid(t, ":", "a single colon is rejected");
+    assert_ipv6_invalid(t, ":1", "a single leading colon is rejected");
+    assert_ipv6_invalid(t, "1:", "a single trailing colon is rejected");
+    assert_ipv6_invalid(t, "1:2:3:4:5:6:7", "seven segments are rejected");
+    assert_ipv6_invalid(
+        t,
+        "1:2:3:4:5:6:7:8:9",
+        "nine segments are rejected"
+    );
+    assert_ipv6_invalid(t, "1::2::3", "repeated compression is rejected");
+    assert_ipv6_invalid(t, "1:::2", "three consecutive colons are rejected");
+    assert_ipv6_invalid(
+        t,
+        "1:2:3:4:5:6:7:8::",
+        "compression must omit at least one segment"
+    );
+    assert_ipv6_invalid(
+        t,
+        "::1:2:3:4:5:6:7:8",
+        "leading compression must omit at least one segment"
+    );
+}
+
+test ipv6_parsing_rejects_invalid_segments(&testing::UnitTest t) {
+    assert_ipv6_invalid(t, "12345::", "five-digit segments are rejected");
+    assert_ipv6_invalid(t, "gggg::", "non-hexadecimal digits are rejected");
+    assert_ipv6_invalid(t, "-1::", "signed segments are rejected");
+    assert_ipv6_invalid(t, " 1::", "leading whitespace is rejected");
+    assert_ipv6_invalid(t, "1:: ", "trailing whitespace is rejected");
+    assert_ipv6_invalid(
+        t,
+        "::ffff:192.0.2.1",
+        "embedded IPv4 notation is not accepted yet"
+    );
+}
+
+test ipv6_formatting_uses_lowercase_without_leading_zeroes(
+    &testing::UnitTest t
+) {
+    value := address::Ipv6Address::fromSegments(
+        8193,
+        3512,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+    );
+    formatted, formatError := value.toString();
+    asserts::is_true(
+        t,
+        formatError == none and
+            formatted.view() == "2001:db8:1:2:3:4:5:6",
+        "formatting uses lowercase hexadecimal without leading zeroes"
+    );
+
+    maximum := address::Ipv6Address::fromSegments(
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535
+    );
+    maximumText, maximumError := maximum.toString();
+    asserts::is_true(
+        t,
+        maximumError == none and maximumText.len().cast<usize> ==
+            address::MAX_IPV6_STRING_LENGTH and maximumText.view() ==
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        "the public maximum length matches fully expanded output"
+    );
+}
+
+test ipv6_formatting_round_trips_address_values(&testing::UnitTest t) {
+    original, parseError :=
+        address::Ipv6Address::parse("2001:db8::ff00:42:8329");
+    formatted, formatError := original.toString();
+    reparsed, reparseError := address::Ipv6Address::parse(formatted.view());
+    asserts::is_true(
+        t,
+        parseError == none and formatError == none and reparseError == none and
+            reparsed == original,
+        "formatted addresses parse back to the same value"
+    );
+
+    wildcard := address::Ipv6Address::wildcard();
+    wildcardText, wildcardFormatError := wildcard.toString();
+    parsedWildcard, wildcardParseError :=
+        address::Ipv6Address::parse(wildcardText.view());
+    asserts::is_true(
+        t,
+        wildcardFormatError == none and wildcardParseError == none and
+            parsedWildcard == wildcard,
+        "the wildcard address round trips through text"
+    );
+}
+
+test ipv6_formatting_uses_canonical_zero_compression(&testing::UnitTest t) {
+    assert_ipv6_formats(
+        t,
+        "0:0:0:0:0:0:0:0",
+        "::",
+        "wildcard formatting compresses every zero segment"
+    );
+    assert_ipv6_formats(
+        t,
+        "0:0:0:0:0:0:0:1",
+        "::1",
+        "loopback formatting compresses its leading zeroes"
+    );
+    assert_ipv6_formats(
+        t,
+        "2001:db8:0:0:0:0:0:1",
+        "2001:db8::1",
+        "the longest middle run is compressed"
+    );
+    assert_ipv6_formats(
+        t,
+        "1:2:3:4:5:6:0:0",
+        "1:2:3:4:5:6::",
+        "a trailing zero run is compressed"
+    );
+    assert_ipv6_formats(
+        t,
+        "1:0:0:2:0:0:3:4",
+        "1::2:0:0:3:4",
+        "the leftmost run wins when lengths tie"
+    );
+    assert_ipv6_formats(
+        t,
+        "1:0:2:3:4:5:6:7",
+        "1:0:2:3:4:5:6:7",
+        "a single zero segment is not compressed"
+    );
+    assert_ipv6_formats(
+        t,
+        "1:0:0:2:0:0:0:3",
+        "1:0:0:2::3",
+        "a longer run wins over an earlier shorter run"
+    );
 }
