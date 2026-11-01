@@ -4,6 +4,9 @@
 
 ### Added
 
+- Flecha tests can now own self-cleaning temporary directory fixtures, compare
+  text or binary golden files through an explicit update workflow, and generate
+  deterministic random test data with reproducible seed reporting.
 - Standard testing assertions now include value-rich numeric equality and
   ordering checks, escaped and bounded string diagnostics, byte mismatch
   context, and explicit error-family and error-variant checks.

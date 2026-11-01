@@ -15,6 +15,9 @@ if(DEFINED STANDARD_LIBRARY)
             "STANDARD_LIBRARY is not a directory: ${STANDARD_LIBRARY}")
     endif()
     set(ENV{FLECHA_STANDARD_LIBRARY} "${STANDARD_LIBRARY}")
+    set(testSupportLibraryArguments --lib "std=${STANDARD_LIBRARY}")
+else()
+    set(testSupportLibraryArguments)
 endif()
 
 execute_process(
@@ -85,6 +88,58 @@ execute_process(COMMAND "${nativeOutput}" RESULT_VARIABLE nativeResult)
 if(NOT nativeResult EQUAL 42)
     message(FATAL_ERROR
         "native smoke returned ${nativeResult} instead of 42")
+endif()
+
+set(testSupportSource "${OUTPUT_ROOT}/test-support-smoke.fl")
+file(WRITE "${testSupportSource}"
+    "module test_support_smoke;\n"
+    "@imports\n"
+    "    :: lib::std::io::filesystem\n"
+    "    :: lib::std::tests::fixtures\n"
+    "    :: lib::std::tests::golden\n"
+    "    :: lib::std::tests::testing;\n"
+    "i32 main() {\n"
+    "    string ownedPath = none;\n"
+    "    {\n"
+    "        temporary, creationError := fixtures::TemporaryDirectory::create();\n"
+    "        if creationError != none { return 1; }\n"
+    "        ownedPath = temporary.path().string();\n"
+    "        goldenPath, pathError := temporary.childPath(\"expected.txt\");\n"
+    "        if pathError != none { return 2; }\n"
+    "        result := testing::UnitTest::init(\"release smoke\", false);\n"
+    "        if golden::text(&result, \"expected\", goldenPath.view(),\n"
+    "                \"golden update\", golden::Mode.Update) != none { return 3; }\n"
+    "        if golden::text(&result, \"expected\", goldenPath.view(),\n"
+    "                \"golden verify\") != none { return 4; }\n"
+    "        first := fixtures::RandomData::fromSeed(144);\n"
+    "        second := fixtures::RandomData::fromSeed(144);\n"
+    "        if first.integer<u64>() != second.integer<u64>() { return 5; }\n"
+    "        if first.seed() != 144 or first.logSeed(&result) != none { return 6; }\n"
+    "        if result.assertionCount() != 2 or result.failureCount() != 0 { return 7; }\n"
+    "    }\n"
+    "    present, existsError := filesystem::exists(ownedPath.view());\n"
+    "    if existsError != none or present { return 8; }\n"
+    "    return 42;\n"
+    "}\n")
+
+set(testSupportOutput "${OUTPUT_ROOT}/test-support-smoke${EXECUTABLE_SUFFIX}")
+execute_process(
+    COMMAND "${FLECHA_COMPILER}" build "${testSupportSource}"
+        ${testSupportLibraryArguments} -o "${testSupportOutput}"
+    RESULT_VARIABLE testSupportCompileResult
+    ERROR_VARIABLE testSupportCompileError
+)
+if(NOT testSupportCompileResult EQUAL 0)
+    message(FATAL_ERROR
+        "test support smoke compilation failed: ${testSupportCompileError}")
+endif()
+execute_process(
+    COMMAND "${testSupportOutput}"
+    RESULT_VARIABLE testSupportResult
+)
+if(NOT testSupportResult EQUAL 42)
+    message(FATAL_ERROR
+        "test support smoke returned ${testSupportResult} instead of 42")
 endif()
 
 set(callableRoot "${OUTPUT_ROOT}/callable-smoke")
