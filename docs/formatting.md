@@ -25,6 +25,19 @@ not append a newline.
 one owning string containing the complete result. Allocation failure returns an
 empty string with `AllocationError.OutOfMemory`; partial text is never exposed.
 
+`sprintf!` returns the owning `string` directly. It is a crashable function, so
+its declaration and every call use the bang marker. Allocation failure produces
+the standard crash report instead of an error value:
+
+```flecha
+string label!() {
+    return fmt::sprintf!("item {}", 42);
+}
+```
+
+Use `sprintf` for recoverable application paths and `sprintf!` only where the
+caller has deliberately accepted an unrecoverable allocation failure.
+
 The `fmt` functions are compile-time forwarding wrappers over compiler
 built-ins. Flecha emits typed operations for the concrete call arguments; no C
 variadic call or runtime type-erased argument pack is part of the ABI.
