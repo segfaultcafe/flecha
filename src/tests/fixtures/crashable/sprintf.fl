@@ -1,0 +1,10 @@
+module main;
+
+@imports
+    :: lib::std::fmt;
+
+i32 main!() {
+    text := fmt::sprintf!("{} {}", "value", 42);
+    stdout(text);
+    return 0;
+}
