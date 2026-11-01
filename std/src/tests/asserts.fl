@@ -1,6 +1,12 @@
 module asserts;
 
-@imports :: root::tests::testing;
+@imports
+    :: root::fmt
+    :: root::text::strings
+    :: root::tests::testing;
+
+const u32 STRING_DIAGNOSTIC_PREVIEW_BYTES = 64;
+const u32 STRING_DIAGNOSTIC_EDGE_BYTES = 32;
 
 // Records a failure unless actual is true.
 export void is_true(
@@ -85,4 +91,432 @@ export void has_error(
     stringv message
 ) {
     ut->recordAssertion(actual != none, "actual != none", message);
+}
+
+// Records a failure unless actual is a non-none value of error family E.
+export void has_error_family<E>(
+    &testing::UnitTest ut,
+    E actual,
+    stringv message
+) {
+    error widened = actual;
+    passed := !actual.isof<error> and widened != none;
+    ut->recordAssertion(
+        passed,
+        "actual has expected error family",
+        message
+    );
+}
+
+// Records a failure unless actual is less than expected.
+export void less<T: numeric>(
+    &testing::UnitTest ut,
+    &const T actual,
+    &const T expected,
+    stringv message
+) {
+    record_numeric_assertion<T>(
+        ut,
+        *actual < *expected,
+        actual,
+        expected,
+        "expected",
+        "actual < expected",
+        message
+    );
+}
+
+// Records a failure unless actual is less or equal than expected.
+export void less_or_equal<T: numeric>(
+    &testing::UnitTest ut,
+    &const T actual,
+    &const T expected,
+    stringv message
+) {
+    record_numeric_assertion<T>(
+        ut,
+        *actual <= *expected,
+        actual,
+        expected,
+        "expected",
+        "actual <= expected",
+        message
+    );
+}
+
+// Records a failure unless actual is greater than expected.
+export void greater<T: numeric>(
+    &testing::UnitTest ut,
+    &const T actual,
+    &const T expected,
+    stringv message
+) {
+    record_numeric_assertion<T>(
+        ut,
+        *actual > *expected,
+        actual,
+        expected,
+        "expected",
+        "actual > expected",
+        message
+    );
+}
+
+// Records a failure unless actual is greater than or equal to expected.
+export void greater_or_equal<T: numeric>(
+    &testing::UnitTest ut,
+    &const T actual,
+    &const T expected,
+    stringv message
+) {
+    record_numeric_assertion<T>(
+        ut,
+        *actual >= *expected,
+        actual,
+        expected,
+        "expected",
+        "actual >= expected",
+        message
+    );
+}
+
+// Records a failure unless actual and expected are value-equal.
+export void numeric_equal<T: numeric>(
+    &testing::UnitTest ut,
+    &const T actual,
+    &const T expected,
+    stringv message
+) {
+    record_numeric_assertion<T>(
+        ut,
+        *actual == *expected,
+        actual,
+        expected,
+        "expected",
+        "actual == expected",
+        message
+    );
+}
+
+// Records a failure unless actual and unexpected are value-unequal.
+export void numeric_not_equal<T: numeric>(
+    &testing::UnitTest ut,
+    &const T actual,
+    &const T unexpected,
+    stringv message
+) {
+    record_numeric_assertion<T>(
+        ut,
+        *actual != *unexpected,
+        actual,
+        unexpected,
+        "unexpected",
+        "actual != unexpected",
+        message
+    );
+}
+
+// Records a failure unless actual contains an error value of the same variant as expected.
+export void has_error_variant(
+    &testing::UnitTest ut,
+    error actual,
+    error expected,
+    stringv message
+) {
+    passed := expected != none and actual == expected;
+    ut->recordAssertion(passed, "actual has expected error variant", message);
+}
+
+// Records a failure unless actual and expected are value-equal.
+export void string_equal(
+    &testing::UnitTest ut,
+    stringv actual,
+    stringv expected,
+    stringv message
+) {
+    record_string_assertion(
+        ut,
+        actual == expected,
+        actual,
+        expected,
+        "expected",
+        "actual == expected",
+        message
+    );
+}
+
+// Records a failure unless actual and unexpected strings are unequal.
+export void string_not_equal(
+    &testing::UnitTest ut,
+    stringv actual,
+    stringv unexpected,
+    stringv message
+) {
+    record_string_assertion(
+        ut,
+        actual != unexpected,
+        actual,
+        unexpected,
+        "unexpected",
+        "actual != unexpected",
+        message
+    );
+}
+
+// Records a failure unless actual and expected byte slices are equal.
+export void bytes_equal(
+    &testing::UnitTest ut,
+    []const u8 actual,
+    []const u8 expected,
+    stringv message
+) {
+    if actual.len() != expected.len() {
+        formatted, formatErr := fmt::sprintf(
+            "actual bytes == expected bytes (actual length={}, expected length={})",
+            actual.len(),
+            expected.len()
+        );
+        if formatErr != none {
+            ut->recordAssertion(false, "actual bytes == expected bytes", message);
+            return;
+        }
+
+        ut->recordAssertion(false, formatted.view(), message);
+        return;
+    }
+
+    loop usize index = 0; index < actual.len(); index++ {
+        if actual[index] == expected[index] {
+            proceed;
+        }
+
+        formatted, formatErr := fmt::sprintf(
+            "actual bytes == expected bytes (index={}, actual={}, expected={})",
+            index,
+            actual[index],
+            expected[index]
+        );
+        if formatErr != none {
+            ut->recordAssertion(false, "actual bytes == expected bytes", message);
+            return;
+        }
+
+        ut->recordAssertion(false, formatted.view(), message);
+        return;
+    }
+
+    ut->recordAssertion(true, "actual bytes == expected bytes", message);
+}
+
+// Records a failure unless actual and unexpected bytes are unequal.
+export void bytes_not_equal(
+    &testing::UnitTest ut,
+    []const u8 actual,
+    []const u8 unexpected,
+    stringv message
+) {
+    if actual.len() != unexpected.len() {
+        ut->recordAssertion(true, "actual bytes != unexpected bytes", message);
+        return;
+    }
+
+    loop usize index = 0; index < actual.len(); index++ {
+        if actual[index] != unexpected[index] {
+            ut->recordAssertion(true, "actual bytes != unexpected bytes", message);
+            return;
+        }
+    }
+
+    formatted, formatErr := fmt::sprintf(
+        "actual bytes != unexpected bytes (both length={})",
+        actual.len()
+    );
+    if formatErr != none {
+        ut->recordAssertion(false, "actual bytes != unexpected bytes", message);
+        return;
+    }
+
+    ut->recordAssertion(false, formatted.view(), message);
+}
+
+// Records a numeric assertion, including both values on failure.
+void record_numeric_assertion<T: numeric>(
+    &testing::UnitTest ut,
+    bool passed,
+    &const T actual,
+    &const T other,
+    stringv otherLabel,
+    stringv assertion,
+    stringv message
+) {
+    if passed {
+        ut->recordAssertion(true, assertion, message);
+        return;
+    }
+
+    formatted, formatErr := fmt::sprintf(
+        "{} (actual={}, {}={})",
+        assertion,
+        *actual,
+        otherLabel,
+        *other
+    );
+    if formatErr != none {
+        ut->recordAssertion(false, assertion, message);
+        return;
+    }
+
+    ut->recordAssertion(false, formatted.view(), message);
+}
+
+void record_string_assertion(
+    &testing::UnitTest ut,
+    bool passed,
+    stringv actual,
+    stringv other,
+    stringv otherLabel,
+    stringv assertion,
+    stringv message
+) {
+    if passed {
+        ut->recordAssertion(true, assertion, message);
+        return;
+    }
+
+    escapedActual, actualError := escape_assertion_string(actual);
+    if actualError != none {
+        ut->recordAssertion(false, assertion, message);
+        return;
+    }
+
+    escapedOther, otherError := escape_assertion_string(other);
+    if otherError != none {
+        ut->recordAssertion(false, assertion, message);
+        return;
+    }
+
+    formatted, formatError := fmt::sprintf(
+        "{} (actual=\"{}\", {}=\"{}\")",
+        assertion,
+        escapedActual,
+        otherLabel,
+        escapedOther
+    );
+    if formatError != none {
+        ut->recordAssertion(false, assertion, message);
+        return;
+    }
+
+    ut->recordAssertion(false, formatted.view(), message);
+}
+
+(string, error) escape_assertion_string(stringv value) {
+    builder := strings::StringBuilder::init();
+
+    if value.len() <= STRING_DIAGNOSTIC_PREVIEW_BYTES {
+        err := append_escaped_range(&builder, value, 0, value.len());
+        if err != none {
+            return (none, err);
+        }
+
+        return builder.toString();
+    }
+
+    err := append_escaped_range(
+        &builder,
+        value,
+        0,
+        STRING_DIAGNOSTIC_EDGE_BYTES
+    );
+    if err != none {
+        return (none, err);
+    }
+
+    err = builder.append("...<");
+    if err != none {
+        return (none, err);
+    }
+
+    omitted := value.len() - STRING_DIAGNOSTIC_PREVIEW_BYTES;
+    err = builder.appendInteger<u32>(omitted);
+    if err != none {
+        return (none, err);
+    }
+
+    if omitted == 1 {
+        err = builder.append(" byte omitted>...");
+    } else {
+        err = builder.append(" bytes omitted>...");
+    }
+    if err != none {
+        return (none, err);
+    }
+
+    err = append_escaped_range(
+        &builder,
+        value,
+        value.len() - STRING_DIAGNOSTIC_EDGE_BYTES,
+        value.len()
+    );
+    if err != none {
+        return (none, err);
+    }
+
+    return builder.toString();
+}
+
+error append_escaped_character(
+    &strings::StringBuilder builder,
+    char character
+) {
+    byte := character.cast<u8>;
+    error appendError = none;
+
+    if character == '"' {
+        appendError = builder->append("\\\"");
+    } else if character == '\\' {
+        appendError = builder->append("\\\\");
+    } else if character == '\n' {
+        appendError = builder->append("\\n");
+    } else if character == '\r' {
+        appendError = builder->append("\\r");
+    } else if character == '\t' {
+        appendError = builder->append("\\t");
+    } else if character == '\0' {
+        appendError = builder->append("\\0");
+    } else if byte < 32 or byte == 127 {
+        appendError = builder->append("\\x");
+        if appendError != none {
+            return appendError;
+        }
+
+        if byte < 16 {
+            appendError = builder->append("0");
+            if appendError != none {
+                return appendError;
+            }
+        }
+
+        appendError = builder->appendInteger<u8>(byte, 16);
+    } else {
+        appendError = builder->appendChar(character);
+    }
+
+    return appendError;
+}
+
+error append_escaped_range(
+    &strings::StringBuilder builder,
+    stringv value,
+    u32 start,
+    u32 end
+) {
+    loop u32 index = start; index < end; index++ {
+        err := append_escaped_character(builder, value[index]);
+        if err != none {
+            return err;
+        }
+    }
+
+    return none;
 }

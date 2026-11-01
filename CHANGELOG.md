@@ -4,6 +4,9 @@
 
 ### Added
 
+- Standard testing assertions now include value-rich numeric equality and
+  ordering checks, escaped and bounded string diagnostics, byte mismatch
+  context, and explicit error-family and error-variant checks.
 - Direct generic method calls can infer omitted type arguments from supplied
   arguments and expected results, including known tuple-destructuring
   destinations, with the same rules across exported, quiver, internal, and

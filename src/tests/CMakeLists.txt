@@ -155,6 +155,22 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_test_failure.cmake
 )
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(
+        NAME StandardLibraryTests.AssertionAllocationFailure
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assertion_allocation_failure.fl
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assertion_allocation_failure_harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/assertion_allocation_failure_test
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_assertion_allocation_failure.cmake
+    )
+endif()
+
 add_test(
     NAME LanguageTestTests.LongbowDiscovery
     COMMAND ${CMAKE_COMMAND} -E env
