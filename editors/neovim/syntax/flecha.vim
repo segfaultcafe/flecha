@@ -33,7 +33,8 @@ syntax keyword flechaWordOperator and or
 syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>\|<=\|>=\|&&\|||\|[&|~=+*\/%^!<>-]/
 syntax match flechaCrashableBang /\%([A-Za-z0-9_>]\)\@<=!\ze\s*(/
 syntax match flechaRawAddress /\%(&\s*\)\@<=raw\>/
-syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?(/
+syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?!\?\s*(/
+syntax match flechaCrashBuiltin /\<crash\>\ze\s*(/
 syntax match flechaAllocation /\<new\>\ze\s*</
 syntax match flechaAllocation /\<take\>\ze\s*(/
 syntax match flechaCastMethod /\.cast\>\ze\s*</
@@ -64,6 +65,7 @@ highlight default flechaBuiltinTypeSet guifg=#87CEFA ctermfg=117
 highlight default flechaFloatConstant guifg=#C49A00 ctermfg=178
 highlight default flechaIntegerLimit guifg=#C49A00 ctermfg=178
 highlight default flechaCrashableBang guifg=#FF8C00 ctermfg=208
+highlight default flechaCrashBuiltin guifg=#87CEFA ctermfg=117
 highlight default link flechaType Type
 highlight default link flechaTypeSetKeyword Statement
 highlight default link flechaTypeSetName Type

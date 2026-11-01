@@ -22,6 +22,7 @@
     {"include": "#constants"},
     {"include": "#labels"},
     {"include": "#numbers"},
+    {"include": "#crashBuiltin"},
     {"include": "#functions"},
     {"include": "#crashableBangs"},
     {"include": "#operators"}
@@ -173,6 +174,10 @@
         {"name": "constant.numeric.float.flecha", "match": "\\b[0-9]+\\.[0-9]+\\b"},
         {"name": "constant.numeric.integer.flecha", "match": "\\b[0-9]+\\b"}
       ]
+    },
+    "crashBuiltin": {
+      "name": "support.function.crash.flecha",
+      "match": "\\bcrash(?=\\s*\\()"
     },
     "functions": {
       "patterns": [
