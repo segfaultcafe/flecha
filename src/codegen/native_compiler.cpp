@@ -300,6 +300,12 @@ bool NativeCompiler::LinkExecutable(
     ownedArguments.insert(ownedArguments.end(), linkInputs.begin(),
                           linkInputs.end());
     ownedArguments.push_back(_runtimeLibraryPath);
+#ifdef _WIN32
+    // The static runtime uses BCryptGenRandom for secure randomness and
+    // temporary-file names. Consumers must link the Windows import library
+    // after the runtime archive so its unresolved symbols are satisfied.
+    ownedArguments.emplace_back("-lbcrypt");
+#endif
 #ifdef FLECHA_SANITIZED_RUNTIME
     ownedArguments.emplace_back("-fsanitize=address,undefined");
 #endif

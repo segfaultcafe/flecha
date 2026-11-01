@@ -1319,6 +1319,47 @@ TEST(NativeCompilerTests, EmitsObjectAndLinksExecutableForHost) {
     std::filesystem::remove(objectPath);
 }
 
+#ifdef _WIN32
+TEST(NativeCompilerTests, LinksWindowsRuntimeSystemLibraries) {
+    GeneratedSource result = Generate(R"(
+        quiver extern unsafe i32 flecha_runtime_v1_secure_random_fill(
+            *u8 destination,
+            usize length
+        );
+
+        i32 main() {
+            [1]u8 bytes = none;
+            unsafe {
+                if flecha_runtime_v1_secure_random_fill(
+                    &raw bytes[0],
+                    bytes.len().cast<usize>
+                ) != 0 {
+                    return 1;
+                }
+            }
+            return 42;
+        }
+    )");
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_windows_runtime_link_test.exe";
+    std::filesystem::remove(executablePath);
+
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "windows_runtime_link_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+
+    std::filesystem::remove(executablePath);
+}
+#endif
+
 TEST(NativeCompilerTests, RunsForwardAndRecursiveCalls) {
     GeneratedSource result = Generate(
         "i32 main() { return Add(Factorial(3), 36); } "
