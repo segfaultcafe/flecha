@@ -130,6 +130,23 @@ add_test(
 )
 
 add_test(
+    NAME CrashableFunctionTests.StringBuilderAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crashable/string_builder_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crashable/string_builder_allocation_failure_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/crashable_string_builder_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_STRING_FAIL_CALL=1
+        -DFLECHA_ALLOCATION_SYMBOL=malloc
+        "-DFLECHA_EXPECTED_MESSAGE=failed to format string builder contents"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake
+)
+
+add_test(
     NAME LanguageTestTests.PassingModule
     COMMAND $<TARGET_FILE:flecha>
         test
@@ -722,6 +739,66 @@ foreach(failCall IN ITEMS 1 2)
             -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
             -DFLECHA_STRING_FAIL_CALL=${failCall}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_network_socket_address_allocation_failure.cmake)
+endforeach()
+
+add_test(NAME StandardLibraryTests.NetworkAddressCrashableAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/address_crashable_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/socket_address_allocation_failure_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_address_crashable_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_STRING_FAIL_CALL=1
+        "-DFLECHA_EXPECTED_MESSAGE=failed to format IPv4 address"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake)
+
+add_test(NAME StandardLibraryTests.NetworkIpv6AddressCrashableAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/ipv6_address_crashable_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_ipv6_address_crashable_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_STRING_FAIL_CALL=1
+        -DFLECHA_ALLOCATION_SYMBOL=array
+        "-DFLECHA_EXPECTED_MESSAGE=failed to format IPv6 address"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake)
+
+add_test(NAME StandardLibraryTests.NetworkIpv6SocketAddressCrashableAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/ipv6_socket_address_crashable_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_ipv6_socket_address_crashable_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_STRING_FAIL_CALL=1
+        -DFLECHA_ALLOCATION_SYMBOL=array
+        "-DFLECHA_EXPECTED_MESSAGE=failed to format IPv6 socket address"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake)
+
+foreach(failCall IN ITEMS 1 2)
+    add_test(NAME StandardLibraryTests.NetworkSocketAddressCrashableAllocationFailure.${failCall}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/socket_address_crashable_allocation_failure.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/socket_address_allocation_failure_harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_socket_address_crashable_allocation_failure_${failCall}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_STRING_FAIL_CALL=${failCall}
+            "-DFLECHA_EXPECTED_MESSAGE=failed to format IPv4 socket address"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake)
 endforeach()
 
 foreach(case IN ITEMS reader_allocation_failure writer_allocation_failure)

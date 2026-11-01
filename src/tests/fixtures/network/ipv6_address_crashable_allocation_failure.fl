@@ -1,0 +1,11 @@
+module ipv6_address_crashable_allocation_failure;
+
+@imports :: lib::std::net::address;
+
+i32 main!() {
+    value := address::Ipv6Address::fromSegments(
+        8193, 3512, 1, 2, 3, 4, 5, 6
+    );
+    text := value.toString!();
+    return text.len().cast<i32>;
+}

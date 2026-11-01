@@ -4,7 +4,7 @@ module address_runtime;
     :: lib::std::net::address
     :: lib::std::net::errors;
 
-i32 main() {
+i32 main!() {
     loopback, loopbackError := address::Ipv4Address::parse("127.0.0.1");
     expectedLoopback := address::Ipv4Address::loopback();
     if loopbackError != none or loopback != expectedLoopback or
@@ -159,6 +159,26 @@ i32 main() {
     if invalidIpv6SocketError != errors::NetworkError.InvalidAddress or
         invalidIpv6Socket != none {
         return 20;
+    }
+
+    crashableIpv4Text := loopback.toString!();
+    if crashableIpv4Text.view() != "127.0.0.1" {
+        return 21;
+    }
+
+    crashableIpv6Text := ipv6.toString!();
+    if crashableIpv6Text.view() != "2001:db8::ff00:42:8329" {
+        return 22;
+    }
+
+    crashableIpv4SocketText := ipv4Socket.toString!();
+    if crashableIpv4SocketText.view() != "192.0.2.1:8080" {
+        return 23;
+    }
+
+    crashableIpv6SocketText := ipv6Socket.toString!();
+    if crashableIpv6SocketText.view() != "[2001:db8::1]:443" {
+        return 24;
     }
 
     return 42;

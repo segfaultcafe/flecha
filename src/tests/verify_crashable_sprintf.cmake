@@ -24,7 +24,7 @@ if(NOT runResult EQUAL 0)
     message(FATAL_ERROR
         "sprintf! program returned ${runResult}\nstderr:\n${actualError}")
 endif()
-if(NOT actualOutput STREQUAL "value 42")
+if(NOT actualOutput STREQUAL "value 42 built")
     message(FATAL_ERROR "sprintf! output mismatch: '${actualOutput}'")
 endif()
 if(NOT actualError STREQUAL "")

@@ -1,0 +1,12 @@
+module ipv6_socket_address_crashable_allocation_failure;
+
+@imports :: lib::std::net::address;
+
+i32 main!() {
+    socket := address::Ipv6SocketAddress::fromParts(
+        address::Ipv6Address::loopback(),
+        443
+    );
+    text := socket.toString!();
+    return text.len().cast<i32>;
+}
