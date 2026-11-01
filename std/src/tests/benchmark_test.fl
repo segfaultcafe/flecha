@@ -1,0 +1,238 @@
+module benchmark_test;
+
+@imports
+    :: root::tests::benchmark as paired_benchmark
+    :: lib::std::tests::asserts
+    :: lib::std::tests::benchmark
+    :: lib::std::tests::testing;
+
+error WorkError {
+    Failed,
+}
+
+test configuration_and_names_are_validated(&testing::UnitTest t) {
+    _, iterationError := benchmark::Config::create(0, 0, 1);
+    _, sampleError := benchmark::Config::create(0, 1, 0);
+    config, configError := benchmark::Config::create(0, 1, 1);
+    asserts::is_true(t, configError == none, "a minimal config is valid");
+
+    _, emptyNameError := benchmark::run(
+        "",
+        config,
+        () => (error) { return none; }
+    );
+    _, unsafeNameError := benchmark::run(
+        "contains space",
+        config,
+        () => (error) { return none; }
+    );
+
+    asserts::is_true(
+        t,
+        iterationError == benchmark::BenchmarkError.InvalidIterations and
+            sampleError == benchmark::BenchmarkError.InvalidSamples,
+        "zero iterations and samples are rejected"
+    );
+    asserts::is_true(
+        t,
+        emptyNameError == benchmark::BenchmarkError.InvalidName and
+            unsafeNameError == benchmark::BenchmarkError.InvalidName,
+        "machine-stable names reject empty and unsupported bytes"
+    );
+}
+
+test hooks_surround_warmup_and_samples_without_joining_timed_work(
+    &testing::UnitTest t
+) {
+    config, configError := benchmark::Config::create(2, 3, 4);
+    asserts::is_true(t, configError == none, "the benchmark config is valid");
+    if configError != none {
+        return;
+    }
+
+    usize operations = 0;
+    usize setups = 0;
+    usize teardowns = 0;
+    result, runError := benchmark::run_with_hooks(
+        "std.collections.push",
+        config,
+        [&operations]() => (error) {
+            operations++;
+            return none;
+        },
+        [&setups]() => (error) {
+            setups++;
+            return none;
+        },
+        [&teardowns]() => (error) {
+            teardowns++;
+            return none;
+        }
+    );
+
+    asserts::is_true(t, runError == none, "the benchmark run succeeds");
+    asserts::is_true(
+        t,
+        operations == 14,
+        "warmup and every configured sample iteration execute"
+    );
+    asserts::is_true(
+        t,
+        setups == 5 and teardowns == 5,
+        "hooks surround one warmup phase and four timed samples"
+    );
+    asserts::is_true(
+        t,
+        result.name() == "std.collections.push" and
+            result.warmupIterations() == 2 and
+            result.iterationsPerSample() == 3 and
+            result.sampleCount() == 4,
+        "the result retains deterministic identity and configuration"
+    );
+}
+
+test summary_statistics_and_output_are_deterministic(
+    &testing::UnitTest t
+) {
+    config, configError := benchmark::Config::create(2, 5, 4);
+    asserts::is_true(t, configError == none, "the summary config is valid");
+    if configError != none {
+        return;
+    }
+
+    [4]u64 samples = [40, 10, 30, 20];
+    result, resultError := benchmark::summarize(
+        "compiler.check",
+        config,
+        samples[:]
+    );
+    asserts::is_true(t, resultError == none, "fixed samples summarize");
+    if resultError != none {
+        return;
+    }
+
+    minimumDuration := result.minimumDuration();
+    medianDuration := result.medianDuration();
+    meanDuration := result.meanDuration();
+    maximumDuration := result.maximumDuration();
+    minimum, minimumError := minimumDuration.totalNanoseconds();
+    median, medianError := medianDuration.totalNanoseconds();
+    mean, meanError := meanDuration.totalNanoseconds();
+    maximum, maximumError := maximumDuration.totalNanoseconds();
+    asserts::is_true(
+        t,
+        minimumError == none and medianError == none and meanError == none and
+            maximumError == none and minimum == 10 and median == 25 and
+            mean == 25 and maximum == 40,
+        "integer min median mean and max are stable"
+    );
+
+    summary, summaryError := result.summary();
+    machine, machineError := result.machineLine();
+    asserts::is_true(
+        t,
+        summaryError == none and summary ==
+            "compiler.check: samples=4 iterations=5 min=10ns median=25ns mean=25ns max=40ns",
+        "human output has stable integer units"
+    );
+    asserts::is_true(
+        t,
+        machineError == none and machine ==
+            "{\"format\":\"flecha-benchmark-v1\",\"name\":\"compiler.check\","
+                + "\"warmup_iterations\":2,\"iterations_per_sample\":5,"
+                + "\"sample_count\":4,\"sample_min_ns\":10,"
+                + "\"sample_median_ns\":25,\"sample_mean_ns\":25,"
+                + "\"sample_max_ns\":40}",
+        "machine output is versioned and deterministic"
+    );
+}
+
+test mean_avoids_overflow_and_truncates_sub_nanosecond_remainders(
+    &testing::UnitTest t
+) {
+    config, configError := benchmark::Config::create(0, 1, 3);
+    asserts::is_true(t, configError == none, "the mean config is valid");
+    if configError != none {
+        return;
+    }
+
+    [3]u64 samples = [u64.max_value, u64.max_value, u64.max_value - 1];
+    result, resultError := benchmark::summarize(
+        "math.maximum",
+        config,
+        samples[:]
+    );
+    meanDuration := result.meanDuration();
+    mean, meanError := meanDuration.totalNanoseconds();
+    asserts::is_true(
+        t,
+        resultError == none and meanError == none and
+            mean == u64.max_value - 1,
+        "mean uses overflow-free integer division"
+    );
+}
+
+test operation_failures_stop_and_still_run_teardown(
+    &testing::UnitTest t
+) {
+    config, configError := benchmark::Config::create(0, 4, 2);
+    asserts::is_true(t, configError == none, "the failure config is valid");
+    if configError != none {
+        return;
+    }
+
+    usize operations = 0;
+    usize teardowns = 0;
+    _, runError := benchmark::run_with_hooks(
+        "failure.cleanup",
+        config,
+        [&operations]() => (error) {
+            operations++;
+            if operations == 2 {
+                return WorkError.Failed;
+            }
+            return none;
+        },
+        () => (error) { return none; },
+        [&teardowns]() => (error) {
+            teardowns++;
+            return none;
+        }
+    );
+
+    asserts::is_true(
+        t,
+        runError == WorkError.Failed and operations == 2,
+        "the workload error is preserved and stops the run"
+    );
+    asserts::is_true(
+        t,
+        teardowns == 1,
+        "teardown runs after a timed workload failure"
+    );
+}
+
+test no_op_benchmark_reports_the_runner_measurement_floor(
+    &testing::UnitTest t
+) {
+    config, configError := benchmark::Config::create(1, 1, 5);
+    asserts::is_true(t, configError == none, "the no-op config is valid");
+    if configError != none {
+        return;
+    }
+
+    result, runError := benchmark::run(
+        "runner.noop",
+        config,
+        () => (error) { return none; }
+    );
+    asserts::is_true(t, runError == none, "the no-op benchmark succeeds");
+    minimum := result.minimumDuration();
+    median := result.medianDuration();
+    maximum := result.maximumDuration();
+    asserts::is_true(
+        t,
+        minimum.lessOrEqual(median) and median.lessOrEqual(maximum),
+        "the measured runner floor preserves statistic ordering"
+    );
+}

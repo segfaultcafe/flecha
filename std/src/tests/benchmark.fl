@@ -1,0 +1,450 @@
+module benchmark;
+
+@imports
+    :: root::containers::collections
+    :: root::fmt
+    :: root::time::clock
+    :: root::time::duration;
+
+// Reports invalid benchmark configuration or identity.
+export error BenchmarkError {
+    // The benchmark name is empty or contains an unsupported byte.
+    InvalidName,
+
+    // A timed sample would execute zero workload iterations.
+    InvalidIterations,
+
+    // A run would record zero timed samples.
+    InvalidSamples,
+}
+
+// Performs one benchmark workload iteration. Returning an error stops the run.
+export func Operation() => (error);
+
+// Prepares or tears down one benchmark phase. Returning an error stops the run.
+export func Hook() => (error);
+
+// Controls untimed warmup, workload iterations per sample, and sample count.
+export structure Config {
+    private {
+        usize warmups;
+        usize iterations;
+        usize samples;
+    }
+};
+
+// Constructs a benchmark configuration. Zero warmup iterations are valid;
+// iterationsPerSample and sampleCount must both be nonzero.
+(Config, error) Config::create(
+    usize warmupIterations,
+    usize iterationsPerSample,
+    usize sampleCount
+) {
+    if iterationsPerSample == 0 {
+        return (none, BenchmarkError.InvalidIterations);
+    }
+    if sampleCount == 0 {
+        return (none, BenchmarkError.InvalidSamples);
+    }
+
+    return (build Config {
+        self.warmups = warmupIterations;
+        self.iterations = iterationsPerSample;
+        self.samples = sampleCount;
+    }, none);
+}
+
+// Returns the number of untimed workload iterations.
+usize Config::warmupIterations(&const self) {
+    return self->warmups;
+}
+
+// Returns the number of workload calls inside each timed sample.
+usize Config::iterationsPerSample(&const self) {
+    return self->iterations;
+}
+
+// Returns the number of timed samples.
+usize Config::sampleCount(&const self) {
+    return self->samples;
+}
+
+// Contains deterministic integer-nanosecond summary statistics. Durations are
+// complete timed-sample durations, not estimated per-iteration values.
+export structure Result {
+    private {
+        string benchmarkName;
+        usize warmups;
+        usize iterations;
+        usize samples;
+        duration::Duration minimum;
+        duration::Duration medianValue;
+        duration::Duration meanValue;
+        duration::Duration maximum;
+    }
+};
+
+// Borrows the stable benchmark identity.
+stringv Result::name(&const self) <-self {
+    return self->benchmarkName.view();
+}
+
+// Returns the number of untimed workload iterations.
+usize Result::warmupIterations(&const self) {
+    return self->warmups;
+}
+
+// Returns the number of workload calls inside each timed sample.
+usize Result::iterationsPerSample(&const self) {
+    return self->iterations;
+}
+
+// Returns the number of recorded timed samples.
+usize Result::sampleCount(&const self) {
+    return self->samples;
+}
+
+// Returns the shortest complete timed sample.
+duration::Duration Result::minimumDuration(&const self) {
+    return self->minimum;
+}
+
+// Returns the integer midpoint of the sorted timed samples.
+duration::Duration Result::medianDuration(&const self) {
+    return self->medianValue;
+}
+
+// Returns the integer mean of complete timed samples, truncated below one
+// nanosecond.
+duration::Duration Result::meanDuration(&const self) {
+    return self->meanValue;
+}
+
+// Returns the longest complete timed sample.
+duration::Duration Result::maximumDuration(&const self) {
+    return self->maximum;
+}
+
+// Formats a deterministic human-readable single-line summary.
+(string, error) Result::summary(&const self) {
+    minimumNanoseconds, minimumError := self->minimum.totalNanoseconds();
+    if minimumError != none {
+        return (none, minimumError);
+    }
+    medianNanoseconds, medianError := self->medianValue.totalNanoseconds();
+    if medianError != none {
+        return (none, medianError);
+    }
+    meanNanoseconds, meanError := self->meanValue.totalNanoseconds();
+    if meanError != none {
+        return (none, meanError);
+    }
+    maximumNanoseconds, maximumError := self->maximum.totalNanoseconds();
+    if maximumError != none {
+        return (none, maximumError);
+    }
+
+    return fmt::sprintf(
+        "{}: samples={} iterations={} min={}ns median={}ns mean={}ns max={}ns",
+        self->benchmarkName.view(),
+        self->samples,
+        self->iterations,
+        minimumNanoseconds,
+        medianNanoseconds,
+        meanNanoseconds,
+        maximumNanoseconds
+    );
+}
+
+// Formats one versioned JSON object with a stable key order and integer units.
+// The returned string has no trailing newline.
+(string, error) Result::machineLine(&const self) {
+    minimumNanoseconds, minimumError := self->minimum.totalNanoseconds();
+    if minimumError != none {
+        return (none, minimumError);
+    }
+    medianNanoseconds, medianError := self->medianValue.totalNanoseconds();
+    if medianError != none {
+        return (none, medianError);
+    }
+    meanNanoseconds, meanError := self->meanValue.totalNanoseconds();
+    if meanError != none {
+        return (none, meanError);
+    }
+    maximumNanoseconds, maximumError := self->maximum.totalNanoseconds();
+    if maximumError != none {
+        return (none, maximumError);
+    }
+
+    return fmt::sprintf(
+        "{{\"format\":\"flecha-benchmark-v1\",\"name\":\"{}\",\"warmup_iterations\":{},\"iterations_per_sample\":{},\"sample_count\":{},\"sample_min_ns\":{},\"sample_median_ns\":{},\"sample_mean_ns\":{},\"sample_max_ns\":{}}}",
+        self->benchmarkName.view(),
+        self->warmups,
+        self->iterations,
+        self->samples,
+        minimumNanoseconds,
+        medianNanoseconds,
+        meanNanoseconds,
+        maximumNanoseconds
+    );
+}
+
+structure Runner {
+    Operation operation;
+    Hook setup;
+    Hook teardown;
+};
+
+Runner Runner::init(
+    Operation operation,
+    Hook setup,
+    Hook teardown
+) <- (operation, setup, teardown) override {
+    return build Runner {
+        self.operation = operation;
+        self.setup = setup;
+        self.teardown = teardown;
+    };
+}
+
+// Runs a benchmark whose complete workload is timed.
+export (Result, error) run(
+    stringv name,
+    Config config,
+    Operation operation
+) {
+    return run_with_hooks(name, config, operation, empty_hook, empty_hook);
+}
+
+// Runs a benchmark with setup and teardown outside each timed sample. A
+// nonzero warmup count forms one additional untimed setup/work/teardown phase.
+export (Result, error) run_with_hooks(
+    stringv name,
+    Config config,
+    Operation operation,
+    Hook setup,
+    Hook teardown
+) {
+    validationError := validate(name, config);
+    if validationError != none {
+        return (none, validationError);
+    }
+
+    runner := Runner::init(operation, setup, teardown);
+
+    warmupError := runner.runWarmup(config.warmupIterations());
+    if warmupError != none {
+        return (none, warmupError);
+    }
+
+    samples := collections::Array<u64>::init();
+    allocationError := samples.reserve(config.sampleCount());
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    loop usize index = 0; index < config.sampleCount(); index++ {
+        elapsed, sampleError := runner.runSample(
+            config.iterationsPerSample()
+        );
+        if sampleError != none {
+            return (none, sampleError);
+        }
+
+        nanoseconds, conversionError := elapsed.totalNanoseconds();
+        if conversionError != none {
+            return (none, conversionError);
+        }
+        appendError := samples.push(nanoseconds);
+        if appendError != none {
+            return (none, appendError);
+        }
+    }
+
+    return summarize_mut(name, config, samples.viewRef());
+}
+
+error Runner::runWarmup(&self, usize iterations) {
+    if iterations == 0 {
+        return none;
+    }
+
+    setupError := (self->setup)();
+    if setupError != none {
+        return setupError;
+    }
+
+    operationError := self->runOperations(iterations);
+    teardownError := (self->teardown)();
+    if operationError != none {
+        return operationError;
+    }
+    return teardownError;
+}
+
+(duration::Duration, error) Runner::runSample(
+    &self,
+    usize iterations
+) {
+    setupError := (self->setup)();
+    if setupError != none {
+        return (none, setupError);
+    }
+
+    start, startError := clock::Instant::now();
+    if startError != none {
+        teardownError := (self->teardown)();
+        return (none, startError);
+    }
+
+    operationError := self->runOperations(iterations);
+    duration::Duration elapsed = none;
+    error measurementError = operationError;
+    if measurementError == none {
+        end, endError := clock::Instant::now();
+        measurementError = endError;
+        if measurementError == none {
+            elapsed, measurementError = end.durationSince(start);
+        }
+    }
+
+    teardownError := (self->teardown)();
+    if measurementError != none {
+        return (none, measurementError);
+    }
+    if teardownError != none {
+        return (none, teardownError);
+    }
+    return (elapsed, none);
+}
+
+error Runner::runOperations(&self, usize iterations) {
+    loop usize index = 0; index < iterations; index++ {
+        operationError := (self->operation)();
+        if operationError != none {
+            return operationError;
+        }
+    }
+    return none;
+}
+
+error empty_hook() {
+    return none;
+}
+
+// Summarizes caller-supplied complete sample durations in nanoseconds. The
+// source order is preserved. This supports host-driven compiler benchmarks as
+// well as workloads timed by run and run_with_hooks.
+export (Result, error) summarize(
+    stringv name,
+    Config config,
+    []const u64 sampleNanoseconds
+) {
+    samples, allocationError :=
+        collections::Array<u64>::fromSlice(sampleNanoseconds);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+    return summarize_mut(name, config, samples.viewRef());
+}
+
+(Result, error) summarize_mut(
+    stringv name,
+    Config config,
+    []u64 samples
+) {
+    validationError := validate(name, config);
+    if validationError != none {
+        return (none, validationError);
+    }
+    if samples.len() != config.sampleCount() {
+        return (none, BenchmarkError.InvalidSamples);
+    }
+
+    collections::sort<u64>(samples);
+    const usize MIDDLE = samples.len() / 2;
+    u64 median = samples[MIDDLE];
+    if samples.len() % 2 == 0 {
+        const u64 LOWER = samples[MIDDLE - 1];
+        const u64 UPPER = samples[MIDDLE];
+        median = LOWER + (UPPER - LOWER) / 2;
+    }
+
+    const u64 DIVISOR = samples.len().cast<u64>;
+    u64 mean = 0;
+    u64 remainder = 0;
+    loop usize index = 0; index < samples.len(); index++ {
+        const u64 VALUE = samples[index];
+        mean = mean + VALUE / DIVISOR;
+        const u64 PART = VALUE % DIVISOR;
+        if remainder >= DIVISOR - PART {
+            mean++;
+            remainder = remainder - (DIVISOR - PART);
+        } else {
+            remainder = remainder + PART;
+        }
+    }
+
+    return (Result::fromSummary(
+        name,
+        config,
+        samples[0],
+        median,
+        mean,
+        samples[samples.len() - 1]
+    ), none);
+}
+
+Result Result::fromSummary(
+    stringv name,
+    Config config,
+    u64 minimumNanoseconds,
+    u64 medianNanoseconds,
+    u64 meanNanoseconds,
+    u64 maximumNanoseconds
+) {
+    return build Result {
+        self.benchmarkName = name.string();
+        self.warmups = config.warmupIterations();
+        self.iterations = config.iterationsPerSample();
+        self.samples = config.sampleCount();
+        self.minimum = duration::Duration::fromNanoseconds(minimumNanoseconds);
+        self.medianValue = duration::Duration::fromNanoseconds(
+            medianNanoseconds
+        );
+        self.meanValue = duration::Duration::fromNanoseconds(meanNanoseconds);
+        self.maximum = duration::Duration::fromNanoseconds(maximumNanoseconds);
+    };
+}
+
+error validate(stringv name, Config config) {
+    if !valid_name(name) {
+        return BenchmarkError.InvalidName;
+    }
+    if config.iterationsPerSample() == 0 {
+        return BenchmarkError.InvalidIterations;
+    }
+    if config.sampleCount() == 0 {
+        return BenchmarkError.InvalidSamples;
+    }
+    return none;
+}
+
+bool valid_name(stringv name) {
+    if name.len() == 0 {
+        return false;
+    }
+
+    loop u32 index = 0; index < name.len(); index++ {
+        const u8 VALUE = name[index].cast<u8>;
+        const bool LETTER = (VALUE >= 97 and VALUE <= 122) or
+            (VALUE >= 65 and VALUE <= 90);
+        const bool DIGIT = VALUE >= 48 and VALUE <= 57;
+        const bool PUNCTUATION = VALUE == 46 or VALUE == 95 or
+            VALUE == 45 or VALUE == 47 or VALUE == 58;
+        if !LETTER and !DIGIT and !PUNCTUATION {
+            return false;
+        }
+    }
+    return true;
+}
