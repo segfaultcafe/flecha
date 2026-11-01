@@ -67,6 +67,7 @@ foreach(required IN ITEMS
         signed_integer unsigned_integer integer floating_point numeric
         borrowAllArguments
         "keyword.operator.crashable.flecha"
+        "support.function.crash.flecha"
         "storage.type.function.flecha"
         "storage.type.typeset.flecha"
         "entity.name.type.typeset.flecha"
@@ -81,6 +82,7 @@ endforeach()
 foreach(required IN ITEMS
         "keyword.other.test.flecha" "#FFD700"
         "storage.type.function.flecha" "#569CD6"
+        "support.function.crash.flecha" "#87CEFA"
         "support.type.typeset.builtin.flecha" "#87CEFA"
         "constant.numeric.integer.bound.flecha" "#C49A00"
         "constant.numeric.float.property.flecha" "#C49A00"

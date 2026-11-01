@@ -137,6 +137,16 @@ stringv StringBuilder::view(&const self) <-self {
     return string_from_bytes(self->storage.bytes());
 }
 
+// Copies the builder contents into an owning string, crashing on allocation failure.
+string StringBuilder::toString!(&const self) {
+    text, formattingError := self->toString();
+    if formattingError != none {
+        crash("failed to format string builder contents");
+    }
+
+    return text;
+}
+
 // Appends line followed by a newline, preserving contents on allocation error.
 error StringBuilder::appendLine(&self, stringv line) {
     usize additional = line.len().cast<usize>;

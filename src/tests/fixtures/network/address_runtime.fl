@@ -4,7 +4,7 @@ module address_runtime;
     :: lib::std::net::address
     :: lib::std::net::errors;
 
-i32 main() {
+i32 main!() {
     loopback, loopbackError := address::Ipv4Address::parse("127.0.0.1");
     expectedLoopback := address::Ipv4Address::loopback();
     if loopbackError != none or loopback != expectedLoopback or
@@ -122,6 +122,63 @@ i32 main() {
     ipv6LoopbackText, ipv6LoopbackFormatError := ipv6Loopback.toString();
     if ipv6LoopbackFormatError != none or ipv6LoopbackText.view() != "::1" {
         return 16;
+    }
+
+    ipv4Socket, ipv4SocketError :=
+        address::Ipv4SocketAddress::parse("192.0.2.1:8080");
+    ipv4SocketText, ipv4SocketFormatError := ipv4Socket.toString();
+    if ipv4SocketError != none or
+        ipv4Socket.address() != address::Ipv4Address::fromOctets(192, 0, 2, 1) or
+        ipv4Socket.port() != 8080 or ipv4SocketFormatError != none or
+        ipv4SocketText.view() != "192.0.2.1:8080" {
+        return 17;
+    }
+
+    invalidIpv4Socket, invalidIpv4SocketError :=
+        address::Ipv4SocketAddress::parse("192.0.2.1:65536");
+    if invalidIpv4SocketError != errors::NetworkError.InvalidPort or
+        invalidIpv4Socket != none {
+        return 18;
+    }
+
+    ipv6Socket, ipv6SocketError :=
+        address::Ipv6SocketAddress::parse("[2001:db8::1]:443");
+    ipv6SocketText, ipv6SocketFormatError := ipv6Socket.toString();
+    expectedIpv6SocketAddress := address::Ipv6Address::fromSegments(
+        8193, 3512, 0, 0, 0, 0, 0, 1
+    );
+    if ipv6SocketError != none or
+        ipv6Socket.address() != expectedIpv6SocketAddress or
+        ipv6Socket.port() != 443 or ipv6SocketFormatError != none or
+        ipv6SocketText.view() != "[2001:db8::1]:443" {
+        return 19;
+    }
+
+    invalidIpv6Socket, invalidIpv6SocketError :=
+        address::Ipv6SocketAddress::parse("::1:443");
+    if invalidIpv6SocketError != errors::NetworkError.InvalidAddress or
+        invalidIpv6Socket != none {
+        return 20;
+    }
+
+    crashableIpv4Text := loopback.toString!();
+    if crashableIpv4Text.view() != "127.0.0.1" {
+        return 21;
+    }
+
+    crashableIpv6Text := ipv6.toString!();
+    if crashableIpv6Text.view() != "2001:db8::ff00:42:8329" {
+        return 22;
+    }
+
+    crashableIpv4SocketText := ipv4Socket.toString!();
+    if crashableIpv4SocketText.view() != "192.0.2.1:8080" {
+        return 23;
+    }
+
+    crashableIpv6SocketText := ipv6Socket.toString!();
+    if crashableIpv6SocketText.view() != "[2001:db8::1]:443" {
+        return 24;
     }
 
     return 42;

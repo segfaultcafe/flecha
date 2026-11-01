@@ -25,6 +25,7 @@ void call_explode!() { explode!(); if !false {} }
 T generic_explode<T>!(T value) { crash("generic boom"); }
 structure CrashableWorker {};
 void CrashableWorker::method!(&const self) { crash("method boom"); }
+void crash_handler() {}
 
 T generic_identity<T>(T value) { return value; }
 i32 generic_result = generic_identity<i32>(42);

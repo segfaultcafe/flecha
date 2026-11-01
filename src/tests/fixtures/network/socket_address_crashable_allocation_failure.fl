@@ -1,0 +1,16 @@
+module socket_address_crashable_allocation_failure;
+
+@imports :: lib::std::net::address;
+
+quiver extern unsafe void socket_address_begin_allocation_failure();
+
+i32 main!() {
+    socket := address::Ipv4SocketAddress::fromParts(
+        address::Ipv4Address::fromOctets(192, 0, 2, 1),
+        8080
+    );
+
+    unsafe { socket_address_begin_allocation_failure(); }
+    text := socket.toString!();
+    return text.len().cast<i32>;
+}

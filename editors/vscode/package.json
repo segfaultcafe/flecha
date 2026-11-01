@@ -57,6 +57,12 @@
             }
           },
           {
+            "scope": "support.function.crash.flecha",
+            "settings": {
+              "foreground": "#87CEFA"
+            }
+          },
+          {
             "scope": "support.type.typeset.builtin.flecha",
             "settings": {
               "foreground": "#87CEFA"

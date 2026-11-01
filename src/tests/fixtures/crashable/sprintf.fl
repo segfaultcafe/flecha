@@ -1,10 +1,18 @@
 module main;
 
 @imports
-    :: lib::std::fmt;
+    :: lib::std::fmt
+    :: lib::std::text::strings;
 
 i32 main!() {
     text := fmt::sprintf!("{} {}", "value", 42);
     stdout(text);
+
+    builder := strings::StringBuilder::init();
+    appendError := builder.append(" built");
+    if appendError != none {
+        crash("failed to prepare string builder fixture");
+    }
+    stdout(builder.toString!());
     return 0;
 }

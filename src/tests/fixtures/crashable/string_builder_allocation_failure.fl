@@ -1,0 +1,17 @@
+module string_builder_allocation_failure;
+
+@imports :: lib::std::text::strings;
+
+quiver extern unsafe void string_builder_begin_allocation_failure();
+
+i32 main!() {
+    builder := strings::StringBuilder::init();
+    appendError := builder.append("flecha");
+    if appendError != none {
+        crash("failed to prepare string builder allocation fixture");
+    }
+
+    unsafe { string_builder_begin_allocation_failure(); }
+    text := builder.toString!();
+    return text.len().cast<i32>;
+}
