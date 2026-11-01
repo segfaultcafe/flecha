@@ -328,6 +328,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/random.md`](docs/random.md) — secure host randomness and deterministic generation
 - [`docs/testing.md`](docs/testing.md) — test assertions, diagnostics, and failure behavior
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation
+- [`docs/crashable_functions.md`](docs/crashable_functions.md) — explicit unrecoverable effects and crash reports
 - [`docs/enums.md`](docs/enums.md) — nominal enums, defaults, discriminants, and member functions
 - [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting setup
 - [`editors/neovim/README.md`](editors/neovim/README.md) — Neovim installation and usage

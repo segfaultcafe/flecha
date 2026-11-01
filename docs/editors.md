@@ -5,6 +5,10 @@ Neovim runtime plugin. Both currently provide syntax highlighting, filetype
 detection, comments, brackets, and indentation support; neither is a language
 server.
 
+Both editors render the `!` in a crashable declaration or call, such as
+`load!()`, in orange. Logical negation such as `!ready` keeps the ordinary
+operator style.
+
 ## Visual Studio Code
 
 Download `flecha-language-VERSION.vsix` and `SHA256SUMS` from the matching

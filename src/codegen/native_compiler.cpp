@@ -300,6 +300,11 @@ bool NativeCompiler::LinkExecutable(
     ownedArguments.insert(ownedArguments.end(), linkInputs.begin(),
                           linkInputs.end());
     ownedArguments.push_back(_runtimeLibraryPath);
+#if defined(__linux__)
+    // Crash reports use the executable's dynamic symbol table to name Flecha
+    // frames in their native stack trace.
+    ownedArguments.emplace_back("-rdynamic");
+#endif
 #ifdef _WIN32
     // The static runtime uses BCryptGenRandom for secure randomness and
     // temporary-file names. Consumers must link the Windows import library

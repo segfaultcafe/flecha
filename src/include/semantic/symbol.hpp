@@ -32,6 +32,8 @@ enum class BuiltInFunction {
     StderrLine,
     StderrFormat,
     StringFormat,
+    StringFormatCrash,
+    Crash,
     Stdin,
     StdinLine,
     New,
@@ -98,7 +100,8 @@ class FunctionSymbol final : public Symbol {
                    std::vector<std::size_t> borrowSourceIndices = {},
                    std::vector<core::OwnershipContract> parameterContracts = {},
                    const core::FunctionDeclaration* declaration = nullptr,
-                   bool borrowsVariadicPack = false)
+                   bool borrowsVariadicPack = false,
+                   bool isCrashable = false)
         : FunctionSymbol(std::move(name),
                          std::make_shared<const CallableSignature>(
                              CallableSignature{returnType,
@@ -106,7 +109,9 @@ class FunctionSymbol final : public Symbol {
                                                std::move(parameterContracts),
                                                {},
                                                std::move(borrowSourceIndices),
-                                               isUnsafe}),
+                                               isUnsafe,
+                                               false,
+                                               isCrashable}),
                          declarationRange, builtIn, owner, isPrivate,
                          hasReceiver, isExtern, std::move(linkName), enumOwner,
                          declaration, borrowsVariadicPack) {}
@@ -143,6 +148,9 @@ class FunctionSymbol final : public Symbol {
     }
     [[nodiscard]] bool IsUnsafe() const { return _signature->isUnsafe; }
     [[nodiscard]] bool IsOnce() const { return _signature->isOnce; }
+    [[nodiscard]] bool IsCrashable() const {
+        return _signature->isCrashable;
+    }
     const StructureType* Owner() const { return _owner; }
     const EnumType* EnumOwner() const { return _enumOwner; }
     bool HasOwner() const { return _owner != nullptr || _enumOwner != nullptr; }

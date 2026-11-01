@@ -1,4 +1,4 @@
-add_library(runtime STATIC runtime.cpp allocation.cpp environment.cpp
+add_library(runtime STATIC runtime.cpp crash.cpp allocation.cpp environment.cpp
                            filesystem.cpp file_stream.cpp process.cpp time.cpp
                            random.cpp standard_stream.cpp)
 target_include_directories(runtime PUBLIC ${PROJECT_SOURCE_DIR}/src/include)

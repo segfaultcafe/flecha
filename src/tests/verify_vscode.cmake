@@ -66,6 +66,7 @@ foreach(required IN ITEMS
         nan infinity negative_infinity min_positive epsilon
         signed_integer unsigned_integer integer floating_point numeric
         borrowAllArguments
+        "keyword.operator.crashable.flecha"
         "storage.type.function.flecha"
         "storage.type.typeset.flecha"
         "entity.name.type.typeset.flecha"
@@ -82,7 +83,8 @@ foreach(required IN ITEMS
         "storage.type.function.flecha" "#569CD6"
         "support.type.typeset.builtin.flecha" "#87CEFA"
         "constant.numeric.integer.bound.flecha" "#C49A00"
-        "constant.numeric.float.property.flecha" "#C49A00")
+        "constant.numeric.float.property.flecha" "#C49A00"
+        "keyword.operator.crashable.flecha" "#FF8C00")
     string(FIND "${manifest}" "${required}" position)
     if(position EQUAL -1)
         message(FATAL_ERROR "VS Code manifest does not style ${required}")

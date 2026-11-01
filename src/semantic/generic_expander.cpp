@@ -278,8 +278,11 @@ void Walk(const AstNode& input, const Callback& callback) {
     callback(node, false);
 }
 std::string Name(const Declaration& declaration) {
-    if (declaration.Kind() == AstNodeKind::FunctionDeclaration)
-        return static_cast<const FunctionDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::FunctionDeclaration) {
+        const auto& function =
+            static_cast<const FunctionDeclaration&>(declaration);
+        return function.Name() + (function.IsCrashable() ? "!" : "");
+    }
     if (declaration.Kind() == AstNodeKind::StructureDeclaration)
         return static_cast<const StructureDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::EnumDeclaration)
@@ -314,6 +317,7 @@ struct Instance {
 };
 struct MethodRequest {
     std::string name, concreteName;
+    bool crashable = false;
     Arguments arguments;
     source::SourceRange range;
 };
@@ -376,11 +380,12 @@ class Expander {
             }
             const auto* owner = found->second;
             const auto [previous, inserted] = methodNames.emplace(
-                std::make_pair(owner, method->Name()), method);
+                std::make_pair(owner, Name(*method)), method);
             if (!inserted && (Template(*method) || Template(*previous->second)))
                 Error(method->Range(),
-                      "duplicate method declaration '" + method->Name() + "'");
+                      "duplicate method declaration '" + Name(*method) + "'");
             if (Template(*method) &&
+                !method->IsCrashable() &&
                 owner->Kind() == AstNodeKind::EnumDeclaration)
                 for (const auto& variant :
                      static_cast<const EnumDeclaration*>(owner)->Variants())
@@ -401,6 +406,7 @@ class Expander {
                           "parameter '" +
                               p + "'");
             if (!method->genericParameters.empty() &&
+                !method->IsCrashable() &&
                 (method->Name() == "init" || method->Name() == "tear"))
                 Error(method->Range(),
                       "lifecycle methods cannot declare additional type "
@@ -409,7 +415,7 @@ class Expander {
                 !method->genericParameters.empty())
                 genericMethods[owner].push_back(method);
             else
-                concreteMethods[{owner, method->Name()}] = method;
+                concreteMethods[{owner, Name(*method)}] = method;
         }
         for (auto& declaration : originals) {
             if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
@@ -1139,12 +1145,13 @@ class Expander {
                 });
             current = saved;
             for (const auto* method : genericMethods[instance.origin])
-                if (method->genericParameters.empty() &&
+                if (!method->IsCrashable() &&
+                    method->genericParameters.empty() &&
                     (method->Name() == "init" || method->Name() == "zero" ||
                      method->Name() == "tear"))
                     if (auto* clone = Clone(*method, arguments, method->Name(),
                                             at, Name(*concrete)))
-                        concreteMethods[{concrete, method->Name()}] =
+                        concreteMethods[{concrete, Name(*clone)}] =
                             static_cast<FunctionDeclaration*>(clone);
         }
         return concrete;
@@ -1153,6 +1160,7 @@ class Expander {
                            const MethodRequest& request) {
         for (const auto* method : genericMethods[instance.origin]) {
             if (method->Name() != request.name ||
+                method->IsCrashable() != request.crashable ||
                 method->genericParameters.size() != request.arguments.size())
                 continue;
             const auto key =
@@ -1163,7 +1171,9 @@ class Expander {
                              request.arguments.end());
             if (auto* clone = Clone(*method, arguments, request.concreteName,
                                     request.range, Name(*instance.concrete)))
-                concreteMethods[{instance.concrete, request.concreteName}] =
+                concreteMethods[{instance.concrete,
+                                 request.concreteName +
+                                     (request.crashable ? "!" : "")}] =
                     static_cast<FunctionDeclaration*>(clone);
         }
     }
@@ -1188,9 +1198,11 @@ class Expander {
         value.syntax = value.syntax->Target();
         return value;
     }
-    const Declaration* ResolveName(NameExpression& name) {
+    const Declaration* ResolveName(NameExpression& name,
+                                   bool crashable = false) {
         if (Local(name.Name())) return nullptr;
-        const auto* origin = Lookup(name.Name(), current->moduleId,
+        const auto* origin = Lookup(name.Name() + (crashable ? "!" : ""),
+                                    current->moduleId,
                                     name.Range(), !name.typeArguments.empty());
         if (!name.typeArguments.empty()) {
             const auto arguments =
@@ -1571,9 +1583,11 @@ class Expander {
         if (call.Callee().Kind() != AstNodeKind::NameExpression) return;
         auto& callee = const_cast<NameExpression&>(
             static_cast<const NameExpression&>(call.Callee()));
+        if (call.IsCrashable()) crashableCallCallees.insert(&callee);
         if (!callee.typeArguments.empty() || Local(callee.Name())) return;
-        const auto* declaration =
-            Lookup(callee.Name(), current->moduleId, callee.Range(), false);
+        const auto* declaration = Lookup(
+            callee.Name() + (call.IsCrashable() ? "!" : ""),
+            current->moduleId, callee.Range(), false);
         if (!declaration ||
             declaration->Kind() != AstNodeKind::FunctionDeclaration ||
             declaration->genericParameters.empty())
@@ -1750,9 +1764,11 @@ class Expander {
                     return {expressionTypes[&expression].get(),
                             current->moduleId};
                 }
-                const auto* declaration =
-                    ResolveName(const_cast<NameExpression&>(
-                        static_cast<const NameExpression&>(call.Callee())));
+                const auto* declaration = ResolveName(
+                    const_cast<NameExpression&>(static_cast<
+                                                const NameExpression&>(
+                        call.Callee())),
+                    call.IsCrashable());
                 if (!declaration &&
                     static_cast<const NameExpression&>(call.Callee()).Name() ==
                         "take" &&
@@ -1787,7 +1803,9 @@ class Expander {
                 }
                 const auto* owner = Receiver(call);
                 if (!owner) return {};
-                const auto found = concreteMethods.find({owner, call.Member()});
+                const auto found = concreteMethods.find(
+                    {owner, call.Member() +
+                                (call.IsCrashable() ? "!" : "")});
                 if (found != concreteMethods.end())
                     return {&found->second->ReturnType(),
                             found->second->moduleId};
@@ -1991,9 +2009,10 @@ class Expander {
                           "a local value cannot have type arguments");
                 return;
             }
-            const auto* origin =
-                Lookup(name.Name(), current->moduleId, name.Range(),
-                       !name.typeArguments.empty());
+            const bool crashable = crashableCallCallees.contains(&name);
+            const auto* origin = Lookup(
+                name.Name() + (crashable ? "!" : ""), current->moduleId,
+                name.Range(), !name.typeArguments.empty());
             if (!name.typeArguments.empty()) {
                 for (const auto& argument : name.typeArguments)
                     CheckTypeNames(*argument);
@@ -2024,8 +2043,10 @@ class Expander {
                           call.Member() + "'");
             return;
         }
+        const std::string effectMember =
+            call.Member() + (call.IsCrashable() ? "!" : "");
         if (!explicitArguments &&
-            concreteMethods.contains({owner, call.Member()}))
+            concreteMethods.contains({owner, effectMember}))
             return;
         const Instance* receiverInstance = nullptr;
         for (const auto& instance : instances)
@@ -2036,7 +2057,8 @@ class Expander {
         const FunctionDeclaration* origin = nullptr;
         if (receiverInstance)
             for (const auto* method : genericMethods[receiverInstance->origin])
-                if (method->Name() == call.Member()) {
+                if (method->Name() == call.Member() &&
+                    method->IsCrashable() == call.IsCrashable()) {
                     origin = method;
                     break;
                 }
@@ -2055,19 +2077,22 @@ class Expander {
                                     call, "method", arguments))
                 return;
         }
-        const auto key = call.Member() + Key(arguments);
+        const auto key = effectMember + Key(arguments);
         const bool specialized = explicitArguments || !arguments.empty();
         if (!requestNames.contains(key))
             requestNames[key] =
                 specialized
                     ? "$generic_method" + std::to_string(requestNames.size())
                     : call.Member();
-        const MethodRequest request{call.Member(), requestNames[key], arguments,
+        const MethodRequest request{call.Member(), requestNames[key],
+                                    call.IsCrashable(), arguments,
                                     call.Range()};
         bool found = false;
         if (receiverInstance) {
             MaterializeMethod(*receiverInstance, request);
-            found = concreteMethods.contains({owner, request.concreteName});
+            found = concreteMethods.contains(
+                {owner, request.concreteName +
+                            (request.crashable ? "!" : "")});
         }
         if (!found && explicitArguments)
             Error(call.Range(),
@@ -2103,6 +2128,7 @@ class Expander {
     std::map<const Expression*, std::unique_ptr<TypeNode>>
         contextualTypeStorage;
     std::map<const NameExpression*, const FunctionDeclaration*> inferredCalls;
+    std::set<const NameExpression*> crashableCallCallees;
     std::map<const Expression*, TypeView> contextualTypes;
     std::vector<const FunctionDeclaration*> functionContexts;
 };

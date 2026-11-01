@@ -522,7 +522,7 @@ class FunctionDeclaration final : public Declaration {
         std::vector<source::SourceRange> borrowSourceRanges = {},
         std::string variadicPackName = {},
         source::SourceRange variadicPackRange = {},
-        bool borrowsVariadicPack = false)
+        bool borrowsVariadicPack = false, bool isCrashable = false)
         : Declaration(range),
           _owner(std::move(owner)),
           _modifiers(std::move(modifiers)),
@@ -535,7 +535,8 @@ class FunctionDeclaration final : public Declaration {
           _borrowSourceRanges(std::move(borrowSourceRanges)),
           _variadicPackName(std::move(variadicPackName)),
           _variadicPackRange(variadicPackRange),
-          _borrowsVariadicPack(borrowsVariadicPack) {}
+          _borrowsVariadicPack(borrowsVariadicPack),
+          _isCrashable(isCrashable) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::FunctionDeclaration;
@@ -549,6 +550,7 @@ class FunctionDeclaration final : public Declaration {
         }
         return false;
     }
+    [[nodiscard]] bool IsCrashable() const { return _isCrashable; }
     [[nodiscard]] bool IsExtern() const {
         return HasModifier(FunctionModifier::Extern);
     }
@@ -619,6 +621,7 @@ class FunctionDeclaration final : public Declaration {
     std::string _variadicPackName;
     source::SourceRange _variadicPackRange;
     bool _borrowsVariadicPack;
+    bool _isCrashable;
     bool _isTest = false;
     bool _isTestHarness = false;
 };
@@ -694,7 +697,8 @@ class CallableTypeDeclaration final : public Declaration {
         source::SourceRange nameRange,
         std::vector<std::unique_ptr<Parameter>> parameters,
         std::vector<std::unique_ptr<TypeNode>> results, bool isUnsafe,
-        bool isOnce, std::vector<std::string> borrowSources = {},
+        bool isOnce, bool isCrashable = false,
+        std::vector<std::string> borrowSources = {},
         std::vector<source::SourceRange> borrowSourceRanges = {})
         : Declaration(range),
           _name(std::move(name)),
@@ -703,6 +707,7 @@ class CallableTypeDeclaration final : public Declaration {
           _results(std::move(results)),
           _isUnsafe(isUnsafe),
           _isOnce(isOnce),
+          _isCrashable(isCrashable),
           _borrowSources(std::move(borrowSources)),
           _borrowSourceRanges(std::move(borrowSourceRanges)) {}
 
@@ -723,6 +728,7 @@ class CallableTypeDeclaration final : public Declaration {
     }
     [[nodiscard]] bool IsUnsafe() const { return _isUnsafe; }
     [[nodiscard]] bool IsOnce() const { return _isOnce; }
+    [[nodiscard]] bool IsCrashable() const { return _isCrashable; }
     [[nodiscard]] bool HasBorrowSources() const {
         return !_borrowSources.empty();
     }
@@ -741,6 +747,7 @@ class CallableTypeDeclaration final : public Declaration {
     std::vector<std::unique_ptr<TypeNode>> _results;
     bool _isUnsafe;
     bool _isOnce;
+    bool _isCrashable;
     std::vector<std::string> _borrowSources;
     std::vector<source::SourceRange> _borrowSourceRanges;
 };
@@ -1390,12 +1397,14 @@ class CallExpression final : public Expression {
                    std::unique_ptr<Expression> callee,
                    std::vector<std::unique_ptr<Expression>> arguments,
                    std::unique_ptr<TypeNode> typeArgument = nullptr,
-                   std::vector<bool> expandedArguments = {})
+                   std::vector<bool> expandedArguments = {},
+                   bool isCrashable = false)
         : Expression(range),
           _callee(std::move(callee)),
           _arguments(std::move(arguments)),
           _typeArgument(std::move(typeArgument)),
-          _expandedArguments(std::move(expandedArguments)) {}
+          _expandedArguments(std::move(expandedArguments)),
+          _isCrashable(isCrashable) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::CallExpression;
@@ -1411,12 +1420,14 @@ class CallExpression final : public Expression {
     [[nodiscard]] bool ArgumentIsExpanded(std::size_t index) const {
         return index < _expandedArguments.size() && _expandedArguments[index];
     }
+    [[nodiscard]] bool IsCrashable() const { return _isCrashable; }
 
    private:
     std::unique_ptr<Expression> _callee;
     std::vector<std::unique_ptr<Expression>> _arguments;
     std::unique_ptr<TypeNode> _typeArgument;
     std::vector<bool> _expandedArguments;
+    bool _isCrashable;
 };
 
 class MemberCallExpression final : public Expression {
@@ -1428,14 +1439,16 @@ class MemberCallExpression final : public Expression {
                          std::string member, source::SourceRange memberRange,
                          std::vector<std::unique_ptr<Expression>> arguments,
                          TokenType access = TokenType::Dot,
-                         std::vector<bool> expandedArguments = {})
+                         std::vector<bool> expandedArguments = {},
+                         bool isCrashable = false)
         : Expression(range),
           _access(access),
           _receiver(std::move(receiver)),
           _member(std::move(member)),
           _memberRange(memberRange),
           _arguments(std::move(arguments)),
-          _expandedArguments(std::move(expandedArguments)) {}
+          _expandedArguments(std::move(expandedArguments)),
+          _isCrashable(isCrashable) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::MemberCallExpression;
@@ -1452,6 +1465,7 @@ class MemberCallExpression final : public Expression {
     [[nodiscard]] bool ArgumentIsExpanded(std::size_t index) const {
         return index < _expandedArguments.size() && _expandedArguments[index];
     }
+    [[nodiscard]] bool IsCrashable() const { return _isCrashable; }
 
     void Rename(std::string name) { _member = std::move(name); }
     TokenType Access() const { return _access; }
@@ -1463,6 +1477,7 @@ class MemberCallExpression final : public Expression {
     source::SourceRange _memberRange;
     std::vector<std::unique_ptr<Expression>> _arguments;
     std::vector<bool> _expandedArguments;
+    bool _isCrashable;
 };
 
 class SliceExpression final : public Expression {
