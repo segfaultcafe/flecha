@@ -243,6 +243,15 @@ Ipv6Address Ipv6Address::fromSegments(
     return builder.toString();
 }
 
+string Ipv6Address::toString!(&const self) {
+    text, formattingError := self->toString();
+    if formattingError != none {
+        crash("failed to format IPv6 address");
+    }
+
+    return text;
+}
+
 // Returns the eight 16-bit segments of the IPv6 address.
 [8]u16 Ipv6Address::segments(&const self) {
     return [

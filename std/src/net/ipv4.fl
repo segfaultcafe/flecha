@@ -101,6 +101,15 @@ Ipv4Address Ipv4Address::fromOctets(u8 octet1, u8 octet2, u8 octet3, u8 octet4) 
     );
 }
 
+string Ipv4Address::toString!(&const self) {
+    text, formattingError := self->toString();
+    if formattingError != none {
+        crash("failed to format IPv4 address");
+    }
+
+    return text;
+}
+
 // Returns the individual octets of the IPv4 address as an array of 4 bytes.
 [4]u8 Ipv4Address::octets(&const self) {
     return [

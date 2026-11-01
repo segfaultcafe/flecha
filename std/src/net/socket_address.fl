@@ -1,6 +1,6 @@
 module address;
 
-@imports 
+@imports
     :: root::fmt
     :: root::net::errors;
 
@@ -72,6 +72,15 @@ u16 Ipv4SocketAddress::port(&const self) {
     return fmt::sprintf("{}:{}", addressText, self->port);
 }
 
+string Ipv4SocketAddress::toString!(&const self) {
+    text, formattingError := self->toString();
+    if formattingError != none {
+        crash("failed to format IPv4 socket address");
+    }
+
+    return text;
+}
+
 Ipv6SocketAddress Ipv6SocketAddress::fromParts(
     Ipv6Address address,
     u16 port
@@ -138,6 +147,15 @@ u16 Ipv6SocketAddress::port(&const self) {
     }
 
     return fmt::sprintf("[{}]:{}", addressText, self->port);
+}
+
+string Ipv6SocketAddress::toString!(&const self) {
+    text, formattingError := self->toString();
+    if formattingError != none {
+        crash("failed to format IPv6 socket address");
+    }
+
+    return text;
 }
 
 (u16, error) parse_socket_port(stringv text) {
