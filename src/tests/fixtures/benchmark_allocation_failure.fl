@@ -10,18 +10,26 @@ export i32 sample_storage_allocation_failure_test() {
     if configError != none {
         return 1;
     }
+    usize operations = 0;
+    benchmark::Operation operation = [&operations]() => (error) {
+        operations++;
+        return none;
+    };
 
     unsafe { benchmark_fail_next_array_allocation(); }
     result, runError := benchmark::run(
         "allocation.run",
         config,
-        () => (error) { return none; }
+        operation
     );
     if runError != AllocationError.OutOfMemory {
         return 2;
     }
     if result.sampleCount() != 0 or result.name().len() != 0 {
         return 3;
+    }
+    if operations != 0 {
+        return 4;
     }
     return 42;
 }

@@ -145,6 +145,12 @@ test summary_statistics_and_output_are_deterministic(
                 + "\"sample_max_ns\":40}",
         "machine output is versioned and deterministic"
     );
+    asserts::is_true(
+        t,
+        samples[0] == 40 and samples[1] == 10 and samples[2] == 30 and
+            samples[3] == 20,
+        "summarizing does not reorder caller-owned samples"
+    );
 }
 
 test mean_avoids_overflow_and_truncates_sub_nanosecond_remainders(

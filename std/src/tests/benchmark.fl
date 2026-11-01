@@ -230,17 +230,17 @@ export (Result, error) run_with_hooks(
         return (none, validationError);
     }
 
+    samples := collections::Array<u64>::init();
+    allocationError := samples.reserve(config.sampleCount());
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
     runner := Runner::init(operation, setup, teardown);
 
     warmupError := runner.runWarmup(config.warmupIterations());
     if warmupError != none {
         return (none, warmupError);
-    }
-
-    samples := collections::Array<u64>::init();
-    allocationError := samples.reserve(config.sampleCount());
-    if allocationError != none {
-        return (none, allocationError);
     }
 
     loop usize index = 0; index < config.sampleCount(); index++ {
@@ -340,6 +340,14 @@ export (Result, error) summarize(
     Config config,
     []const u64 sampleNanoseconds
 ) {
+    validationError := validate(name, config);
+    if validationError != none {
+        return (none, validationError);
+    }
+    if sampleNanoseconds.len() != config.sampleCount() {
+        return (none, BenchmarkError.InvalidSamples);
+    }
+
     samples, allocationError :=
         collections::Array<u64>::fromSlice(sampleNanoseconds);
     if allocationError != none {
