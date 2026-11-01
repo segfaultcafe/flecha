@@ -129,6 +129,11 @@ class SemanticAnalyzer final {
     SemanticType AnalyzeCall(const core::CallExpression& expression);
     SemanticType AnalyzeMemberCall(
         const core::MemberCallExpression& expression);
+    void ValidateCrashableCall(bool markedCrashable,
+                               const CallableSignature& signature,
+                               const FunctionSymbol* function,
+                               source::SourceRange range);
+    void WarnForCrashlessFunctions();
     SemanticType AnalyzeSlice(const core::SliceExpression& expression,
                               SemanticType expected);
     SemanticType AnalyzeIndex(const core::IndexExpression& expression);
@@ -155,6 +160,10 @@ class SemanticAnalyzer final {
     std::unordered_map<const FunctionSymbol*,
                        std::unordered_set<const FunctionSymbol*>>
         _functionCalls;
+    std::unordered_map<const FunctionSymbol*,
+                       std::unordered_set<const FunctionSymbol*>>
+        _crashableCalls;
+    std::unordered_set<const FunctionSymbol*> _directCrashFunctions;
     std::unordered_set<const FunctionSymbol*> _forbiddenZeroEffects;
     std::vector<
         std::pair<const core::VariableDeclarationStatement*, SemanticType>>
@@ -172,6 +181,7 @@ class SemanticAnalyzer final {
     bool _allowBuildSelf = false;
     std::size_t _buildDepth = 0;
     bool _analyzingCallCallee = false;
+    bool _callCalleeCrashable = false;
 };
 
 }  // namespace flecha::semantic

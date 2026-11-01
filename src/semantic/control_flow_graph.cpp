@@ -449,6 +449,9 @@ class GraphBuilder final {
                     callee && callee->Kind() == SymbolKind::Function
                         ? static_cast<const FunctionSymbol*>(callee)
                         : nullptr;
+                if (function &&
+                    function->BuiltIn() == BuiltInFunction::Crash)
+                    next = AddNode({});
                 const bool allocation =
                     function &&
                     (function->BuiltIn() == BuiltInFunction::New ||

@@ -564,6 +564,7 @@ Parser::ParseCallableTypeDeclaration() {
     std::map<std::string, std::string> genericConstraints;
     auto genericParameters = ParseGenericParameters(&genericConstraints);
     const auto parameterEnd = _position;
+    const bool isCrashable = Match(TokenType::Bang);
     if (Consume(TokenType::LParen, "'(' after callable type name") == nullptr)
         return nullptr;
 
@@ -602,7 +603,8 @@ Parser::ParseCallableTypeDeclaration() {
     auto declaration = std::make_unique<CallableTypeDeclaration>(
         source::SourceRange{start, semicolon->range.end}, name->value,
         name->range, std::move(parameters), std::move(results), isUnsafe,
-        isOnce, std::move(borrowSources), std::move(borrowSourceRanges));
+        isOnce, isCrashable, std::move(borrowSources),
+        std::move(borrowSourceRanges));
     declaration->genericParameters = std::move(genericParameters);
     declaration->genericConstraints = std::move(genericConstraints);
     if (parameterStart != parameterEnd)
@@ -771,6 +773,7 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         if (name == nullptr) return nullptr;
         genericParameters = parametersAtName(*this, genericConstraints);
     }
+    const bool isCrashable = Match(TokenType::Bang);
     if (Consume(TokenType::LParen, "'(' after function name") == nullptr) {
         return nullptr;
     }
@@ -873,7 +876,8 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         std::move(returnType), name->value, std::move(parameters),
         std::move(body), name->range, std::move(owner),
         std::move(borrowSources), std::move(borrowSourceRanges),
-        std::move(variadicPackName), variadicPackRange, borrowsVariadicPack);
+        std::move(variadicPackName), variadicPackRange, borrowsVariadicPack,
+        isCrashable);
     declaration->genericParameters = std::move(genericParameters);
     declaration->ownerParameters = std::move(ownerParameters);
     declaration->genericConstraints = std::move(genericConstraints);
@@ -1845,6 +1849,8 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             std::size_t offset = 0;
             if (ScanTypeArguments(offset) &&
                 (Peek(offset).type == TokenType::LParen ||
+                 (Peek(offset).type == TokenType::Bang &&
+                  Peek(offset + 1).type == TokenType::LParen) ||
                  Peek(offset).type == TokenType::Scope ||
                  Peek(offset).type == TokenType::SemiColon ||
                  Peek(offset).type == TokenType::Comma ||
@@ -1913,8 +1919,13 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             std::vector<std::unique_ptr<TypeNode>> typeArguments;
             std::size_t argumentEnd = 0;
             if (Check(TokenType::Less) && ScanTypeArguments(argumentEnd) &&
-                Peek(argumentEnd).type == TokenType::LParen)
+                (Peek(argumentEnd).type == TokenType::LParen ||
+                 (Peek(argumentEnd).type == TokenType::Bang &&
+                  Peek(argumentEnd + 1).type == TokenType::LParen)))
                 typeArguments = ParseTypeArguments();
+            const bool isCrashable =
+                Check(TokenType::Bang) && Peek(1).type == TokenType::LParen;
+            if (isCrashable) Advance();
             if (!Match(TokenType::LParen)) {
                 expression = std::make_unique<MemberAccessExpression>(
                     source::SourceRange{expression->Range().start,
@@ -1939,7 +1950,8 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             expression = std::make_unique<MemberCallExpression>(
                 source::SourceRange{expression->Range().start, end},
                 std::move(expression), member->value, member->range,
-                std::move(arguments), access, std::move(expandedArguments));
+                std::move(arguments), access, std::move(expandedArguments),
+                isCrashable);
             static_cast<MemberCallExpression&>(*expression).typeArguments =
                 std::move(typeArguments);
             continue;
@@ -1976,6 +1988,9 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             continue;
         }
 
+        const bool isCrashable =
+            Check(TokenType::Bang) && Peek(1).type == TokenType::LParen;
+        if (isCrashable) Advance();
         if (!Match(TokenType::LParen)) break;
         source::SourceLocation end = expression->Range().end;
         std::vector<bool> expandedArguments;
@@ -1984,7 +1999,7 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
         expression = std::make_unique<CallExpression>(
             source::SourceRange{expression->Range().start, end},
             std::move(expression), std::move(arguments), nullptr,
-            std::move(expandedArguments));
+            std::move(expandedArguments), isCrashable);
     }
 
     return expression;

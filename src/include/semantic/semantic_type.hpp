@@ -178,6 +178,7 @@ struct CallableSignature final {
     std::vector<std::size_t> borrowSourceIndices;
     bool isUnsafe = false;
     bool isOnce = false;
+    bool isCrashable = false;
 
     bool operator==(const CallableSignature& other) const;
 };

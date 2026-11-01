@@ -173,6 +173,8 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::Value* EmitBuiltInStringFormat(
         const lowering::BoundCallExpression& expression,
         const std::vector<llvm::Value*>& arguments);
+    [[nodiscard]] llvm::Value* EmitCrash(
+        llvm::Value* message, source::SourceRange range);
     [[nodiscard]] llvm::Value* EmitBuiltInInput(
         const lowering::BoundCallExpression& expression,
         const std::vector<llvm::Value*>& arguments);
@@ -248,6 +250,7 @@ class LlvmCodeGenerator final {
     std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedValues;
     llvm::Value* _returnStorage = nullptr;
     llvm::Function* _currentFunction = nullptr;
+    const semantic::FunctionSymbol* _currentFunctionSymbol = nullptr;
     semantic::SemanticType _currentReturnType{semantic::SemanticTypeKind::Void};
     std::string _error;
 };

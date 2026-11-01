@@ -133,6 +133,13 @@ void* flecha_runtime_v1_alloc(size_t size, size_t alignment);
 // Terminates execution after an allocation that cannot be represented as a
 // language-level error, such as closure-environment creation.
 void flecha_runtime_v1_allocation_failure(void);
+// Reports an unrecoverable Flecha failure. The source strings are borrowed for
+// the duration of the call. This function prints the source location, a native
+// stack trace, and registers where the host exposes them, then raises SIGABRT.
+void flecha_runtime_v1_crash(const char* message, size_t message_length,
+                             const char* file, size_t file_length,
+                             const char* function, size_t function_length,
+                             uint32_t line, uint32_t column);
 // Allocates count zeroed elements, checking multiplication before allocation.
 // Zero count and zero-sized elements still return a releasable allocation on
 // success. Failure returns null and does not allocate storage.
