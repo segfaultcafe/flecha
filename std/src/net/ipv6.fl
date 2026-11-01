@@ -1,0 +1,284 @@
+module address;
+
+@imports
+    :: root::text::strings
+    :: root::net::errors;
+
+// Maximum length of an IPv6 address string representation.
+export const usize MAX_IPV6_STRING_LENGTH = 39;
+
+// Represents an IPv6 address.
+export structure Ipv6Address {
+    private u64 high;
+    private u64 low;
+};
+
+// Returns the unspecified IPv6 address used for wildcard binding.
+Ipv6Address Ipv6Address::wildcard() {
+    return Ipv6Address::fromSegments(0, 0, 0, 0, 0, 0, 0, 0);
+}
+
+// Returns the loopback IPv6 address used for local communication.
+Ipv6Address Ipv6Address::loopback() {
+    return Ipv6Address::fromSegments(0, 0, 0, 0, 0, 0, 0, 1);
+}
+
+// Builds an IPv6 address from eight 16-bit segments.
+Ipv6Address Ipv6Address::fromSegments(
+    u16 segment1,
+    u16 segment2,
+    u16 segment3,
+    u16 segment4,
+    u16 segment5,
+    u16 segment6,
+    u16 segment7,
+    u16 segment8
+) {
+    Ipv6Address address = Ipv6Address::init();
+    address.high =
+        (segment1.cast<u64> << 48) |
+        (segment2.cast<u64> << 32) |
+        (segment3.cast<u64> << 16) |
+        segment4.cast<u64>;
+
+    address.low =
+        (segment5.cast<u64> << 48) |
+        (segment6.cast<u64> << 32) |
+        (segment7.cast<u64> << 16) |
+        segment8.cast<u64>;
+    return address;
+}
+
+(Ipv6Address, error) Ipv6Address::parse(stringv text) {
+    if text.len() == 0 {
+        return (none, errors::NetworkError.InvalidAddress);
+    }
+
+    [8]u16 segments = [0, 0, 0, 0, 0, 0, 0, 0];
+
+    u32 index = 0;
+    usize segmentCount = 0;
+    usize compressionIndex = 0;
+    bool hasCompression = false;
+
+    // Handle compression at the beginning: "::" or "::1".
+    if text[0].cast<char> == ':' {
+        if text.len() < 2 or text[1].cast<char> != ':' {
+            return (none, errors::NetworkError.InvalidAddress);
+        }
+
+        hasCompression = true;
+        compressionIndex = 0;
+        index = 2;
+    }
+
+    while index < text.len() {
+        if segmentCount == 8 {
+            return (none, errors::NetworkError.InvalidAddress);
+        }
+
+        u16 segment = 0;
+        u32 digits = 0;
+
+        // Parse one hexadecimal segment.
+        while index < text.len() and text[index].cast<char> != ':' {
+            digit, valid := ipv6_hex_digit(text[index].cast<char>);
+
+            if !valid or digits == 4 {
+                return (none, errors::NetworkError.InvalidAddress);
+            }
+
+            segment = segment * 16 + digit;
+            digits++;
+            index++;
+        }
+
+        // An empty segment is only valid as part of "::", which is handled
+        // outside this loop.
+        if digits == 0 {
+            return (none, errors::NetworkError.InvalidAddress);
+        }
+
+        segments[segmentCount] = segment;
+        segmentCount++;
+
+        if index == text.len() {
+            break;
+        }
+
+        // text[index] is a colon. Check whether this is "::".
+        bool isCompression =
+            index + 1 < text.len() and
+            text[index + 1].cast<char> == ':';
+
+        if isCompression {
+            if hasCompression {
+                return (none, errors::NetworkError.InvalidAddress);
+            }
+
+            hasCompression = true;
+            compressionIndex = segmentCount;
+            index += 2;
+        } else {
+            // Consume a normal single-segment separator.
+            index++;
+
+            // A single trailing colon is invalid.
+            if index == text.len() {
+                return (none, errors::NetworkError.InvalidAddress);
+            }
+        }
+    }
+
+    if hasCompression {
+        // "::" must replace at least one missing segment.
+        if segmentCount >= 8 {
+            return (none, errors::NetworkError.InvalidAddress);
+        }
+
+        usize tailCount = segmentCount - compressionIndex;
+        usize destinationStart = 8 - tailCount;
+
+        // Move segments after "::" to the end. Copy backward because the
+        // source and destination ranges can overlap.
+        usize tailIndex = tailCount;
+        while tailIndex > 0 {
+            tailIndex--;
+
+            segments[destinationStart + tailIndex] =
+                segments[compressionIndex + tailIndex];
+        }
+
+        // Fill the space represented by "::" with zero segments.
+        usize zeroIndex = compressionIndex;
+        while zeroIndex < destinationStart {
+            segments[zeroIndex] = 0;
+            zeroIndex++;
+        }
+    } else if segmentCount != 8 {
+        return (none, errors::NetworkError.InvalidAddress);
+    }
+
+    return (
+        Ipv6Address::fromSegments(
+            segments[0],
+            segments[1],
+            segments[2],
+            segments[3],
+            segments[4],
+            segments[5],
+            segments[6],
+            segments[7]
+        ),
+        none
+    );
+}
+
+// Converts the IPv6 address to its canonical string representation.
+(string, error) Ipv6Address::toString(&const self) {
+    [8]u16 segments = self->segments();
+    // Locate the longest consecutive run of zero segments.
+    usize bestStart = 0;
+    usize bestLength = 0;
+    usize index = 0;
+
+    while index < 8 {
+        if segments[index] != 0 {
+            index++;
+        } else {
+            usize runStart = index;
+            while index < 8 and segments[index] == 0 {
+                index++;
+            }
+
+            usize runLength = index - runStart;
+            // Strictly greater keeps the leftmost run when lengths tie.
+            if runLength > bestLength {
+                bestStart = runStart;
+                bestLength = runLength;
+            }
+        }
+    }
+
+    // A single zero segment must not be compressed.
+    if bestLength < 2 {
+        bestLength = 0;
+    }
+
+    builder, allocationError :=
+        strings::StringBuilder::withCapacity(MAX_IPV6_STRING_LENGTH);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    error appendError = none;
+    index = 0;
+    while index < 8 {
+        if bestLength > 0 and index == bestStart {
+            appendError = builder.append("::");
+            if appendError != none {
+                return (none, appendError);
+            }
+
+            index += bestLength;
+        } else {
+            bool followsCompression =
+                bestLength > 0 and index == bestStart + bestLength;
+
+            if index > 0 and !followsCompression {
+                appendError = builder.appendChar(':');
+            } also appendError != none {
+                return (none, appendError);
+            }
+
+            appendError = builder.appendInteger<u16>(segments[index], 16);
+            if appendError != none {
+                return (none, appendError);
+            }
+
+            index++;
+        }
+    }
+
+    return builder.toString();
+}
+
+// Returns the eight 16-bit segments of the IPv6 address.
+[8]u16 Ipv6Address::segments(&const self) {
+    return [
+        (self->high >> 48).cast<u16>,
+        (self->high >> 32).cast<u16>,
+        (self->high >> 16).cast<u16>,
+        self->high.cast<u16>,
+        (self->low >> 48).cast<u16>,
+        (self->low >> 32).cast<u16>,
+        (self->low >> 16).cast<u16>,
+        self->low.cast<u16>,
+    ];
+}
+
+// Checks if the IPv6 address is the unspecified address (::).
+bool Ipv6Address::isWildcard(&const self) {
+    return self->high == 0 and self->low == 0;
+}
+
+// Checks if the IPv6 address is the loopback address (::1).
+bool Ipv6Address::isLoopback(&const self) {
+    return self->high == 0 and self->low == 1;
+}
+
+(u16, bool) ipv6_hex_digit(char c) {
+    if c >= '0' and c <= '9' {
+        return ((c.cast<u8> - 48).cast<u16>, true);
+    }
+
+    if c >= 'a' and c <= 'f' {
+        return ((c.cast<u8> - 87).cast<u16>, true);
+    }
+
+    if c >= 'A' and c <= 'F' {
+        return ((c.cast<u8> - 55).cast<u16>, true);
+    }
+
+    return (0, false);
+}
