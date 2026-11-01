@@ -46,5 +46,83 @@ i32 main() {
         return 7;
     }
 
+    ipv6, ipv6Error :=
+        address::Ipv6Address::parse("2001:db8::ff00:42:8329");
+    expectedIpv6 := address::Ipv6Address::fromSegments(
+        8193,
+        3512,
+        0,
+        0,
+        0,
+        65280,
+        66,
+        33577
+    );
+    if ipv6Error != none or ipv6 != expectedIpv6 {
+        return 8;
+    }
+
+    segments := ipv6.segments();
+    if segments[0] != 8193 or segments[1] != 3512 or
+        segments[5] != 65280 or segments[6] != 66 or
+        segments[7] != 33577 {
+        return 9;
+    }
+
+    ipv6Wildcard, wildcardError := address::Ipv6Address::parse("::");
+    if wildcardError != none or !ipv6Wildcard.isWildcard() or
+        ipv6Wildcard != address::Ipv6Address::wildcard() {
+        return 10;
+    }
+
+    ipv6Loopback, ipv6LoopbackError := address::Ipv6Address::parse("::1");
+    if ipv6LoopbackError != none or !ipv6Loopback.isLoopback() or
+        ipv6Loopback != address::Ipv6Address::loopback() {
+        return 11;
+    }
+
+    invalidIpv6, invalidIpv6Error :=
+        address::Ipv6Address::parse("1::2::3");
+    if invalidIpv6Error != errors::NetworkError.InvalidAddress or
+        invalidIpv6 != none {
+        return 12;
+    }
+
+    formattedIpv6, ipv6FormatError := ipv6.toString();
+    reparsedIpv6, ipv6ReparseError :=
+        address::Ipv6Address::parse(formattedIpv6.view());
+    if ipv6FormatError != none or
+        formattedIpv6.view() != "2001:db8::ff00:42:8329" or
+        ipv6ReparseError != none or reparsedIpv6 != ipv6 {
+        return 13;
+    }
+
+    maximumIpv6 := address::Ipv6Address::fromSegments(
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535
+    );
+    maximumIpv6Text, maximumIpv6Error := maximumIpv6.toString();
+    if maximumIpv6Error != none or maximumIpv6Text.len().cast<usize> !=
+        address::MAX_IPV6_STRING_LENGTH or maximumIpv6Text.view() !=
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" {
+        return 14;
+    }
+
+    wildcardText, ipv6WildcardFormatError := ipv6Wildcard.toString();
+    if ipv6WildcardFormatError != none or wildcardText.view() != "::" {
+        return 15;
+    }
+
+    ipv6LoopbackText, ipv6LoopbackFormatError := ipv6Loopback.toString();
+    if ipv6LoopbackFormatError != none or ipv6LoopbackText.view() != "::1" {
+        return 16;
+    }
+
     return 42;
 }
