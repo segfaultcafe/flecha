@@ -76,6 +76,47 @@ test moved_and_explicitly_removed_fixtures_clean_up_once(
     );
 }
 
+test failed_fixture_cleanup_preserves_ownership_for_retry(
+    &testing::UnitTest t
+) {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    asserts::is_true(t, creationError == none, "fixture creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    string ownedPath = temporary.path().string();
+    asserts::is_true(
+        t,
+        filesystem::remove_directory(ownedPath.view(), false) == none,
+        "the fixture directory can be removed externally"
+    );
+    asserts::is_true(
+        t,
+        filesystem::write_file(ownedPath.view(), "blocking file") == none,
+        "a regular file can occupy the fixture path"
+    );
+
+    removalError := temporary.remove();
+    asserts::is_true(t, removalError != none, "invalid cleanup is reported");
+    asserts::is_true(
+        t,
+        temporary.path() == ownedPath.view(),
+        "failed cleanup retains fixture ownership"
+    );
+
+    asserts::is_true(
+        t,
+        filesystem::remove_file(ownedPath.view()) == none,
+        "the blocking file can be removed"
+    );
+    asserts::is_true(
+        t,
+        temporary.remove() == none and temporary.path().len() == 0,
+        "cleanup can be retried and disarmed"
+    );
+}
+
 test fixture_child_paths_cannot_escape_the_owned_directory(
     &testing::UnitTest t
 ) {

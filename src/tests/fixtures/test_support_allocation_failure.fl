@@ -1,0 +1,141 @@
+module test_support_allocation_failure;
+
+@imports
+    :: lib::std::io::filesystem
+    :: lib::std::tests::fixtures
+    :: lib::std::tests::golden
+    :: lib::std::tests::testing;
+
+quiver extern unsafe void test_support_fail_next_array_allocation();
+quiver extern unsafe void test_support_fail_next_malloc();
+quiver extern unsafe void test_support_fail_next_realloc();
+quiver extern unsafe void test_support_fail_second_realloc();
+
+export i32 random_seed_log_allocation_failure_test() {
+    result := testing::UnitTest::init("random seed allocation failure", false);
+    data := fixtures::RandomData::fromSeed(42);
+
+    unsafe { test_support_fail_next_realloc(); }
+    logError := data.logSeed(&result);
+
+    if logError != AllocationError.OutOfMemory {
+        return 1;
+    }
+    if result.assertionCount() != 0 or result.failureCount() != 0 {
+        return 2;
+    }
+    return 42;
+}
+
+export i32 fixture_child_path_allocation_failure_test() {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    if creationError != none {
+        return 1;
+    }
+
+    unsafe { test_support_fail_next_array_allocation(); }
+    child, childError := temporary.childPath("child");
+
+    if childError != AllocationError.OutOfMemory or child.len() != 0 {
+        return 2;
+    }
+    return 42;
+}
+
+export i32 golden_read_allocation_failure_test() {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    if creationError != none {
+        return 1;
+    }
+    goldenPath, pathError := temporary.childPath("read.golden");
+    if pathError != none {
+        return 2;
+    }
+    if filesystem::write_file(goldenPath.view(), "expected") != none {
+        return 3;
+    }
+
+    result := testing::UnitTest::init("golden read allocation failure", false);
+    unsafe { test_support_fail_next_malloc(); }
+    readError := golden::text(
+        &result,
+        "expected",
+        goldenPath.view(),
+        "golden read allocation fallback"
+    );
+
+    if readError != AllocationError.OutOfMemory {
+        return 4;
+    }
+    if result.assertionCount() != 1 or result.failureCount() != 1 {
+        return 5;
+    }
+    result.printOutput();
+    return 42;
+}
+
+export i32 golden_text_diagnostic_allocation_failure_test() {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    if creationError != none {
+        return 1;
+    }
+    goldenPath, pathError := temporary.childPath("text.golden");
+    if pathError != none {
+        return 2;
+    }
+    if filesystem::write_file(goldenPath.view(), "expected") != none {
+        return 3;
+    }
+
+    result := testing::UnitTest::init("golden text allocation failure", false);
+    unsafe { test_support_fail_next_array_allocation(); }
+    comparisonError := golden::text(
+        &result,
+        "actual",
+        goldenPath.view(),
+        "golden text diagnostic fallback"
+    );
+
+    if comparisonError != none {
+        return 4;
+    }
+    if result.assertionCount() != 1 or result.failureCount() != 1 {
+        return 5;
+    }
+    result.printOutput();
+    return 42;
+}
+
+export i32 golden_byte_diagnostic_allocation_failure_test() {
+    temporary, creationError := fixtures::TemporaryDirectory::create();
+    if creationError != none {
+        return 1;
+    }
+    goldenPath, pathError := temporary.childPath("bytes.golden");
+    if pathError != none {
+        return 2;
+    }
+    [2]u8 expected = [1, 2];
+    if filesystem::write_bytes(goldenPath.view(), expected[:]) != none {
+        return 3;
+    }
+
+    result := testing::UnitTest::init("golden byte allocation failure", false);
+    [2]u8 actual = [1, 9];
+    unsafe { test_support_fail_second_realloc(); }
+    comparisonError := golden::bytes(
+        &result,
+        actual[:],
+        goldenPath.view(),
+        "golden byte diagnostic fallback"
+    );
+
+    if comparisonError != none {
+        return 4;
+    }
+    if result.assertionCount() != 1 or result.failureCount() != 1 {
+        return 5;
+    }
+    result.printOutput();
+    return 42;
+}
