@@ -2,6 +2,7 @@ module address_runtime;
 
 @imports
     :: lib::std::net::address
+    :: lib::std::net::dns
     :: lib::std::net::errors;
 
 i32 main!() {
@@ -179,6 +180,46 @@ i32 main!() {
     crashableIpv6SocketText := ipv6Socket.toString!();
     if crashableIpv6SocketText.view() != "[2001:db8::1]:443" {
         return 24;
+    }
+
+    genericIpv4 := address::SocketAddress::fromIpv4(ipv4Socket);
+    genericIpv4Value, hasGenericIpv4 := genericIpv4.ipv4();
+    _, hasGenericIpv6 := genericIpv4.ipv6();
+    if !genericIpv4.isIpv4() or genericIpv4.isIpv6() or
+        genericIpv4.family() != address::AddressFamily.Ipv4 or
+        !hasGenericIpv4 or hasGenericIpv6 or genericIpv4Value != ipv4Socket {
+        return 25;
+    }
+
+    resolved, resolveError := dns::resolve("localhost", 4242);
+    if resolveError != none or resolved.len() == 0 {
+        return 26;
+    }
+    loop usize index = 0; index < resolved.len(); index++ {
+        value, present, getError := resolved.get(index);
+        if getError != none or !present {
+            return 27;
+        }
+        if value.isIpv4() {
+            ipv4Value, present := value.ipv4();
+            if !present or ipv4Value.port() != 4242 {
+                return 28;
+            }
+        } else if value.isIpv6() {
+            ipv6Value, present := value.ipv6();
+            if !present or ipv6Value.port() != 4242 {
+                return 29;
+            }
+        } else {
+            return 30;
+        }
+    }
+
+    invalidResolution, invalidResolutionError :=
+        dns::resolve("bad..name", 80);
+    if invalidResolutionError != errors::NetworkError.InvalidName or
+        invalidResolution.len() != 0 {
+        return 31;
     }
 
     return 42;

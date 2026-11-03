@@ -1,0 +1,81 @@
+module dns_failure_mapping;
+
+@imports
+    :: lib::std::net::address
+    :: lib::std::net::dns
+    :: lib::std::net::errors;
+
+extern unsafe usize flecha_test_dns_close_count();
+
+bool expect_error(stringv name, error expected) {
+    results, actual := dns::resolve(name, 80);
+    return actual == expected and results.len() == 0;
+}
+
+i32 main() {
+    if !expect_error("out-of-memory", AllocationError.OutOfMemory) {
+        return 1;
+    }
+    if !expect_error("invalid-name", errors::NetworkError.InvalidName) {
+        return 2;
+    }
+    if !expect_error("name-not-found", errors::NetworkError.NameNotFound) {
+        return 3;
+    }
+    if !expect_error(
+        "temporary-failure",
+        errors::NetworkError.TemporaryFailure
+    ) {
+        return 4;
+    }
+    if !expect_error(
+        "unsupported-family",
+        errors::NetworkError.UnsupportedFamily
+    ) {
+        return 5;
+    }
+    if !expect_error(
+        "resolution-failed",
+        errors::NetworkError.ResolutionFailed
+    ) {
+        return 6;
+    }
+
+    {
+        results, resolveError := dns::resolve("success", 4242);
+        value, present, getError := results.get(0);
+        ipv4, hasIpv4 := value.ipv4();
+        if resolveError != none or results.len() != 1 or getError != none or
+            !present or !hasIpv4 or ipv4.address() !=
+                address::Ipv4Address::loopback() or
+            ipv4.port() != 4242 {
+            return 7;
+        }
+    }
+
+    usize closeCount = 0;
+    unsafe {
+        closeCount = flecha_test_dns_close_count();
+    }
+    if closeCount != 1 {
+        return 8;
+    }
+
+    {
+        results, resolveError := dns::resolve("get-failure", 80);
+        _, present, getError := results.get(0);
+        if resolveError != none or present or
+            getError != errors::NetworkError.ResolutionFailed {
+            return 9;
+        }
+    }
+
+    unsafe {
+        closeCount = flecha_test_dns_close_count();
+    }
+    if closeCount != 2 {
+        return 10;
+    }
+
+    return 42;
+}

@@ -713,6 +713,19 @@ add_test(NAME StandardLibraryTests.NetworkAddressRuntimeFixture
         -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_network_address.cmake)
 
+add_test(NAME StandardLibraryTests.DnsFailureMapping
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/dns_failure_mapping.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/dns_failure_mapping_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/dns_failure_mapping
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dns_failure_mapping.cmake)
+
 add_test(NAME StandardLibraryTests.NetworkAddressAllocationFailure
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
