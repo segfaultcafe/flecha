@@ -324,7 +324,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/os.md`](docs/os.md) — command-line arguments and environment variables
 - [`docs/path.md`](docs/path.md) — lexical POSIX and Windows path operations
 - [`docs/time.md`](docs/time.md) — durations, clocks, timestamps, and blocking sleep
-- [`docs/network.md`](docs/network.md) — IPv4 address parsing, formatting, and classification
+- [`docs/network.md`](docs/network.md) — IPv4/IPv6 addresses, socket addresses, and hostname resolution
 - [`docs/random.md`](docs/random.md) — secure host randomness and deterministic generation
 - [`docs/testing.md`](docs/testing.md) — test assertions, diagnostics, and failure behavior
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation

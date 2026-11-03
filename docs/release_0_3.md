@@ -414,6 +414,15 @@ The first networking APIs are blocking. Async I/O, HTTP, WebSockets, TLS, and
 service frameworks are not release gates for 0.3.0. They should begin as
 companion libraries after the socket and buffered-I/O contracts are proven.
 
+The address and DNS foundation is implemented. IPv4 and IPv6 values have
+canonical parsing and formatting, family-specific and portable socket-address
+values retain explicit ports, and blocking resolution returns an owning
+ordered result set without exposing native address structures. Invalid names,
+missing names, temporary failures, unsupported families, allocation failures,
+and generic host failures remain distinct. Runtime, Flecha, deterministic
+failure-mapping, cleanup, and localhost integration tests form the foundation
+gate for the later TCP and UDP owners.
+
 ### 7. Hashing and security primitives
 
 Provide the primitives required for deterministic integrity checks and the

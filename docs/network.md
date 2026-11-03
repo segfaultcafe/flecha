@@ -1,8 +1,8 @@
 # Networking
 
 The initial networking surface provides portable IPv4 and IPv6 address and
-socket-address values. Hostname resolution and blocking sockets remain later
-parts of the Stage 6 networking work.
+socket-address values plus blocking hostname resolution. Blocking TCP and UDP
+sockets remain later parts of the Stage 6 networking work.
 
 ## IPv4 addresses
 
@@ -176,3 +176,53 @@ interior to `Ipv6Address::parse`. A malformed address reports
 returns the same canonical result directly and emits the standard crash report
 if either address or socket formatting cannot allocate. Choose the recoverable
 or crashable spelling deliberately; the bang is part of the method identity.
+
+## Portable socket addresses
+
+`SocketAddress` carries either family-specific socket-address value without
+exposing a platform `sockaddr` structure. `AddressFamily`, `isIpv4`, `isIpv6`,
+`ipv4`, and `ipv6` distinguish the active representation. The family-specific
+accessors return the value and `true`, or the zero value and `false` when the
+other family is active. `toString` and `toString!` delegate to the active
+representation.
+
+## Hostname resolution
+
+Import `std::net::dns` and resolve a hostname with the port to attach to every
+result:
+
+```flecha
+results, err := dns::resolve("localhost", 8080);
+if err != none {
+    return err;
+}
+
+loop usize index = 0; index < results.len(); index++ {
+    endpoint, present, getError := results.get(index);
+    if getError != none or !present {
+        return getError;
+    }
+
+    // Try endpoint with the TCP or UDP API.
+}
+```
+
+`resolve` is blocking. It returns an owning `Resolution` containing every
+unique IPv4 and IPv6 result supported by the portable address model, in the
+order supplied by the host resolver. The requested port is stored with every
+returned `SocketAddress`. Destroying or moving `Resolution` releases its
+runtime result set exactly once. `get` returns `present == false` without an
+error when its index is outside the result set.
+
+Names use ASCII hostname syntax. International names must be supplied in their
+ASCII-compatible punycode form. Names are limited to 253 bytes; labels are
+limited to 63 bytes, cannot be empty, and cannot begin or end with a hyphen. A
+single trailing root dot is accepted. Empty names, repeated dots, unsupported
+bytes, and malformed labels return `NetworkError.InvalidName` before calling
+the host resolver.
+
+Stable resolution failures are `NameNotFound`, `TemporaryFailure`,
+`UnsupportedFamily`, and `ResolutionFailed`. Native allocation failure maps to
+`AllocationError.OutOfMemory`. Results contain only portable numeric address
+values and never expose native resolver records, pointers, or structure
+layouts.

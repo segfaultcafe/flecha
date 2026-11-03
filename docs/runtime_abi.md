@@ -263,6 +263,28 @@ the iterator handle, including when the operating system reports a close
 failure. The runtime returns `.` and `..` when the host iterator provides them;
 the safe Flecha wrapper filters those names.
 
+## Hostname resolution
+
+`flecha_runtime_v1_dns_resolve` accepts one length-delimited ASCII hostname
+and returns an opaque ordered result handle. It validates hostname and label
+lengths and syntax before calling the host resolver. The result set removes
+duplicate addresses while retaining the first host-provided occurrence. It
+contains only IPv4 and IPv6 values; a successful host result with no supported
+family reports `UnsupportedFamily`.
+
+`flecha_runtime_v1_dns_result_count` returns the number of normalized results.
+`flecha_runtime_v1_dns_result_get` copies one result into a family byte and two
+portable numeric halves. Family is `4` or `6`. IPv4 occupies the low 32 bits of
+the low half. IPv6 uses the high and low halves in network segment order. The
+function resets every output before validation. `dns_result_close` consumes
+the opaque result handle and accepts null.
+
+Network status values are success `0`, out of memory `1`, invalid name `2`,
+name not found `3`, temporary failure `4`, unsupported family `5`, and generic
+resolution failure `6`. Every `dns_resolve` failure leaves its output null.
+The safe `std::net::dns::Resolution` wrapper owns the handle and attaches the
+caller-provided port while materializing `SocketAddress` values.
+
 ## File streams
 
 The `flecha_runtime_v1_file_stream_*` entry points expose unbuffered binary file
