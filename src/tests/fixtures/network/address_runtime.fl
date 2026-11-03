@@ -196,10 +196,7 @@ i32 main!() {
         return 26;
     }
     loop usize index = 0; index < resolved.len(); index++ {
-        value, present, getError := resolved.get(index);
-        if getError != none or !present {
-            return 27;
-        }
+        value := resolved[index];
         if value.isIpv4() {
             ipv4Value, present := value.ipv4();
             if !present or ipv4Value.port() != 4242 {

@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 
 #include "runtime/runtime_abi.h"
@@ -7,6 +8,7 @@
 namespace {
 
 int successHandle;
+int allocationFailureHandle;
 int getFailureHandle;
 std::size_t closeCount;
 
@@ -30,6 +32,10 @@ extern "C" int32_t __wrap_flecha_runtime_v1_dns_resolve(void** output,
         *output = &successHandle;
         return FLECHA_RUNTIME_NETWORK_OK;
     }
+    if (value == "allocation-failure") {
+        *output = &allocationFailureHandle;
+        return FLECHA_RUNTIME_NETWORK_OK;
+    }
     if (value == "get-failure") {
         *output = &getFailureHandle;
         return FLECHA_RUNTIME_NETWORK_OK;
@@ -39,6 +45,8 @@ extern "C" int32_t __wrap_flecha_runtime_v1_dns_resolve(void** output,
 
 extern "C" std::size_t __wrap_flecha_runtime_v1_dns_result_count(
     const void* handle) {
+    if (handle == &allocationFailureHandle)
+        return std::numeric_limits<std::size_t>::max();
     return handle == &successHandle || handle == &getFailureHandle ? 1 : 0;
 }
 
@@ -60,7 +68,9 @@ extern "C" int32_t __wrap_flecha_runtime_v1_dns_result_get(const void* handle,
 }
 
 extern "C" void __wrap_flecha_runtime_v1_dns_result_close(void* handle) {
-    if (handle == &successHandle || handle == &getFailureHandle) ++closeCount;
+    if (handle == &successHandle || handle == &allocationFailureHandle ||
+        handle == &getFailureHandle)
+        ++closeCount;
 }
 
 extern "C" std::size_t flecha_test_dns_close_count() { return closeCount; }

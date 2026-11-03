@@ -282,8 +282,10 @@ the opaque result handle and accepts null.
 Network status values are success `0`, out of memory `1`, invalid name `2`,
 name not found `3`, temporary failure `4`, unsupported family `5`, and generic
 resolution failure `6`. Every `dns_resolve` failure leaves its output null.
-The safe `std::net::dns::Resolution` wrapper owns the handle and attaches the
-caller-provided port while materializing `SocketAddress` values.
+The safe `std::net::dns::resolve` wrapper owns the handle while copying every
+result into an exact-size `own []SocketAddress`, attaches the caller-provided
+port, and closes the native handle before returning. Allocation or conversion
+failure closes both partially constructed Flecha storage and the native handle.
 
 ## File streams
 

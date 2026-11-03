@@ -198,21 +198,17 @@ if err != none {
 }
 
 loop usize index = 0; index < results.len(); index++ {
-    endpoint, present, getError := results.get(index);
-    if getError != none or !present {
-        return getError;
-    }
+    endpoint := results[index];
 
     // Try endpoint with the TCP or UDP API.
 }
 ```
 
-`resolve` is blocking. It returns an owning `Resolution` containing every
-unique IPv4 and IPv6 result supported by the portable address model, in the
-order supplied by the host resolver. The requested port is stored with every
-returned `SocketAddress`. Destroying or moving `Resolution` releases its
-runtime result set exactly once. `get` returns `present == false` without an
-error when its index is outside the result set.
+`resolve` is blocking. It returns an owning runtime-sized array containing
+every unique IPv4 and IPv6 result supported by the portable address model, in
+the order supplied by the host resolver. The requested port is stored with
+every returned `SocketAddress`. The array supports ordinary checked indexing,
+slicing, and iteration, and releases its storage automatically.
 
 Names use ASCII hostname syntax. International names must be supplied in their
 ASCII-compatible punycode form. Names are limited to 253 bytes; labels are

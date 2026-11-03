@@ -5,27 +5,27 @@ module dns;
     :: root::net::errors
     :: root::net::runtime;
 
-// Owns an ordered hostname-resolution result set.
-export structure Resolution {
+// Owns the native result set while it is copied into portable Flecha values.
+structure NativeResolution {
     private *void handle;
     private u16 port;
 };
 
-Resolution Resolution::zero() override {
-    return build Resolution {
+NativeResolution NativeResolution::zero() override {
+    return build NativeResolution {
         self.handle = null;
         self.port = 0;
     };
 }
 
-unsafe Resolution Resolution::fromHandle(*void handle, u16 port) {
-    return build Resolution {
+unsafe NativeResolution NativeResolution::fromHandle(*void handle, u16 port) {
+    return build NativeResolution {
         self.handle = handle;
         self.port = port;
     };
 }
 
-void Resolution::tear(&self) override {
+void NativeResolution::tear(&self) override {
     if self->handle == null {
         return;
     }
@@ -38,14 +38,14 @@ void Resolution::tear(&self) override {
 }
 
 // Returns the number of resolved addresses.
-usize Resolution::len(&const self) {
+usize NativeResolution::len(&const self) {
     unsafe {
         return runtime::flecha_runtime_v1_dns_result_count(self->handle);
     }
 }
 
 // Copies one resolved address. present is false when index is out of bounds.
-(address::SocketAddress, bool, error) Resolution::get(
+(address::SocketAddress, bool, error) NativeResolution::get(
     &const self,
     usize index
 ) {
@@ -116,7 +116,7 @@ usize Resolution::len(&const self) {
 // reported by the host, preserving resolver order. This operation blocks.
 // Names use ASCII hostname syntax; international names must be supplied in
 // ASCII-compatible punycode form. The returned value owns the result set.
-export (Resolution, error) resolve(
+export (own []address::SocketAddress, error) resolve(
     stringv name,
     u16 port
 ) {
@@ -136,6 +136,24 @@ export (Resolution, error) resolve(
         }
     }
     unsafe {
-        return (Resolution::fromHandle(handle, port), none);
+        nativeResults := NativeResolution::fromHandle(handle, port);
+        results, allocationError :=
+            new<own []address::SocketAddress>(nativeResults.len());
+        if allocationError != none {
+            return (none, allocationError);
+        }
+
+        loop usize index = 0; index < results.len(); index++ {
+            value, present, getError := nativeResults.get(index);
+            if getError != none {
+                return (none, getError);
+            }
+            if !present {
+                return (none, errors::NetworkError.ResolutionFailed);
+            }
+            results[index] = value;
+        }
+
+        return (results, none);
     }
 }
