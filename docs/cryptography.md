@@ -54,3 +54,48 @@ SHA-2 provides integrity digests, not authentication or password hashing.
 Callers must use HMAC for keyed authentication and a dedicated password
 hashing construction for passwords. Comparing secret authentication values
 also requires a constant-time comparison API.
+
+## HMAC
+
+The `std::cryptography::hmac` module provides HMAC-SHA-256 and HMAC-SHA-512.
+Keys and messages are explicit byte views; textual messages can be passed
+allocation-free with `stringv.cast<[]const u8>`:
+
+```flecha
+@imports :: lib::std::cryptography::hmac;
+
+tag, tagError := hmac::sha256(
+    key[:],
+    "authenticated message".cast<[]const u8>
+);
+if tagError != none {
+    return tagError;
+}
+
+tagBytes := tag.bytes();
+```
+
+`HmacSha256Tag` and `HmacSha512Tag` are fixed-size owning values containing 32
+and 64 bytes respectively. `bytes()` returns a borrow tied to the tag. HMAC
+does not interpret keys as text and does not provide `stringv` key overloads.
+
+Incremental authentication uses `HmacSha256::create(key)` or
+`HmacSha512::create(key)`, followed by any number of `update` calls and one
+successful `finalize` call. A compiler-generated default HMAC value is not
+initialized with a key: its `update` and `finalize` operations return
+`HmacError.NotInitialized`. Repeated finalization and updates after finalization
+propagate `Sha2Error.AlreadyFinalized`.
+
+The implementation allocates no heap memory, invokes no runtime ABI, performs
+no input/output, and does not block. Keys longer than the underlying SHA-2
+block size are hashed as required by HMAC. RFC 4231 vectors cover short keys,
+chunked messages, and keys longer than the block size.
+
+Key material is copied into private, fixed-size stack state while constructing
+the inner and outer pads. Intermediate buffers are not exposed through the
+public API. This version does not promise that key material is securely erased
+from memory after use; such a guarantee requires the secure-memory boundary.
+
+HMAC computes authentication tags but does not verify them. Do not compare
+secret tags with an early-exit equality loop; use the constant-time comparison
+API when it becomes available.
