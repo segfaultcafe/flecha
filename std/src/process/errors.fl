@@ -1,0 +1,40 @@
+module errors;
+
+export error ProcessError {
+    ExecutableNotFound,
+    PermissionDenied,
+    InvalidArgument,
+    BrokenPipe,
+    Closed,
+    SpawnFailed,
+    WaitFailed,
+    ReadFailed,
+    WriteFailed,
+    CloseFailed,
+}
+
+quiver error from_runtime(i32 status, ProcessError fallback) {
+    if status == 0 {
+        return none;
+    }
+    if status == 1 {
+        return ProcessError.ExecutableNotFound;
+    }
+    if status == 2 {
+        return ProcessError.PermissionDenied;
+    }
+    if status == 3 {
+        return ProcessError.InvalidArgument;
+    }
+    if status == 4 {
+        return AllocationError.OutOfMemory;
+    }
+    if status == 5 {
+        return ProcessError.BrokenPipe;
+    }
+    if status == 6 {
+        return ProcessError.Closed;
+    }
+
+    return fallback;
+}

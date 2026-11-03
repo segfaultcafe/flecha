@@ -1,0 +1,130 @@
+module command;
+
+@imports
+    :: root::bytes::buffer
+    :: root::containers::collections as coll
+    :: root::process::errors
+    :: root::process::runtime;
+
+export structure Command {
+    private {
+        string executableName;
+        coll::Array<string> arguments;
+        Stdio inputMode, outputMode, errorMode;
+    }
+};
+
+Command Command::init(string executable) override {
+    return build Command {
+        self.executableName = executable;
+        self.arguments = coll::Array<string>::init();
+    };
+}
+
+error Command::arg(&self, string argument) {
+    return self->arguments.push(argument);
+}
+
+void Command::setStdin(&self, Stdio mode) {
+    self->inputMode = mode;
+}
+
+void Command::setStdout(&self, Stdio mode) {
+    self->outputMode = mode;
+}
+
+void Command::setStderr(&self, Stdio mode) {
+    self->errorMode = mode;
+}
+
+// Starts the executable directly without invoking a shell. This operation
+// blocks while the operating system creates the child process.
+(ChildProcess, error) Command::spawn(&const self) {
+    arguments := self->arguments.view();
+    usize byteCount = 0;
+    loop usize index = 0; index < arguments.len(); index++ {
+        usize argumentLen = arguments[index].len().cast<usize>;
+        usize nextByteCount = byteCount + argumentLen;
+
+        if nextByteCount < byteCount {
+            return (none, AllocationError.OutOfMemory);
+        }
+
+        byteCount = nextByteCount;
+    }
+
+    argumentBytes := buffer::Buffer::init();
+    err := argumentBytes.reserve(byteCount);
+    if err != none {
+        return (none, err);
+    }
+
+    offsets := coll::Array<usize>::init();
+    usize offsetCount = arguments.len() + 1;
+    if offsetCount == 0 {
+        return (none, AllocationError.OutOfMemory);
+    }
+
+    err = offsets.reserve(offsetCount);
+    if err != none {
+        return (none, err);
+    }
+
+    err = offsets.push(0);
+    if err != none {
+        return (none, err);
+    }
+
+    loop usize index = 0; index < arguments.len(); index++ {
+        err = argumentBytes.writeString(arguments[index].view());
+        if err != none {
+            return (none, err);
+        }
+
+        err = offsets.push(argumentBytes.len());
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    bytesView := argumentBytes.bytes();
+    offsetsView := offsets.view();
+
+    *void processHandle = null;
+    *void inputHandle = null;
+    *void outputHandle = null;
+    *void errorHandle = null;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_process_spawn(
+            &raw processHandle,
+            &raw inputHandle,
+            &raw outputHandle,
+            &raw errorHandle,
+            self->executableName.data(),
+            self->executableName.len().cast<usize>,
+            bytesView.data(),
+            bytesView.len(),
+            offsetsView.data(),
+            arguments.len(),
+            self->inputMode.number(),
+            self->outputMode.number(),
+            self->errorMode.number()
+        );
+
+        spawnErr := errors::from_runtime(status, errors::ProcessError.SpawnFailed);
+        if spawnErr != none {
+            return (none, spawnErr);
+        }
+    }
+
+    return (
+        ChildProcess::fromHandles(
+            processHandle,
+            inputHandle,
+            outputHandle,
+            errorHandle
+        ),
+        none
+    );
+}
