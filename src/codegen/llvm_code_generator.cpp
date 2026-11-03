@@ -4375,20 +4375,36 @@ llvm::Value* LlvmCodeGenerator::EmitAllocation(
         _builder.CreateBr(condition);
         _builder.SetInsertPoint(initialized);
     }
-    llvm::Value* successful =
-        llvm::Constant::getNullValue(MapType(expression.Type()));
+    llvm::Value* owner = nullptr;
     if (dynamic) {
-        llvm::Value* owner = llvm::Constant::getNullValue(
-            MapType(expression.Type().Elements()[0]));
+        const semantic::SemanticType ownerType =
+            expression.CrashesOnFailure() ? expression.Type()
+                                          : expression.Type().Elements()[0];
+        owner = llvm::Constant::getNullValue(MapType(ownerType));
         owner = _builder.CreateInsertValue(owner, pointer, 0);
         owner = _builder.CreateInsertValue(owner, count, 1, "allocation.owner");
-        successful = _builder.CreateInsertValue(successful, owner, 0);
     } else {
-        successful = _builder.CreateInsertValue(successful, pointer, 0);
+        owner = pointer;
+    }
+    llvm::Value* successful = owner;
+    if (!expression.CrashesOnFailure()) {
+        successful = llvm::Constant::getNullValue(MapType(expression.Type()));
+        successful = _builder.CreateInsertValue(successful, owner, 0);
     }
     llvm::BasicBlock* successEnd = _builder.GetInsertBlock();
     _builder.CreateBr(done);
     _builder.SetInsertPoint(failure);
+    if (expression.CrashesOnFailure()) {
+        const lowering::BoundLiteralExpression message(
+            expression.Range(),
+            semantic::SemanticType(semantic::SemanticTypeKind::StringView),
+            "allocation failed: out of memory");
+        llvm::Value* messageValue = EmitLiteral(message);
+        if (messageValue == nullptr) return nullptr;
+        (void)EmitCrash(messageValue, expression.Range());
+        _builder.SetInsertPoint(done);
+        return successful;
+    }
     llvm::Value* error = CoerceValue(
         llvm::ConstantInt::get(MapType(expression.FailureType()), 1),
         expression.FailureType(),

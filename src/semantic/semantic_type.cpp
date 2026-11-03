@@ -96,7 +96,7 @@ bool SemanticType::IsZeroable() const {
     }
     return IsNumeric() || _kind == SemanticTypeKind::Bool ||
            _kind == SemanticTypeKind::Char ||
-           _kind == SemanticTypeKind::String ||
+           _kind == SemanticTypeKind::String || IsErrorValue() ||
            _kind == SemanticTypeKind::Pointer ||
            _kind == SemanticTypeKind::OwnedBuffer ||
            _kind == SemanticTypeKind::OwnedSlice;
@@ -117,7 +117,7 @@ bool SemanticType::IsTriviallyZeroable() const {
     }
     return IsNumeric() || _kind == SemanticTypeKind::Bool ||
            _kind == SemanticTypeKind::Char ||
-           _kind == SemanticTypeKind::String ||
+           _kind == SemanticTypeKind::String || IsErrorValue() ||
            _kind == SemanticTypeKind::Pointer ||
            _kind == SemanticTypeKind::OwnedBuffer ||
            _kind == SemanticTypeKind::OwnedSlice;

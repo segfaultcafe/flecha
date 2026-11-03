@@ -530,7 +530,9 @@ class Dumper final {
             case BoundNodeKind::AllocationExpression: {
                 const auto& allocation =
                     static_cast<const BoundAllocationExpression&>(expression);
-                _stream << "(new " << allocation.ElementType().Name() << " ";
+                _stream << "(new";
+                if (allocation.CrashesOnFailure()) _stream << "!";
+                _stream << " " << allocation.ElementType().Name() << " ";
                 WriteExpression(allocation.Initializer());
                 _stream << ")";
                 break;

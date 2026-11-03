@@ -1,0 +1,167 @@
+module command;
+
+@imports
+    :: root::process::errors
+    :: root::process::runtime;
+
+export structure ChildProcess {
+    private {
+        *void handle;
+        PipeWriter standardInput;
+        PipeReader standardOutput;
+        PipeReader standardError;
+    }
+};
+
+void ChildProcess::tear(&self) override {
+    error _ = self->close();
+}
+
+ChildProcess ChildProcess::fromHandles(
+    *void handle,
+    *void inputHandle,
+    *void outputHandle,
+    *void errorHandle
+) {
+    return build ChildProcess {
+        self.handle = handle;
+        self.standardInput = PipeWriter::fromHandle(inputHandle);
+        self.standardOutput = PipeReader::fromHandle(outputHandle);
+        self.standardError = PipeReader::fromHandle(errorHandle);
+    };
+}
+
+bool ChildProcess::isOpen(&const self) {
+    return self->handle != null;
+}
+
+bool ChildProcess::hasStdin(&const self) {
+    return self->standardInput.isOpen();
+}
+
+bool ChildProcess::hasStdout(&const self) {
+    return self->standardOutput.isOpen();
+}
+
+bool ChildProcess::hasStderr(&const self) {
+    return self->standardError.isOpen();
+}
+
+// Borrows the pipe connected to the child's standard input.
+&PipeWriter ChildProcess::standardIn(&self) <-self {
+    return &self->standardInput;
+}
+
+// Borrows the pipe connected to the child's standard output.
+&PipeReader ChildProcess::standardOut(&self) <-self {
+    return &self->standardOutput;
+}
+
+// Borrows the pipe connected to the child's standard error.
+&PipeReader ChildProcess::standardErr(&self) <-self {
+    return &self->standardError;
+}
+
+// Transfers ownership of the child's standard-input pipe.
+// Returns a closed pipe when stdin was not configured as piped or was taken.
+PipeWriter ChildProcess::takeStdin(&self) {
+    return self->standardInput.take();
+}
+
+// Transfers ownership of the child's standard-output pipe.
+// Returns a closed pipe when stdout was not configured as piped or was taken.
+PipeReader ChildProcess::takeStdout(&self) {
+    return self->standardOutput.take();
+}
+
+// Transfers ownership of the child's standard-error pipe.
+// Returns a closed pipe when stderr was not configured as piped or was taken.
+PipeReader ChildProcess::takeStderr(&self) {
+    return self->standardError.take();
+}
+
+// Blocks until the child terminates.
+//
+// This does not close stdin first. If the child is waiting for EOF, the caller
+// must close stdin before waiting. Output should be drained before waiting when
+// enough traffic could fill an operating-system pipe.
+(ExitStatus, error) ChildProcess::wait(&self) {
+    if !self->isOpen() {
+        return (none, errors::ProcessError.Closed);
+    }
+
+    u8 terminationKind = 0;
+    u32 terminationDetail = 0;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_process_wait(
+            self->handle,
+            &raw terminationKind,
+            &raw terminationDetail
+        );
+
+        err := errors::from_runtime(status, errors::ProcessError.WaitFailed);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    ExitStatus exitStatus
+        = ExitStatus::fromRuntime(terminationKind, terminationDetail);
+    closeErr := self->releaseProcess();
+    return (exitStatus, closeErr);
+}
+
+// Closes every owned pipe and releases the process handle. This can block on
+// platforms that must reap a child before releasing its final process handle.
+error ChildProcess::close(&self) {
+    bool closedAnything;
+    error firstError, closeErr;
+
+    if self->standardInput.isOpen() {
+        closedAnything = true;
+        closeErr = self->standardInput.close();
+    } also firstError == none {
+        firstError = closeErr;
+    }
+
+    if self->standardOutput.isOpen() {
+        closedAnything = true;
+        closeErr = self->standardOutput.close();
+    } also firstError == none {
+        firstError = closeErr;
+    }
+
+    if self->standardError.isOpen() {
+        closedAnything = true;
+        closeErr = self->standardError.close();
+    } also firstError == none {
+        firstError = closeErr;
+    }
+
+    if self->isOpen() {
+        closedAnything = true;
+        closeErr = self->releaseProcess();
+    } also firstError == none {
+        firstError = closeErr;
+    }
+
+    if !closedAnything {
+        return errors::ProcessError.Closed;
+    }
+
+    return firstError;
+}
+
+private error ChildProcess::releaseProcess(&self) {
+    if !self->isOpen() {
+        return errors::ProcessError.Closed;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_process_close(handle);
+        return errors::from_runtime(status, errors::ProcessError.CloseFailed);
+    }
+}

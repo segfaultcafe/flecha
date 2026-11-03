@@ -2317,6 +2317,7 @@ TEST(SemanticDeclarationTests,
             [2]bool flags;
             (i32, bool) pair;
             string text;
+            error firstError, closeErr;
             (string, string) textPair;
             Text compositeText;
             Pair composite;
@@ -2334,8 +2335,7 @@ TEST(SemanticDeclarationTests,
         }
     )";
     for (const std::string& local :
-         {"stringv value;", "error value;", "Fault value;", "Offset value;",
-          "Nontrivial value;"}) {
+         {"stringv value;", "Offset value;", "Nontrivial value;"}) {
         SCOPED_TRACE(local);
         const Analysis invalid =
             Analyze(declarations + "void invalid() { " + local + " }");
@@ -2356,6 +2356,14 @@ TEST(SemanticDeclarationTests,
         }
     )");
     EXPECT_FALSE(explicitDefaults.diagnostics.HasErrors());
+
+    const Analysis implicitErrors = Analyze(declarations + R"(
+        void implicitErrors() {
+            error any;
+            Fault fault;
+        }
+    )");
+    EXPECT_FALSE(implicitErrors.diagnostics.HasErrors());
 
     EXPECT_FALSE(Analyze(R"(
         T defaultValue<T>() { T value; return value; }
@@ -4856,15 +4864,11 @@ TEST(SemanticEnumTests, SupportsGenericMemberFunctions) {
 
 TEST(SemanticErrorTests, IntegratesDefiniteAssignmentQualifiersAndBorrowing) {
     const std::string prefix = "error Fault { Bad } ";
-    EXPECT_NE(
-        FindDiagnostic(Analyze(prefix + "error f() { error e; return e; }"),
-                       DiagnosticCode::InvalidVariableType),
-        nullptr);
-    EXPECT_NE(
-        FindDiagnostic(Analyze(prefix + "Fault f(bool flag) { Fault e; if flag "
-                                        "{ e = Fault.Bad; } return e; }"),
-                       DiagnosticCode::InvalidVariableType),
-        nullptr);
+    EXPECT_FALSE(Analyze(prefix + "error f() { error e; return e; }")
+                     .diagnostics.HasErrors());
+    EXPECT_FALSE(Analyze(prefix + "Fault f(bool flag) { Fault e; if flag "
+                                  "{ e = Fault.Bad; } return e; }")
+                     .diagnostics.HasErrors());
     EXPECT_FALSE(Analyze(prefix +
                          "error f(bool flag) { error e = none; if flag "
                          "{ e = Fault.Bad; } return e; }")
@@ -6476,6 +6480,27 @@ TEST(SemanticMemoryTests, OwningSlicesAreSafeManagedMoveOnlyBuffers) {
     EXPECT_TRUE(Analyze("void f() { values, failure := new<own []const "
                         "i32>(2); values[0] = 1; }")
                     .diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, CrashableNewReturnsOwnerDirectly) {
+    Analysis valid = Analyze(R"(
+        own []string allocate!(usize count) {
+            return new<own []string>!(count);
+        }
+        unsafe i32 scalar!() {
+            value := new<i32>!(42);
+            result := *value;
+            free(value);
+            return result;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_NE(FindDiagnostic(Analyze("void f() { new<own []u8>!(1); }"),
+                             DiagnosticCode::InvalidCrashable),
+              nullptr);
 }
 
 TEST(SemanticMemoryTests,

@@ -1,0 +1,84 @@
+module command;
+
+export enum Stdio: u8 {
+    // Uses the corresponding parent standard stream
+    default Inherit,
+
+    // Connects the child stream to the platform null device
+    Null,
+
+    // Creates a parent-owned anon pipe
+    Piped,
+}
+
+u8 Stdio::number(&const self) {
+    return match *self {
+        Stdio.Inherit => 0,
+        Stdio.Null => 1,
+        Stdio.Piped => 2,
+    };
+}
+
+// Describes how a child process is terminated
+export enum Termination: u8 {
+    default Exited,
+    Signaled,
+    Abnormal,
+}
+
+// Describes a completed child process
+export structure ExitStatus {
+    private Termination terminationKind;
+    private u32 terminationDetail;
+};
+
+ExitStatus ExitStatus::zero() override {
+    return build ExitStatus {
+        self.terminationKind = Termination.Exited;
+        self.terminationDetail = 0;
+    };
+}
+
+ExitStatus ExitStatus::fromRuntime(u8 kind, u32 detail) {
+    Termination termination = Termination.Abnormal;
+    if kind == 0 {
+        termination = Termination.Exited;
+    } else if kind == 1 {
+        termination = Termination.Signaled;
+    }
+
+    return build ExitStatus {
+        self.terminationKind = termination;
+        self.terminationDetail = detail;
+    };
+}
+
+// Reports the termination category
+Termination ExitStatus::termination(&const self) {
+    return self->terminationKind;
+}
+
+// Returns the exit code, signal number, or platform abnormal-status value.
+u32 ExitStatus::detail(&const self) {
+    return self->terminationDetail;
+}
+
+bool ExitStatus::success(&const self) {
+    return self->terminationKind == Termination.Exited and self->terminationDetail == 0;
+}
+
+bool ExitStatus::exited(&const self) {
+    return self->terminationCompare(Termination.Exited);
+}
+
+bool ExitStatus::signaled(&const self) {
+    return self->terminationCompare(Termination.Signaled);
+}
+
+bool ExitStatus::abnormal(&const self) {
+    return self->terminationCompare(Termination.Abnormal);
+}
+
+private bool ExitStatus::terminationCompare(&const self, Termination inTermination) {
+    return self->terminationKind == inTermination;
+}

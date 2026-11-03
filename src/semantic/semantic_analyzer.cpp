@@ -1416,6 +1416,17 @@ void SemanticAnalyzer::RegisterBuiltIns() {
         (void)_currentScope->Declare(*function);
         _model._symbols.push_back(std::move(function));
     }
+    {
+        auto signature = std::make_shared<CallableSignature>();
+        signature->result = SemanticType(SemanticTypeKind::Void);
+        signature->isUnsafe = true;
+        signature->isCrashable = true;
+        auto function = std::make_unique<FunctionSymbol>(
+            "new", std::move(signature), source::SourceRange{},
+            BuiltInFunction::New);
+        (void)_currentScope->DeclareAs("new!", *function);
+        _model._symbols.push_back(std::move(function));
+    }
     auto family = std::make_shared<ErrorFamily>();
     family->name = "AllocationError";
     family->displayName = family->name;
@@ -4902,6 +4913,20 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
     const bool allocate = intrinsic == BuiltInFunction::New ||
                           intrinsic == BuiltInFunction::StorageNew;
     const bool uninitialized = intrinsic == BuiltInFunction::StorageNew;
+    const bool crashesOnFailure =
+        intrinsic == BuiltInFunction::New && expression.IsCrashable();
+    if (expression.IsCrashable() && intrinsic != BuiltInFunction::New)
+        Report(diagnostics::DiagnosticCode::InvalidCrashable,
+               expression.Range(),
+               "only new<T> supports a crash-on-allocation-failure form");
+    if (crashesOnFailure) {
+        if (!_currentFunction || !_currentFunction->IsCrashable())
+            Report(diagnostics::DiagnosticCode::InvalidCrashable,
+                   expression.Range(),
+                   "new<T>!() may only appear in a crashable function");
+        else
+            _directCrashFunctions.insert(_currentFunction);
+    }
     SemanticType element = SemanticType::Error();
     const bool dynamic =
         allocate && expression.TypeArgument() &&
@@ -4994,12 +5019,15 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
     SemanticType parameter = input;
     SemanticType result(SemanticTypeKind::Void);
     if (allocate) {
-        result = SemanticType(std::vector<SemanticType>{
-            SemanticType(dynamic ? (safeOwner ? SemanticTypeKind::OwnedSlice
-                                              : SemanticTypeKind::OwnedBuffer)
-                                 : SemanticTypeKind::Pointer,
-                         element),
-            SemanticType(SemanticTypeKind::ErrorValue)});
+        const SemanticType owner(
+            dynamic ? (safeOwner ? SemanticTypeKind::OwnedSlice
+                                 : SemanticTypeKind::OwnedBuffer)
+                    : SemanticTypeKind::Pointer,
+            element);
+        result = crashesOnFailure
+                     ? owner
+                     : SemanticType(std::vector<SemanticType>{
+                           owner, SemanticType(SemanticTypeKind::ErrorValue)});
     } else {
         if (argument.Kind() == SemanticTypeKind::Null ||
             argument.Kind() == SemanticTypeKind::None)
@@ -5018,9 +5046,13 @@ SemanticType SemanticAnalyzer::AnalyzeAllocationCall(
     // Each call has a concrete typed signature, also used for deferred free.
     const auto& callee =
         static_cast<const core::NameExpression&>(expression.Callee());
+    auto signature = std::make_shared<CallableSignature>();
+    signature->result = result;
+    signature->parameters = {parameter};
+    signature->isUnsafe = true;
+    signature->isCrashable = crashesOnFailure;
     auto specialized = std::make_unique<FunctionSymbol>(
-        callee.Name(), result, std::vector<SemanticType>{parameter},
-        callee.Range(), intrinsic, true);
+        callee.Name(), std::move(signature), callee.Range(), intrinsic);
     _model._bindings[&callee] = specialized.get();
     _model._types.insert_or_assign(&callee, specialized->Type());
     _model._symbols.push_back(std::move(specialized));

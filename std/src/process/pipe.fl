@@ -1,0 +1,206 @@
+module command;
+
+@imports
+    :: root::io::stream
+    :: root::process::errors
+    :: root::process::runtime;
+
+// Owns the readable parent side of the child-process pipe
+export structure PipeReader {
+    private *void handle;
+};
+
+PipeReader PipeReader::zero() override {
+    return build PipeReader {
+        self.handle = null;
+    };
+}
+
+void PipeReader::tear(&self) override {
+    if self->handle == null {
+        return;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+    unsafe {
+        runtime::flecha_runtime_v1_process_pipe_close(handle);
+    }
+}
+
+PipeReader PipeReader::fromHandle(*void handle) {
+    return build PipeReader {
+        self.handle = handle;
+    };
+}
+
+bool PipeReader::isOpen(&const self) {
+    return self->handle != null;
+}
+
+// Blocks until data, EOF, or an error is available. A successful zero count
+// reports EOF. An error may be returned together with partial progress.
+(usize, error) PipeReader::read(&self, []u8 destination) {
+    if !self->isOpen() {
+        return (none, errors::ProcessError.Closed);
+    }
+
+    usize count = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_process_pipe_read(
+            self->handle,
+            destination.data(),
+            destination.len(),
+            &raw count
+        );
+
+        err := errors::from_runtime(status, errors::ProcessError.ReadFailed);
+        if err != none {
+            return (count, err);
+        }
+    }
+
+    return (count, none);
+}
+
+PipeReader PipeReader::take(&self) {
+    *void handle = self->handle;
+    self->handle = null;
+    return PipeReader::fromHandle(handle);
+}
+
+// Borrows this pipe as a generic stream reader
+stream::Reader PipeReader::reader(&self) <-self {
+    return stream::Reader::init(
+        [own self](destination) => {
+            return self->read(destination);
+        }
+    );
+}
+
+error PipeReader::readExact(&self, []u8 destination) {
+    if !self->isOpen() {
+        return errors::ProcessError.Closed;
+    }
+
+    reader := self->reader();
+    return reader.readExact(destination);
+}
+
+// Closes this pipe immediately. The handle is consumed even if closing fails.
+error PipeReader::close(&self) {
+    if !self->isOpen() {
+        return errors::ProcessError.Closed;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_process_pipe_close(handle);
+        return errors::from_runtime(status, errors::ProcessError.CloseFailed);
+    }
+}
+
+// Owns the writable parent side of a child-process pipe
+export structure PipeWriter {
+    private *void handle;
+};
+
+PipeWriter PipeWriter::zero() override {
+    return build PipeWriter {
+        self.handle = null;
+    };
+}
+
+void PipeWriter::tear(&self) override {
+    if self->handle == null {
+        return;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+    unsafe {
+        runtime::flecha_runtime_v1_process_pipe_close(handle);
+    }
+}
+
+PipeWriter PipeWriter::fromHandle(*void handle) {
+    return build PipeWriter {
+        self.handle = handle;
+    };
+}
+
+bool PipeWriter::isOpen(&const self) {
+    return self->handle != null;
+}
+
+// Blocks until data is accepted or an error occurs. An error may be returned
+// together with partial progress.
+(usize, error) PipeWriter::write(&self, []const u8 source) {
+    if !self->isOpen() {
+        return (none, errors::ProcessError.Closed);
+    }
+
+    usize count = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_process_pipe_write(
+            self->handle,
+            source.data(),
+            source.len(),
+            &raw count
+        );
+
+        err := errors::from_runtime(
+            status,
+            errors::ProcessError.WriteFailed
+        );
+        if err != none {
+            return (count, err);
+        }
+    }
+
+    return (count, none);
+}
+
+// Borrows this pipe as a generic stream writer.
+stream::Writer PipeWriter::writer(&self) <-self {
+    return stream::Writer::init(
+        [own self](source) => {
+            return self->write(source);
+        }
+    );
+}
+
+error PipeWriter::writeAll(&self, []const u8 source) {
+    if !self->isOpen() {
+        return errors::ProcessError.Closed;
+    }
+
+    writer := self->writer();
+    return writer.writeAll(source);
+}
+
+PipeWriter PipeWriter::take(&self) {
+    *void handle = self->handle;
+    self->handle = null;
+    return PipeWriter::fromHandle(handle);
+}
+
+// Closes this pipe immediately. Closing child stdin also communicates EOF
+// to the child process.
+error PipeWriter::close(&self) {
+    if !self->isOpen() {
+        return errors::ProcessError.Closed;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_process_pipe_close(handle);
+        return errors::from_runtime(
+            status,
+            errors::ProcessError.CloseFailed
+        );
+    }
+}

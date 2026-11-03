@@ -1751,10 +1751,24 @@ class Expander {
                             call.TypeArgument()->TypeForm() == TypeKind::Slice
                                 ? *call.TypeArgument()->Target()
                                 : *call.TypeArgument();
+                        std::unique_ptr<TypeNode> owner;
+                        if (call.TypeArgument()->TypeForm() ==
+                                TypeKind::Slice &&
+                            call.TypeArgument()->Contract() ==
+                                OwnershipContract::Own) {
+                            owner = CopyType(*call.TypeArgument());
+                        } else {
+                            owner = std::make_unique<TypeNode>(
+                                expression.Range(), TypeKind::Pointer,
+                                CopyType(element));
+                        }
+                        if (call.IsCrashable()) {
+                            expressionTypes[&expression] = std::move(owner);
+                            return {expressionTypes[&expression].get(),
+                                    current->moduleId};
+                        }
                         std::vector<std::unique_ptr<TypeNode>> values;
-                        values.push_back(std::make_unique<TypeNode>(
-                            expression.Range(), TypeKind::Pointer,
-                            CopyType(element)));
+                        values.push_back(std::move(owner));
                         values.push_back(std::make_unique<TypeNode>(
                             expression.Range(), PrimitiveType::ErrorValue));
                         expressionTypes[&expression] =

@@ -9,23 +9,28 @@ namespace flecha::core {
 namespace {
 
 std::unique_ptr<TypeNode> CloneType(const TypeNode& type) {
+    std::unique_ptr<TypeNode> result;
     if (type.TypeForm() == TypeKind::Named)
-        return std::make_unique<TypeNode>(
+        result = std::make_unique<TypeNode>(
             type.Range(), type.Name(), type.IsConst(), type.QualifierRange());
-    if (type.TypeForm() == TypeKind::Tuple) {
+    else if (type.TypeForm() == TypeKind::Tuple) {
         std::vector<std::unique_ptr<TypeNode>> elements;
         for (const auto& element : type.Elements())
             elements.push_back(CloneType(*element));
-        return std::make_unique<TypeNode>(type.Range(), std::move(elements),
-                                          type.IsConst(),
-                                          type.QualifierRange());
-    }
-    if (type.TypeForm() == TypeKind::Primitive)
-        return std::make_unique<TypeNode>(
+        result =
+            std::make_unique<TypeNode>(type.Range(), std::move(elements),
+                                       type.IsConst(), type.QualifierRange());
+    } else if (type.TypeForm() == TypeKind::Primitive)
+        result = std::make_unique<TypeNode>(
             type.Range(), type.Type(), type.IsConst(), type.QualifierRange());
-    return std::make_unique<TypeNode>(type.Range(), type.TypeForm(),
-                                      CloneType(*type.Target()), type.IsConst(),
-                                      type.QualifierRange(), type.Length());
+    else
+        result = std::make_unique<TypeNode>(
+            type.Range(), type.TypeForm(), CloneType(*type.Target()),
+            type.IsConst(), type.QualifierRange(), type.Length());
+    for (const auto& argument : type.typeArguments)
+        result->typeArguments.push_back(CloneType(*argument));
+    result->SetContract(type.Contract());
+    return result;
 }
 
 source::SourceRange EndOfInputRange(const std::vector<Token>& tokens) {
@@ -1011,19 +1016,35 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
         auto type = ParseType(true);
         if (!type) return nullptr;
         const auto fieldStart = type->Range().start;
-        const Token* field = Consume(TokenType::Identifier, "field name");
-        if (!field) return nullptr;
-        std::unique_ptr<Expression> initializer;
-        if (Match(TokenType::Assign)) {
-            initializer = ParseExpression();
-            if (!initializer) return nullptr;
-        }
+        struct ParsedField {
+            std::string name;
+            source::SourceRange nameRange;
+            std::unique_ptr<Expression> initializer;
+        };
+        std::vector<ParsedField> parsedFields;
+        do {
+            const Token* field = Consume(TokenType::Identifier, "field name");
+            if (!field) return nullptr;
+            std::unique_ptr<Expression> initializer;
+            if (Match(TokenType::Assign)) {
+                initializer = ParseExpression();
+                if (!initializer) return nullptr;
+            }
+            parsedFields.push_back(
+                {field->value, field->range, std::move(initializer)});
+        } while (Match(TokenType::Comma));
         const Token* end =
             Consume(TokenType::SemiColon, "';' after structure field");
         if (!end) return nullptr;
-        fields.push_back(std::make_unique<StructureField>(
-            source::SourceRange{fieldStart, end->range.end}, std::move(type),
-            field->value, field->range, std::move(initializer), isPrivate));
+        for (std::size_t index = 0; index < parsedFields.size(); ++index) {
+            ParsedField& field = parsedFields[index];
+            fields.push_back(std::make_unique<StructureField>(
+                source::SourceRange{
+                    index == 0 ? fieldStart : field.nameRange.start,
+                    end->range.end},
+                CloneType(*type), std::move(field.name), field.nameRange,
+                std::move(field.initializer), isPrivate));
+        }
     }
     ReportUnexpectedToken("in structure declaration");
     return nullptr;
@@ -1154,6 +1175,17 @@ std::unique_ptr<BlockStatement> Parser::ParseBlockStatement(bool isUnsafe) {
 
     std::vector<std::unique_ptr<Statement>> statements;
     while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+        if ((StartsType() || IsInferredVariableDeclaration()) &&
+            !IsDestructureStatement()) {
+            auto declarations = ParseVariableDeclarationStatements();
+            if (declarations.empty()) {
+                SynchronizeStatement();
+                continue;
+            }
+            for (auto& declaration : declarations)
+                statements.push_back(std::move(declaration));
+            continue;
+        }
         std::unique_ptr<Statement> statement = ParseStatement();
         if (statement != nullptr) {
             statements.push_back(std::move(statement));
@@ -1199,10 +1231,6 @@ std::unique_ptr<Statement> Parser::ParseStatement() {
     if (Check(TokenType::JumpTo)) return ParseJumpToStatement();
     if (Check(TokenType::Hash)) return ParsePositionStatement();
     if (IsDestructureStatement()) return ParseDestructureStatement();
-    if (StartsType() || IsInferredVariableDeclaration()) {
-        return ParseVariableDeclarationStatement();
-    }
-
     const source::SourceLocation start = Current().range.start;
     std::unique_ptr<Expression> expression = ParseExpression();
     if (expression == nullptr) {
@@ -1300,48 +1328,71 @@ std::unique_ptr<Statement> Parser::ParseDestructureStatement() {
         std::move(bindings), std::move(value), inferred);
 }
 
-std::unique_ptr<VariableDeclarationStatement>
-Parser::ParseVariableDeclarationStatement() {
+std::vector<std::unique_ptr<VariableDeclarationStatement>>
+Parser::ParseVariableDeclarationStatements() {
+    struct ParsedVariable {
+        std::string name;
+        source::SourceRange nameRange;
+        std::unique_ptr<Expression> initializer;
+        bool implicitlyDefaulted;
+    };
+
     const source::SourceLocation start = Current().range.start;
     std::unique_ptr<TypeNode> type;
-    const Token* name = nullptr;
-    bool hasInitializer = false;
     if (IsInferredVariableDeclaration()) {
-        name = &Advance();
+        const Token name = Advance();
         Advance();
-        hasInitializer = true;
-    } else {
-        type = ParseType();
-        if (type == nullptr) {
-            return nullptr;
-        }
-
-        name = Consume(TokenType::Identifier, "variable name");
-        if (name == nullptr) {
-            return nullptr;
-        }
-        if (Check(TokenType::Assign)) {
-            Advance();
-            hasInitializer = true;
-        }
+        auto initializer = ParseExpression();
+        if (initializer == nullptr) return {};
+        const Token* semicolon =
+            Consume(TokenType::SemiColon, "';' after variable declaration");
+        const source::SourceLocation end = semicolon == nullptr
+                                               ? initializer->Range().end
+                                               : semicolon->range.end;
+        std::vector<std::unique_ptr<VariableDeclarationStatement>> result;
+        result.push_back(std::make_unique<VariableDeclarationStatement>(
+            source::SourceRange{start, end}, nullptr, name.value,
+            std::move(initializer), name.range));
+        return result;
     }
 
-    std::unique_ptr<Expression> initializer;
-    if (hasInitializer) {
-        initializer = ParseExpression();
-        if (initializer == nullptr) return nullptr;
-    } else {
-        initializer = std::make_unique<LiteralExpression>(
-            name->range, TokenType::None, "none");
-    }
+    type = ParseType();
+    if (type == nullptr) return {};
+
+    std::vector<ParsedVariable> variables;
+    do {
+        const Token* name = Consume(TokenType::Identifier, "variable name");
+        if (name == nullptr) return {};
+        bool hasInitializer = Match(TokenType::Assign);
+        std::unique_ptr<Expression> initializer;
+        if (hasInitializer) {
+            initializer = ParseExpression();
+            if (initializer == nullptr) return {};
+        } else {
+            initializer = std::make_unique<LiteralExpression>(
+                name->range, TokenType::None, "none");
+        }
+        variables.push_back({name->value, name->range, std::move(initializer),
+                             !hasInitializer});
+    } while (Match(TokenType::Comma));
 
     const Token* semicolon =
         Consume(TokenType::SemiColon, "';' after variable declaration");
     const source::SourceLocation end =
-        semicolon == nullptr ? initializer->Range().end : semicolon->range.end;
-    return std::make_unique<VariableDeclarationStatement>(
-        source::SourceRange{start, end}, std::move(type), name->value,
-        std::move(initializer), name->range, false, !hasInitializer);
+        semicolon == nullptr ? variables.back().initializer->Range().end
+                             : semicolon->range.end;
+    std::vector<std::unique_ptr<VariableDeclarationStatement>> result;
+    result.reserve(variables.size());
+    for (std::size_t index = 0; index < variables.size(); ++index) {
+        ParsedVariable& variable = variables[index];
+        result.push_back(std::make_unique<VariableDeclarationStatement>(
+            source::SourceRange{index == 0 ? start : variable.nameRange.start,
+                                end},
+            CloneType(*type), std::move(variable.name),
+            std::move(variable.initializer), variable.nameRange, false,
+            variable.implicitlyDefaulted));
+    }
+    return result;
 }
 
 std::unique_ptr<AlsoClause> Parser::ParseAlsoClause() {
@@ -1473,9 +1524,10 @@ std::unique_ptr<Statement> Parser::ParseLoopStatement() {
     std::vector<std::unique_ptr<Statement>> statements;
     if (!Match(TokenType::SemiColon)) {
         if (StartsType() || IsInferredVariableDeclaration()) {
-            auto initializer = ParseVariableDeclarationStatement();
-            if (initializer == nullptr) return nullptr;
-            statements.push_back(std::move(initializer));
+            auto initializers = ParseVariableDeclarationStatements();
+            if (initializers.empty()) return nullptr;
+            for (auto& initializer : initializers)
+                statements.push_back(std::move(initializer));
         } else {
             auto initializer = ParseExpression();
             if (initializer == nullptr) return nullptr;
@@ -1831,9 +1883,10 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
                  "__hash") &&
             Match(TokenType::Less)) {
             auto type = ParseType(true);
-            if (!type ||
-                !ConsumeTypeArgumentClose("'>' after intrinsic type") ||
-                !Consume(TokenType::LParen, "'(' after typed intrinsic"))
+            if (!type || !ConsumeTypeArgumentClose("'>' after intrinsic type"))
+                return expression;
+            const bool isCrashable = Match(TokenType::Bang);
+            if (!Consume(TokenType::LParen, "'(' after typed intrinsic"))
                 return expression;
             source::SourceLocation end = expression->Range().end;
             std::vector<bool> expandedArguments;
@@ -1841,7 +1894,7 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             expression = std::make_unique<CallExpression>(
                 source::SourceRange{expression->Range().start, end},
                 std::move(expression), std::move(arguments), std::move(type),
-                std::move(expandedArguments));
+                std::move(expandedArguments), isCrashable);
             continue;
         }
         if (expression->Kind() == AstNodeKind::NameExpression &&

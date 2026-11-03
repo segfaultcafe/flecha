@@ -5,6 +5,9 @@ target_include_directories(runtime PUBLIC ${PROJECT_SOURCE_DIR}/src/include)
 target_link_libraries(runtime PRIVATE flecha_project_options)
 if(WIN32)
     target_link_libraries(runtime PRIVATE bcrypt ws2_32)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(runtime PRIVATE Threads::Threads)
 endif()
 
 set_target_properties(runtime PROPERTIES
