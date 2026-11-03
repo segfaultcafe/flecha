@@ -11,14 +11,17 @@ if(NOT compileResult EQUAL 0)
     )
 endif()
 
-set(sanitizerFlags)
+set(linkFlags)
 if(FLECHA_SANITIZERS)
-    list(APPEND sanitizerFlags -fsanitize=address,undefined)
+    list(APPEND linkFlags -fsanitize=address,undefined)
+endif()
+if(WIN32)
+    list(APPEND linkFlags -lbcrypt -lws2_32)
 endif()
 
 execute_process(
     COMMAND "${FLECHA_LINKER}" "${FLECHA_HARNESS}" "${FLECHA_OUTPUT}.o"
-        "-I${FLECHA_RUNTIME_INCLUDE}" "${FLECHA_RUNTIME}" ${sanitizerFlags}
+        "-I${FLECHA_RUNTIME_INCLUDE}" "${FLECHA_RUNTIME}" ${linkFlags}
         -Wl,--wrap=flecha_runtime_v1_tcp_stream_connect
         -Wl,--wrap=flecha_runtime_v1_tcp_listener_bind
         -Wl,--wrap=flecha_runtime_v1_tcp_listener_accept

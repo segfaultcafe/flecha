@@ -156,6 +156,183 @@ if(NOT testSupportResult EQUAL 42)
         "test support smoke returned ${testSupportResult} instead of 42")
 endif()
 
+# Exercise the installed standard library and runtime through a real TCP
+# client/server exchange. The native helper supplies only the peer thread
+# because Flecha does not have threading yet; both endpoints use the public
+# runtime ABI and the server uses std::net::tcp.
+set(tcpSmokeSource "${OUTPUT_ROOT}/tcp-smoke.fl")
+file(WRITE "${tcpSmokeSource}" [=[
+module tcp_smoke;
+
+@imports
+    :: lib::std::net::address
+    :: lib::std::net::tcp
+    :: lib::std::time::duration;
+
+foreign c {
+    #include <stddef.h>
+    #include <stdint.h>
+
+    #ifdef _WIN32
+    #include <windows.h>
+    static HANDLE tcp_smoke_thread;
+    #else
+    #include <pthread.h>
+    static pthread_t tcp_smoke_thread;
+    #endif
+
+    extern int32_t flecha_runtime_v1_tcp_stream_connect(
+        void**, uint8_t, uint64_t, uint64_t, uint16_t,
+        uint8_t, uint64_t, uint32_t);
+    extern int32_t flecha_runtime_v1_tcp_stream_read(
+        void*, uint8_t*, size_t, size_t*);
+    extern int32_t flecha_runtime_v1_tcp_stream_write(
+        void*, const uint8_t*, size_t, size_t*);
+    extern int32_t flecha_runtime_v1_tcp_stream_set_timeout(
+        void*, uint8_t, uint8_t, uint64_t, uint32_t);
+    extern int32_t flecha_runtime_v1_tcp_stream_close(void*);
+
+    static int32_t tcp_smoke_status = 1;
+    static int tcp_smoke_started = 0;
+
+    static void tcp_smoke_run_client(uint16_t port) {
+        void* stream = NULL;
+        size_t count = 0;
+        uint8_t request = 20;
+        uint8_t response = 0;
+        tcp_smoke_status = 2;
+        if (flecha_runtime_v1_tcp_stream_connect(
+                &stream, 4, 0, UINT64_C(0x7f000001), port, 1, 3, 0) != 0)
+            return;
+        if (flecha_runtime_v1_tcp_stream_set_timeout(
+                stream, 0, 1, 3, 0) != 0 ||
+            flecha_runtime_v1_tcp_stream_set_timeout(
+                stream, 1, 1, 3, 0) != 0) {
+            tcp_smoke_status = 3;
+            flecha_runtime_v1_tcp_stream_close(stream);
+            return;
+        }
+        if (flecha_runtime_v1_tcp_stream_write(
+                stream, &request, 1, &count) != 0 || count != 1) {
+            tcp_smoke_status = 4;
+            flecha_runtime_v1_tcp_stream_close(stream);
+            return;
+        }
+        count = 0;
+        if (flecha_runtime_v1_tcp_stream_read(
+                stream, &response, 1, &count) != 0 ||
+            count != 1 || response != 22) {
+            tcp_smoke_status = 5;
+            flecha_runtime_v1_tcp_stream_close(stream);
+            return;
+        }
+        tcp_smoke_status =
+            flecha_runtime_v1_tcp_stream_close(stream) == 0 ? 0 : 6;
+    }
+
+    #ifdef _WIN32
+    static DWORD WINAPI tcp_smoke_client(void* input) {
+        tcp_smoke_run_client((uint16_t)(uintptr_t)input);
+        return 0;
+    }
+    #else
+    static void* tcp_smoke_client(void* input) {
+        tcp_smoke_run_client((uint16_t)(uintptr_t)input);
+        return NULL;
+    }
+    #endif
+
+    int32_t tcp_smoke_start_client(uint16_t port) {
+        if (tcp_smoke_started) return 7;
+        tcp_smoke_started = 1;
+        #ifdef _WIN32
+        tcp_smoke_thread = CreateThread(
+            NULL, 0, tcp_smoke_client, (void*)(uintptr_t)port, 0, NULL);
+        if (tcp_smoke_thread == NULL) return 8;
+        #else
+        if (pthread_create(&tcp_smoke_thread, NULL, tcp_smoke_client,
+                           (void*)(uintptr_t)port) != 0)
+            return 8;
+        #endif
+        return 0;
+    }
+
+    int32_t tcp_smoke_join_client(void) {
+        if (!tcp_smoke_started) return 9;
+        #ifdef _WIN32
+        if (WaitForSingleObject(tcp_smoke_thread, INFINITE) != WAIT_OBJECT_0)
+            return 10;
+        CloseHandle(tcp_smoke_thread);
+        #else
+        if (pthread_join(tcp_smoke_thread, NULL) != 0) return 10;
+        #endif
+        tcp_smoke_started = 0;
+        return tcp_smoke_status;
+    }
+}
+
+extern unsafe i32 tcp_smoke_start_client(u16 port);
+extern unsafe i32 tcp_smoke_join_client();
+
+i32 main() {
+    endpoint := address::SocketAddress::fromIpv4(
+        address::Ipv4SocketAddress::fromParts(
+            address::Ipv4Address::loopback(), 0));
+    listener, bindError := tcp::Listener::bind(endpoint, 8);
+    if bindError != none { return 1; }
+    local, addressError := listener.localAddress();
+    localIpv4, isIpv4 := local.ipv4();
+    if addressError != none or !isIpv4 or localIpv4.port() == 0 { return 2; }
+
+    i32 startStatus = 0;
+    unsafe { startStatus = tcp_smoke_start_client(localIpv4.port()); }
+    if startStatus != 0 { return 3; }
+
+    stream, _, acceptError := listener.accept();
+    if acceptError != none { return 4; }
+    if stream.setReadTimeout(duration::Duration::fromSeconds(3)) != none or
+        stream.setWriteTimeout(duration::Duration::fromSeconds(3)) != none {
+        return 5;
+    }
+    [1]u8 request = none;
+    count, readError := stream.read(request[:]);
+    if readError != none or count != 1 or request[0] != 20 { return 6; }
+    [1]u8 response = [22];
+    count, writeError := stream.write(response[:]);
+    if writeError != none or count != 1 { return 7; }
+    if stream.close() != none or listener.close() != none { return 8; }
+
+    i32 clientStatus = 0;
+    unsafe { clientStatus = tcp_smoke_join_client(); }
+    if clientStatus != 0 { return 9; }
+    return 42;
+}
+]=])
+
+set(tcpSmokeOutput "${OUTPUT_ROOT}/tcp-smoke${EXECUTABLE_SUFFIX}")
+execute_process(
+    COMMAND "${FLECHA_COMPILER}" build "${tcpSmokeSource}"
+        ${testSupportLibraryArguments} -o "${tcpSmokeOutput}"
+    RESULT_VARIABLE tcpSmokeCompileResult
+    ERROR_VARIABLE tcpSmokeCompileError
+    TIMEOUT 60
+)
+if(NOT tcpSmokeCompileResult EQUAL 0)
+    message(FATAL_ERROR
+        "TCP client/server smoke compilation failed: ${tcpSmokeCompileError}")
+endif()
+execute_process(
+    COMMAND "${tcpSmokeOutput}"
+    RESULT_VARIABLE tcpSmokeResult
+    ERROR_VARIABLE tcpSmokeError
+    TIMEOUT 15
+)
+if(NOT tcpSmokeResult EQUAL 42)
+    message(FATAL_ERROR
+        "TCP client/server smoke returned ${tcpSmokeResult} instead of 42: "
+        "${tcpSmokeError}")
+endif()
+
 set(callableRoot "${OUTPUT_ROOT}/callable-smoke")
 file(MAKE_DIRECTORY "${callableRoot}")
 file(WRITE "${callableRoot}/pipeline.fl"
