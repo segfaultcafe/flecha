@@ -1059,6 +1059,31 @@ Flecha should eventually provide:
 
 Layout must not be inferred solely from the behavior of a particular backend. Language-level rules will define which layouts are guaranteed and which remain implementation-defined.
 
+Top-level foreign translation units are implemented for C and target assembly:
+
+```flecha
+foreign c {
+    int answer(void) { return 42; }
+}
+
+extern i32 answer();
+```
+
+```flecha
+foreign asm {
+    // Target-assembler source.
+}
+```
+
+The text between the outer braces is preserved as foreign source and is not
+tokenized as Flecha. Braces nested in foreign source, strings, character
+literals, and C-style comments do not terminate the block. The foreign unit
+does not introduce Flecha declarations; symbols cross the boundary through
+ordinary `extern` declarations and the target C ABI. `foreign c` is compiled as
+C, while `foreign asm` uses the active target assembler syntax and is therefore
+target-specific. Inline, value-producing assembly with typed operands is not
+part of this form.
+
 ## 16. Compilation model
 
 The reference compiler is implemented in C++23.
@@ -1080,6 +1105,9 @@ Flecha source
 
 The LLVM backend emits textual IR or a host-native object. The native driver can
 link that object with the version-matched runtime and explicit native inputs.
+For loaded sources containing foreign translation units, the native compiler
+also compiles each unit with the configured host driver and relocatably merges
+the resulting objects into Flecha's emitted object before final linking.
 The compiler does not include a C source backend, optimization-level selection,
 source-level debug information, or explicit cross-compilation in the 0.1 line.
 See [LLVM code generation](docs/llvm_codegen.md) and

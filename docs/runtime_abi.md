@@ -280,8 +280,11 @@ function resets every output before validation. `dns_result_close` consumes
 the opaque result handle and accepts null.
 
 Network status values are success `0`, out of memory `1`, invalid name `2`,
-name not found `3`, temporary failure `4`, unsupported family `5`, and generic
-resolution failure `6`. Every `dns_resolve` failure leaves its output null.
+name not found `3`, temporary failure `4`, unsupported family `5`, resolution
+failure `6`, closed `7`, timeout `8`, connection refused `9`, connection reset
+`10`, network unreachable `11`, address in use `12`, address unavailable `13`,
+broken pipe `14`, and generic operation failure `15`. Every `dns_resolve`
+failure leaves its output null.
 The safe `std::net::dns::resolve` wrapper owns the handle while copying every
 result into an exact-size `own []SocketAddress`, attaches the caller-provided
 port, and closes the native handle before returning. Allocation or conversion

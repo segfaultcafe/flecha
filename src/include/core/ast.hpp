@@ -774,6 +774,15 @@ struct Module final {
     std::vector<Import> imports;
 };
 
+enum class ForeignLanguage { C, Assembly };
+
+struct ForeignSource final {
+    ForeignLanguage language;
+    std::string source;
+    source::SourceRange range;
+    std::uint32_t bodyLine = 1;
+};
+
 class CompilationUnit final : public AstNode {
    public:
     CompilationUnit(source::SourceRange range,
@@ -791,9 +800,13 @@ class CompilationUnit final : public AstNode {
     bool privateModule = false;
     std::vector<Import> imports;
     std::vector<Module> modules;
+    std::vector<ForeignSource> foreignSources;
     std::string testingModule;
     std::vector<std::unique_ptr<Declaration>> TakeDeclarations() {
         return std::move(_declarations);
+    }
+    std::vector<ForeignSource> TakeForeignSources() {
+        return std::move(foreignSources);
     }
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::CompilationUnit;

@@ -156,6 +156,8 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-C0003";
         case DiagnosticCode::LinkerFailed:
             return "FLECHA-C0004";
+        case DiagnosticCode::ForeignCompilationFailed:
+            return "FLECHA-C0005";
     }
     return "FLECHA-UNKNOWN";
 }

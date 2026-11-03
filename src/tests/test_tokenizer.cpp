@@ -179,6 +179,45 @@ TEST(TokenizerTests, RecognizesIdentifiers) {
     EXPECT_EQ(tokens[2].type, TokenType::EOF_TOKEN);
 }
 
+TEST(TokenizerTests, PreservesForeignSourceAsOneRawToken) {
+    DiagnosticBag diagnostics;
+    const std::vector<Token> tokens = Tokenize(R"(
+foreign c {
+    // A comment containing a misleading }
+    const char* text = "{still raw}";
+    int value(void) { return text[0] == '{' ? 42 : 0; }
+}
+i32 main() { return 0; }
+)",
+                                               &diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_GE(tokens.size(), 2u);
+    ASSERT_EQ(tokens[0].type, TokenType::ForeignBlock);
+    const std::size_t languageEnd = tokens[0].value.find('\0');
+    const std::size_t lineEnd = tokens[0].value.find('\0', languageEnd + 1);
+    ASSERT_NE(languageEnd, std::string::npos);
+    ASSERT_NE(lineEnd, std::string::npos);
+    EXPECT_EQ(tokens[0].value.substr(0, languageEnd), "c");
+    const std::string body = tokens[0].value.substr(lineEnd + 1);
+    EXPECT_NE(body.find("const char* text = \"{still raw}\";"),
+              std::string::npos);
+    EXPECT_NE(body.find("int value(void) { return"), std::string::npos);
+    EXPECT_EQ(tokens[1].type, TokenType::I32);
+}
+
+TEST(TokenizerTests, ReportsUnterminatedForeignSource) {
+    DiagnosticBag diagnostics;
+    const std::vector<Token> tokens =
+        Tokenize("foreign asm { mov rax, 41", &diagnostics);
+
+    ASSERT_TRUE(diagnostics.HasErrors());
+    ASSERT_EQ(tokens[0].type, TokenType::Invalid);
+    EXPECT_EQ(diagnostics.Diagnostics()[0].code, DiagnosticCode::ExpectedToken);
+    EXPECT_NE(diagnostics.Diagnostics()[0].message.find("foreign source"),
+              std::string::npos);
+}
+
 TEST(TokenizerTests, RecognizesNumbers) {
     std::vector<Token> tokens = Tokenize("123 0 3.14");
     ASSERT_EQ(tokens.size(), 4);  // 3 numbers + EOF

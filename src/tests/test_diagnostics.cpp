@@ -101,4 +101,6 @@ TEST(DiagnosticTests, CompilerCodesAreStableAndContiguous) {
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::RuntimeUnavailable),
               "FLECHA-C0003");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::LinkerFailed), "FLECHA-C0004");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::ForeignCompilationFailed),
+              "FLECHA-C0005");
 }

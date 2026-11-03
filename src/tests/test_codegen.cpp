@@ -1336,6 +1336,64 @@ TEST(NativeCompilerTests, EmitsObjectAndLinksExecutableForHost) {
     std::filesystem::remove(objectPath);
 }
 
+TEST(NativeCompilerTests, CompilesAndLinksEmbeddedCTranslationUnits) {
+    GeneratedSource result = Generate(R"(
+        foreign c {
+            #include <stdint.h>
+            int32_t foreign_value(void) { return 42; }
+        }
+        extern i32 foreign_value();
+        i32 main() { return foreign_value(); }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+    ASSERT_EQ(result.boundProgram->ForeignSources().size(), 1u);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() / "flecha_foreign_c_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram, "foreign_c_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executable = executablePath.string();
+    const llvm::StringRef arguments[] = {executable};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+#if defined(__linux__) && defined(__x86_64__)
+TEST(NativeCompilerTests, CompilesAndLinksEmbeddedAssemblyTranslationUnits) {
+    GeneratedSource result = Generate(R"(
+        foreign asm {
+            .text
+            .globl foreign_asm_value
+            .type foreign_asm_value, @function
+        foreign_asm_value:
+            mov $42, %eax
+            ret
+            .section .note.GNU-stack,"",@progbits
+        }
+        extern i32 foreign_asm_value();
+        i32 main() { return foreign_asm_value(); }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() / "flecha_foreign_asm_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "foreign_asm_test", executablePath.string()))
+        << compiler.Error();
+    const std::string executable = executablePath.string();
+    const llvm::StringRef arguments[] = {executable};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+#endif
+
 #ifdef _WIN32
 TEST(NativeCompilerTests, LinksWindowsRuntimeSystemLibraries) {
     GeneratedSource result = Generate(R"(

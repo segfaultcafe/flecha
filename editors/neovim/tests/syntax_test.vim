@@ -173,6 +173,7 @@ call assert_equal('flechaStatement', s:HighlightAt('module integer', 0))
 call assert_equal('flechaModuleName', s:HighlightAt('module integer', 7))
 call assert_equal('flechaModifier', s:HighlightAt('export i32', 0))
 call assert_equal('flechaModifier', s:HighlightAt('quiver i32', 0))
+call assert_equal('flechaModifier', s:HighlightAt('foreign c', 0))
 
 " Exercise actual Enter/closing-brace typing, not just the '=' operator.
 enew

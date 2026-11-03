@@ -1,0 +1,16 @@
+foreign c {
+    #include <stdint.h>
+
+    // Braces in comments and strings remain part of the C translation unit: }
+    static const char* marker = "{";
+
+    int32_t foreign_answer(void) {
+        return marker[0] == '{' ? 42 : 1;
+    }
+}
+
+extern i32 foreign_answer();
+
+i32 main() {
+    return foreign_answer();
+}

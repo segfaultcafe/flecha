@@ -1,0 +1,313 @@
+module tcp;
+
+@imports
+    :: root::io::stream
+    :: root::net::address
+    :: root::net::errors
+    :: root::net::runtime
+    :: root::time::duration;
+
+// Selects which direction of a TCP stream to shut down.
+export enum Shutdown: u8 {
+    default Read,
+    Write,
+    ReadWrite,
+}
+
+u8 Shutdown::number(&const self) {
+    return match *self {
+        Shutdown.Read => 0,
+        Shutdown.Write => 1,
+        Shutdown.ReadWrite => 2,
+    };
+}
+
+// Owns one connected TCP socket.
+export structure Stream {
+    private *void handle;
+};
+
+Stream Stream::zero() override {
+    return build Stream {
+        self.handle = null;
+    };
+}
+
+void Stream::tear(&self) override {
+    if self->handle == null {
+        return;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        runtime::flecha_runtime_v1_tcp_stream_close(handle);
+    }
+}
+
+// Creates a Stream from a native handle, owning it.
+Stream Stream::fromHandle(*void handle) {
+    return build Stream {
+        self.handle = handle;
+    };
+}
+
+// Connects without a deadline.
+(Stream, error) Stream::connect(address::SocketAddress host) {
+    return connect(host, 0);
+}
+
+// Connects with a deadline.
+(Stream, error) Stream::connectWithTimeout(
+    address::SocketAddress host,
+    duration::Duration timeout
+) {
+    return connect(host, 1, timeout);
+}
+
+// Checks if the stream is open. A stream is considered open if it has a valid handle.
+bool Stream::isOpen(&const self) {
+    return self->handle != null;
+}
+
+// Reads at most destination.len() bytes.
+//
+// A successful zero-byte result means orderly peer EOF.
+(usize, error) Stream::read(&self, []u8 destination) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    usize count = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_tcp_stream_read(
+            self->handle,
+            destination.data(),
+            destination.len().cast<usize>,
+            &raw count
+        );
+
+        err := errors::from_runtime(
+            status,
+            errors::NetworkError.ReadFailed
+        );
+        if err != none {
+            return (count, err);
+        }
+    }
+
+    return (count, none);
+}
+
+// Creates a reader that mutably borrows this stream.
+stream::Reader Stream::reader(&self) <-self {
+    return stream::Reader::init(
+        [own self](destination) => {
+            return self->read(destination);
+        }
+    );
+}
+
+// Reads exactly destination.len() bytes or returns an error. 
+// A successful zero-byte result means orderly peer EOF.
+error Stream::readExact(&self, []u8 destination) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    reader := self->reader();
+    return reader.readExact(destination);
+}
+
+// Writes at most source.len() bytes.
+(usize, error) Stream::write(&self, []const u8 source) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    usize count = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_tcp_stream_write(
+            self->handle,
+            source.data(),
+            source.len(),
+            &raw count
+        );
+
+        err := errors::from_runtime(
+            status,
+            errors::NetworkError.WriteFailed
+        );
+        if err != none {
+            return (count, err);
+        }
+    }
+
+    return (count, none);
+}
+
+// Creates a writer that mutably borrows this stream.
+stream::Writer Stream::writer(&self) <-self {
+    return stream::Writer::init(
+        [own self](source) => {
+            return self->write(source);
+        }
+    );
+}
+
+error Stream::writeAll(&self, []const u8 source) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    writer := self->writer();
+    return writer.writeAll(source);
+}
+
+// Sets the read timeout. Zero means an immediate, non-waiting attempt.
+error Stream::setReadTimeout(&self, duration::Duration timeout) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    return set_timeout(self->handle, 0, 1, timeout);
+}
+
+// Disables the read timeout.
+error Stream::clearReadTimeout(&self) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    return set_timeout(
+        self->handle,
+        0,
+        0,
+        duration::Duration::zero()
+    );
+}
+
+// Sets the write timeout. Zero means an immediate, non-waiting attempt.
+error Stream::setWriteTimeout(&self, duration::Duration timeout) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    return set_timeout(self->handle, 1, 1, timeout);
+}
+
+// Disables the write timeout.
+error Stream::clearWriteTimeout(&self) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    return set_timeout(
+        self->handle,
+        1,
+        0,
+        duration::Duration::zero()
+    );
+}
+
+// Disables reads, writes, or both without releasing the socket.
+error Stream::shutdown(&self, Shutdown direction) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_tcp_stream_shutdown(
+            self->handle,
+            direction.number()
+        );
+
+        return errors::from_runtime(
+            status,
+            errors::NetworkError.ShutdownFailed
+        );
+    }
+}
+
+(address::SocketAddress, error) Stream::localAddress(&const self) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    u8 family = 0;
+    u64 high = 0;
+    u64 low = 0;
+    u16 port = 0;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_tcp_stream_local_address(
+            self->handle,
+            &raw family,
+            &raw high,
+            &raw low,
+            &raw port
+        );
+
+        err := errors::from_runtime(
+            status,
+            errors::NetworkError.AddressFailed
+        );
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return decode_address(family, high, low, port);
+}
+
+(address::SocketAddress, error) Stream::peerAddress(&const self) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    u8 family = 0;
+    u64 high = 0;
+    u64 low = 0;
+    u16 port = 0;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_tcp_stream_peer_address(
+            self->handle,
+            &raw family,
+            &raw high,
+            &raw low,
+            &raw port
+        );
+
+        err := errors::from_runtime(
+            status,
+            errors::NetworkError.AddressFailed
+        );
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return decode_address(family, high, low, port);
+}
+
+// Relinquishes the socket. A close failure still leaves this value closed.
+error Stream::close(&self) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        i32 status =
+            runtime::flecha_runtime_v1_tcp_stream_close(handle);
+
+        return errors::from_runtime(
+            status,
+            errors::NetworkError.CloseFailed
+        );
+    }
+}

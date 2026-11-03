@@ -188,6 +188,7 @@ std::unique_ptr<CompilationUnit> ModuleLoader::LoadConfigured(
     _active.clear();
     _modules.clear();
     _declarations.clear();
+    _foreignSources.clear();
     _mode = mode;
     _verboseTests = verboseTests;
     _testingModule.clear();
@@ -214,6 +215,7 @@ std::unique_ptr<CompilationUnit> ModuleLoader::LoadConfigured(
                                                   std::move(_declarations));
     unit->modules = std::move(_modules);
     unit->testingModule = std::move(_testingModule);
+    unit->foreignSources = std::move(_foreignSources);
     return unit;
 }
 
@@ -303,6 +305,8 @@ void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root,
         declaration->sourceId = sourceId;
         _declarations.push_back(std::move(declaration));
     }
+    for (auto& foreign : unit->TakeForeignSources())
+        _foreignSources.push_back(std::move(foreign));
 }
 
 std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
@@ -606,13 +610,16 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
         }
     }
 
-    for (auto& source : sources)
+    for (auto& source : sources) {
+        for (auto& foreign : source.unit->TakeForeignSources())
+            _foreignSources.push_back(std::move(foreign));
         for (auto& declaration : source.unit->TakeDeclarations()) {
             declaration->moduleId = id;
             declaration->sourceId = source.sourceId;
             declaration->quiverId = quiverId;
             _declarations.push_back(std::move(declaration));
         }
+    }
     _active.pop_back();
     return id;
 }

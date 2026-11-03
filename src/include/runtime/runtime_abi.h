@@ -134,6 +134,15 @@ typedef enum FlechaRuntimeNetworkStatus {
     FLECHA_RUNTIME_NETWORK_TEMPORARY_FAILURE = 4,
     FLECHA_RUNTIME_NETWORK_UNSUPPORTED_FAMILY = 5,
     FLECHA_RUNTIME_NETWORK_RESOLUTION_FAILED = 6,
+    FLECHA_RUNTIME_NETWORK_CLOSED = 7,
+    FLECHA_RUNTIME_NETWORK_TIMED_OUT = 8,
+    FLECHA_RUNTIME_NETWORK_CONNECTION_REFUSED = 9,
+    FLECHA_RUNTIME_NETWORK_CONNECTION_RESET = 10,
+    FLECHA_RUNTIME_NETWORK_UNREACHABLE = 11,
+    FLECHA_RUNTIME_NETWORK_ADDRESS_IN_USE = 12,
+    FLECHA_RUNTIME_NETWORK_ADDRESS_NOT_AVAILABLE = 13,
+    FLECHA_RUNTIME_NETWORK_BROKEN_PIPE = 14,
+    FLECHA_RUNTIME_NETWORK_FAILED = 15,
 } FlechaRuntimeNetworkStatus;
 
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
@@ -195,6 +204,57 @@ int32_t flecha_runtime_v1_dns_result_get(const void* handle, size_t index,
 
 // Releases a result set returned by dns_resolve. Null is accepted.
 void flecha_runtime_v1_dns_result_close(void* handle);
+
+// Connects one blocking TCP stream to a portable IPv4 or IPv6 endpoint.
+// timeout_enabled is zero or one. Every failure leaves output null.
+int32_t flecha_runtime_v1_tcp_stream_connect(
+    void** output, uint8_t family, uint64_t high, uint64_t low, uint16_t port,
+    uint8_t timeout_enabled, uint64_t timeout_seconds,
+    uint32_t timeout_nanoseconds);
+
+// Binds and starts one blocking TCP listener. Every failure leaves output null.
+int32_t flecha_runtime_v1_tcp_listener_bind(void** output, uint8_t family,
+                                            uint64_t high, uint64_t low,
+                                            uint16_t port, uint32_t backlog);
+
+// Accepts one stream and copies its peer address. Every failure leaves the
+// stream output null and resets all address outputs.
+int32_t flecha_runtime_v1_tcp_listener_accept(
+    void* listener, void** output, uint8_t* family, uint64_t* high,
+    uint64_t* low, uint16_t* port);
+
+// Performs one partial blocking read or write. count is reset before the
+// operation and preserves partial progress when an error follows a transfer.
+int32_t flecha_runtime_v1_tcp_stream_read(void* handle, uint8_t* destination,
+                                          size_t length, size_t* count);
+int32_t flecha_runtime_v1_tcp_stream_write(void* handle,
+                                           const uint8_t* source,
+                                           size_t length, size_t* count);
+
+// Configures read direction zero or write direction one. enabled is zero or
+// one; a zero duration while enabled requests an immediate non-waiting attempt.
+int32_t flecha_runtime_v1_tcp_stream_set_timeout(
+    void* handle, uint8_t direction, uint8_t enabled, uint64_t seconds,
+    uint32_t nanoseconds);
+
+// Shuts down reads (zero), writes (one), or both (two).
+int32_t flecha_runtime_v1_tcp_stream_shutdown(void* handle,
+                                              uint8_t direction);
+
+// Copies portable local or peer endpoint fields. Every failure resets outputs.
+int32_t flecha_runtime_v1_tcp_stream_local_address(
+    void* handle, uint8_t* family, uint64_t* high, uint64_t* low,
+    uint16_t* port);
+int32_t flecha_runtime_v1_tcp_stream_peer_address(
+    void* handle, uint8_t* family, uint64_t* high, uint64_t* low,
+    uint16_t* port);
+int32_t flecha_runtime_v1_tcp_listener_local_address(
+    void* handle, uint8_t* family, uint64_t* high, uint64_t* low,
+    uint16_t* port);
+
+// Close consumes a non-null native handle even when it reports failure.
+int32_t flecha_runtime_v1_tcp_stream_close(void* handle);
+int32_t flecha_runtime_v1_tcp_listener_close(void* handle);
 
 // Copies the current value into an empty owning Flecha string. A successful
 // missing lookup sets present to zero; a successful empty value sets present

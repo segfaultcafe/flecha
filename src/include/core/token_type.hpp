@@ -130,6 +130,10 @@ enum class TokenType {
     FloatLiteral,
     StringLiteral,
     CharLiteral,
+    // A complete `foreign <language> { ... }` raw source unit. Its value is
+    // encoded by the tokenizer and decoded by the parser; foreign contents are
+    // deliberately never tokenized as Flecha.
+    ForeignBlock,
 
     // End of file
     EOF_TOKEN,

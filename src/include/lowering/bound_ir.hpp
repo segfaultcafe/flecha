@@ -1,6 +1,7 @@
 #ifndef FLECHA_LOWERING_BOUND_IR_HPP
 #define FLECHA_LOWERING_BOUND_IR_HPP
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -958,10 +959,21 @@ class BoundFunction final {
     std::unique_ptr<BoundBlockStatement> _body;
 };
 
+enum class BoundForeignLanguage { C, Assembly };
+
+struct BoundForeignSource final {
+    BoundForeignLanguage language;
+    std::string source;
+    source::SourceRange range;
+    std::uint32_t bodyLine = 1;
+};
+
 class BoundProgram final {
    public:
-    explicit BoundProgram(std::vector<std::unique_ptr<BoundFunction>> functions)
-        : _functions(std::move(functions)) {}
+    explicit BoundProgram(std::vector<std::unique_ptr<BoundFunction>> functions,
+                          std::vector<BoundForeignSource> foreignSources = {})
+        : _functions(std::move(functions)),
+          _foreignSources(std::move(foreignSources)) {}
     BoundProgram(const BoundProgram&) = delete;
     BoundProgram& operator=(const BoundProgram&) = delete;
     BoundProgram(BoundProgram&&) = default;
@@ -970,9 +982,14 @@ class BoundProgram final {
         const {
         return _functions;
     }
+    [[nodiscard]] const std::vector<BoundForeignSource>& ForeignSources()
+        const {
+        return _foreignSources;
+    }
 
    private:
     std::vector<std::unique_ptr<BoundFunction>> _functions;
+    std::vector<BoundForeignSource> _foreignSources;
 };
 
 }  // namespace flecha::lowering

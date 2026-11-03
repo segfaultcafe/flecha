@@ -44,7 +44,9 @@ their detailed `testing::UnitTest` output beneath the failed test and include
 the test declaration's `file:line:column` location. This location identifies
 the test function, not an inferred defect inside the production function.
 Both modes report the number of passed and failed tests. `--emit-object` stops
-before linking.
+before final executable linking. When the loaded sources contain embedded
+`foreign c` or `foreign asm` blocks, their temporary objects are relocatably
+merged into the emitted object.
 `--emit-llvm` writes textual LLVM IR, or prints it when `-o` is omitted.
 
 `--root` supplies the source root used by `root::` imports. Each `--lib`
@@ -80,7 +82,10 @@ does require a host C++ linker driver and the platform's native SDK components:
 - macOS requires the Xcode command-line tools, including `clang++` and the
   macOS SDK. Install them with `xcode-select --install` when they are absent.
 
-`flecha check` and `flecha --emit-object` do not invoke the system linker.
+`flecha check` does not invoke native tools. `flecha --emit-object` ordinarily
+uses LLVM directly; programs containing embedded foreign blocks additionally
+invoke the configured native driver to compile and relocatably merge those
+blocks.
 Building Flecha itself from source still requires the LLVM development package
 listed in the repository build requirements. The exact supported ranges,
 platform packages, and release baselines are maintained in

@@ -19,3 +19,91 @@ quiver extern unsafe i32 flecha_runtime_v1_dns_result_get(
 );
 
 quiver extern unsafe void flecha_runtime_v1_dns_result_close(*void handle);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_stream_connect(
+    **void output,
+    u8 family,
+    u64 high,
+    u64 low,
+    u16 port,
+    u8 timeout_enabled,
+    u64 timeout_seconds,
+    u32 timeout_nanoseconds
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_listener_bind(
+    **void output,
+    u8 family,
+    u64 high,
+    u64 low,
+    u16 port,
+    u32 backlog
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_listener_accept(
+    *void listener,
+    **void output,
+    *u8 family,
+    *u64 high,
+    *u64 low,
+    *u16 port
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_stream_read(
+    *void handle,
+    *u8 destination,
+    usize length,
+    *usize count
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_stream_write(
+    *void handle,
+    *const u8 source,
+    usize length,
+    *usize count
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_stream_set_timeout(
+    *void handle,
+    u8 direction,
+    u8 enabled,
+    u64 seconds,
+    u32 nanoseconds
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_stream_shutdown(
+    *void handle,
+    u8 direction
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_stream_local_address(
+    *void handle,
+    *u8 family,
+    *u64 high,
+    *u64 low,
+    *u16 port
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_stream_peer_address(
+    *void handle,
+    *u8 family,
+    *u64 high,
+    *u64 low,
+    *u16 port
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_listener_local_address(
+    *void handle,
+    *u8 family,
+    *u64 high,
+    *u64 low,
+    *u16 port
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_stream_close(
+    *void handle
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_tcp_listener_close(
+    *void handle
+);

@@ -1,0 +1,7 @@
+module foreign_module;
+
+foreign c {
+    int module_foreign_answer(void) {
+        return 42;
+    }
+}

@@ -120,6 +120,24 @@ set_tests_properties(CliTests.LongbowVersion PROPERTIES
 )
 
 add_test(
+    NAME NativeCompilerTests.EmbeddedForeignSourceFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/foreign_source.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/foreign_source_test${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_foreign_source.cmake
+)
+
+add_test(
+    NAME NativeCompilerTests.ForeignSourceAcrossModuleFiles
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/foreign_module/main.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/foreign_module_test${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_foreign_source.cmake
+)
+
+add_test(
     NAME CrashableFunctionTests.SprintfSuccess
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
@@ -725,6 +743,32 @@ add_test(NAME StandardLibraryTests.DnsFailureMapping
         -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
         -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dns_failure_mapping.cmake)
+
+add_test(NAME StandardLibraryTests.TcpRuntimeFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/tcp_runtime.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/tcp_runtime_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tcp_runtime
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_tcp_runtime.cmake)
+
+add_test(NAME StandardLibraryTests.TcpLoopbackFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/tcp_loopback.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/tcp_loopback_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tcp_loopback
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_tcp_loopback.cmake)
 
 add_test(NAME StandardLibraryTests.NetworkAddressAllocationFailure
     COMMAND ${CMAKE_COMMAND}
