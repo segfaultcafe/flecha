@@ -194,6 +194,80 @@ TEST(RuntimeEnvironmentTests, DistinguishesMissingEmptyAndPresentValues) {
               FLECHA_RUNTIME_ENVIRONMENT_OK);
 }
 
+TEST(RuntimeNetworkTests, ResolvesPortableNumericAddresses) {
+    void* ipv4Results = reinterpret_cast<void*>(1);
+    ASSERT_EQ(flecha_runtime_v1_dns_resolve(&ipv4Results, "127.0.0.1", 9),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_NE(ipv4Results, nullptr);
+    ASSERT_GE(flecha_runtime_v1_dns_result_count(ipv4Results), 1u);
+
+    uint8_t family = 0;
+    uint64_t high = 1;
+    uint64_t low = 1;
+    EXPECT_EQ(
+        flecha_runtime_v1_dns_result_get(ipv4Results, 0, &family, &high, &low),
+        FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(family, 4);
+    EXPECT_EQ(high, 0u);
+    EXPECT_EQ(low, 0x7f000001u);
+    flecha_runtime_v1_dns_result_close(ipv4Results);
+
+    void* ipv6Results = nullptr;
+    ASSERT_EQ(flecha_runtime_v1_dns_resolve(&ipv6Results, "localhost", 9),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_GE(flecha_runtime_v1_dns_result_count(ipv6Results), 1u);
+    flecha_runtime_v1_dns_result_close(ipv6Results);
+}
+
+TEST(RuntimeNetworkTests, ValidatesNamesHandlesAndResultIndexes) {
+    void* output = reinterpret_cast<void*>(1);
+    EXPECT_EQ(flecha_runtime_v1_dns_resolve(&output, nullptr, 0),
+              FLECHA_RUNTIME_NETWORK_INVALID_NAME);
+    EXPECT_EQ(output, nullptr);
+
+    EXPECT_EQ(flecha_runtime_v1_dns_resolve(&output, "bad..name", 9),
+              FLECHA_RUNTIME_NETWORK_INVALID_NAME);
+    EXPECT_EQ(output, nullptr);
+    EXPECT_EQ(flecha_runtime_v1_dns_resolve(&output, "-bad.example", 12),
+              FLECHA_RUNTIME_NETWORK_INVALID_NAME);
+    EXPECT_EQ(output, nullptr);
+    const std::string oversizedLabel(64, 'a');
+    EXPECT_EQ(flecha_runtime_v1_dns_resolve(&output, oversizedLabel.data(),
+                                            oversizedLabel.size()),
+              FLECHA_RUNTIME_NETWORK_INVALID_NAME);
+    EXPECT_EQ(output, nullptr);
+    const std::array<char, 8> embeddedNull{'f',  'l', 'e', 'c',
+                                           '\0', 'h', 'a', 'x'};
+    EXPECT_EQ(flecha_runtime_v1_dns_resolve(&output, embeddedNull.data(),
+                                            embeddedNull.size()),
+              FLECHA_RUNTIME_NETWORK_INVALID_NAME);
+    EXPECT_EQ(output, nullptr);
+    EXPECT_EQ(flecha_runtime_v1_dns_resolve(nullptr, "localhost", 9),
+              FLECHA_RUNTIME_NETWORK_RESOLUTION_FAILED);
+
+    uint8_t family = 9;
+    uint64_t high = 9;
+    uint64_t low = 9;
+    EXPECT_EQ(
+        flecha_runtime_v1_dns_result_get(nullptr, 0, &family, &high, &low),
+        FLECHA_RUNTIME_NETWORK_RESOLUTION_FAILED);
+    EXPECT_EQ(family, 0);
+    EXPECT_EQ(high, 0u);
+    EXPECT_EQ(low, 0u);
+
+    ASSERT_EQ(flecha_runtime_v1_dns_resolve(&output, "localhost", 9),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(flecha_runtime_v1_dns_result_get(
+                  output, flecha_runtime_v1_dns_result_count(output), &family,
+                  &high, &low),
+              FLECHA_RUNTIME_NETWORK_RESOLUTION_FAILED);
+    EXPECT_EQ(family, 0);
+    EXPECT_EQ(high, 0u);
+    EXPECT_EQ(low, 0u);
+    flecha_runtime_v1_dns_result_close(output);
+    flecha_runtime_v1_dns_result_close(nullptr);
+}
+
 TEST(RuntimeEnvironmentTests, RejectsInvalidNamesAndValuesTransactionally) {
     const std::string name = "FLECHA_RUNTIME_ENVIRONMENT_VALIDATION";
     ScopedRuntimeEnvironment restore(name);

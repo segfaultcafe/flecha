@@ -1,0 +1,21 @@
+module runtime;
+
+quiver extern unsafe i32 flecha_runtime_v1_dns_resolve(
+    **void output,
+    *const char name,
+    usize name_length
+);
+
+quiver extern unsafe usize flecha_runtime_v1_dns_result_count(
+    *const void handle
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_dns_result_get(
+    *const void handle,
+    usize index,
+    *u8 family,
+    *u64 high,
+    *u64 low
+);
+
+quiver extern unsafe void flecha_runtime_v1_dns_result_close(*void handle);

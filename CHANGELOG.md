@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added portable IPv4/IPv6 socket-address values and blocking hostname
+  resolution with ordered owning results, explicit ports, stable network
+  errors, and a versioned native resolver boundary.
 - Added `std::tests::benchmark` with validated warmup and sample configuration,
   monotonic in-process timing, setup/teardown hooks, integer summary statistics,
   and deterministic versioned JSON output for CI baselines.

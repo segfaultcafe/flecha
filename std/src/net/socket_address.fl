@@ -14,6 +14,97 @@ export structure Ipv6SocketAddress {
     private u16 port;
 };
 
+// Identifies the address representation stored by SocketAddress.
+export enum AddressFamily: u8 {
+    default Ipv4,
+    Ipv6,
+}
+
+// Stores either a portable IPv4 or IPv6 socket address without exposing a
+// platform-native socket structure.
+export structure SocketAddress {
+    private AddressFamily addressFamily;
+    private Ipv4SocketAddress ipv4Value;
+    private Ipv6SocketAddress ipv6Value;
+};
+
+SocketAddress SocketAddress::zero() override {
+    return build SocketAddress {
+        self.addressFamily = AddressFamily.Ipv4;
+        self.ipv4Value = Ipv4SocketAddress::fromParts(
+            Ipv4Address::wildcard(),
+            0
+        );
+        self.ipv6Value = Ipv6SocketAddress::fromParts(
+            Ipv6Address::wildcard(),
+            0
+        );
+    };
+}
+
+SocketAddress SocketAddress::fromIpv4(Ipv4SocketAddress value) {
+    return build SocketAddress {
+        self.addressFamily = AddressFamily.Ipv4;
+        self.ipv4Value = value;
+        self.ipv6Value = Ipv6SocketAddress::fromParts(
+            Ipv6Address::wildcard(),
+            0
+        );
+    };
+}
+
+SocketAddress SocketAddress::fromIpv6(Ipv6SocketAddress value) {
+    return build SocketAddress {
+        self.addressFamily = AddressFamily.Ipv6;
+        self.ipv4Value = Ipv4SocketAddress::fromParts(
+            Ipv4Address::wildcard(),
+            0
+        );
+        self.ipv6Value = value;
+    };
+}
+
+AddressFamily SocketAddress::family(&const self) {
+    return self->addressFamily;
+}
+
+bool SocketAddress::isIpv4(&const self) {
+    return self->addressFamily == AddressFamily.Ipv4;
+}
+
+bool SocketAddress::isIpv6(&const self) {
+    return self->addressFamily == AddressFamily.Ipv6;
+}
+
+(Ipv4SocketAddress, bool) SocketAddress::ipv4(&const self) {
+    if !self->isIpv4() {
+        return (none, false);
+    }
+    return (self->ipv4Value, true);
+}
+
+(Ipv6SocketAddress, bool) SocketAddress::ipv6(&const self) {
+    if !self->isIpv6() {
+        return (none, false);
+    }
+    return (self->ipv6Value, true);
+}
+
+(string, error) SocketAddress::toString(&const self) {
+    if self->isIpv6() {
+        return self->ipv6Value.toString();
+    }
+    return self->ipv4Value.toString();
+}
+
+string SocketAddress::toString!(&const self) {
+    text, formattingError := self->toString();
+    if formattingError != none {
+        crash("failed to format socket address");
+    }
+    return text;
+}
+
 Ipv4SocketAddress Ipv4SocketAddress::fromParts(
     Ipv4Address address,
     u16 port

@@ -126,6 +126,16 @@ typedef enum FlechaRuntimeRandomStatus {
     FLECHA_RUNTIME_RANDOM_FAILED = 2,
 } FlechaRuntimeRandomStatus;
 
+typedef enum FlechaRuntimeNetworkStatus {
+    FLECHA_RUNTIME_NETWORK_OK = 0,
+    FLECHA_RUNTIME_NETWORK_OUT_OF_MEMORY = 1,
+    FLECHA_RUNTIME_NETWORK_INVALID_NAME = 2,
+    FLECHA_RUNTIME_NETWORK_NAME_NOT_FOUND = 3,
+    FLECHA_RUNTIME_NETWORK_TEMPORARY_FAILURE = 4,
+    FLECHA_RUNTIME_NETWORK_UNSUPPORTED_FAMILY = 5,
+    FLECHA_RUNTIME_NETWORK_RESOLUTION_FAILED = 6,
+} FlechaRuntimeNetworkStatus;
+
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.
@@ -165,6 +175,26 @@ int32_t flecha_runtime_v1_process_argument_capture(FlechaRuntimeString* output,
 // any prefix may already have been overwritten and must not be used.
 int32_t flecha_runtime_v1_secure_random_fill(uint8_t* destination,
                                              size_t length);
+
+// Resolves one ASCII hostname into a runtime-owned ordered set of unique IPv4
+// and IPv6 addresses. International names must be supplied in their ASCII
+// compatible (punycode) form. Every failure leaves output null.
+int32_t flecha_runtime_v1_dns_resolve(void** output, const char* name,
+                                      size_t name_length);
+
+// Returns the number of normalized addresses held by a successful resolution.
+// A null handle has no results.
+size_t flecha_runtime_v1_dns_result_count(const void* handle);
+
+// Copies one result into portable numeric fields. family is 4 or 6. IPv4 uses
+// the low 32 bits of low; IPv6 uses high and low in network segment order.
+// Every failure resets all outputs.
+int32_t flecha_runtime_v1_dns_result_get(const void* handle, size_t index,
+                                         uint8_t* family, uint64_t* high,
+                                         uint64_t* low);
+
+// Releases a result set returned by dns_resolve. Null is accepted.
+void flecha_runtime_v1_dns_result_close(void* handle);
 
 // Copies the current value into an empty owning Flecha string. A successful
 // missing lookup sets present to zero; a successful empty value sets present
