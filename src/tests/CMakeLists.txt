@@ -120,6 +120,24 @@ set_tests_properties(CliTests.LongbowVersion PROPERTIES
 )
 
 add_test(
+    NAME NativeCompilerTests.EmbeddedForeignSourceFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/foreign_source.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/foreign_source_test${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_foreign_source.cmake
+)
+
+add_test(
+    NAME NativeCompilerTests.ForeignSourceAcrossModuleFiles
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/foreign_module/main.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/foreign_module_test${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_foreign_source.cmake
+)
+
+add_test(
     NAME CrashableFunctionTests.SprintfSuccess
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>

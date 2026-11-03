@@ -102,6 +102,40 @@ TEST(ParserTests, ParsesCompleteFunctionWithReturnStatement) {
     EXPECT_EQ(unit->Range().end.offset, 24);
 }
 
+TEST(ParserTests, ParsesCAndAssemblyForeignUnits) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        foreign c { int native_value(void) { return 40; } }
+        foreign asm { .text
+native_marker:
+            nop
+        };
+        i32 main() { return 2; }
+    )", diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->foreignSources.size(), 2u);
+    EXPECT_EQ(unit->foreignSources[0].language, ForeignLanguage::C);
+    EXPECT_NE(unit->foreignSources[0].source.find("native_value"),
+              std::string::npos);
+    EXPECT_EQ(unit->foreignSources[1].language, ForeignLanguage::Assembly);
+    EXPECT_NE(unit->foreignSources[1].source.find("native_marker"),
+              std::string::npos);
+    ASSERT_EQ(unit->Declarations().size(), 1u);
+}
+
+TEST(ParserTests, RejectsUnknownForeignLanguages) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource("foreign rust { fn value() {} }", diagnostics);
+
+    ASSERT_NE(unit, nullptr);
+    EXPECT_TRUE(unit->foreignSources.empty());
+    ASSERT_TRUE(diagnostics.HasErrors());
+    EXPECT_NE(diagnostics.Diagnostics()[0].message.find(
+                  "unsupported foreign language 'rust'"),
+              std::string::npos);
+}
+
 TEST(ParserTests, ParsesCrashableDeclarationsAndCalls) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(R"(

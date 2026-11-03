@@ -124,6 +124,132 @@ bool Tokenizer::Match(char expected) {
 
 bool Tokenizer::IsAtEnd() const { return _index >= _source.size(); }
 
+Token Tokenizer::ScanForeignBlock(source::SourceLocation start,
+                                  size_t startIndex) {
+    while (std::isspace(static_cast<unsigned char>(Peek())) != 0) Advance();
+    const size_t languageStart = _index;
+    if (!IsIdentifierStart(Peek())) {
+        _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                            RangeFrom(start),
+                            "expected a language after 'foreign'");
+        return Token(TokenType::Invalid,
+                     _source.substr(startIndex, _index - startIndex),
+                     RangeFrom(start));
+    }
+    Advance();
+    while (IsIdentifierContinue(Peek())) Advance();
+    const std::string language =
+        _source.substr(languageStart, _index - languageStart);
+
+    while (std::isspace(static_cast<unsigned char>(Peek())) != 0) Advance();
+    if (!Match('{')) {
+        _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                            RangeFrom(start),
+                            "expected '{' after foreign language");
+        return Token(TokenType::Invalid,
+                     _source.substr(startIndex, _index - startIndex),
+                     RangeFrom(start));
+    }
+
+    const source::SourceLocation bodyStart = Location();
+    const size_t bodyStartIndex = _index;
+    size_t depth = 1;
+    enum class Mode {
+        Source,
+        SingleQuote,
+        DoubleQuote,
+        LineComment,
+        BlockComment
+    };
+    Mode mode = Mode::Source;
+    while (!IsAtEnd()) {
+        const char current = Peek();
+        const char next = Peek(1);
+        if (mode == Mode::LineComment) {
+            Advance();
+            if (current == '\n') mode = Mode::Source;
+            continue;
+        }
+        if (mode == Mode::BlockComment) {
+            Advance();
+            if (current == '*' && next == '/') {
+                Advance();
+                mode = Mode::Source;
+            }
+            continue;
+        }
+        if (mode == Mode::SingleQuote || mode == Mode::DoubleQuote) {
+            Advance();
+            if (current == '\\' && !IsAtEnd()) {
+                Advance();
+                continue;
+            }
+            if ((mode == Mode::SingleQuote && current == '\'') ||
+                (mode == Mode::DoubleQuote && current == '"'))
+                mode = Mode::Source;
+            continue;
+        }
+
+        if (current == '/' && next == '/') {
+            Advance();
+            Advance();
+            mode = Mode::LineComment;
+            continue;
+        }
+        if (current == '/' && next == '*') {
+            Advance();
+            Advance();
+            mode = Mode::BlockComment;
+            continue;
+        }
+        if (language == "asm" && current == '#') {
+            Advance();
+            mode = Mode::LineComment;
+            continue;
+        }
+        if (current == '\'') {
+            Advance();
+            mode = Mode::SingleQuote;
+            continue;
+        }
+        if (current == '"') {
+            Advance();
+            mode = Mode::DoubleQuote;
+            continue;
+        }
+        if (current == '{') {
+            ++depth;
+            Advance();
+            continue;
+        }
+        if (current == '}') {
+            --depth;
+            if (depth == 0) {
+                const size_t bodyEndIndex = _index;
+                Advance();
+                std::string value = language;
+                value.push_back('\0');
+                value += std::to_string(bodyStart.line);
+                value.push_back('\0');
+                value += _source.substr(bodyStartIndex,
+                                        bodyEndIndex - bodyStartIndex);
+                return Token(TokenType::ForeignBlock, std::move(value),
+                             RangeFrom(start));
+            }
+            Advance();
+            continue;
+        }
+        Advance();
+    }
+
+    _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                        RangeFrom(start),
+                        "expected '}' to close foreign source block");
+    return Token(TokenType::Invalid,
+                 _source.substr(startIndex, _index - startIndex),
+                 RangeFrom(start));
+}
+
 void Tokenizer::SkipTrivia() {
     while (!IsAtEnd()) {
         const unsigned char current = static_cast<unsigned char>(Peek());
@@ -409,6 +535,7 @@ Token Tokenizer::NextToken() {
             Advance();
         }
         const string word = _source.substr(startIndex, _index - startIndex);
+        if (word == "foreign") return ScanForeignBlock(start, startIndex);
         const KeywordMap::const_iterator keyword = KEYWORDS.find(word);
         return Token(
             keyword == KEYWORDS.end() ? TokenType::Identifier : keyword->second,

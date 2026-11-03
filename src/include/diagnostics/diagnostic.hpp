@@ -87,6 +87,7 @@ enum class DiagnosticCode {
     ObjectEmissionFailed,
     RuntimeUnavailable,
     LinkerFailed,
+    ForeignCompilationFailed,
 };
 
 [[nodiscard]] std::string_view DiagnosticCodeName(DiagnosticCode code);

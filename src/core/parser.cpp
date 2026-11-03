@@ -2585,8 +2585,53 @@ std::unique_ptr<CompilationUnit> Parser::Parse() {
                 "duplicate import alias '" + import.alias + "'");
     }
     std::vector<std::unique_ptr<Declaration>> declarations;
+    std::vector<ForeignSource> foreignSources;
     while (!IsAtEnd()) {
         const std::size_t startPosition = _position;
+        if (Check(TokenType::ForeignBlock)) {
+            const Token& token = Advance();
+            const std::size_t languageEnd = token.value.find('\0');
+            const std::size_t lineEnd =
+                languageEnd == std::string::npos
+                    ? std::string::npos
+                    : token.value.find('\0', languageEnd + 1);
+            if (languageEnd == std::string::npos ||
+                lineEnd == std::string::npos) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::UnexpectedToken, token.range,
+                    "malformed foreign source block");
+            } else {
+                const std::string language = token.value.substr(0, languageEnd);
+                ForeignLanguage kind;
+                bool supported = true;
+                if (language == "c")
+                    kind = ForeignLanguage::C;
+                else if (language == "asm")
+                    kind = ForeignLanguage::Assembly;
+                else {
+                    supported = false;
+                    _diagnostics.Report(
+                        diagnostics::DiagnosticCode::UnexpectedToken,
+                        token.range,
+                        "unsupported foreign language '" + language +
+                            "'; expected 'c' or 'asm'");
+                }
+                if (supported) {
+                    std::uint32_t bodyLine = token.range.start.line;
+                    try {
+                        bodyLine = static_cast<std::uint32_t>(
+                            std::stoul(token.value.substr(
+                                languageEnd + 1, lineEnd - languageEnd - 1)));
+                    } catch (...) {
+                    }
+                    foreignSources.push_back({kind,
+                                              token.value.substr(lineEnd + 1),
+                                              token.range, bodyLine});
+                }
+            }
+            Match(TokenType::SemiColon);
+            continue;
+        }
         std::unique_ptr<Declaration> declaration = ParseDeclaration();
         if (declaration != nullptr) {
             declarations.push_back(std::move(declaration));
@@ -2604,6 +2649,7 @@ std::unique_ptr<CompilationUnit> Parser::Parse() {
     unit->moduleName = std::move(_moduleName);
     unit->privateModule = _modulePrivate;
     unit->imports = std::move(_imports);
+    unit->foreignSources = std::move(foreignSources);
     return unit;
 }
 

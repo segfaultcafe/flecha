@@ -12,7 +12,7 @@ syntax keyword flechaType f32 f64 bool char void string stringv error Allocation
 syntax match flechaType /\<[A-Z][A-Za-z0-9_]*\>/
 syntax match flechaBuiltinTypeSet /\<\%(signed_integer\|unsigned_integer\|integer\|floating_point\|numeric\)\>/
 
-syntax keyword flechaModifier unsafe once export quiver extern inline comptime copy own lend const constptr constref volatile private override
+syntax keyword flechaModifier unsafe once export quiver extern foreign inline comptime copy own lend const constptr constref volatile private override
 syntax keyword flechaFuncKeyword func
 syntax keyword flechaTypeSetKeyword typeset nextgroup=flechaTypeSetName skipwhite
 syntax match flechaTypeSetName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained

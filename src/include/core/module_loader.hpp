@@ -66,6 +66,7 @@ class ModuleLoader final {
     const PackageGraph* _packageGraph = nullptr;
     std::vector<Module> _modules;
     std::vector<std::unique_ptr<Declaration>> _declarations;
+    std::vector<ForeignSource> _foreignSources;
     ModuleLoadMode _mode = ModuleLoadMode::Runtime;
     bool _verboseTests = false;
     std::string _testingModule;

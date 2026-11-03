@@ -31,8 +31,18 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
         functions.push_back(LowerFunction(*function));
     for (const auto* function : semanticModel.AnonymousFunctions())
         functions.push_back(LowerFunction(*function));
+    std::vector<BoundForeignSource> foreignSources;
+    foreignSources.reserve(unit.foreignSources.size());
+    for (const auto& source : unit.foreignSources) {
+        foreignSources.push_back({source.language == core::ForeignLanguage::C
+                                      ? BoundForeignLanguage::C
+                                      : BoundForeignLanguage::Assembly,
+                                  source.source, source.range,
+                                  source.bodyLine});
+    }
     _semanticModel = nullptr;
-    return std::make_unique<BoundProgram>(std::move(functions));
+    return std::make_unique<BoundProgram>(std::move(functions),
+                                          std::move(foreignSources));
 }
 
 std::unique_ptr<BoundFunction> Lowerer::LowerFunction(

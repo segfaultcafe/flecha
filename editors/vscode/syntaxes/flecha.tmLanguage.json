@@ -144,7 +144,7 @@
     },
     "modifiers": {
       "name": "storage.modifier.flecha",
-      "match": "\\b(?:unsafe|once|export|quiver|extern|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|override)\\b"
+      "match": "\\b(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|override)\\b"
     },
     "control": {
       "name": "keyword.control.flecha",

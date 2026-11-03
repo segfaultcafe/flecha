@@ -77,3 +77,52 @@ unique temporary object, so an output-adjacent native input such as `program.o`
 cannot be overwritten by `build source.fl -o program --link program.o`.
 Longbow projects can list native objects or archives in the `[native]` manifest
 section described in [longbow.md](longbow.md).
+
+## Embedded foreign source
+
+Top-level `foreign c` and `foreign asm` blocks embed complete native
+translation units directly in a Flecha source unit. Their bodies are preserved
+verbatim rather than tokenized as Flecha:
+
+```flecha
+foreign c {
+    #include <stdint.h>
+
+    int32_t native_add(int32_t left, int32_t right) {
+        return left + right;
+    }
+}
+
+extern i32 native_add(i32 left, i32 right);
+```
+
+Assembly blocks use the active target assembler's source syntax:
+
+```flecha
+foreign asm {
+    .text
+    .globl native_answer
+native_answer:
+    mov $42, %eax
+    ret
+}
+
+extern i32 native_answer();
+```
+
+Assembly is necessarily target-specific; a source containing it must use syntax
+and symbols appropriate for the active host target. Embedded C is compiled as
+C, not C++, so definitions use the C ABI automatically. A foreign block does
+not declare Flecha names: every symbol used from Flecha still requires a
+matching `extern` declaration, with the same type and unsafe-pointer rules
+described above.
+
+`check` validates the Flecha structure, supported language tag, and surrounding
+declarations without invoking a native compiler. Native C or assembly syntax is
+validated by `build`, `test`, or `--emit-object`. Those commands compile every
+foreign block from the loaded module graph, merge the resulting objects with
+the Flecha object, and report foreign compiler output as `FLECHA-C0005`.
+Temporary sources and objects are removed after compilation. The configured
+`FLECHA_LINKER` driver is also the foreign compiler; otherwise Flecha discovers
+the same supported C++ driver used for final linking and selects C or assembly
+mode explicitly.
