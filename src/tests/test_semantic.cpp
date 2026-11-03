@@ -2688,13 +2688,12 @@ TEST(SemanticCallTests, ResolvesForwardAndRecursiveCalls) {
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
-TEST(SemanticCallTests, RejectsDuplicateFunctionDeclarations) {
+TEST(SemanticCallTests, AcceptsFunctionDeclarationsWithDifferentParameters) {
     Analysis analysis = Analyze(
         "i32 Calculate(i32 value) { return value; } "
         "bool Calculate(bool value) { return value; }");
 
-    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::DuplicateDeclaration),
-              nullptr);
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
 TEST(SemanticIntegrationTests, AnalyzesCompleteValidProgram) {
@@ -3690,6 +3689,21 @@ TEST(SemanticReferenceTests,
         FindDiagnostic(Analyze("void f() { i32 typed = 3; u8 x = typed; }"),
                        DiagnosticCode::IncompatibleType),
         nullptr);
+}
+
+TEST(SemanticReferenceTests, AcceptsHexadecimalIntegerLiterals) {
+    EXPECT_FALSE(Analyze("enum Code: u32 { Value = 0x6a09e667, }"
+                         "u8 f() { [0x10]u8 bytes = none; "
+                         "bytes[0x0] = 0Xff; return bytes[0x0]; }")
+                     .diagnostics.HasErrors());
+
+    for (const std::string& declaration :
+         {"u8 x = 0x100;", "i8 x = 0X80;", "u64 x = 0x10000000000000000;"}) {
+        SCOPED_TRACE(declaration);
+        EXPECT_NE(FindDiagnostic(Analyze("void f() { " + declaration + " }"),
+                                 DiagnosticCode::IntegerLiteralOutOfRange),
+                  nullptr);
+    }
 }
 
 TEST(SemanticReferenceTests, HandlesShortCircuitMovesAndUnreachableCode) {
@@ -4799,9 +4813,9 @@ TEST(SemanticEnumTests, ResolvesNominalValuesDefaultsAndMemberFunctions) {
     ASSERT_TRUE(enumeration.defaultValue.has_value());
     EXPECT_EQ(*enumeration.defaultValue, 3);
     EXPECT_TRUE(enumeration.methods.contains("is_running"));
-    EXPECT_TRUE(enumeration.methods.at("is_running")->HasReceiver());
+    EXPECT_TRUE(enumeration.methods.at("is_running").front()->HasReceiver());
     EXPECT_TRUE(enumeration.methods.contains("done"));
-    EXPECT_FALSE(enumeration.methods.at("done")->HasReceiver());
+    EXPECT_FALSE(enumeration.methods.at("done").front()->HasReceiver());
 }
 
 TEST(SemanticEnumTests, RequiresDefaultsForNoneAndKeepsEnumsNominal) {
@@ -7738,4 +7752,158 @@ TEST(SemanticReferenceTests, DerefMemberSharesDereferenceLvalueAndBorrowRules) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+}
+
+TEST(SemanticOverloadTests, ResolvesFreeStaticInstanceAndPrivateFunctions) {
+    Analysis analysis = Analyze(R"(
+        i32 select(i32 value) { return value; }
+        i64 select(i64 value) { return value; }
+
+        structure Box { i32 value; };
+        i32 Box::select(&const self, i32 value) {
+            return self->value + value;
+        }
+        i64 Box::select(&const self, i64 value) { return value; }
+        i32 Box::make(i32 value) { return value; }
+        i64 Box::make(i64 value) { return value; }
+        private i32 Box::secret(&const self, i32 value) { return value; }
+        private i64 Box::secret(&const self, i64 value) { return value; }
+        i32 Box::reveal(&const self) {
+            return self->secret(20) +
+                self->secret(22.cast<i64>).cast<i32>;
+        }
+
+        i32 check() {
+            box := Box::init();
+            i32 small = select(20);
+            i64 large = select(22.cast<i64>);
+            i32 memberSmall = box.select(20);
+            i64 memberLarge = box.select(22.cast<i64>);
+            return small + large.cast<i32> + memberSmall +
+                memberLarge.cast<i32> + Box::make(1) +
+                Box::make(1.cast<i64>).cast<i32> + box.reveal();
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticOverloadTests, ResolvesStringViewsAndByteSlicesExactly) {
+    Analysis analysis = Analyze(R"(
+        i32 size(stringv value) { return value.len().cast<i32>; }
+        i32 size([]const u8 value) { return value.len().cast<i32>; }
+        i32 check() {
+            [3]u8 bytes = [1, 2, 3];
+            fromText := size("flecha");
+            fromBytes := size(bytes[:]);
+            viewBytes := "abc".cast<[]const u8>;
+            return fromText + fromBytes + size(viewBytes);
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticOverloadTests, RejectsReturnOnlyAndMixedSafetyOverloads) {
+    Analysis returnOnly = Analyze(R"(
+        i32 convert(i32 value) { return value; }
+        i64 convert(i32 value) { return value.cast<i64>; }
+    )");
+    const Diagnostic* duplicate = FindErrorDiagnostic(
+        returnOnly, DiagnosticCode::DuplicateDeclaration);
+    ASSERT_NE(duplicate, nullptr);
+    EXPECT_NE(duplicate->message.find("same parameter types"),
+              std::string::npos);
+
+    Analysis mixedSafety = Analyze(R"(
+        i32 access(i32 value) { return value; }
+        unsafe i64 access(i64 value) { return value; }
+    )");
+    const Diagnostic* safety = FindErrorDiagnostic(
+        mixedSafety, DiagnosticCode::DuplicateDeclaration);
+    ASSERT_NE(safety, nullptr);
+    EXPECT_NE(safety->message.find("mix safe and unsafe"), std::string::npos);
+}
+
+TEST(SemanticOverloadTests, RejectsExternAndAmbiguousOverloads) {
+    Analysis foreign = Analyze(R"(
+        extern i32 host(i32 value);
+        extern i64 host(i64 value);
+    )");
+    EXPECT_NE(FindErrorDiagnostic(foreign, DiagnosticCode::InvalidExtern),
+              nullptr);
+
+    Analysis ambiguous = Analyze(R"(
+        i64 choose(i64 value) { return value; }
+        u64 choose(u64 value) { return value; }
+        void check() { choose(1); }
+    )");
+    const Diagnostic* diagnostic = FindErrorDiagnostic(
+        ambiguous, DiagnosticCode::IncompatibleArgument);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_NE(diagnostic->message.find("ambiguous overload"),
+              std::string::npos);
+}
+
+TEST(SemanticOverloadTests, KeepsUniformlyUnsafeSetsUnsafe) {
+    Analysis valid = Analyze(R"(
+        unsafe i32 read(*const i32 value) { return 20; }
+        unsafe i64 read(*const i64 value) { return 22; }
+        unsafe i32 check(*const i32 small, *const i64 large) {
+            return read(small) + read(large).cast<i32>;
+        }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis invalid = Analyze(R"(
+        unsafe i32 read(*const i32 value) { return 20; }
+        unsafe i64 read(*const i64 value) { return 22; }
+        i32 check(*const i32 value) { return read(value); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invalid,
+                                  DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticOverloadTests, RejectsBareAndDefaultAmbiguousOverloads) {
+    Analysis bare = Analyze(R"(
+        i32 choose(i32 value) { return value; }
+        i64 choose(i64 value) { return value; }
+        func Choice(i32) => (i32);
+        void check() { Choice selected = choose; }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(bare, DiagnosticCode::InvalidOperand),
+              nullptr);
+
+    Analysis defaults = Analyze(R"(
+        i32 choose(i32 value = 1) { return value; }
+        i64 choose(i64 value = 1) { return value; }
+        void check() { choose(); }
+    )");
+    const Diagnostic* ambiguity = FindErrorDiagnostic(
+        defaults, DiagnosticCode::IncompatibleArgument);
+    ASSERT_NE(ambiguity, nullptr);
+    EXPECT_NE(ambiguity->message.find("ambiguous overload"),
+              std::string::npos);
+}
+
+TEST(SemanticCastTests, StringViewsCastOnlyToConstByteSlices) {
+    Analysis valid = Analyze(R"(
+        usize length(stringv value) {
+            bytes := value.cast<[]const u8>;
+            return bytes.len();
+        }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis invalid = Analyze(R"(
+        void mutate(stringv value) {
+            bytes := value.cast<[]u8>;
+            bytes[0] = 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::InvalidCast),
+              nullptr);
 }

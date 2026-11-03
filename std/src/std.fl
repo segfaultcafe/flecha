@@ -4,6 +4,7 @@ module std;
     :: root::containers::raw_array
     :: root::containers::collections
     :: root::containers::errors as containers_errors
+    :: root::cryptography::sha2
     :: root::bytes::buffer
     :: root::bytes::sequence
     :: root::encoding::binary

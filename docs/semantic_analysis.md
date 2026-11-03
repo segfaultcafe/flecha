@@ -32,8 +32,10 @@ queries are used.
 The compilation-unit scope contains functions and named error types. Each function has a child scope
 containing its parameters and top-level body locals. Conditional bodies,
 `else` bodies, and `also` bodies introduce nested lexical scopes. Lookup starts
-in the current scope and walks outward. A declaration name may appear only once
-in a scope; a nested declaration may intentionally shadow an outer symbol.
+in the current scope and walks outward. A non-function declaration name may
+appear only once in a scope. Functions may form a parameter-based overload set;
+a nested declaration may intentionally shadow an outer symbol. See
+[function overloading](function_overloading.md).
 
 Function declarations are callable and not writable. Parameters and local
 variables are writable under the current language rules. A `:=` declaration
@@ -82,9 +84,11 @@ uses IEEE ordered equality and unordered inequality: NaN never equals a value,
 while `!=` is true when either operand is NaN. Relational comparisons remain
 ordered and therefore return false for NaN operands.
 
-Calls currently require a directly resolved function symbol. Analysis checks
-callability, argument count, and each known argument type. Function values and
-overloads are not yet part of the language model.
+Calls to an overloaded name select a unique candidate from the argument types,
+preferring exact matches over ordinary assignment or reborrow conversions.
+Analysis then checks callability, argument count, and each argument type against
+the selected signature. An overloaded name cannot yet be used as a bare
+function value.
 
 ## Diagnostics and recovery
 

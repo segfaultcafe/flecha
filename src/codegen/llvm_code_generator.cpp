@@ -19,6 +19,7 @@
 #include <string>
 #include <utility>
 
+#include "core/integer_literal.hpp"
 #include "core/output_format.hpp"
 
 namespace flecha::codegen {
@@ -2591,9 +2592,12 @@ llvm::Value* LlvmCodeGenerator::EmitLiteral(
     if (expression.Type().IsInteger() ||
         expression.Type().Kind() == semantic::SemanticTypeKind::Enum ||
         expression.Type().Kind() == semantic::SemanticTypeKind::NamedError) {
-        return llvm::ConstantInt::get(
-            type,
-            llvm::APInt(type->getIntegerBitWidth(), expression.Value(), 10));
+        std::uint64_t value = 0;
+        if (!core::ParseUnsignedIntegerLiteral(expression.Value(), value)) {
+            Fail("invalid integer literal");
+            return nullptr;
+        }
+        return llvm::ConstantInt::get(type, value);
     }
     if (expression.Type().IsFloating()) {
         char* end = nullptr;
@@ -2658,6 +2662,15 @@ llvm::Value* LlvmCodeGenerator::EmitCast(
         return _builder.CreateInsertValue(
             result, _builder.CreateExtractValue(value, 1, "slice.length"), 1,
             "slice.stringv");
+    }
+    if (sourceType.Kind() == semantic::SemanticTypeKind::StringView &&
+        expression.Type().Kind() == semantic::SemanticTypeKind::Slice) {
+        llvm::Value* result = llvm::UndefValue::get(targetType);
+        result = _builder.CreateInsertValue(
+            result, _builder.CreateExtractValue(value, 0, "stringv.data"), 0);
+        return _builder.CreateInsertValue(
+            result, _builder.CreateExtractValue(value, 1, "stringv.length"),
+            1, "stringv.slice");
     }
     if ((sourceType.Kind() == semantic::SemanticTypeKind::U8 &&
          expression.Type().Kind() == semantic::SemanticTypeKind::Char) ||

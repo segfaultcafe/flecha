@@ -45,7 +45,7 @@ syntax match flechaNamespace /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*::/
 syntax match flechaLabel /#\s*[A-Za-z_][A-Za-z0-9_]*/
 syntax match flechaJumpTarget /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 
-syntax match flechaNumber /\<\d\+\>/
+syntax match flechaNumber /\<\%(0[xX][0-9A-Fa-f]\+\|\d\+\)\>/
 syntax match flechaFloat /\<\d\+\.\d\+\>/
 
 syntax match flechaEscape /\\[ntr\\"]/ contained

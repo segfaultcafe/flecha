@@ -52,10 +52,13 @@ Source units in one logical module:
   source unit, regardless of `export`, `quiver`, or unmarked visibility;
 - keep their `@imports` bindings source-local;
 - are assembled in deterministic canonical-path order;
-- cannot declare the same top-level name twice.
+- cannot declare the same non-function top-level name twice.
 
-A duplicate top-level declaration is a module-assembly error. Flecha does not
-use source order to select a winner and does not implicitly form overload sets.
+A duplicate non-function declaration, or a function declaration with an
+already-used parameter signature, is a module-assembly error. Same-name
+functions with distinct parameter types form one overload set even when their
+declarations are contributed by different source units. Flecha never uses
+source order to select a winner.
 
 Source-unit boundaries are implementation boundaries, not visibility
 boundaries. This rule does not weaken member-level privacy inside structures or

@@ -753,6 +753,22 @@ add_test(NAME StandardLibraryTests.RandomGeneratorRuntimeFixture
         -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_random_generator.cmake)
 
+add_test(NAME StandardLibraryTests.Sha256Fixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cryptography/sha256.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/sha256_fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_sha256.cmake)
+
+add_test(NAME StandardLibraryTests.Sha512Fixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cryptography/sha512.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/sha512_fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_sha512.cmake)
+
 add_test(NAME StandardLibraryTests.NetworkAddressRuntimeFixture
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>

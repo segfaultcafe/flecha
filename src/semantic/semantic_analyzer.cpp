@@ -1,7 +1,6 @@
 #include "semantic/semantic_analyzer.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -12,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/integer_literal.hpp"
 #include "core/output_format.hpp"
 #include "core/token_type.hpp"
 #include "semantic/allocation_checker.hpp"
@@ -29,6 +29,44 @@ std::string EffectName(std::string_view name, bool crashable) {
 std::string TypeMismatch(SemanticType expected, SemanticType actual) {
     return "expected '" + std::string(expected.Name()) + "', found '" +
            std::string(actual.Name()) + "'";
+}
+
+std::string MangleType(SemanticType type) {
+    std::string result = type.IsConst() ? "K" : "N";
+    result += std::to_string(static_cast<int>(type.Kind()));
+    if (type.Kind() == SemanticTypeKind::Structure ||
+        type.Kind() == SemanticTypeKind::Enum ||
+        type.Kind() == SemanticTypeKind::NamedError) {
+        const std::string name(type.Name());
+        result += "_" + std::to_string(name.size()) + name;
+    }
+    if (type.Target()) result += "T" + MangleType(*type.Target());
+    if (type.Kind() == SemanticTypeKind::Array)
+        result += "L" + std::to_string(type.Length());
+    if (type.Kind() == SemanticTypeKind::Tuple) {
+        result += "E" + std::to_string(type.Elements().size());
+        for (const SemanticType element : type.Elements())
+            result += MangleType(element);
+    }
+    if (type.Kind() == SemanticTypeKind::Function) {
+        result += "R" + MangleType(type.Signature().result);
+        result += "P" + std::to_string(type.Signature().parameters.size());
+        for (const SemanticType parameter : type.Signature().parameters)
+            result += MangleType(parameter);
+    }
+    return result;
+}
+
+std::string OverloadLinkName(const FunctionSymbol& function) {
+    std::string result = function.Name() + "$overload$";
+    for (const SemanticType parameter : function.ParameterTypes())
+        result += MangleType(parameter);
+    return result;
+}
+
+bool SameParameterTypes(const FunctionSymbol& left,
+                        const FunctionSymbol& right) {
+    return left.ParameterTypes() == right.ParameterTypes();
 }
 
 std::optional<SemanticType> PrimitiveNumericType(const std::string& name) {
@@ -354,10 +392,7 @@ std::optional<std::uint64_t> ConstantIndex(const core::Expression& expression) {
             return std::nullopt;
         std::uint64_t value = 0;
         const std::string& text = literal.Value();
-        const auto result =
-            std::from_chars(text.data(), text.data() + text.size(), value);
-        if (result.ec == std::errc{} && result.ptr == text.data() + text.size())
-            return value;
+        if (core::ParseUnsignedIntegerLiteral(text, value)) return value;
     }
     if (expression.Kind() == core::AstNodeKind::UnaryExpression) {
         const auto& unary =
@@ -601,13 +636,35 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
             }
         }
         for (const auto& [name, found] : candidates) {
-            if (found.size() > 1) {
+            const bool functionOverloads =
+                found.size() > 1 &&
+                std::all_of(found.begin(), found.end(),
+                            [](const core::Declaration* declaration) {
+                                return declaration->Kind() ==
+                                       core::AstNodeKind::FunctionDeclaration;
+                            }) &&
+                std::all_of(found.begin(), found.end(),
+                            [&](const core::Declaration* declaration) {
+                                return declaration->moduleId ==
+                                       found.front()->moduleId;
+                            });
+            if (found.size() > 1 && !functionOverloads) {
                 _ambiguousImports[module.sourceId].insert_or_assign(name,
                                                                     found);
                 continue;
             }
-            const Symbol* symbol = _model.DeclaredSymbol(*found.front());
-            if (symbol) (void)scope->DeclareAs(name, *symbol);
+            if (functionOverloads) {
+                for (const core::Declaration* declaration : found) {
+                    const Symbol* symbol = _model.DeclaredSymbol(*declaration);
+                    if (symbol && symbol->Kind() == SymbolKind::Function)
+                        (void)scope->DeclareOverloadAs(
+                            name,
+                            *static_cast<const FunctionSymbol*>(symbol));
+                }
+            } else {
+                const Symbol* symbol = _model.DeclaredSymbol(*found.front());
+                if (symbol) (void)scope->DeclareAs(name, *symbol);
+            }
         }
     }
 }
@@ -691,29 +748,31 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
         for (const auto& field : structure->fields)
             if (!field.syntax->IsPrivate())
                 check(field.type, field.syntax->Range(), *structure->syntax);
-        for (const auto& [name, method] : structure->methods) {
-            if (method->IsPrivate() || name == "tear" ||
-                specializedFunctions.contains(method))
-                continue;
-            check(method->ReturnType(), method->DeclarationRange(),
-                  *structure->syntax);
-            for (const auto& parameter : method->ParameterTypes())
-                check(parameter, method->DeclarationRange(),
+        for (const auto& [name, methods] : structure->methods)
+            for (const FunctionSymbol* method : methods) {
+                if (method->IsPrivate() || name == "tear" ||
+                    specializedFunctions.contains(method))
+                    continue;
+                check(method->ReturnType(), method->DeclarationRange(),
                       *structure->syntax);
-        }
+                for (const auto& parameter : method->ParameterTypes())
+                    check(parameter, method->DeclarationRange(),
+                          *structure->syntax);
+            }
     }
     for (const auto& enumeration : _model._enums) {
         if (!enumeration->syntax->exported &&
             !enumeration->syntax->quiverVisible)
             continue;
-        for (const auto& [name, method] : enumeration->methods) {
-            if (method->IsPrivate()) continue;
-            check(method->ReturnType(), method->DeclarationRange(),
-                  *enumeration->syntax);
-            for (const auto& parameter : method->ParameterTypes())
-                check(parameter, method->DeclarationRange(),
+        for (const auto& [name, methods] : enumeration->methods)
+            for (const FunctionSymbol* method : methods) {
+                if (method->IsPrivate()) continue;
+                check(method->ReturnType(), method->DeclarationRange(),
                       *enumeration->syntax);
-        }
+                for (const auto& parameter : method->ParameterTypes())
+                    check(parameter, method->DeclarationRange(),
+                          *enumeration->syntax);
+            }
     }
     for (const auto& declaration : unit.Declarations()) {
         if ((!declaration->exported && !declaration->quiverVisible) ||
@@ -790,12 +849,79 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
             module != _moduleScopes.end())
             declarationScope = module->second;
     }
-    const bool declared = declarationScope->DeclareAs(localName, *result);
-    if (localName != result->Name()) (void)declarationScope->Declare(*result);
+    bool declared = false;
+    const auto& existing = declarationScope->LookupAllLocal(localName);
+    if (result->Kind() == SymbolKind::Function && !existing.empty() &&
+        std::all_of(existing.begin(), existing.end(), [](const Symbol* item) {
+            return item->Kind() == SymbolKind::Function;
+        })) {
+        auto* function = static_cast<FunctionSymbol*>(
+            const_cast<Symbol*>(result));
+        const auto functions = [&] {
+            std::vector<const FunctionSymbol*> values;
+            values.reserve(existing.size());
+            for (const Symbol* item : existing)
+                values.push_back(static_cast<const FunctionSymbol*>(item));
+            return values;
+        }();
+        const bool foreign = function->IsExtern() ||
+                             std::any_of(functions.begin(), functions.end(),
+                                         [](const FunctionSymbol* candidate) {
+                                             return candidate->IsExtern();
+                                         });
+        const bool mixedSafety =
+            std::any_of(functions.begin(), functions.end(),
+                        [&](const FunctionSymbol* candidate) {
+                            return candidate->IsUnsafe() !=
+                                   function->IsUnsafe();
+                        });
+        const bool duplicate =
+            std::any_of(functions.begin(), functions.end(),
+                        [&](const FunctionSymbol* candidate) {
+                            return SameParameterTypes(*candidate, *function);
+                        });
+        if (foreign) {
+            Report(diagnostics::DiagnosticCode::InvalidExtern,
+                   result->DeclarationRange(),
+                   "extern functions cannot be overloaded");
+        } else if (mixedSafety) {
+            Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                   result->DeclarationRange(),
+                   "an overload set cannot mix safe and unsafe functions");
+        } else if (duplicate) {
+            Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                   result->DeclarationRange(),
+                   "duplicate overload of '" + localName +
+                       "' with the same parameter types");
+        } else {
+            declared = declarationScope->DeclareOverloadAs(localName,
+                                                            *function);
+            function->SetLinkName(OverloadLinkName(*function));
+            for (const FunctionSymbol* candidate : functions)
+                const_cast<FunctionSymbol*>(candidate)->SetLinkName(
+                    OverloadLinkName(*candidate));
+        }
+    } else {
+        declared = declarationScope->DeclareAs(localName, *result);
+    }
+    if (declared && localName != result->Name()) {
+        if (result->Kind() == SymbolKind::Function &&
+            !declarationScope->LookupAllLocal(result->Name()).empty())
+            (void)declarationScope->DeclareOverloadAs(
+                result->Name(),
+                *static_cast<const FunctionSymbol*>(result));
+        else
+            (void)declarationScope->Declare(*result);
+    }
     if (!declared) {
-        Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
-               result->DeclarationRange(),
-               "duplicate declaration of '" + result->Name() + "'");
+        if (existing.empty() || result->Kind() != SymbolKind::Function ||
+            std::any_of(existing.begin(), existing.end(),
+                        [](const Symbol* item) {
+                            return item->Kind() != SymbolKind::Function;
+                        }))
+            Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                   result->DeclarationRange(),
+                   "duplicate declaration of '" + result->Name() + "'");
         return nullptr;
     }
     return result;
@@ -1569,10 +1695,7 @@ void SemanticAnalyzer::RegisterEnums(const core::CompilationUnit& unit) {
                     negative ? std::string_view(variant.discriminant).substr(1)
                              : std::string_view(variant.discriminant);
                 std::uint64_t magnitude = 0;
-                const auto parsed = std::from_chars(
-                    digits.data(), digits.data() + digits.size(), magnitude);
-                valid = parsed.ec == std::errc{} &&
-                        parsed.ptr == digits.data() + digits.size();
+                valid = core::ParseUnsignedIntegerLiteral(digits, magnitude);
                 if (!signedBacking && negative) {
                     valid = false;
                 } else if (signedBacking && negative) {
@@ -1963,10 +2086,7 @@ void SemanticAnalyzer::RegisterFunction(
     if (owner && symbol) {
         const std::string methodName =
             EffectName(function.Name(), function.IsCrashable());
-        if (!owner->methods.emplace(methodName, symbol).second)
-            Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
-                   function.NameRange(),
-                   "duplicate method '" + methodName + "'");
+        owner->methods[methodName].push_back(symbol);
         if (lifecycle && function.Name() == "init") {
             owner->init = symbol;
             owner->hasCustomInit = !generated;
@@ -1980,10 +2100,7 @@ void SemanticAnalyzer::RegisterFunction(
     if (enumOwner && symbol) {
         const std::string methodName =
             EffectName(function.Name(), function.IsCrashable());
-        if (!enumOwner->methods.emplace(methodName, symbol).second)
-            Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
-                   function.NameRange(),
-                   "duplicate enum method '" + methodName + "'");
+        enumOwner->methods[methodName].push_back(symbol);
         for (const EnumVariant& variant : enumOwner->variants)
             if (variant.name == function.Name())
                 Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
@@ -3673,10 +3790,7 @@ SemanticType SemanticAnalyzer::AnalyzeLiteral(
             limit = (std::uint64_t{1} << bits) - 1;
         std::uint64_t value = 0;
         const std::string& text = expression.Value();
-        const auto parsed =
-            std::from_chars(text.data(), text.data() + text.size(), value);
-        if (parsed.ec != std::errc{} ||
-            parsed.ptr != text.data() + text.size() || value > limit ||
+        if (!core::ParseUnsignedIntegerLiteral(text, value) || value > limit ||
             (negative && !isSigned && value != 0)) {
             Report(diagnostics::DiagnosticCode::IntegerLiteralOutOfRange,
                    expression.Range(),
@@ -3868,7 +3982,8 @@ void SemanticAnalyzer::ClassifyTrivialZeros(const core::CompilationUnit& unit) {
                 static_cast<const core::LiteralExpression&>(expression);
             switch (literal.LiteralType()) {
                 case TokenType::NumberLiteral:
-                    return expected.IsNumeric() && literal.Value() == "0";
+                    return expected.IsNumeric() &&
+                           core::IsZeroIntegerLiteral(literal.Value());
                 case TokenType::FloatLiteral:
                     return expected.IsNumeric() &&
                            std::all_of(literal.Value().begin(),
@@ -4089,6 +4204,14 @@ SemanticType SemanticAnalyzer::AnalyzeName(
         if (!ReportInaccessibleImport(lookupName, expression.Range()))
             Report(diagnostics::DiagnosticCode::UnknownName, expression.Range(),
                    "unknown name '" + lookupName + "'");
+        return SemanticType::Error();
+    }
+    if (!_analyzingCallCallee && symbol->Kind() == SymbolKind::Function &&
+        LookupFunctions(lookupName).size() > 1) {
+        Report(diagnostics::DiagnosticCode::InvalidOperand,
+               expression.Range(),
+               "overloaded function '" + expression.Name() +
+                   "' must be selected by a call");
         return SemanticType::Error();
     }
     if (symbol == _buildSelf && !_allowBuildSelf)
@@ -5280,6 +5403,123 @@ void SemanticAnalyzer::WarnForCrashlessFunctions() {
     }
 }
 
+std::vector<const FunctionSymbol*> SemanticAnalyzer::LookupFunctions(
+    std::string_view name) const {
+    std::vector<const FunctionSymbol*> result;
+    std::set<const FunctionSymbol*> seen;
+    for (const Symbol* symbol : _currentScope->LookupAll(name)) {
+        if (symbol->Kind() != SymbolKind::Function) return {};
+        const auto* function = static_cast<const FunctionSymbol*>(symbol);
+        if (seen.insert(function).second) result.push_back(function);
+    }
+    return result;
+}
+
+const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
+    std::string_view displayName,
+    const std::vector<const FunctionSymbol*>& candidates,
+    const std::vector<std::unique_ptr<core::Expression>>& arguments,
+    source::SourceRange range, bool isStatic, SemanticType receiver) {
+    std::vector<SemanticType> actualTypes;
+    actualTypes.reserve(arguments.size());
+    for (const auto& argument : arguments)
+        actualTypes.push_back(AnalyzeExpression(*argument));
+
+    const auto isNumericLiteral = [](const core::Expression& expression) {
+        const core::Expression* value = &expression;
+        while (value->Kind() == core::AstNodeKind::ParenthesizedExpression)
+            value = &static_cast<const core::ParenthesizedExpression&>(*value)
+                         .Inner();
+        if (value->Kind() == core::AstNodeKind::UnaryExpression) {
+            const auto& unary =
+                static_cast<const core::UnaryExpression&>(*value);
+            if (unary.OperatorType() != TokenType::Add &&
+                unary.OperatorType() != TokenType::Sub)
+                return false;
+            value = &unary.Operand();
+            while (value->Kind() ==
+                   core::AstNodeKind::ParenthesizedExpression)
+                value =
+                    &static_cast<const core::ParenthesizedExpression&>(*value)
+                         .Inner();
+        }
+        if (value->Kind() != core::AstNodeKind::LiteralExpression)
+            return false;
+        const auto token =
+            static_cast<const core::LiteralExpression&>(*value).LiteralType();
+        return token == TokenType::NumberLiteral ||
+               token == TokenType::FloatLiteral;
+    };
+
+    struct Match final {
+        const FunctionSymbol* function;
+        std::size_t score;
+    };
+    std::vector<Match> matches;
+    for (const FunctionSymbol* candidate : candidates) {
+        if (candidate->HasReceiver() == isStatic) continue;
+        const std::size_t offset = candidate->HasReceiver() ? 1 : 0;
+        if (candidate->HasReceiver() && receiver.IsError()) continue;
+
+        const auto& parameters = candidate->ParameterTypes();
+        const std::size_t maximum = parameters.size() - offset;
+        std::size_t minimum = maximum;
+        if (const auto* declaration = candidate->Declaration()) {
+            for (std::size_t index = offset;
+                 index < declaration->Parameters().size(); ++index) {
+                if (declaration->Parameters()[index]->DefaultValue()) {
+                    minimum = index - offset;
+                    break;
+                }
+            }
+        }
+        if (arguments.size() < minimum || arguments.size() > maximum)
+            continue;
+
+        std::size_t score = 0;
+        bool viable = true;
+        for (std::size_t index = 0; index < actualTypes.size(); ++index) {
+            const SemanticType expected = parameters[index + offset];
+            const SemanticType actual = actualTypes[index];
+            if (actual == expected ||
+                actual.WithoutConst() == expected.WithoutConst())
+                continue;
+            if (IsAssignable(expected, actual) ||
+                CanReborrow(expected, actual)) {
+                ++score;
+                continue;
+            }
+            if (isNumericLiteral(*arguments[index]) && expected.IsNumeric()) {
+                score += 2;
+                continue;
+            }
+            viable = false;
+            break;
+        }
+        if (viable) matches.push_back({candidate, score});
+    }
+
+    if (matches.empty()) {
+        Report(diagnostics::DiagnosticCode::IncompatibleArgument, range,
+               "no overload of '" + std::string(displayName) +
+                   "' accepts the supplied argument types");
+        return nullptr;
+    }
+    const auto best = std::min_element(
+        matches.begin(), matches.end(),
+        [](const Match& left, const Match& right) {
+            return left.score < right.score;
+        });
+    if (std::count_if(matches.begin(), matches.end(), [&](const Match& match) {
+            return match.score == best->score;
+        }) != 1) {
+        Report(diagnostics::DiagnosticCode::IncompatibleArgument, range,
+               "ambiguous overload of '" + std::string(displayName) + "'");
+        return nullptr;
+    }
+    return best->function;
+}
+
 SemanticType SemanticAnalyzer::AnalyzeCall(
     const core::CallExpression& expression) {
     if (expression.Callee().Kind() == core::AstNodeKind::NameExpression &&
@@ -5347,19 +5587,38 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         _model._symbols.push_back(std::move(specialized));
         return type;
     }
-    const bool previousCallee = _analyzingCallCallee;
-    const bool previousCrashableCallee = _callCalleeCrashable;
-    _analyzingCallCallee = true;
-    _callCalleeCrashable = expression.IsCrashable();
-    SemanticType calleeType = AnalyzeExpression(expression.Callee());
-    _analyzingCallCallee = previousCallee;
-    _callCalleeCrashable = previousCrashableCallee;
     const FunctionSymbol* function = nullptr;
+    SemanticType calleeType = SemanticType::Error();
     if (expression.Callee().Kind() == core::AstNodeKind::NameExpression) {
-        const Symbol* symbol = _model.SymbolFor(
-            static_cast<const core::NameExpression&>(expression.Callee()));
-        if (symbol != nullptr && symbol->Kind() == SymbolKind::Function) {
-            function = static_cast<const FunctionSymbol*>(symbol);
+        const auto& callee =
+            static_cast<const core::NameExpression&>(expression.Callee());
+        const std::string lookupName =
+            EffectName(callee.Name(), expression.IsCrashable());
+        const auto overloads = LookupFunctions(lookupName);
+        if (overloads.size() > 1) {
+            function = ResolveOverload(callee.Name(), overloads,
+                                       expression.Arguments(),
+                                       expression.Range());
+            if (!function) return SemanticType::Error();
+            _model._bindings.insert_or_assign(&callee, function);
+            _model._types.insert_or_assign(&callee, function->Type());
+            calleeType = function->Type();
+        }
+    }
+    if (!function) {
+        const bool previousCallee = _analyzingCallCallee;
+        const bool previousCrashableCallee = _callCalleeCrashable;
+        _analyzingCallCallee = true;
+        _callCalleeCrashable = expression.IsCrashable();
+        calleeType = AnalyzeExpression(expression.Callee());
+        _analyzingCallCallee = previousCallee;
+        _callCalleeCrashable = previousCrashableCallee;
+        if (expression.Callee().Kind() == core::AstNodeKind::NameExpression) {
+            const Symbol* symbol = _model.SymbolFor(
+                static_cast<const core::NameExpression&>(
+                    expression.Callee()));
+            if (symbol != nullptr && symbol->Kind() == SymbolKind::Function)
+                function = static_cast<const FunctionSymbol*>(symbol);
         }
     }
     const FunctionSymbol* declaredFunction = function;
@@ -6562,7 +6821,13 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                "unknown method '" + methodName + "'");
         return SemanticType::Error();
     }
-    const FunctionSymbol* function = methods->at(methodName);
+    const auto& overloads = methods->at(methodName);
+    const FunctionSymbol* function =
+        overloads.size() == 1
+            ? overloads.front()
+            : ResolveOverload(methodName, overloads, expression.Arguments(),
+                              expression.Range(), isStatic, receiver);
+    if (!function) return SemanticType::Error();
     _model._methods[&expression] = function;
     ValidateCrashableCall(expression.IsCrashable(), function->Signature(),
                           function, expression.Range());

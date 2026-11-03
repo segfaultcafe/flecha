@@ -160,6 +160,11 @@ void main() {
 
 Functions place the return type before the function name. Local type inference uses `:=`; explicit declarations are also supported. See [`SPEC.md`](SPEC.md) for the current syntax and design goals.
 
+Functions may overload by parameter types; return types alone never
+distinguish declarations. The selection, safety, foreign-function, and
+`stringv` byte-view rules are documented in
+[`docs/function_overloading.md`](docs/function_overloading.md).
+
 The standard formatting facade, `{}` replacement syntax, and console-output
 behavior are documented in [`docs/formatting.md`](docs/formatting.md).
 Command-line argument capture is documented in
@@ -320,6 +325,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/bytes.md`](docs/bytes.md) — raw byte storage and sequence operations
 - [`docs/encoding.md`](docs/encoding.md) — binary and hexadecimal encoding
 - [`docs/hashing.md`](docs/hashing.md) — structural non-cryptographic hashing
+- [`docs/cryptography.md`](docs/cryptography.md) — SHA-256 and SHA-512 secure hashing
 - [`docs/generics.md`](docs/generics.md) — generic specialization and direct-call inference
 - [`docs/os.md`](docs/os.md) — command-line arguments and environment variables
 - [`docs/path.md`](docs/path.md) — lexical POSIX and Windows path operations

@@ -59,6 +59,16 @@ The view must not outlive or observe destruction or replacement of its owner.
 The compiler conservatively rejects returning or otherwise escaping a view
 derived from a local owning string.
 
+A `stringv` can also be viewed as immutable bytes without allocating or
+copying:
+
+```flecha
+[]const u8 bytes = view.cast<[]const u8>;
+```
+
+The slice borrows the view's storage and cannot outlive it. A cast to mutable
+`[]u8` is rejected.
+
 ## Initial operations
 
 Both string types provide byte-based inspection:

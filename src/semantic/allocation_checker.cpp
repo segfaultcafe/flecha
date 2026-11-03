@@ -1,12 +1,12 @@
 #include "semantic/allocation_checker.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <deque>
 #include <map>
 #include <set>
 #include <utility>
 
+#include "core/integer_literal.hpp"
 #include "semantic/control_flow_graph.hpp"
 
 namespace flecha::semantic {
@@ -1268,12 +1268,8 @@ class AllocationChecker final {
                         return {ValueKind::False};
                     case TokenType::NumberLiteral: {
                         Value result{ValueKind::Integer};
-                        const std::string& text = literal.Value();
-                        const auto parsed = std::from_chars(
-                            text.data(), text.data() + text.size(),
-                            result.integer);
-                        return parsed.ec == std::errc{} &&
-                                       parsed.ptr == text.data() + text.size()
+                        return core::ParseUnsignedIntegerLiteral(
+                                   literal.Value(), result.integer)
                                    ? result
                                    : Value{};
                     }
