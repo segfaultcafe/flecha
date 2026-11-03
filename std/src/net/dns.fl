@@ -1,0 +1,141 @@
+module dns;
+
+@imports
+    :: root::net::address
+    :: root::net::errors
+    :: root::net::runtime;
+
+// Owns an ordered hostname-resolution result set.
+export structure Resolution {
+    private *void handle;
+    private u16 port;
+};
+
+Resolution Resolution::zero() override {
+    return build Resolution {
+        self.handle = null;
+        self.port = 0;
+    };
+}
+
+unsafe Resolution Resolution::fromHandle(*void handle, u16 port) {
+    return build Resolution {
+        self.handle = handle;
+        self.port = port;
+    };
+}
+
+void Resolution::tear(&self) override {
+    if self->handle == null {
+        return;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+    unsafe {
+        runtime::flecha_runtime_v1_dns_result_close(handle);
+    }
+}
+
+// Returns the number of resolved addresses.
+usize Resolution::len(&const self) {
+    unsafe {
+        return runtime::flecha_runtime_v1_dns_result_count(self->handle);
+    }
+}
+
+// Copies one resolved address. present is false when index is out of bounds.
+(address::SocketAddress, bool, error) Resolution::get(
+    &const self,
+    usize index
+) {
+    if index >= self->len() {
+        return (none, false, none);
+    }
+
+    u8 family = 0;
+    u64 high = 0;
+    u64 low = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_dns_result_get(
+            self->handle,
+            index,
+            &raw family,
+            &raw high,
+            &raw low
+        );
+        err := errors::from_runtime(
+            status,
+            errors::NetworkError.ResolutionFailed
+        );
+        if err != none {
+            return (none, false, err);
+        }
+    }
+
+    if family == 4 {
+        ipv4 := address::Ipv4Address::fromOctets(
+            (low >> 24).cast<u8>,
+            (low >> 16).cast<u8>,
+            (low >> 8).cast<u8>,
+            low.cast<u8>
+        );
+        return (
+            address::SocketAddress::fromIpv4(
+                address::Ipv4SocketAddress::fromParts(ipv4, self->port)
+            ),
+            true,
+            none
+        );
+    }
+
+    if family == 6 {
+        ipv6 := address::Ipv6Address::fromSegments(
+            (high >> 48).cast<u16>,
+            (high >> 32).cast<u16>,
+            (high >> 16).cast<u16>,
+            high.cast<u16>,
+            (low >> 48).cast<u16>,
+            (low >> 32).cast<u16>,
+            (low >> 16).cast<u16>,
+            low.cast<u16>
+        );
+        return (
+            address::SocketAddress::fromIpv6(
+                address::Ipv6SocketAddress::fromParts(ipv6, self->port)
+            ),
+            true,
+            none
+        );
+    }
+
+    return (none, false, errors::NetworkError.UnsupportedFamily);
+}
+
+// Resolves name into every unique portable IPv4 and IPv6 socket address
+// reported by the host, preserving resolver order. This operation blocks.
+// Names use ASCII hostname syntax; international names must be supplied in
+// ASCII-compatible punycode form. The returned value owns the result set.
+export (Resolution, error) resolve(
+    stringv name,
+    u16 port
+) {
+    *void handle = null;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_dns_resolve(
+            &raw handle,
+            name.data(),
+            name.len().cast<usize>
+        );
+        err := errors::from_runtime(
+            status,
+            errors::NetworkError.ResolutionFailed
+        );
+        if err != none {
+            return (none, err);
+        }
+    }
+    unsafe {
+        return (Resolution::fromHandle(handle, port), none);
+    }
+}
