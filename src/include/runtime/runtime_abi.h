@@ -98,6 +98,29 @@ typedef enum FlechaRuntimeProcessArgumentStatus {
     FLECHA_RUNTIME_PROCESS_ARGUMENT_INVALID_INDEX = 2,
 } FlechaRuntimeProcessArgumentStatus;
 
+typedef enum FlechaRuntimeProcessStatus {
+    FLECHA_RUNTIME_PROCESS_OK = 0,
+    FLECHA_RUNTIME_PROCESS_EXECUTABLE_NOT_FOUND = 1,
+    FLECHA_RUNTIME_PROCESS_PERMISSION_DENIED = 2,
+    FLECHA_RUNTIME_PROCESS_INVALID_ARGUMENT = 3,
+    FLECHA_RUNTIME_PROCESS_OUT_OF_MEMORY = 4,
+    FLECHA_RUNTIME_PROCESS_BROKEN_PIPE = 5,
+    FLECHA_RUNTIME_PROCESS_CLOSED = 6,
+    FLECHA_RUNTIME_PROCESS_FAILED = 7,
+} FlechaRuntimeProcessStatus;
+
+typedef enum FlechaRuntimeProcessStdio {
+    FLECHA_RUNTIME_PROCESS_STDIO_INHERIT = 0,
+    FLECHA_RUNTIME_PROCESS_STDIO_NULL = 1,
+    FLECHA_RUNTIME_PROCESS_STDIO_PIPED = 2,
+} FlechaRuntimeProcessStdio;
+
+typedef enum FlechaRuntimeProcessTermination {
+    FLECHA_RUNTIME_PROCESS_TERMINATION_EXITED = 0,
+    FLECHA_RUNTIME_PROCESS_TERMINATION_SIGNALED = 1,
+    FLECHA_RUNTIME_PROCESS_TERMINATION_ABNORMAL = 2,
+} FlechaRuntimeProcessTermination;
+
 typedef enum FlechaRuntimeEnvironmentStatus {
     FLECHA_RUNTIME_ENVIRONMENT_OK = 0,
     FLECHA_RUNTIME_ENVIRONMENT_OUT_OF_MEMORY = 1,
@@ -178,6 +201,41 @@ size_t flecha_runtime_v1_process_argument_count(void);
 // output pointer, every failure leaves the output empty.
 int32_t flecha_runtime_v1_process_argument_capture(FlechaRuntimeString* output,
                                                    size_t index);
+
+// Starts an executable directly, without a command shell. argument_offsets
+// has argument_count + 1 monotonic entries, begins at zero, and ends at
+// argument_bytes_length. All output handles are reset before validation. On
+// success process_output owns the process; piped stdin owns a writer while
+// piped stdout and stderr each own a reader. Other stream outputs remain null.
+int32_t flecha_runtime_v1_process_spawn(
+    void** process_output, void** stdin_output, void** stdout_output,
+    void** stderr_output, const char* executable, size_t executable_length,
+    const uint8_t* argument_bytes, size_t argument_bytes_length,
+    const size_t* argument_offsets, size_t argument_count, uint8_t stdin_mode,
+    uint8_t stdout_mode, uint8_t stderr_mode);
+
+// Blocks until termination. A successful call returns an exit code, signal
+// number, or platform abnormal-status value according to termination_kind.
+int32_t flecha_runtime_v1_process_wait(void* handle, uint8_t* termination_kind,
+                                       uint32_t* termination_detail);
+
+// Consumes an owning process handle. On POSIX this can block while reaping a
+// child that has not already been waited for.
+int32_t flecha_runtime_v1_process_close(void* handle);
+
+// Performs one blocking partial operation. Count is reset before validation
+// and preserves progress if the native operation reports it with an error. A
+// successful read of zero bytes reports EOF.
+int32_t flecha_runtime_v1_process_pipe_read(void* handle, uint8_t* destination,
+                                            size_t capacity,
+                                            size_t* bytes_read);
+int32_t flecha_runtime_v1_process_pipe_write(void* handle,
+                                             const uint8_t* source,
+                                             size_t length,
+                                             size_t* bytes_written);
+
+// Consumes a non-null owning process-pipe handle, including on close failure.
+int32_t flecha_runtime_v1_process_pipe_close(void* handle);
 
 // Fills the complete destination from the host cryptographically secure random
 // source. A null destination is valid only when length is zero. On failure,
