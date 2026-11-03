@@ -5,6 +5,7 @@ module std;
     :: root::containers::collections
     :: root::containers::errors as containers_errors
     :: root::cryptography::sha2
+    :: root::cryptography::hmac
     :: root::bytes::buffer
     :: root::bytes::sequence
     :: root::encoding::binary
