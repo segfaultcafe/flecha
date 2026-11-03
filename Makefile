@@ -142,7 +142,7 @@ test-sanitizers:
 	ASAN_OPTIONS=detect_leaks=1 \
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \
-		-R '^StandardLibraryTests\.Sha(256|512)Fixture$$'
+		-R '^StandardLibraryTests\.(Sha(256|512)|Hmac)Fixture$$'
 	ASAN_OPTIONS=detect_leaks=1 \
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \

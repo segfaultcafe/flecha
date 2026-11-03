@@ -4,6 +4,10 @@
 
 ### Added
 
+- Added allocation-free `std::cryptography::sha2` and
+  `std::cryptography::hmac` modules with portable SHA-256, SHA-512,
+  HMAC-SHA-256, and HMAC-SHA-512, including one-shot and incremental APIs,
+  fixed-size owning outputs, and published conformance vectors.
 - Added portable IPv4/IPv6 socket-address values and blocking hostname
   resolution with ordered owning results, explicit ports, stable network
   errors, and a versioned native resolver boundary.

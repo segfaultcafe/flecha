@@ -1,0 +1,55 @@
+module hmac;
+
+@imports :: root::cryptography::sha2;
+
+export error HmacError {
+    NotInitialized
+}
+
+export structure HmacSha256Tag {
+    private [32]u8 value;
+};
+
+export structure HmacSha512Tag {
+    private [64]u8 value;
+};
+
+export structure HmacSha256 {
+    private sha2::Sha256 inner;
+    private [64]u8 outerPad;
+    private bool initialized;
+};
+
+export structure HmacSha512 {
+    private sha2::Sha512 inner;
+    private [128]u8 outerPad;
+    private bool initialized;
+};
+
+export (HmacSha256Tag, error) sha256([]const u8 key, []const u8 message) {
+    hasher, createErr := HmacSha256::create(key);
+    if createErr != none {
+        return (none, createErr);
+    }
+
+    updateErr := hasher.update(message);
+    if updateErr != none {
+        return (none, updateErr);
+    }
+
+    return hasher.finalize();
+}
+
+export (HmacSha512Tag, error) sha512([]const u8 key, []const u8 message) {
+    hasher, createErr := HmacSha512::create(key);
+    if createErr != none {
+        return (none, createErr);
+    }
+
+    updateErr := hasher.update(message);
+    if updateErr != none {
+        return (none, updateErr);
+    }
+
+    return hasher.finalize();
+}

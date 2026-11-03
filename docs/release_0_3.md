@@ -73,8 +73,10 @@ std::process::*           command
 std::time::*              duration, clock
 std::random::*            generator, secure
 std::net::*               errors, address, dns, tcp, udp
-std::hash::*              checksums, sha2, hmac
-std::crypto::*            constant_time, secure_memory
+std::hashing::*           structural, non-cryptographic hashes
+std::cryptography::sha2   sha256, sha512
+std::cryptography::hmac   hmac-sha256, hmac-sha512
+std::cryptography::*      constant_time, secure_memory
 std::tests::*             testing, asserts, fixtures, golden, benchmark
 ```
 

@@ -769,6 +769,14 @@ add_test(NAME StandardLibraryTests.Sha512Fixture
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/sha512_fixture
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_sha512.cmake)
 
+add_test(NAME StandardLibraryTests.HmacFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cryptography/hmac.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/hmac_fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_hmac.cmake)
+
 add_test(NAME StandardLibraryTests.NetworkAddressRuntimeFixture
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
