@@ -62,8 +62,9 @@ The first receiver parameter can be `self`, `&self`, `&const self`, `*self`, or
 value and permits chaining on temporaries; inside that method, fields use `.`
 and returning `self` transfers the complete value. Explicitly writing
 `Box self` or `&Box self` is equivalent to the corresponding shorthand. A
-method without a receiver is static and uses `Box::method()`. There is no method
-overloading in this milestone.
+method without a receiver is static and uses `Box::method()`. Static and
+instance methods may overload by parameter types under the ordinary
+[function-overloading rules](function_overloading.md).
 
 Reference receivers participate in checked borrowing. The implicit receiver
 borrow lasts throughout argument evaluation and the call. Field borrows
