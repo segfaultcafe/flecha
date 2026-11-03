@@ -43,10 +43,10 @@ i32 main() {
 
     {
         results, resolveError := dns::resolve("success", 4242);
-        value, present, getError := results.get(0);
+        value := results[0];
         ipv4, hasIpv4 := value.ipv4();
-        if resolveError != none or results.len() != 1 or getError != none or
-            !present or !hasIpv4 or ipv4.address() !=
+        if resolveError != none or results.len() != 1 or
+            !hasIpv4 or ipv4.address() !=
                 address::Ipv4Address::loopback() or
             ipv4.port() != 4242 {
             return 7;
@@ -61,13 +61,8 @@ i32 main() {
         return 8;
     }
 
-    {
-        results, resolveError := dns::resolve("get-failure", 80);
-        _, present, getError := results.get(0);
-        if resolveError != none or present or
-            getError != errors::NetworkError.ResolutionFailed {
-            return 9;
-        }
+    if !expect_error("allocation-failure", AllocationError.OutOfMemory) {
+        return 9;
     }
 
     unsafe {
@@ -75,6 +70,21 @@ i32 main() {
     }
     if closeCount != 2 {
         return 10;
+    }
+
+    {
+        results, resolveError := dns::resolve("get-failure", 80);
+        if resolveError != errors::NetworkError.ResolutionFailed or
+            results.len() != 0 {
+            return 11;
+        }
+    }
+
+    unsafe {
+        closeCount = flecha_test_dns_close_count();
+    }
+    if closeCount != 3 {
+        return 12;
     }
 
     return 42;

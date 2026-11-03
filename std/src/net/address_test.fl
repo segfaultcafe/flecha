@@ -717,10 +717,8 @@ test dns_resolution_returns_owned_portable_addresses(
 
     bool valid = results.len() > 0;
     loop usize index = 0; index < results.len(); index++ {
-        value, present, getError := results.get(index);
-        if getError != none or !present {
-            valid = false;
-        } else if value.isIpv4() {
+        value := results[index];
+        if value.isIpv4() {
             ipv4, hasIpv4 := value.ipv4();
             if !hasIpv4 or ipv4.port() != 4242 {
                 valid = false;
@@ -735,11 +733,10 @@ test dns_resolution_returns_owned_portable_addresses(
         }
     }
 
-    _, pastEnd, pastEndError := results.get(results.len());
     asserts::is_true(
         t,
-        valid and !pastEnd and pastEndError == none,
-        "resolution preserves every address and reports its end safely"
+        valid,
+        "resolution returns every address in an owning array"
     );
 }
 
