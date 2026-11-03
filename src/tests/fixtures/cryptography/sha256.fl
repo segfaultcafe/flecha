@@ -1,0 +1,60 @@
+module sha256_fixture;
+
+@imports :: lib::std::cryptography::sha2;
+
+bool digest_equals(
+    &const sha2::Sha256Digest digest,
+    []const u8 expected
+) {
+    actual := digest->bytes();
+    if actual.len() != expected.len() {
+        return false;
+    }
+
+    loop usize index = 0; index < actual.len(); index++ {
+        if actual[index] != expected[index] {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+i32 main() {
+    [32]u8 abcExpected = [
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+        0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+        0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+        0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad
+    ];
+    abcDigest, abcError := sha2::sha256("abc");
+    if abcError != none or !digest_equals(&abcDigest, abcExpected[:]) {
+        return 1;
+    }
+
+    [64]u8 message = [0x61; 64];
+    [32]u8 expected = [
+        0xff, 0xe0, 0x54, 0xfe, 0x7a, 0xe0, 0xcb, 0x6d,
+        0xc6, 0x5c, 0x3a, 0xf9, 0xb6, 0x1d, 0x52, 0x09,
+        0xf4, 0x39, 0x85, 0x1d, 0xb4, 0x3d, 0x0b, 0xa5,
+        0x99, 0x73, 0x37, 0xdf, 0x15, 0x46, 0x68, 0xeb
+    ];
+    hasher := sha2::Sha256::init();
+    if hasher.update(message[:13]) != none or
+        hasher.update(message[13:]) != none {
+        return 2;
+    }
+
+    digest, finalizeError := hasher.finalize();
+    if finalizeError != none or !digest_equals(&digest, expected[:]) {
+        return 3;
+    }
+
+    _, secondFinalizeError := hasher.finalize();
+    if secondFinalizeError != sha2::Sha2Error.AlreadyFinalized or
+        hasher.update(message[:0]) != sha2::Sha2Error.AlreadyFinalized {
+        return 4;
+    }
+
+    return 42;
+}

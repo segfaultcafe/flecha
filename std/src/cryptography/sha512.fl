@@ -1,0 +1,350 @@
+module sha2;
+
+@imports :: root::math::bits;
+
+Sha512 Sha512::init() override {
+    return Sha512::zero();
+}
+
+Sha512 Sha512::zero() override {
+    return build Sha512 {
+        self.state = [
+            SHA512_CONST_1,
+            SHA512_CONST_2,
+            SHA512_CONST_3,
+            SHA512_CONST_4,
+            SHA512_CONST_5,
+            SHA512_CONST_6,
+            SHA512_CONST_7,
+            SHA512_CONST_8
+        ];
+        self.pending = none;
+        self.pendingLength = 0;
+        self.totalLengthHigh = 0;
+        self.totalLengthLow = 0;
+        self.finalized = false;
+    };
+}
+
+bool Sha512::isFinalized(&const self) {
+    return self->finalized;
+}
+
+Sha2Error Sha512::update(&self, []const u8 input) {
+    if self->finalized {
+        return Sha2Error.AlreadyFinalized;
+    }
+
+    lengthError := self->addLength(input.len().cast<u64>);
+    if lengthError != none {
+        return lengthError;
+    }
+
+    usize sourceOffset = 0;
+    if self->pendingLength > 0 {
+        usize available = 128 - self->pendingLength;
+        usize count = input.len();
+
+        if count > available {
+            count = available;
+        }
+
+        loop usize index = 0; index < count; index++ {
+            self->pending[self->pendingLength + index] = input[index];
+        }
+
+        self->pendingLength += count;
+        sourceOffset = count;
+    } also self->pendingLength == 128 {
+        [128]u8 completedBlock = self->pending;
+        self->compress(completedBlock[:]);
+        self->pendingLength = 0;
+    }
+
+    while input.len() - sourceOffset >= 128 {
+        self->compress(input[sourceOffset:sourceOffset + 128]);
+        sourceOffset += 128;
+    }
+
+    while sourceOffset < input.len() {
+        self->pending[self->pendingLength] = input[sourceOffset];
+        self->pendingLength++;
+        sourceOffset++;
+    }
+
+    return none;
+}
+
+(Sha512Digest, Sha2Error) Sha512::finalize(&self) {
+    if self->finalized {
+        return (none, Sha2Error.AlreadyFinalized);
+    }
+
+    [256]u8 tail;
+
+    loop usize index = 0; index < self->pendingLength; index++ {
+        tail[index] = self->pending[index];
+    }
+
+    tail[self->pendingLength] = 0x80;
+
+    usize blockCount = 1;
+    if self->pendingLength >= 112 {
+        blockCount++;
+    }
+
+    const u64 BIT_LENGTH_HIGH =
+        (self->totalLengthHigh << 3) |
+        (self->totalLengthLow >> 61);
+    const u64 BIT_LENGTH_LOW = self->totalLengthLow << 3;
+    const usize LENGTH_OFFSET = blockCount * 128 - 16;
+
+    tail[LENGTH_OFFSET] = (BIT_LENGTH_HIGH >> 56).cast<u8>;
+    tail[LENGTH_OFFSET + 1] = (BIT_LENGTH_HIGH >> 48).cast<u8>;
+    tail[LENGTH_OFFSET + 2] = (BIT_LENGTH_HIGH >> 40).cast<u8>;
+    tail[LENGTH_OFFSET + 3] = (BIT_LENGTH_HIGH >> 32).cast<u8>;
+    tail[LENGTH_OFFSET + 4] = (BIT_LENGTH_HIGH >> 24).cast<u8>;
+    tail[LENGTH_OFFSET + 5] = (BIT_LENGTH_HIGH >> 16).cast<u8>;
+    tail[LENGTH_OFFSET + 6] = (BIT_LENGTH_HIGH >> 8).cast<u8>;
+    tail[LENGTH_OFFSET + 7] = BIT_LENGTH_HIGH.cast<u8>;
+
+    tail[LENGTH_OFFSET + 8] = (BIT_LENGTH_LOW >> 56).cast<u8>;
+    tail[LENGTH_OFFSET + 9] = (BIT_LENGTH_LOW >> 48).cast<u8>;
+    tail[LENGTH_OFFSET + 10] = (BIT_LENGTH_LOW >> 40).cast<u8>;
+    tail[LENGTH_OFFSET + 11] = (BIT_LENGTH_LOW >> 32).cast<u8>;
+    tail[LENGTH_OFFSET + 12] = (BIT_LENGTH_LOW >> 24).cast<u8>;
+    tail[LENGTH_OFFSET + 13] = (BIT_LENGTH_LOW >> 16).cast<u8>;
+    tail[LENGTH_OFFSET + 14] = (BIT_LENGTH_LOW >> 8).cast<u8>;
+    tail[LENGTH_OFFSET + 15] = BIT_LENGTH_LOW.cast<u8>;
+
+    self->compress(tail[:128]);
+    if blockCount == 2 {
+        self->compress(tail[128:256]);
+    }
+
+    [64]u8 digest;
+
+    loop usize index = 0; index < 8; index++ {
+        const usize OFFSET = index * 8;
+        const u64 WORD = self->state[index];
+
+        digest[OFFSET] = (WORD >> 56).cast<u8>;
+        digest[OFFSET + 1] = (WORD >> 48).cast<u8>;
+        digest[OFFSET + 2] = (WORD >> 40).cast<u8>;
+        digest[OFFSET + 3] = (WORD >> 32).cast<u8>;
+        digest[OFFSET + 4] = (WORD >> 24).cast<u8>;
+        digest[OFFSET + 5] = (WORD >> 16).cast<u8>;
+        digest[OFFSET + 6] = (WORD >> 8).cast<u8>;
+        digest[OFFSET + 7] = WORD.cast<u8>;
+    }
+
+    self->finalized = true;
+    return (Sha512Digest::init(digest), none);
+}
+
+private Sha2Error Sha512::addLength(&self, u64 inputLength) {
+    newLow, lowOverflow := self->totalLengthLow.overflow_add(inputLength);
+    u64 newHigh = self->totalLengthHigh;
+
+    if lowOverflow {
+        incrementedHigh, highOverflow := newHigh.overflow_add(1);
+        if highOverflow {
+            return Sha2Error.MessageTooLong;
+        }
+
+        newHigh = incrementedHigh;
+    }
+
+    // SHA-512 accepts at most 2^128 - 1 bits, or floor((2^128 - 1) / 8)
+    // complete bytes.
+    const u64 MAX_BYTE_LENGTH_HIGH = 0x1fffffffffffffff;
+    if newHigh > MAX_BYTE_LENGTH_HIGH {
+        return Sha2Error.MessageTooLong;
+    }
+
+    self->totalLengthHigh = newHigh;
+    self->totalLengthLow = newLow;
+    return none;
+}
+
+private void Sha512::compress(&self, []const u8 block) {
+    [80]u64 words;
+
+    loop usize index = 0; index < 16; index++ {
+        const usize OFFSET = index * 8;
+        words[index] =
+            (block[OFFSET].cast<u64> << 56) |
+            (block[OFFSET + 1].cast<u64> << 48) |
+            (block[OFFSET + 2].cast<u64> << 40) |
+            (block[OFFSET + 3].cast<u64> << 32) |
+            (block[OFFSET + 4].cast<u64> << 24) |
+            (block[OFFSET + 5].cast<u64> << 16) |
+            (block[OFFSET + 6].cast<u64> << 8) |
+            block[OFFSET + 7].cast<u64>;
+    }
+
+    loop usize index = 16; index < 80; index++ {
+        words[index] =
+            sha512_small_sigma_one(words[index - 2]) +
+            words[index - 7] +
+            sha512_small_sigma_zero(words[index - 15]) +
+            words[index - 16];
+    }
+
+    const [80]u64 ROUND_CONSTANTS = [
+        SHA512_ROUND_CONST_1,
+        SHA512_ROUND_CONST_2,
+        SHA512_ROUND_CONST_3,
+        SHA512_ROUND_CONST_4,
+        SHA512_ROUND_CONST_5,
+        SHA512_ROUND_CONST_6,
+        SHA512_ROUND_CONST_7,
+        SHA512_ROUND_CONST_8,
+        SHA512_ROUND_CONST_9,
+        SHA512_ROUND_CONST_10,
+        SHA512_ROUND_CONST_11,
+        SHA512_ROUND_CONST_12,
+        SHA512_ROUND_CONST_13,
+        SHA512_ROUND_CONST_14,
+        SHA512_ROUND_CONST_15,
+        SHA512_ROUND_CONST_16,
+        SHA512_ROUND_CONST_17,
+        SHA512_ROUND_CONST_18,
+        SHA512_ROUND_CONST_19,
+        SHA512_ROUND_CONST_20,
+        SHA512_ROUND_CONST_21,
+        SHA512_ROUND_CONST_22,
+        SHA512_ROUND_CONST_23,
+        SHA512_ROUND_CONST_24,
+        SHA512_ROUND_CONST_25,
+        SHA512_ROUND_CONST_26,
+        SHA512_ROUND_CONST_27,
+        SHA512_ROUND_CONST_28,
+        SHA512_ROUND_CONST_29,
+        SHA512_ROUND_CONST_30,
+        SHA512_ROUND_CONST_31,
+        SHA512_ROUND_CONST_32,
+        SHA512_ROUND_CONST_33,
+        SHA512_ROUND_CONST_34,
+        SHA512_ROUND_CONST_35,
+        SHA512_ROUND_CONST_36,
+        SHA512_ROUND_CONST_37,
+        SHA512_ROUND_CONST_38,
+        SHA512_ROUND_CONST_39,
+        SHA512_ROUND_CONST_40,
+        SHA512_ROUND_CONST_41,
+        SHA512_ROUND_CONST_42,
+        SHA512_ROUND_CONST_43,
+        SHA512_ROUND_CONST_44,
+        SHA512_ROUND_CONST_45,
+        SHA512_ROUND_CONST_46,
+        SHA512_ROUND_CONST_47,
+        SHA512_ROUND_CONST_48,
+        SHA512_ROUND_CONST_49,
+        SHA512_ROUND_CONST_50,
+        SHA512_ROUND_CONST_51,
+        SHA512_ROUND_CONST_52,
+        SHA512_ROUND_CONST_53,
+        SHA512_ROUND_CONST_54,
+        SHA512_ROUND_CONST_55,
+        SHA512_ROUND_CONST_56,
+        SHA512_ROUND_CONST_57,
+        SHA512_ROUND_CONST_58,
+        SHA512_ROUND_CONST_59,
+        SHA512_ROUND_CONST_60,
+        SHA512_ROUND_CONST_61,
+        SHA512_ROUND_CONST_62,
+        SHA512_ROUND_CONST_63,
+        SHA512_ROUND_CONST_64,
+        SHA512_ROUND_CONST_65,
+        SHA512_ROUND_CONST_66,
+        SHA512_ROUND_CONST_67,
+        SHA512_ROUND_CONST_68,
+        SHA512_ROUND_CONST_69,
+        SHA512_ROUND_CONST_70,
+        SHA512_ROUND_CONST_71,
+        SHA512_ROUND_CONST_72,
+        SHA512_ROUND_CONST_73,
+        SHA512_ROUND_CONST_74,
+        SHA512_ROUND_CONST_75,
+        SHA512_ROUND_CONST_76,
+        SHA512_ROUND_CONST_77,
+        SHA512_ROUND_CONST_78,
+        SHA512_ROUND_CONST_79,
+        SHA512_ROUND_CONST_80
+    ];
+
+    u64 a = self->state[0];
+    u64 b = self->state[1];
+    u64 c = self->state[2];
+    u64 d = self->state[3];
+    u64 e = self->state[4];
+    u64 f = self->state[5];
+    u64 g = self->state[6];
+    u64 h = self->state[7];
+
+    loop usize index = 0; index < 80; index++ {
+        const u64 TEMP_1 =
+            h +
+            sha512_big_sigma_one(e) +
+            sha512_choose(e, f, g) +
+            ROUND_CONSTANTS[index] +
+            words[index];
+        const u64 TEMP_2 =
+            sha512_big_sigma_zero(a) + sha512_majority(a, b, c);
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + TEMP_1;
+        d = c;
+        c = b;
+        b = a;
+        a = TEMP_1 + TEMP_2;
+    }
+
+    self->state[0] += a;
+    self->state[1] += b;
+    self->state[2] += c;
+    self->state[3] += d;
+    self->state[4] += e;
+    self->state[5] += f;
+    self->state[6] += g;
+    self->state[7] += h;
+}
+
+u64 sha512_choose(u64 x, u64 y, u64 z) {
+    return (x & y) ^ ((~x) & z);
+}
+
+u64 sha512_majority(u64 x, u64 y, u64 z) {
+    return (x & y) ^ (x & z) ^ (y & z);
+}
+
+u64 sha512_big_sigma_zero(u64 value) {
+    return
+        bits::rotate_right(value, 28) ^
+        bits::rotate_right(value, 34) ^
+        bits::rotate_right(value, 39);
+}
+
+u64 sha512_big_sigma_one(u64 value) {
+    return
+        bits::rotate_right(value, 14) ^
+        bits::rotate_right(value, 18) ^
+        bits::rotate_right(value, 41);
+}
+
+u64 sha512_small_sigma_zero(u64 value) {
+    return
+        bits::rotate_right(value, 1) ^
+        bits::rotate_right(value, 8) ^
+        (value >> 7);
+}
+
+u64 sha512_small_sigma_one(u64 value) {
+    return
+        bits::rotate_right(value, 19) ^
+        bits::rotate_right(value, 61) ^
+        (value >> 6);
+}
