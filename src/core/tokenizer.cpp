@@ -83,6 +83,12 @@ bool IsIdentifierContinue(char character) {
     return std::isalnum(value) != 0 || character == '_';
 }
 
+bool IsHexadecimalDigit(char character) {
+    const unsigned char value = static_cast<unsigned char>(character);
+    return std::isdigit(value) != 0 || (character >= 'a' && character <= 'f') ||
+           (character >= 'A' && character <= 'F');
+}
+
 }  // namespace
 
 source::SourceLocation Tokenizer::Location() const {
@@ -514,6 +520,13 @@ Token Tokenizer::NextToken() {
     const unsigned char unsignedCharacter =
         static_cast<unsigned char>(character);
     if (std::isdigit(unsignedCharacter) != 0) {
+        if (character == '0' && (Peek() == 'x' || Peek() == 'X') &&
+            IsHexadecimalDigit(Peek(1))) {
+            Advance();
+            while (IsHexadecimalDigit(Peek())) Advance();
+            return makeToken(TokenType::NumberLiteral);
+        }
+
         while (std::isdigit(static_cast<unsigned char>(Peek())) != 0) {
             Advance();
         }

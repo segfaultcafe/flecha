@@ -509,6 +509,11 @@ bool CanExplicitlyCast(SemanticType source, SemanticType destination) {
         source.Target()->WithoutConst().Kind() == SemanticTypeKind::U8 &&
         destination.Kind() == SemanticTypeKind::StringView)
         return true;
+    if (source.Kind() == SemanticTypeKind::StringView &&
+        destination.Kind() == SemanticTypeKind::Slice &&
+        destination.Target()->Kind() == SemanticTypeKind::U8 &&
+        destination.Target()->IsConst())
+        return true;
     if (source.IsCompound() || destination.IsCompound()) return false;
     if (source.WithoutConst() == destination.WithoutConst()) return true;
     if ((source.Kind() == SemanticTypeKind::U8 &&

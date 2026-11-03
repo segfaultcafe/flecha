@@ -158,6 +158,9 @@ class FunctionSymbol final : public Symbol {
     bool HasReceiver() const { return _hasReceiver; }
     bool IsExtern() const { return _isExtern; }
     const std::string& LinkName() const { return _linkName; }
+    void SetLinkName(std::string linkName) {
+        _linkName = std::move(linkName);
+    }
     [[nodiscard]] const std::vector<std::size_t>& BorrowSourceIndices() const {
         return _signature->borrowSourceIndices;
     }
@@ -201,7 +204,8 @@ struct EnumType final {
     SemanticType backing = SemanticType(SemanticTypeKind::U32);
     std::vector<EnumVariant> variants;
     std::optional<std::uint64_t> defaultValue;
-    std::unordered_map<std::string, const FunctionSymbol*> methods;
+    std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
+        methods;
 };
 
 struct StructureField final {
@@ -215,7 +219,8 @@ struct StructureType final {
     std::string displayName;
     const core::StructureDeclaration* syntax = nullptr;
     std::vector<StructureField> fields;
-    std::unordered_map<std::string, const FunctionSymbol*> methods;
+    std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
+        methods;
     const FunctionSymbol* init = nullptr;
     const FunctionSymbol* zero = nullptr;
     const FunctionSymbol* tear = nullptr;

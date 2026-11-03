@@ -1,9 +1,10 @@
 #include "core/parser.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <string>
 #include <utility>
+
+#include "core/integer_literal.hpp"
 
 namespace flecha::core {
 namespace {
@@ -2303,10 +2304,7 @@ std::optional<std::uint64_t> Parser::ParseArrayLength() {
                                  "nonnegative integer literal array length");
     if (count == nullptr) return std::nullopt;
     std::uint64_t length = 0;
-    const auto result = std::from_chars(
-        count->value.data(), count->value.data() + count->value.size(), length);
-    if (result.ec != std::errc{} ||
-        result.ptr != count->value.data() + count->value.size()) {
+    if (!ParseUnsignedIntegerLiteral(count->value, length)) {
         _diagnostics.Report(diagnostics::DiagnosticCode::InvalidArrayLength,
                             count->range, "array length is too large");
         return std::nullopt;

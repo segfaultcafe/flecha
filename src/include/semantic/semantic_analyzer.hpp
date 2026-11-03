@@ -86,6 +86,14 @@ class SemanticAnalyzer final {
     SemanticType AnalyzeBuild(const core::BuildExpression& expression);
     SemanticType AnalyzeStructureCall(
         const core::MemberCallExpression& expression, SemanticType receiver);
+    std::vector<const FunctionSymbol*> LookupFunctions(
+        std::string_view name) const;
+    const FunctionSymbol* ResolveOverload(
+        std::string_view displayName,
+        const std::vector<const FunctionSymbol*>& candidates,
+        const std::vector<std::unique_ptr<core::Expression>>& arguments,
+        source::SourceRange range, bool isStatic = true,
+        SemanticType receiver = SemanticType::Error());
     void CheckTransfer(const core::Expression& expression, SemanticType type,
                        bool consumingOwnership = false);
     void WarnForNontrivialDefault(SemanticType type, source::SourceRange range);

@@ -219,8 +219,8 @@ TEST(TokenizerTests, ReportsUnterminatedForeignSource) {
 }
 
 TEST(TokenizerTests, RecognizesNumbers) {
-    std::vector<Token> tokens = Tokenize("123 0 3.14");
-    ASSERT_EQ(tokens.size(), 4);  // 3 numbers + EOF
+    std::vector<Token> tokens = Tokenize("123 0 3.14 0x6a09e667 0XCAFE");
+    ASSERT_EQ(tokens.size(), 6);  // 5 numbers + EOF
 
     EXPECT_EQ(tokens[0].type, TokenType::NumberLiteral);
     EXPECT_EQ(tokens[0].value, "123");
@@ -233,7 +233,13 @@ TEST(TokenizerTests, RecognizesNumbers) {
         TokenType::FloatLiteral);  // If floating-point numbers are supported
     EXPECT_EQ(tokens[2].value, "3.14");
 
-    EXPECT_EQ(tokens[3].type, TokenType::EOF_TOKEN);
+    EXPECT_EQ(tokens[3].type, TokenType::NumberLiteral);
+    EXPECT_EQ(tokens[3].value, "0x6a09e667");
+
+    EXPECT_EQ(tokens[4].type, TokenType::NumberLiteral);
+    EXPECT_EQ(tokens[4].value, "0XCAFE");
+
+    EXPECT_EQ(tokens[5].type, TokenType::EOF_TOKEN);
 }
 
 TEST(TokenizerTests, RecognizesSpecialCharacters) {

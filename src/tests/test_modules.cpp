@@ -147,6 +147,23 @@ TEST_F(ModuleTests, ComposesLogicalModulesAcrossArbitraryFilenames) {
               std::string::npos);
 }
 
+TEST_F(ModuleTests, ComposesAndImportsOverloadsAcrossSourceUnits) {
+    Write("first_piece.fl", R"(module shared;
+        export i32 choose(i32 value) { return value + 1; }
+    )");
+    Write("second_piece.fl", R"(module shared;
+        export i64 choose(i64 value) { return value + 2; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::shared;
+        i32 main() {
+            i32 small = shared::choose(19);
+            i64 large = shared::choose(20.cast<i64>);
+            return small + large.cast<i32>;
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+
 TEST_F(ModuleTests, ExportsVariadicForwardingFunctionsAcrossModules) {
     Write("output.fl", R"(module output;
         export void print(values...) { stdout(values...); }

@@ -1,6 +1,7 @@
 stringv Echo(stringv value) {
     // NOTE: exercise current Flecha syntax.
     count := 42;
+    digest_word := 0x6a09e667;
     ratio := 4.2;
     letter := '\n';
     message := "flecha\n";

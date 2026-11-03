@@ -1268,10 +1268,12 @@ class BorrowChecker final {
             case Kind::CastExpression: {
                 const auto& cast =
                     static_cast<const core::CastExpression&>(expression);
-                if (_model.TypeOf(expression).Kind() ==
-                    SemanticTypeKind::StringView) {
-                    if (_model.TypeOf(cast.Value()).Kind() ==
-                        SemanticTypeKind::String)
+                const SemanticType resultType = _model.TypeOf(expression);
+                const SemanticType valueType = _model.TypeOf(cast.Value());
+                if (resultType.Kind() == SemanticTypeKind::StringView ||
+                    (resultType.Kind() == SemanticTypeKind::Slice &&
+                     valueType.Kind() == SemanticTypeKind::StringView)) {
+                    if (valueType.Kind() == SemanticTypeKind::String)
                         return Borrow(Place(cast.Value()), false,
                                       expression.Range());
                     return Evaluate(cast.Value());
