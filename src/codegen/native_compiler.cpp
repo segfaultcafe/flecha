@@ -418,7 +418,10 @@ bool NativeCompiler::CompileForeignSources(
 bool NativeCompiler::MergeObjects(const std::string& compilerPath,
                                   const std::vector<std::string>& objectPaths,
                                   const std::string& outputPath) {
-    std::vector<std::string> arguments{compilerPath, "-r"};
+    // A relocatable merge must contain only the supplied objects. In
+    // particular, MinGW compiler drivers otherwise inject CRT startup objects
+    // even with -r, causing duplicate entry points during the final link.
+    std::vector<std::string> arguments{compilerPath, "-nostdlib", "-r"};
     arguments.insert(arguments.end(), objectPaths.begin(), objectPaths.end());
     arguments.emplace_back("-o");
     arguments.push_back(outputPath);
