@@ -593,6 +593,9 @@ itself:
 8. Provide allocation-free compile-time forwarding packs for the small Flecha
    wrappers over typed standard-output and standard-error operations, without
    exposing a native variadic ABI or a runtime pack value.
+9. Add an MSVC toolchain path that builds Flecha, Longbow, and the runtime with
+   `cl.exe`, emits the LLVM `windows-msvc` ABI, compiles embedded C through the
+   MSVC driver, and links generated programs with `link.exe` or `lld-link`.
 
 This work should be delivered as focused compiler or runtime changes in support
 of a concrete standard-library API. It must not become an unrelated language
@@ -626,17 +629,21 @@ Flecha 0.3.0 is ready when:
    build and run from clean, relocated release packages.
 3. The complete suite passes on Linux x86-64, Windows x86-64, macOS x86-64,
    and macOS arm64 where those release runners remain supported.
-4. Compiler, runtime, and native examples pass AddressSanitizer and
+4. The Windows matrix covers both the existing MSYS2 UCRT64/MinGW path and an
+   MSVC path. The MSVC job builds Flecha, Longbow, and the runtime with
+   `cl.exe`, then builds and runs clean-install native and embedded-C smoke
+   programs targeting the `windows-msvc` ABI.
+5. Compiler, runtime, and native examples pass AddressSanitizer and
    UndefinedBehaviorSanitizer checks on supported sanitizer hosts.
-5. Resource-owning APIs pass injected allocation and operating-system failure
+6. Resource-owning APIs pass injected allocation and operating-system failure
    tests without leaks, double cleanup, or stale-handle use.
-6. Serialization, hashing, text, and numeric operations pass portable golden
+7. Serialization, hashing, text, and numeric operations pass portable golden
    vectors and produce deterministic cross-platform results.
-7. Every exported module has reference documentation and at least one focused
+8. Every exported module has reference documentation and at least one focused
    example or north-star use.
-8. Packaged Longbow discovers the bundled standard library and all required
+9. Packaged Longbow discovers the bundled standard library and all required
    runtime symbols without referring to the source checkout.
-9. A community-package fixture can be published, resolved into a locked graph,
+10. A community-package fixture can be published, resolved into a locked graph,
    built from a clean cache, rebuilt offline, yanked without invalidating the
    existing lock, and consumed under a caller-selected `lib` alias.
 

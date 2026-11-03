@@ -17,6 +17,11 @@ clean-install matrix.
 | Apple Clang | 16 through 17 |
 | Microsoft Visual C++ | Not supported |
 
+Microsoft Visual C++ is not supported by the current release line. Building
+Flecha and generated programs with the MSVC ABI and native MSVC drivers is a
+required [0.3.0 release gate](release_0_3.md#release-gates), not a claim about
+the toolchains supported today.
+
 The C and C++ compilers must come from the same toolchain and support C++23.
 CMake rejects unsupported compiler and LLVM versions during configuration.
 `LLVM_DIR` must identify the matching LLVM CMake package when it is not on the
