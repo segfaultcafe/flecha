@@ -1,0 +1,20 @@
+module process_allocation_failure;
+
+@imports
+    :: lib::std::process::command;
+
+i32 main() {
+    processCommand := command::Command::init(
+        "flecha-process-allocation-failure"
+    );
+    if processCommand.arg("unused") != none {
+        return 1;
+    }
+
+    child, spawnError := processCommand.spawn();
+    if spawnError != AllocationError.OutOfMemory or child.isOpen() or
+        child.hasStdin() or child.hasStdout() or child.hasStderr() {
+        return 2;
+    }
+    return 42;
+}

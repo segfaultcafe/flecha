@@ -12,6 +12,13 @@ add_executable(test_flecha
     test_tokenizer.cpp
 )
 
+add_executable(process_fixture fixtures/process_fixture.cpp)
+target_link_libraries(process_fixture PRIVATE flecha_project_options)
+target_compile_definitions(test_flecha PRIVATE
+    FLECHA_PROCESS_FIXTURE="$<TARGET_FILE:process_fixture>"
+)
+add_dependencies(test_flecha process_fixture)
+
 target_link_libraries(test_flecha
     PRIVATE
         flecha_project_options
@@ -693,6 +700,32 @@ add_test(NAME StandardLibraryTests.ProcessArgumentsCaptureFailure
         -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
         -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_process_argument_capture_failure.cmake)
+
+add_test(NAME StandardLibraryTests.ChildProcess
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/process/main.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_PROCESS_FIXTURE=$<TARGET_FILE:process_fixture>
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/child_process_test${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_process.cmake)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    foreach(failCall IN ITEMS 2 3)
+        add_test(NAME StandardLibraryTests.ChildProcessAllocationFailure.${failCall}
+            COMMAND ${CMAKE_COMMAND}
+                -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+                -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/process/allocation_failure.fl
+                -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+                -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+                -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/child_process_allocation_failure_${failCall}
+                -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+                -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+                -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+                -DFLECHA_ARRAY_FAIL_CALL=${failCall}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+    endforeach()
+endif()
 
 add_test(NAME StandardLibraryTests.EnvironmentAllocationFailure
     COMMAND ${CMAKE_COMMAND}

@@ -16,12 +16,17 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "runtime/runtime_abi.h"
 
 #ifndef _WIN32
 #include <pthread.h>
 #include <signal.h>
+#endif
+
+#ifndef FLECHA_PROCESS_FIXTURE
+#error "FLECHA_PROCESS_FIXTURE must name the process test fixture"
 #endif
 
 namespace {
@@ -81,6 +86,43 @@ class ScopedRuntimeEnvironment final {
 #ifndef _WIN32
 void IgnoreSignal(int) {}
 #endif
+
+struct SpawnedProcess final {
+    void* process = nullptr;
+    void* input = nullptr;
+    void* output = nullptr;
+    void* error = nullptr;
+};
+
+int32_t SpawnFixture(const std::vector<std::string>& arguments,
+                     uint8_t inputMode, uint8_t outputMode, uint8_t errorMode,
+                     SpawnedProcess* output) {
+    std::string bytes;
+    std::vector<size_t> offsets{0};
+    for (const std::string& argument : arguments) {
+        bytes += argument;
+        offsets.push_back(bytes.size());
+    }
+    return flecha_runtime_v1_process_spawn(
+        &output->process, &output->input, &output->output, &output->error,
+        FLECHA_PROCESS_FIXTURE, std::strlen(FLECHA_PROCESS_FIXTURE),
+        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
+        offsets.data(), arguments.size(), inputMode, outputMode, errorMode);
+}
+
+std::string ReadProcessOutput(void* handle) {
+    std::string result;
+    std::array<uint8_t, 257> bytes{};
+    for (;;) {
+        size_t count = 0;
+        if (flecha_runtime_v1_process_pipe_read(handle, bytes.data(),
+                                                bytes.size(), &count) !=
+            FLECHA_RUNTIME_PROCESS_OK)
+            return {};
+        if (count == 0) return result;
+        result.append(reinterpret_cast<const char*>(bytes.data()), count);
+    }
+}
 
 }  // namespace
 
@@ -161,6 +203,237 @@ TEST(RuntimeProcessArgumentTests, CapturesInitializedArguments) {
     flecha_runtime_v1_process_arguments_initialize(0, nullptr);
     EXPECT_EQ(flecha_runtime_v1_process_argument_count(), 0u);
 }
+
+TEST(RuntimeChildProcessTests, PassesArgumentsWithoutShellInterpolation) {
+    SpawnedProcess child;
+    ASSERT_EQ(SpawnFixture({"arguments", "two words", "; echo expanded",
+                            "$(echo expanded)", "", "quote\"slash\\"},
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                           FLECHA_RUNTIME_PROCESS_STDIO_PIPED,
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL, &child),
+              FLECHA_RUNTIME_PROCESS_OK);
+    ASSERT_NE(child.process, nullptr);
+    ASSERT_NE(child.output, nullptr);
+    EXPECT_EQ(child.input, nullptr);
+    EXPECT_EQ(child.error, nullptr);
+
+    EXPECT_EQ(ReadProcessOutput(child.output),
+              "9:two words\n15:; echo expanded\n16:$(echo expanded)\n0:\n"
+              "12:quote\"slash\\\n");
+    EXPECT_EQ(flecha_runtime_v1_process_pipe_close(child.output),
+              FLECHA_RUNTIME_PROCESS_OK);
+    uint8_t kind = 99;
+    uint32_t detail = 99;
+    EXPECT_EQ(flecha_runtime_v1_process_wait(child.process, &kind, &detail),
+              FLECHA_RUNTIME_PROCESS_OK);
+    EXPECT_EQ(kind, FLECHA_RUNTIME_PROCESS_TERMINATION_EXITED);
+    EXPECT_EQ(detail, 0u);
+    EXPECT_EQ(flecha_runtime_v1_process_close(child.process),
+              FLECHA_RUNTIME_PROCESS_OK);
+}
+
+TEST(RuntimeChildProcessTests, DistinguishesMissingAndNonzeroExit) {
+    const size_t offsets[] = {0};
+    SpawnedProcess missing{
+        reinterpret_cast<void*>(1), reinterpret_cast<void*>(1),
+        reinterpret_cast<void*>(1), reinterpret_cast<void*>(1)};
+    const char executable[] = "flecha-definitely-missing-executable";
+    EXPECT_EQ(flecha_runtime_v1_process_spawn(
+                  &missing.process, &missing.input, &missing.output,
+                  &missing.error, executable, sizeof(executable) - 1, nullptr,
+                  0, offsets, 0, FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                  FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                  FLECHA_RUNTIME_PROCESS_STDIO_NULL),
+              FLECHA_RUNTIME_PROCESS_EXECUTABLE_NOT_FOUND);
+    EXPECT_EQ(missing.process, nullptr);
+    EXPECT_EQ(missing.input, nullptr);
+    EXPECT_EQ(missing.output, nullptr);
+    EXPECT_EQ(missing.error, nullptr);
+
+    SpawnedProcess child;
+    ASSERT_EQ(SpawnFixture({"exit", "37"}, FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL, &child),
+              FLECHA_RUNTIME_PROCESS_OK);
+    uint8_t kind = 99;
+    uint32_t detail = 99;
+    EXPECT_EQ(flecha_runtime_v1_process_wait(child.process, &kind, &detail),
+              FLECHA_RUNTIME_PROCESS_OK);
+    EXPECT_EQ(kind, FLECHA_RUNTIME_PROCESS_TERMINATION_EXITED);
+    EXPECT_EQ(detail, 37u);
+    EXPECT_EQ(flecha_runtime_v1_process_close(child.process),
+              FLECHA_RUNTIME_PROCESS_OK);
+}
+
+TEST(RuntimeChildProcessTests, TransfersLargePartialPipeTraffic) {
+    constexpr size_t expectedLength = 1024 * 1024;
+    SpawnedProcess child;
+    ASSERT_EQ(
+        SpawnFixture({"large", "1048576"}, FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                     FLECHA_RUNTIME_PROCESS_STDIO_PIPED,
+                     FLECHA_RUNTIME_PROCESS_STDIO_NULL, &child),
+        FLECHA_RUNTIME_PROCESS_OK);
+    const std::string bytes = ReadProcessOutput(child.output);
+    ASSERT_EQ(bytes.size(), expectedLength);
+    for (size_t index = 0; index < bytes.size(); ++index)
+        ASSERT_EQ(bytes[index], 'a' + index % 26) << "at byte " << index;
+    EXPECT_EQ(flecha_runtime_v1_process_pipe_close(child.output),
+              FLECHA_RUNTIME_PROCESS_OK);
+    uint8_t kind = 0;
+    uint32_t detail = 0;
+    EXPECT_EQ(flecha_runtime_v1_process_wait(child.process, &kind, &detail),
+              FLECHA_RUNTIME_PROCESS_OK);
+    EXPECT_EQ(detail, 0u);
+    EXPECT_EQ(flecha_runtime_v1_process_close(child.process),
+              FLECHA_RUNTIME_PROCESS_OK);
+}
+
+TEST(RuntimeChildProcessTests, ReportsBrokenPipeAfterChildClosesInput) {
+    SpawnedProcess child;
+    ASSERT_EQ(SpawnFixture({"exit", "0"}, FLECHA_RUNTIME_PROCESS_STDIO_PIPED,
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL, &child),
+              FLECHA_RUNTIME_PROCESS_OK);
+    uint8_t kind = 0;
+    uint32_t detail = 0;
+    ASSERT_EQ(flecha_runtime_v1_process_wait(child.process, &kind, &detail),
+              FLECHA_RUNTIME_PROCESS_OK);
+    const uint8_t byte = 42;
+    size_t count = 99;
+    EXPECT_EQ(
+        flecha_runtime_v1_process_pipe_write(child.input, &byte, 1, &count),
+        FLECHA_RUNTIME_PROCESS_BROKEN_PIPE);
+    EXPECT_EQ(count, 0u);
+    EXPECT_EQ(flecha_runtime_v1_process_pipe_close(child.input),
+              FLECHA_RUNTIME_PROCESS_OK);
+    EXPECT_EQ(flecha_runtime_v1_process_close(child.process),
+              FLECHA_RUNTIME_PROCESS_OK);
+}
+
+TEST(RuntimeChildProcessTests, KeepsOutputAndErrorPipesDistinct) {
+    SpawnedProcess child;
+    ASSERT_EQ(SpawnFixture({"both"}, FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                           FLECHA_RUNTIME_PROCESS_STDIO_PIPED,
+                           FLECHA_RUNTIME_PROCESS_STDIO_PIPED, &child),
+              FLECHA_RUNTIME_PROCESS_OK);
+    EXPECT_EQ(ReadProcessOutput(child.output), "standard output");
+    EXPECT_EQ(ReadProcessOutput(child.error), "standard error");
+    EXPECT_EQ(flecha_runtime_v1_process_pipe_close(child.output),
+              FLECHA_RUNTIME_PROCESS_OK);
+    EXPECT_EQ(flecha_runtime_v1_process_pipe_close(child.error),
+              FLECHA_RUNTIME_PROCESS_OK);
+    uint8_t kind = 0;
+    uint32_t detail = 0;
+    EXPECT_EQ(flecha_runtime_v1_process_wait(child.process, &kind, &detail),
+              FLECHA_RUNTIME_PROCESS_OK);
+    EXPECT_EQ(detail, 0u);
+    EXPECT_EQ(flecha_runtime_v1_process_close(child.process),
+              FLECHA_RUNTIME_PROCESS_OK);
+}
+
+TEST(RuntimeChildProcessTests, ResetsOutputsWhenArgumentsAreInvalid) {
+    SpawnedProcess child{reinterpret_cast<void*>(1), reinterpret_cast<void*>(1),
+                         reinterpret_cast<void*>(1),
+                         reinterpret_cast<void*>(1)};
+    const size_t invalidOffsets[] = {1};
+    EXPECT_EQ(
+        flecha_runtime_v1_process_spawn(
+            &child.process, &child.input, &child.output, &child.error,
+            FLECHA_PROCESS_FIXTURE, std::strlen(FLECHA_PROCESS_FIXTURE),
+            nullptr, 0, invalidOffsets, 0, FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+            FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+            FLECHA_RUNTIME_PROCESS_STDIO_NULL),
+        FLECHA_RUNTIME_PROCESS_INVALID_ARGUMENT);
+    EXPECT_EQ(child.process, nullptr);
+    EXPECT_EQ(child.input, nullptr);
+    EXPECT_EQ(child.output, nullptr);
+    EXPECT_EQ(child.error, nullptr);
+
+    child = {reinterpret_cast<void*>(1), reinterpret_cast<void*>(1),
+             reinterpret_cast<void*>(1), reinterpret_cast<void*>(1)};
+    EXPECT_EQ(
+        flecha_runtime_v1_process_spawn(
+            &child.process, &child.input, &child.output, &child.error,
+            FLECHA_PROCESS_FIXTURE, std::strlen(FLECHA_PROCESS_FIXTURE),
+            nullptr, 0, invalidOffsets, std::numeric_limits<size_t>::max(),
+            FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+            FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+            FLECHA_RUNTIME_PROCESS_STDIO_NULL),
+        FLECHA_RUNTIME_PROCESS_OUT_OF_MEMORY);
+    EXPECT_EQ(child.process, nullptr);
+    EXPECT_EQ(child.input, nullptr);
+    EXPECT_EQ(child.output, nullptr);
+    EXPECT_EQ(child.error, nullptr);
+
+    size_t count = 99;
+    EXPECT_EQ(flecha_runtime_v1_process_pipe_read(nullptr, nullptr, 0, &count),
+              FLECHA_RUNTIME_PROCESS_CLOSED);
+    EXPECT_EQ(count, 0u);
+    count = 99;
+    EXPECT_EQ(flecha_runtime_v1_process_pipe_write(nullptr, nullptr, 0, &count),
+              FLECHA_RUNTIME_PROCESS_CLOSED);
+    EXPECT_EQ(count, 0u);
+}
+
+TEST(RuntimeChildProcessTests, ReleasesEveryOwnedHandle) {
+#ifdef __linux__
+    const size_t descriptorsBefore = OpenDescriptorCount();
+#endif
+    for (int iteration = 0; iteration < 32; ++iteration) {
+        SpawnedProcess child;
+        ASSERT_EQ(SpawnFixture({"both"}, FLECHA_RUNTIME_PROCESS_STDIO_PIPED,
+                               FLECHA_RUNTIME_PROCESS_STDIO_PIPED,
+                               FLECHA_RUNTIME_PROCESS_STDIO_PIPED, &child),
+                  FLECHA_RUNTIME_PROCESS_OK);
+        ASSERT_EQ(flecha_runtime_v1_process_pipe_close(child.input),
+                  FLECHA_RUNTIME_PROCESS_OK);
+        EXPECT_EQ(ReadProcessOutput(child.output), "standard output");
+        EXPECT_EQ(ReadProcessOutput(child.error), "standard error");
+        ASSERT_EQ(flecha_runtime_v1_process_pipe_close(child.output),
+                  FLECHA_RUNTIME_PROCESS_OK);
+        ASSERT_EQ(flecha_runtime_v1_process_pipe_close(child.error),
+                  FLECHA_RUNTIME_PROCESS_OK);
+        ASSERT_EQ(flecha_runtime_v1_process_close(child.process),
+                  FLECHA_RUNTIME_PROCESS_OK);
+    }
+#ifdef __linux__
+    EXPECT_EQ(OpenDescriptorCount(), descriptorsBefore);
+#endif
+}
+
+#ifndef _WIN32
+TEST(RuntimeChildProcessTests, ReportsSignalTermination) {
+    SpawnedProcess child;
+    ASSERT_EQ(SpawnFixture({"signal"}, FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL, &child),
+              FLECHA_RUNTIME_PROCESS_OK);
+    uint8_t kind = 0;
+    uint32_t detail = 0;
+    EXPECT_EQ(flecha_runtime_v1_process_wait(child.process, &kind, &detail),
+              FLECHA_RUNTIME_PROCESS_OK);
+    EXPECT_EQ(kind, FLECHA_RUNTIME_PROCESS_TERMINATION_SIGNALED);
+    EXPECT_EQ(detail, static_cast<uint32_t>(SIGTERM));
+    EXPECT_EQ(flecha_runtime_v1_process_close(child.process),
+              FLECHA_RUNTIME_PROCESS_OK);
+}
+#else
+TEST(RuntimeChildProcessTests, ReportsAbnormalWindowsTermination) {
+    SpawnedProcess child;
+    ASSERT_EQ(SpawnFixture({"abnormal"}, FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL,
+                           FLECHA_RUNTIME_PROCESS_STDIO_NULL, &child),
+              FLECHA_RUNTIME_PROCESS_OK);
+    uint8_t kind = 0;
+    uint32_t detail = 0;
+    EXPECT_EQ(flecha_runtime_v1_process_wait(child.process, &kind, &detail),
+              FLECHA_RUNTIME_PROCESS_OK);
+    EXPECT_EQ(kind, FLECHA_RUNTIME_PROCESS_TERMINATION_ABNORMAL);
+    EXPECT_NE(detail, 0u);
+    EXPECT_EQ(flecha_runtime_v1_process_close(child.process),
+              FLECHA_RUNTIME_PROCESS_OK);
+}
+#endif
 
 TEST(RuntimeEnvironmentTests, DistinguishesMissingEmptyAndPresentValues) {
     const std::string name = "FLECHA_RUNTIME_ENVIRONMENT_ROUND_TRIP";
