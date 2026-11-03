@@ -268,6 +268,146 @@ TEST(RuntimeNetworkTests, ValidatesNamesHandlesAndResultIndexes) {
     flecha_runtime_v1_dns_result_close(nullptr);
 }
 
+TEST(RuntimeTcpTests, ExchangesDataOverAnIpv4LoopbackConnection) {
+    constexpr uint64_t loopback = UINT64_C(0x7f000001);
+    void* listener = nullptr;
+    ASSERT_EQ(
+        flecha_runtime_v1_tcp_listener_bind(&listener, 4, 0, loopback, 0, 8),
+        FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_NE(listener, nullptr);
+
+    uint8_t listenerFamily = 0;
+    uint64_t listenerHigh = 1;
+    uint64_t listenerLow = 0;
+    uint16_t listenerPort = 0;
+    ASSERT_EQ(flecha_runtime_v1_tcp_listener_local_address(
+                  listener, &listenerFamily, &listenerHigh, &listenerLow,
+                  &listenerPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(listenerFamily, 4);
+    EXPECT_EQ(listenerHigh, 0u);
+    EXPECT_EQ(listenerLow, loopback);
+    ASSERT_NE(listenerPort, 0);
+
+    std::atomic<int32_t> clientConnectStatus{FLECHA_RUNTIME_NETWORK_FAILED};
+    std::atomic<int32_t> clientWriteStatus{FLECHA_RUNTIME_NETWORK_FAILED};
+    std::atomic<int32_t> clientReadStatus{FLECHA_RUNTIME_NETWORK_FAILED};
+    std::atomic<int32_t> clientCloseStatus{FLECHA_RUNTIME_NETWORK_FAILED};
+    std::atomic<size_t> clientWriteCount{0};
+    std::atomic<size_t> clientReadCount{0};
+    std::atomic<bool> clientMayWrite{false};
+    std::array<uint8_t, 4> clientReply{};
+
+    std::thread client([&] {
+        void* stream = nullptr;
+        clientConnectStatus = flecha_runtime_v1_tcp_stream_connect(
+            &stream, 4, 0, loopback, listenerPort, 1, 2, 0);
+        if (clientConnectStatus != FLECHA_RUNTIME_NETWORK_OK) return;
+        while (!clientMayWrite.load()) std::this_thread::yield();
+
+        const std::array<uint8_t, 4> request{'p', 'i', 'n', 'g'};
+        size_t count = 0;
+        clientWriteStatus = flecha_runtime_v1_tcp_stream_write(
+            stream, request.data(), request.size(), &count);
+        clientWriteCount = count;
+        if (clientWriteStatus == FLECHA_RUNTIME_NETWORK_OK) {
+            (void)flecha_runtime_v1_tcp_stream_set_timeout(stream, 0, 1, 2, 0);
+            count = 0;
+            clientReadStatus = flecha_runtime_v1_tcp_stream_read(
+                stream, clientReply.data(), clientReply.size(), &count);
+            clientReadCount = count;
+        }
+        clientCloseStatus = flecha_runtime_v1_tcp_stream_close(stream);
+    });
+
+    void* accepted = nullptr;
+    uint8_t peerFamily = 0;
+    uint64_t peerHigh = 1;
+    uint64_t peerLow = 0;
+    uint16_t peerPort = 0;
+    const int32_t acceptStatus = flecha_runtime_v1_tcp_listener_accept(
+        listener, &accepted, &peerFamily, &peerHigh, &peerLow, &peerPort);
+
+    int32_t serverReadStatus = FLECHA_RUNTIME_NETWORK_FAILED;
+    int32_t serverWriteStatus = FLECHA_RUNTIME_NETWORK_FAILED;
+    int32_t acceptedCloseStatus = FLECHA_RUNTIME_NETWORK_FAILED;
+    int32_t immediateReadStatus = FLECHA_RUNTIME_NETWORK_FAILED;
+    size_t immediateReadCount = 99;
+    size_t serverReadCount = 0;
+    size_t serverWriteCount = 0;
+    std::array<uint8_t, 4> request{};
+    if (acceptStatus == FLECHA_RUNTIME_NETWORK_OK) {
+        (void)flecha_runtime_v1_tcp_stream_set_timeout(accepted, 0, 1, 0, 0);
+        uint8_t byte = 0;
+        immediateReadStatus = flecha_runtime_v1_tcp_stream_read(
+            accepted, &byte, 1, &immediateReadCount);
+        (void)flecha_runtime_v1_tcp_stream_set_timeout(accepted, 0, 1, 2, 0);
+        clientMayWrite = true;
+        serverReadStatus = flecha_runtime_v1_tcp_stream_read(
+            accepted, request.data(), request.size(), &serverReadCount);
+        const std::array<uint8_t, 4> reply{'p', 'o', 'n', 'g'};
+        serverWriteStatus = flecha_runtime_v1_tcp_stream_write(
+            accepted, reply.data(), reply.size(), &serverWriteCount);
+        acceptedCloseStatus = flecha_runtime_v1_tcp_stream_close(accepted);
+    } else {
+        clientMayWrite = true;
+    }
+    const int32_t listenerCloseStatus =
+        flecha_runtime_v1_tcp_listener_close(listener);
+    client.join();
+
+    ASSERT_EQ(acceptStatus, FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_NE(accepted, nullptr);
+    EXPECT_EQ(peerFamily, 4);
+    EXPECT_EQ(peerHigh, 0u);
+    EXPECT_EQ(peerLow, loopback);
+    EXPECT_NE(peerPort, 0);
+    EXPECT_EQ(immediateReadStatus, FLECHA_RUNTIME_NETWORK_TIMED_OUT);
+    EXPECT_EQ(immediateReadCount, 0u);
+    EXPECT_EQ(serverReadStatus, FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(serverReadCount, 4u);
+    EXPECT_EQ(request, (std::array<uint8_t, 4>{'p', 'i', 'n', 'g'}));
+    EXPECT_EQ(serverWriteStatus, FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(serverWriteCount, 4u);
+    EXPECT_EQ(acceptedCloseStatus, FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(listenerCloseStatus, FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(clientConnectStatus, FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(clientWriteStatus, FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(clientWriteCount, 4u);
+    EXPECT_EQ(clientReadStatus, FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(clientReadCount, 4u);
+    EXPECT_EQ(clientReply, (std::array<uint8_t, 4>{'p', 'o', 'n', 'g'}));
+    EXPECT_EQ(clientCloseStatus, FLECHA_RUNTIME_NETWORK_OK);
+}
+
+TEST(RuntimeTcpTests, ResetsOutputsAndValidatesPortableEndpoints) {
+    void* output = reinterpret_cast<void*>(1);
+    EXPECT_EQ(flecha_runtime_v1_tcp_listener_bind(&output, 3, 0, 0, 0, 1),
+              FLECHA_RUNTIME_NETWORK_UNSUPPORTED_FAMILY);
+    EXPECT_EQ(output, nullptr);
+    output = reinterpret_cast<void*>(1);
+    EXPECT_EQ(flecha_runtime_v1_tcp_listener_bind(&output, 4, 1,
+                                                  UINT64_C(0x7f000001), 0, 1),
+              FLECHA_RUNTIME_NETWORK_UNSUPPORTED_FAMILY);
+    EXPECT_EQ(output, nullptr);
+    EXPECT_EQ(flecha_runtime_v1_tcp_stream_close(nullptr),
+              FLECHA_RUNTIME_NETWORK_CLOSED);
+    EXPECT_EQ(flecha_runtime_v1_tcp_listener_close(nullptr),
+              FLECHA_RUNTIME_NETWORK_CLOSED);
+
+    uint8_t family = 9;
+    uint64_t high = 9;
+    uint64_t low = 9;
+    uint16_t port = 9;
+    EXPECT_EQ(flecha_runtime_v1_tcp_stream_local_address(nullptr, &family,
+                                                         &high, &low, &port),
+              FLECHA_RUNTIME_NETWORK_CLOSED);
+    EXPECT_EQ(family, 0);
+    EXPECT_EQ(high, 0u);
+    EXPECT_EQ(low, 0u);
+    EXPECT_EQ(port, 0);
+}
+
 TEST(RuntimeEnvironmentTests, RejectsInvalidNamesAndValuesTransactionally) {
     const std::string name = "FLECHA_RUNTIME_ENVIRONMENT_VALIDATION";
     ScopedRuntimeEnvironment restore(name);

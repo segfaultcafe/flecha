@@ -1,0 +1,194 @@
+module tcp_runtime;
+
+@imports
+    :: lib::std::net::address
+    :: lib::std::net::errors
+    :: lib::std::net::tcp
+    :: lib::std::time::duration;
+
+extern unsafe usize flecha_test_tcp_stream_close_count();
+extern unsafe usize flecha_test_tcp_listener_close_count();
+extern unsafe u8 flecha_test_tcp_timeout_mask();
+extern unsafe u8 flecha_test_tcp_connect_timeout_valid();
+extern unsafe u8 flecha_test_tcp_bind_valid();
+extern unsafe u8 flecha_test_tcp_shutdown_valid();
+
+address::SocketAddress endpoint(u16 port) {
+    return address::SocketAddress::fromIpv4(
+        address::Ipv4SocketAddress::fromParts(
+            address::Ipv4Address::loopback(),
+            port
+        )
+    );
+}
+
+bool expect_connect_error(u16 port, error expected) {
+    value, actual := tcp::Stream::connect(endpoint(port));
+    return actual == expected and !value.isOpen();
+}
+
+i32 main() {
+    if !expect_connect_error(10001, AllocationError.OutOfMemory) {
+        return 1;
+    }
+    if !expect_connect_error(10007, errors::NetworkError.Closed) {
+        return 2;
+    }
+    if !expect_connect_error(10008, errors::NetworkError.TimedOut) {
+        return 3;
+    }
+    if !expect_connect_error(10009, errors::NetworkError.ConnectionRefused) {
+        return 4;
+    }
+    if !expect_connect_error(10010, errors::NetworkError.ConnectionReset) {
+        return 5;
+    }
+    if !expect_connect_error(10011, errors::NetworkError.NetworkUnreachable) {
+        return 6;
+    }
+    if !expect_connect_error(10012, errors::NetworkError.AddressInUse) {
+        return 7;
+    }
+    if !expect_connect_error(
+        10013,
+        errors::NetworkError.AddressNotAvailable
+    ) {
+        return 8;
+    }
+    if !expect_connect_error(10014, errors::NetworkError.BrokenPipe) {
+        return 9;
+    }
+    if !expect_connect_error(10015, errors::NetworkError.ConnectFailed) {
+        return 10;
+    }
+
+    {
+        connection, connectError := tcp::Stream::connect(endpoint(4242));
+        if connectError != none or !connection.isOpen() {
+            return 11;
+        }
+
+        local, localError := connection.localAddress();
+        localIpv4, hasLocalIpv4 := local.ipv4();
+        if localError != none or !hasLocalIpv4 or
+            localIpv4.address() != address::Ipv4Address::loopback() or
+            localIpv4.port() != 50000 {
+            return 12;
+        }
+
+        peer, peerError := connection.peerAddress();
+        peerIpv4, hasPeerIpv4 := peer.ipv4();
+        if peerError != none or !hasPeerIpv4 or
+            peerIpv4.address() != address::Ipv4Address::loopback() or
+            peerIpv4.port() != 443 {
+            return 13;
+        }
+
+        [4]u8 destination;
+        count, readError := connection.read(destination[:]);
+        if count != 1 or readError != errors::NetworkError.ConnectionReset or
+            destination[0] != 42 {
+            return 14;
+        }
+
+        eofCount, eofError := connection.read(destination[:]);
+        if eofCount != 0 or eofError != none {
+            return 15;
+        }
+
+        [3]u8 source = [1, 2, 3];
+        written, writeError := connection.write(source[:]);
+        if written != 2 or writeError != errors::NetworkError.BrokenPipe {
+            return 16;
+        }
+        if connection.writeAll(source[:]) != none {
+            return 17;
+        }
+
+        if connection.setReadTimeout(
+            duration::Duration::fromMilliseconds(2500)
+        ) != none or connection.clearReadTimeout() != none or
+            connection.setWriteTimeout(
+                duration::Duration::fromMilliseconds(3750)
+            ) != none or connection.clearWriteTimeout() != none {
+            return 18;
+        }
+
+        if connection.shutdown(tcp::Shutdown.ReadWrite) != none {
+            return 19;
+        }
+
+        if connection.close() != none or connection.isOpen() or
+            connection.close() != errors::NetworkError.Closed {
+            return 20;
+        }
+    }
+
+    {
+        timed, timedError := tcp::Stream::connectWithTimeout(
+            endpoint(4243),
+            duration::Duration::fromMilliseconds(1500)
+        );
+        if timedError != none or !timed.isOpen() {
+            return 21;
+        }
+    }
+
+    {
+        failedClose, connectError := tcp::Stream::connect(endpoint(4244));
+        if connectError != none or
+            failedClose.close() != errors::NetworkError.CloseFailed or
+            failedClose.isOpen() {
+            return 22;
+        }
+    }
+
+    {
+        listener, bindError := tcp::Listener::bind(endpoint(0), 16);
+        if bindError != none or !listener.isOpen() {
+            return 23;
+        }
+
+        local, localError := listener.localAddress();
+        localIpv4, hasIpv4 := local.ipv4();
+        if localError != none or !hasIpv4 or
+            localIpv4.address() != address::Ipv4Address::loopback() or
+            localIpv4.port() != 4321 {
+            return 24;
+        }
+
+        accepted, peer, acceptError := listener.accept();
+        peerIpv6, hasIpv6 := peer.ipv6();
+        if acceptError != none or !accepted.isOpen() or !hasIpv6 or
+            peerIpv6.address() != address::Ipv6Address::loopback() or
+            peerIpv6.port() != 65000 {
+            return 25;
+        }
+
+        if listener.close() != none or listener.isOpen() {
+            return 26;
+        }
+    }
+
+    usize streamCloses = 0;
+    usize listenerCloses = 0;
+    u8 timeoutMask = 0;
+    u8 connectTimeoutValid = 0;
+    u8 bindValid = 0;
+    u8 shutdownValid = 0;
+    unsafe {
+        streamCloses = flecha_test_tcp_stream_close_count();
+        listenerCloses = flecha_test_tcp_listener_close_count();
+        timeoutMask = flecha_test_tcp_timeout_mask();
+        connectTimeoutValid = flecha_test_tcp_connect_timeout_valid();
+        bindValid = flecha_test_tcp_bind_valid();
+        shutdownValid = flecha_test_tcp_shutdown_valid();
+    }
+
+    if streamCloses != 4 or listenerCloses != 1 or timeoutMask != 15 or
+        connectTimeoutValid != 1 or bindValid != 1 or shutdownValid != 1 {
+        return 27;
+    }
+
+    return 42;
+}

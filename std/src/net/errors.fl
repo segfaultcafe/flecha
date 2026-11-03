@@ -8,6 +8,23 @@ export error NetworkError {
     TemporaryFailure,
     UnsupportedFamily,
     ResolutionFailed,
+    Closed,
+    TimedOut,
+    ConnectionRefused,
+    ConnectionReset,
+    NetworkUnreachable,
+    AddressInUse,
+    AddressNotAvailable,
+    BrokenPipe,
+    ConnectFailed,
+    BindFailed,
+    AcceptFailed,
+    ReadFailed,
+    WriteFailed,
+    ShutdownFailed,
+    CloseFailed,
+    AddressFailed,
+    TimeoutConfigurationFailed,
 }
 
 quiver error from_runtime(i32 status, NetworkError fallback) {
@@ -28,6 +45,33 @@ quiver error from_runtime(i32 status, NetworkError fallback) {
     }
     if status == 5 {
         return NetworkError.UnsupportedFamily;
+    }
+    if status == 6 {
+        return NetworkError.ResolutionFailed;
+    }
+    if status == 7 {
+        return NetworkError.Closed;
+    }
+    if status == 8 {
+        return NetworkError.TimedOut;
+    }
+    if status == 9 {
+        return NetworkError.ConnectionRefused;
+    }
+    if status == 10 {
+        return NetworkError.ConnectionReset;
+    }
+    if status == 11 {
+        return NetworkError.NetworkUnreachable;
+    }
+    if status == 12 {
+        return NetworkError.AddressInUse;
+    }
+    if status == 13 {
+        return NetworkError.AddressNotAvailable;
+    }
+    if status == 14 {
+        return NetworkError.BrokenPipe;
     }
     return fallback;
 }
