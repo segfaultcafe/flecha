@@ -571,10 +571,39 @@ bool NativeCompiler::BuildExecutable(
                     "unable to create temporary object for '" + outputPath +
                         "': " + temporaryError.message());
     }
-    llvm::FileRemover removeObject(objectPath);
     const std::string objectPathText = objectPath.str().str();
-    if (!EmitObject(program, moduleName, objectPathText)) return false;
-    return LinkExecutable(objectPathText, outputPath, linkInputs);
+    std::vector<std::string> temporaryPaths{objectPathText};
+    ScopedFileCleanup cleanup(temporaryPaths);
+    if (program.ForeignSources().empty()) {
+        if (!EmitFlechaObject(program, moduleName, objectPathText)) return false;
+        return LinkExecutable(objectPathText, outputPath, linkInputs);
+    }
+
+    const LinkerSearchResult compiler = FindLinkerDriver();
+    if (!compiler.path.has_value()) {
+        return Fail(
+            diagnostics::DiagnosticCode::ForeignCompilationFailed,
+            "unable to find a native compiler for foreign source blocks; "
+            "tried: " +
+                AttemptedLinkers(compiler.attempted) + ". " +
+                PlatformToolchainHint());
+    }
+
+    if (!EmitFlechaObject(program, moduleName, objectPathText)) return false;
+
+    std::vector<std::string> objectPaths{objectPathText};
+    if (!CompileForeignSources(program, *compiler.path, objectPaths,
+                               temporaryPaths))
+        return false;
+
+    // Executables can consume each object directly. Avoiding an intermediate
+    // relocatable merge is also required on MinGW, where ld -r output can
+    // produce a final PE image that Windows refuses to load.
+    std::vector<std::string> combinedLinkInputs(objectPaths.begin() + 1,
+                                                objectPaths.end());
+    combinedLinkInputs.insert(combinedLinkInputs.end(), linkInputs.begin(),
+                              linkInputs.end());
+    return LinkExecutable(objectPathText, outputPath, combinedLinkInputs);
 }
 
 }  // namespace flecha::codegen
