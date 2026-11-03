@@ -88,8 +88,8 @@ class Parser {
     bool HasParenthesizedBindings() const;
     bool IsDestructureStatement() const;
     std::unique_ptr<Statement> ParseDestructureStatement();
-    std::unique_ptr<VariableDeclarationStatement>
-    ParseVariableDeclarationStatement();
+    std::vector<std::unique_ptr<VariableDeclarationStatement>>
+    ParseVariableDeclarationStatements();
     std::unique_ptr<ReturnStatement> ParseReturnStatement();
     std::unique_ptr<IfStatement> ParseIfStatement();
     std::unique_ptr<WhileStatement> ParseWhileStatement();

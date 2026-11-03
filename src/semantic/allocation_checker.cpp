@@ -35,8 +35,10 @@ bool ExposesHeapHandle(SemanticType type) {
 }
 
 bool IsManagedSliceAllocation(SemanticType type) {
-    return type.Kind() == SemanticTypeKind::Tuple && !type.Elements().empty() &&
-           type.Elements()[0].Kind() == SemanticTypeKind::OwnedSlice;
+    return type.Kind() == SemanticTypeKind::OwnedSlice ||
+           (type.Kind() == SemanticTypeKind::Tuple &&
+            !type.Elements().empty() &&
+            type.Elements()[0].Kind() == SemanticTypeKind::OwnedSlice);
 }
 
 enum class ValueKind {
@@ -577,8 +579,11 @@ class AllocationChecker final {
     bool Allocate(State& state, const core::CallExpression& call) {
         const SemanticType resultType = _model.TypeOf(call);
         if (IsManagedSliceAllocation(resultType)) {
-            Value value{ValueKind::Aggregate};
-            value.elements = {{}, {ValueKind::Null}};
+            Value value;
+            if (resultType.Kind() == SemanticTypeKind::Tuple) {
+                value.kind = ValueKind::Aggregate;
+                value.elements = {{}, {ValueKind::Null}};
+            }
             Put(state, call, std::move(value));
             return true;
         }
@@ -597,8 +602,13 @@ class AllocationChecker final {
         for (Deferred& deferred : state.deferred)
             for (Value& argument : deferred.arguments) Retire(argument, &call);
         state.resources[&call] = {};
-        Value result{ValueKind::Aggregate};
-        result.elements = {{ValueKind::Pointer, &call}, {ValueKind::Null}};
+        Value result;
+        if (call.IsCrashable()) {
+            result = {ValueKind::Pointer, &call};
+        } else {
+            result.kind = ValueKind::Aggregate;
+            result.elements = {{ValueKind::Pointer, &call}, {ValueKind::Null}};
+        }
         Put(state, call, std::move(result));
         return true;
     }

@@ -461,7 +461,8 @@ class GraphBuilder final {
                     call.TypeArgument()->TypeForm() == core::TypeKind::Slice;
                 const NodeId failure = next;
                 if (dynamic) {
-                    next = AddNode({next, failure});
+                    next = call.IsCrashable() ? AddNode({next})
+                                              : AddNode({next, failure});
                     _graph.nodes[next].allocation = &call;
                 }
                 const auto arguments = _model.ArgumentsFor(call);
@@ -469,7 +470,8 @@ class GraphBuilder final {
                      argument != arguments.rend(); ++argument)
                     next = BuildExpression(**argument, next);
                 if (allocation && call.TypeArgument() && !dynamic) {
-                    next = AddNode({next, failure});
+                    next = call.IsCrashable() ? AddNode({next})
+                                              : AddNode({next, failure});
                     _graph.nodes[next].allocation = &call;
                 }
                 return BuildExpression(call.Callee(), next);

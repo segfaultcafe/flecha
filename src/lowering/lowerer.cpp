@@ -613,9 +613,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     : _semanticModel->TypeOf(call.Callee()).Signature();
             if (function &&
                 (function->BuiltIn() == semantic::BuiltInFunction::New ||
-                 function->BuiltIn() == semantic::BuiltInFunction::StorageNew))
+                 function->BuiltIn() ==
+                     semantic::BuiltInFunction::StorageNew)) {
+                const semantic::SemanticType owner =
+                    call.IsCrashable() ? type : type.Elements()[0];
                 return std::make_unique<BoundAllocationExpression>(
-                    expression.Range(), type, *type.Elements()[0].Target(),
+                    expression.Range(), type, *owner.Target(),
                     _semanticModel->GlobalScope()
                         .Lookup("AllocationError")
                         ->Type(),
@@ -623,7 +626,9 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                                     function->ParameterTypes()[0]),
                     call.TypeArgument()->TypeForm() == core::TypeKind::Slice,
                     function->BuiltIn() ==
-                        semantic::BuiltInFunction::StorageNew);
+                        semantic::BuiltInFunction::StorageNew,
+                    call.IsCrashable());
+            }
             std::vector<std::unique_ptr<BoundExpression>> arguments;
             const auto sourceArguments = _semanticModel->ArgumentsFor(call);
             arguments.reserve(sourceArguments.size());

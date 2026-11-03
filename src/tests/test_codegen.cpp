@@ -3149,6 +3149,8 @@ TEST(NativeCompilerTests, HonorsConfiguredLinkerWithoutFallback) {
 TEST(LlvmCodeGeneratorTests, EmitsDefaultedScalarAndStringDeclarations) {
     GeneratedSource result = Generate(
         "i32 main(bool c) { i32 value; string text; "
+        "error firstError, closeErr; "
+        "if firstError != none or closeErr != none { return 1; } "
         "if c { return 0; } else { value = 42; text = \"ready\"; } "
         "stdoutln(text); return value; }");
     ASSERT_FALSE(result.diagnostics.HasErrors());
@@ -3651,4 +3653,40 @@ TEST(LlvmCodeGeneratorTests, EmitsConditionalAllocationAndTypedFree) {
     EXPECT_NE(ir.find("@flecha_runtime_v1_free"), std::string::npos);
     EXPECT_NE(ir.find("allocation.failure"), std::string::npos);
     EXPECT_NE(ir.find("free.release"), std::string::npos);
+}
+
+TEST(LlvmCodeGeneratorTests, EmitsCrashableAllocationAsDirectOwner) {
+    GeneratedSource result = Generate(R"(
+        i32 main!() {
+            values := new<own []i32>!(2);
+            values[0] = 20;
+            values[1] = 22;
+            return values[0] + values[1];
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_alloc_array"), std::string::npos);
+    EXPECT_NE(ir.find("allocation failed: out of memory"), std::string::npos);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_crash"), std::string::npos);
+    EXPECT_EQ(ir.find(".flecha.error.AllocationError"), std::string::npos);
+}
+
+TEST(LlvmCodeGeneratorTests, EmitsSharedTypedStructureFieldDefaults) {
+    GeneratedSource result = Generate(R"(
+        structure Pair { i32 first = 20, second = 22; };
+        i32 main() {
+            pair := Pair::init();
+            return pair.first + pair.second;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
 }
