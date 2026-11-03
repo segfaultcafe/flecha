@@ -48,7 +48,7 @@ whose encoded bit length cannot be represented by the selected SHA-2 variant.
 The implementations allocate no heap memory, invoke no runtime ABI, perform
 no input/output, and do not block. Hashers and digests are ordinary owning
 values and may be moved. Published SHA-2 conformance vectors cover one-shot,
-streaming, full-block, and padding-boundary behavior.
+streaming, full-block, padding-boundary, and one-million-byte behavior.
 
 SHA-2 provides integrity digests, not authentication or password hashing.
 Callers must use HMAC for keyed authentication and a dedicated password

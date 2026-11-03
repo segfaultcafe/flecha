@@ -156,6 +156,85 @@ if(NOT testSupportResult EQUAL 42)
         "test support smoke returned ${testSupportResult} instead of 42")
 endif()
 
+# Run the published one-million-'a' SHA-256 and SHA-512 vectors through both
+# source-tree and relocated standard-library packages on every release target.
+set(sha2SmokeSource "${OUTPUT_ROOT}/sha2-smoke.fl")
+file(WRITE "${sha2SmokeSource}" [=[
+module sha2_smoke;
+
+@imports :: lib::std::cryptography::sha2;
+
+bool equals([]const u8 actual, []const u8 expected) {
+    if actual.len() != expected.len() { return false; }
+    loop usize index = 0; index < actual.len(); index++ {
+        if actual[index] != expected[index] { return false; }
+    }
+    return true;
+}
+
+i32 main() {
+    [1000]u8 chunk = [0x61; 1000];
+
+    sha256Hasher := sha2::Sha256::init();
+    loop usize iteration = 0; iteration < 1000; iteration++ {
+        if sha256Hasher.update(chunk[:]) != none { return 1; }
+    }
+    sha256Digest, sha256Error := sha256Hasher.finalize();
+    [32]u8 sha256Expected = [
+        0xcd, 0xc7, 0x6e, 0x5c, 0x99, 0x14, 0xfb, 0x92,
+        0x81, 0xa1, 0xc7, 0xe2, 0x84, 0xd7, 0x3e, 0x67,
+        0xf1, 0x80, 0x9a, 0x48, 0xa4, 0x97, 0x20, 0x0e,
+        0x04, 0x6d, 0x39, 0xcc, 0xc7, 0x11, 0x2c, 0xd0
+    ];
+    if sha256Error != none or
+        !equals(sha256Digest.bytes(), sha256Expected[:]) {
+        return 2;
+    }
+
+    sha512Hasher := sha2::Sha512::init();
+    loop usize iteration = 0; iteration < 1000; iteration++ {
+        if sha512Hasher.update(chunk[:]) != none { return 3; }
+    }
+    sha512Digest, sha512Error := sha512Hasher.finalize();
+    [64]u8 sha512Expected = [
+        0xe7, 0x18, 0x48, 0x3d, 0x0c, 0xe7, 0x69, 0x64,
+        0x4e, 0x2e, 0x42, 0xc7, 0xbc, 0x15, 0xb4, 0x63,
+        0x8e, 0x1f, 0x98, 0xb1, 0x3b, 0x20, 0x44, 0x28,
+        0x56, 0x32, 0xa8, 0x03, 0xaf, 0xa9, 0x73, 0xeb,
+        0xde, 0x0f, 0xf2, 0x44, 0x87, 0x7e, 0xa6, 0x0a,
+        0x4c, 0xb0, 0x43, 0x2c, 0xe5, 0x77, 0xc3, 0x1b,
+        0xeb, 0x00, 0x9c, 0x5c, 0x2c, 0x49, 0xaa, 0x2e,
+        0x4e, 0xad, 0xb2, 0x17, 0xad, 0x8c, 0xc0, 0x9b
+    ];
+    if sha512Error != none or
+        !equals(sha512Digest.bytes(), sha512Expected[:]) {
+        return 4;
+    }
+
+    return 42;
+}
+]=])
+
+set(sha2SmokeOutput "${OUTPUT_ROOT}/sha2-smoke${EXECUTABLE_SUFFIX}")
+execute_process(
+    COMMAND "${FLECHA_COMPILER}" build "${sha2SmokeSource}"
+        ${testSupportLibraryArguments} -o "${sha2SmokeOutput}"
+    RESULT_VARIABLE sha2SmokeCompileResult
+    ERROR_VARIABLE sha2SmokeCompileError
+)
+if(NOT sha2SmokeCompileResult EQUAL 0)
+    message(FATAL_ERROR
+        "SHA-2 smoke compilation failed: ${sha2SmokeCompileError}")
+endif()
+execute_process(
+    COMMAND "${sha2SmokeOutput}"
+    RESULT_VARIABLE sha2SmokeResult
+)
+if(NOT sha2SmokeResult EQUAL 42)
+    message(FATAL_ERROR
+        "SHA-2 smoke returned ${sha2SmokeResult} instead of 42")
+endif()
+
 # Exercise the installed standard library and runtime through a real TCP
 # client/server exchange. The native helper supplies only the peer thread
 # because Flecha does not have threading yet; both endpoints use the public
