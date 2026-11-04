@@ -166,6 +166,7 @@ typedef enum FlechaRuntimeNetworkStatus {
     FLECHA_RUNTIME_NETWORK_ADDRESS_NOT_AVAILABLE = 13,
     FLECHA_RUNTIME_NETWORK_BROKEN_PIPE = 14,
     FLECHA_RUNTIME_NETWORK_FAILED = 15,
+    FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE = 16,
 } FlechaRuntimeNetworkStatus;
 
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
@@ -326,6 +327,42 @@ int32_t flecha_runtime_v1_tcp_listener_local_address(
 // Close consumes a non-null native handle even when it reports failure.
 int32_t flecha_runtime_v1_tcp_stream_close(void* handle);
 int32_t flecha_runtime_v1_tcp_listener_close(void* handle);
+
+// Binds one blocking UDP socket. IPv6 sockets accept only IPv6 datagrams.
+// Every failure leaves output null.
+int32_t flecha_runtime_v1_udp_socket_bind(void** output, uint8_t family,
+                                          uint64_t high, uint64_t low,
+                                          uint16_t port);
+
+// Sends one datagram and receives one datagram. Counts are reset before the
+// operation. receive_from returns MESSAGE_TOO_LARGE when a datagram does not
+// fit, while preserving the copied prefix count and sender address.
+int32_t flecha_runtime_v1_udp_socket_send_to(void* handle,
+                                             const uint8_t* source,
+                                             size_t length, uint8_t family,
+                                             uint64_t high, uint64_t low,
+                                             uint16_t port, size_t* count);
+int32_t flecha_runtime_v1_udp_socket_receive_from(
+    void* handle, uint8_t* destination, size_t length, size_t* count,
+    uint8_t* family, uint64_t* high, uint64_t* low, uint16_t* port);
+
+// Configures receive direction zero or send direction one. enabled is zero or
+// one; a zero duration while enabled requests an immediate non-waiting attempt.
+int32_t flecha_runtime_v1_udp_socket_set_timeout(void* handle,
+                                                 uint8_t direction,
+                                                 uint8_t enabled,
+                                                 uint64_t seconds,
+                                                 uint32_t nanoseconds);
+
+// Copies the socket's bound local endpoint. Every failure resets all outputs.
+int32_t flecha_runtime_v1_udp_socket_local_address(void* handle,
+                                                   uint8_t* family,
+                                                   uint64_t* high,
+                                                   uint64_t* low,
+                                                   uint16_t* port);
+
+// Closes and relinquishes one UDP socket.
+int32_t flecha_runtime_v1_udp_socket_close(void* handle);
 
 // Copies the current value into an empty owning Flecha string. A successful
 // missing lookup sets present to zero; a successful empty value sets present

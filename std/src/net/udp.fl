@@ -1,0 +1,200 @@
+module udp;
+
+@imports
+    :: root::net::address
+    :: root::net::errors
+    :: root::net::runtime
+    :: root::time::duration;
+
+// Owns one bound UDP socket.
+export structure Socket {
+    private *void handle;
+};
+
+Socket Socket::zero() override {
+    return build Socket {
+        self.handle = null;
+    };
+}
+
+void Socket::tear(&self) override {
+    if self->handle == null {
+        return;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+    unsafe {
+        runtime::flecha_runtime_v1_udp_socket_close(handle);
+    }
+}
+
+// Binds a UDP socket. Port zero requests an operating-system-selected port.
+(Socket, error) Socket::bind(address::SocketAddress local) {
+    family, high, low, port := encode_address(local);
+    *void handle = null;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_udp_socket_bind(
+            &raw handle,
+            family,
+            high,
+            low,
+            port
+        );
+
+        err := errors::from_runtime(status, errors::NetworkError.BindFailed);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return (build Socket {
+        self.handle = handle;
+    }, none);
+}
+
+bool Socket::isOpen(&const self) {
+    return self->handle != null;
+}
+
+// Sends one complete datagram to destination. The byte count is preserved on
+// every failure.
+(usize, error) Socket::sendTo(
+    &self,
+    []const u8 source,
+    address::SocketAddress destination
+) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    family, high, low, port := encode_address(destination);
+    usize count = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_udp_socket_send_to(
+            self->handle,
+            source.data(),
+            source.len(),
+            family,
+            high,
+            low,
+            port,
+            &raw count
+        );
+
+        err := errors::from_runtime(status, errors::NetworkError.SendFailed);
+        return (count, err);
+    }
+}
+
+// Receives one datagram and its sender. When the destination is too small,
+// MessageTooLarge is returned with the copied prefix count and sender address.
+(usize, address::SocketAddress, error) Socket::receiveFrom(
+    &self,
+    []u8 destination
+) {
+    if !self->isOpen() {
+        return (none, none, errors::NetworkError.Closed);
+    }
+
+    usize count = 0;
+    u8 family = 0;
+    u64 high = 0;
+    u64 low = 0;
+    u16 port = 0;
+    i32 status = 0;
+    unsafe {
+        status = runtime::flecha_runtime_v1_udp_socket_receive_from(
+            self->handle,
+            destination.data(),
+            destination.len().cast<usize>,
+            &raw count,
+            &raw family,
+            &raw high,
+            &raw low,
+            &raw port
+        );
+    }
+
+    err := errors::from_runtime(status, errors::NetworkError.ReceiveFailed);
+    if err != none and err != errors::NetworkError.MessageTooLarge {
+        return (count, none, err);
+    }
+
+    sender, addressError := decode_address(family, high, low, port);
+    if addressError != none {
+        return (count, none, addressError);
+    }
+    return (count, sender, err);
+}
+
+// Sets the receive timeout. Zero requests an immediate, non-waiting attempt.
+error Socket::setReceiveTimeout(&self, duration::Duration timeout) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+    return set_timeout(self->handle, 0, 1, timeout);
+}
+
+error Socket::clearReceiveTimeout(&self) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+    return set_timeout(self->handle, 0, 0, duration::Duration::zero());
+}
+
+// Sets the send timeout. Zero requests an immediate, non-waiting attempt.
+error Socket::setSendTimeout(&self, duration::Duration timeout) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+    return set_timeout(self->handle, 1, 1, timeout);
+}
+
+error Socket::clearSendTimeout(&self) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+    return set_timeout(self->handle, 1, 0, duration::Duration::zero());
+}
+
+(address::SocketAddress, error) Socket::localAddress(&const self) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    u8 family = 0;
+    u64 high = 0;
+    u64 low = 0;
+    u16 port = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_udp_socket_local_address(
+            self->handle,
+            &raw family,
+            &raw high,
+            &raw low,
+            &raw port
+        );
+        err := errors::from_runtime(status, errors::NetworkError.AddressFailed);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return decode_address(family, high, low, port);
+}
+
+// Relinquishes the socket. A close failure still leaves this value closed.
+error Socket::close(&self) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_udp_socket_close(handle);
+        return errors::from_runtime(status, errors::NetworkError.CloseFailed);
+    }
+}

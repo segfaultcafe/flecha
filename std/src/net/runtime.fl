@@ -107,3 +107,51 @@ quiver extern unsafe i32 flecha_runtime_v1_tcp_stream_close(
 quiver extern unsafe i32 flecha_runtime_v1_tcp_listener_close(
     *void handle
 );
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_bind(
+    **void output,
+    u8 family,
+    u64 high,
+    u64 low,
+    u16 port
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_send_to(
+    *void handle,
+    *const u8 source,
+    usize length,
+    u8 family,
+    u64 high,
+    u64 low,
+    u16 port,
+    *usize count
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_receive_from(
+    *void handle,
+    *u8 destination,
+    usize length,
+    *usize count,
+    *u8 family,
+    *u64 high,
+    *u64 low,
+    *u16 port
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_set_timeout(
+    *void handle,
+    u8 direction,
+    u8 enabled,
+    u64 seconds,
+    u32 nanoseconds
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_local_address(
+    *void handle,
+    *u8 family,
+    *u64 high,
+    *u64 low,
+    *u16 port
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_close(*void handle);

@@ -21,6 +21,9 @@ export error NetworkError {
     AcceptFailed,
     ReadFailed,
     WriteFailed,
+    ReceiveFailed,
+    SendFailed,
+    MessageTooLarge,
     ShutdownFailed,
     CloseFailed,
     AddressFailed,
@@ -72,6 +75,9 @@ quiver error from_runtime(i32 status, NetworkError fallback) {
     }
     if status == 14 {
         return NetworkError.BrokenPipe;
+    }
+    if status == 16 {
+        return NetworkError.MessageTooLarge;
     }
     return fallback;
 }

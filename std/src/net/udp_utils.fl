@@ -1,0 +1,100 @@
+module udp;
+
+@imports
+    :: root::net::address
+    :: root::net::errors
+    :: root::net::runtime
+    :: root::time::duration;
+
+(u8, u64, u64, u16) encode_address(address::SocketAddress host) {
+    if host.isIpv4() {
+        ipv4, _ := host.ipv4();
+        ipv4Address := ipv4.address();
+        octets := ipv4Address.octets();
+        u64 low =
+            (octets[0].cast<u64> << 24) |
+            (octets[1].cast<u64> << 16) |
+            (octets[2].cast<u64> << 8) |
+            octets[3].cast<u64>;
+        return (4, 0, low, ipv4.port());
+    }
+
+    ipv6, _ := host.ipv6();
+    ipv6Address := ipv6.address();
+    segments := ipv6Address.segments();
+    u64 high =
+        (segments[0].cast<u64> << 48) |
+        (segments[1].cast<u64> << 32) |
+        (segments[2].cast<u64> << 16) |
+        segments[3].cast<u64>;
+    u64 low =
+        (segments[4].cast<u64> << 48) |
+        (segments[5].cast<u64> << 32) |
+        (segments[6].cast<u64> << 16) |
+        segments[7].cast<u64>;
+    return (6, high, low, ipv6.port());
+}
+
+(address::SocketAddress, error) decode_address(
+    u8 family,
+    u64 high,
+    u64 low,
+    u16 port
+) {
+    if family == 4 {
+        ipv4 := address::Ipv4Address::fromOctets(
+            (low >> 24).cast<u8>,
+            (low >> 16).cast<u8>,
+            (low >> 8).cast<u8>,
+            low.cast<u8>
+        );
+        return (
+            address::SocketAddress::fromIpv4(
+                address::Ipv4SocketAddress::fromParts(ipv4, port)
+            ),
+            none
+        );
+    }
+
+    if family == 6 {
+        ipv6 := address::Ipv6Address::fromSegments(
+            (high >> 48).cast<u16>,
+            (high >> 32).cast<u16>,
+            (high >> 16).cast<u16>,
+            high.cast<u16>,
+            (low >> 48).cast<u16>,
+            (low >> 32).cast<u16>,
+            (low >> 16).cast<u16>,
+            low.cast<u16>
+        );
+        return (
+            address::SocketAddress::fromIpv6(
+                address::Ipv6SocketAddress::fromParts(ipv6, port)
+            ),
+            none
+        );
+    }
+
+    return (none, errors::NetworkError.UnsupportedFamily);
+}
+
+error set_timeout(
+    *void handle,
+    u8 direction,
+    u8 enabled,
+    duration::Duration timeout
+) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_udp_socket_set_timeout(
+            handle,
+            direction,
+            enabled,
+            timeout.wholeSeconds(),
+            timeout.subsecondNanoseconds()
+        );
+        return errors::from_runtime(
+            status,
+            errors::NetworkError.TimeoutConfigurationFailed
+        );
+    }
+}
