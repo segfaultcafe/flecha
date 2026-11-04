@@ -334,6 +334,12 @@ int32_t flecha_runtime_v1_udp_socket_bind(void** output, uint8_t family,
                                           uint64_t high, uint64_t low,
                                           uint16_t port);
 
+// Sets the default peer for connected datagram operations. The socket remains
+// bound to its local endpoint.
+int32_t flecha_runtime_v1_udp_socket_connect(void* handle, uint8_t family,
+                                             uint64_t high, uint64_t low,
+                                             uint16_t port);
+
 // Sends one datagram and receives one datagram. Counts are reset before the
 // operation. receive_from returns MESSAGE_TOO_LARGE when a datagram does not
 // fit, while preserving the copied prefix count and sender address.
@@ -345,6 +351,14 @@ int32_t flecha_runtime_v1_udp_socket_send_to(void* handle,
 int32_t flecha_runtime_v1_udp_socket_receive_from(
     void* handle, uint8_t* destination, size_t length, size_t* count,
     uint8_t* family, uint64_t* high, uint64_t* low, uint16_t* port);
+
+// Sends to and receives from the peer selected by udp_socket_connect. The
+// portable maximum payload accepted by send is 65,507 bytes. receive returns
+// MESSAGE_TOO_LARGE when the destination does not fit the complete datagram.
+int32_t flecha_runtime_v1_udp_socket_send(void* handle, const uint8_t* source,
+                                          size_t length, size_t* count);
+int32_t flecha_runtime_v1_udp_socket_receive(void* handle, uint8_t* destination,
+                                             size_t length, size_t* count);
 
 // Configures receive direction zero or send direction one. enabled is zero or
 // one; a zero duration while enabled requests an immediate non-waiting attempt.
@@ -360,6 +374,9 @@ int32_t flecha_runtime_v1_udp_socket_local_address(void* handle,
                                                    uint64_t* high,
                                                    uint64_t* low,
                                                    uint16_t* port);
+int32_t flecha_runtime_v1_udp_socket_peer_address(void* handle, uint8_t* family,
+                                                  uint64_t* high, uint64_t* low,
+                                                  uint16_t* port);
 
 // Closes and relinquishes one UDP socket.
 int32_t flecha_runtime_v1_udp_socket_close(void* handle);

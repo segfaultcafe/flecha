@@ -6,6 +6,8 @@ module udp;
     :: root::net::runtime
     :: root::time::duration;
 
+export const usize MAX_DATAGRAM_SIZE = 65507;
+
 // Owns one bound UDP socket.
 export structure Socket {
     private *void handle;
@@ -197,4 +199,94 @@ error Socket::close(&self) {
         i32 status = runtime::flecha_runtime_v1_udp_socket_close(handle);
         return errors::from_runtime(status, errors::NetworkError.CloseFailed);
     }
+}
+
+// Selects the default peer for connected send and receive operations.
+error Socket::connect(&self, address::SocketAddress peer) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    family, high, low, port := encode_address(peer);
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_udp_socket_connect(
+            self->handle,
+            family,
+            high,
+            low,
+            port
+        );
+
+        return errors::from_runtime(status, errors::NetworkError.ConnectFailed);
+    }
+}
+
+// Sends one complete datagram to the connected peer.
+(usize, error) Socket::send(&self, []const u8 source) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    usize count = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_udp_socket_send(
+            self->handle,
+            source.data(),
+            source.len(),
+            &raw count
+        );
+
+        err := errors::from_runtime(status, errors::NetworkError.SendFailed);
+        return (count, err);
+    }
+}
+
+// Receives one datagram from the connected peer.
+//
+// When destination is too small, MessageTooLarge is returned with the number
+// of bytes copied into destination.
+(usize, error) Socket::receive(&self, []u8 destination) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    usize count = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_udp_socket_receive(
+            self->handle,
+            destination.data(),
+            destination.len().cast<usize>,
+            &raw count
+        );
+
+        err := errors::from_runtime(status, errors::NetworkError.ReceiveFailed);
+        return (count, err);
+    }
+}
+
+// Returns the peer selected by connect.
+(address::SocketAddress, error) Socket::peerAddress(&const self) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    u8 family;
+    u64 high, low;
+    u16 port;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_udp_socket_peer_address(
+            self->handle,
+            &raw family,
+            &raw high,
+            &raw low,
+            &raw port
+        );
+
+        err := errors::from_runtime(status, errors::NetworkError.AddressFailed);
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return decode_address(family, high, low, port);
 }

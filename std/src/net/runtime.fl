@@ -155,3 +155,33 @@ quiver extern unsafe i32 flecha_runtime_v1_udp_socket_local_address(
 );
 
 quiver extern unsafe i32 flecha_runtime_v1_udp_socket_close(*void handle);
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_connect(
+    *void opaque,
+    u8 family,
+    u64 high,
+    u64 low,
+    u16 port
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_send(
+    *void opaque,
+    *const u8 source,
+    usize length,
+    *usize count
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_receive(
+    *void opaque,
+    *u8 destination,
+    usize length,
+    *usize count
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_udp_socket_peer_address(
+    *void handle,
+    *u8 family,
+    *u64 high,
+    *u64 low,
+    *u16 port
+);

@@ -251,6 +251,11 @@ if bindError != none {
 
 sent, sendError := socket.sendTo(payload, destination);
 received, sender, receiveError := socket.receiveFrom(buffer);
+
+connectError := socket.connect(destination);
+connectedSent, connectedSendError := socket.send(payload);
+connectedReceived, connectedReceiveError := socket.receive(buffer);
+peer, peerError := socket.peerAddress();
 ```
 
 `Socket::bind` accepts IPv4 or IPv6 and treats port zero as a request for an
@@ -262,7 +267,15 @@ behavior is identical across hosts. `localAddress` reports the selected port.
 boundaries are never merged. If the supplied buffer is too small, the copied
 prefix count and sender remain available and the operation returns
 `NetworkError.MessageTooLarge`; the discarded suffix cannot be retried.
-Zero-length datagrams remain distinguishable from timeouts and other errors.
+`connect` selects a default peer without changing the local endpoint. `send`
+and `receive` operate on that peer, and `peerAddress` reports it. Connected UDP
+still preserves datagram boundaries; a truncated `receive` returns the copied
+prefix count with `NetworkError.MessageTooLarge`.
+
+Every send accepts at most `udp::MAX_DATAGRAM_SIZE` bytes (65,507), the
+portable IPv4/IPv6 payload boundary. A larger source returns
+`NetworkError.MessageTooLarge` without sending a partial datagram. Zero-length
+datagrams remain valid and distinguishable from timeouts and other errors.
 
 Receive and send timeouts are configured independently. An enabled zero
 duration requests one immediate non-waiting attempt; clearing a timeout restores

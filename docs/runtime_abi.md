@@ -338,19 +338,23 @@ waits without extending a timeout. IPv6 listeners and UDP sockets are
 IPv6-only, avoiding host-dependent dual-stack behavior.
 
 UDP bind clears its output before validation and transfers one handle only on
-success. `send_to` resets its count and performs one datagram send.
+success. Connect selects a default peer without replacing the bound local
+endpoint. Connected `send` and `receive` complement unconnected `send_to` and
+`receive_from`. Every send accepts at most 65,507 bytes, the maximum payload
+that is portable across supported IPv4 and IPv6 hosts, and resets its count
+before validation. Zero-length datagrams are valid.
 `receive_from` resets the count and every address field, then returns one
 sender in the same portable family/high/low/port representation used by DNS and
 TCP. A truncated datagram returns status `16` while retaining its copied prefix
-count and sender. The remaining bytes are discarded by the host as part of the
-same datagram receive.
+count and, for `receive_from`, its sender. The remaining bytes are discarded by
+the host as part of the same datagram receive. Local- and peer-address queries
+reset every address output before validation.
 
 UDP timeout direction zero means receive and direction one means send. Enabled
 and direction fields accept only zero or one, nanoseconds must be normalized,
-and enabled zero-duration timeouts request an immediate poll. Local-address
-queries reset all address outputs before validation. UDP close always consumes
-the opaque handle, releases the platform socket runtime reference, and reports
-any native close failure afterward.
+and enabled zero-duration timeouts request an immediate poll. UDP close always
+consumes the opaque handle, releases the platform socket runtime reference, and
+reports any native close failure afterward.
 
 ## File streams
 
