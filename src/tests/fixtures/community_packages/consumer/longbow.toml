@@ -1,0 +1,7 @@
+[package]
+name = "community-package-consumer"
+version = "0.1.0"
+kind = "program"
+
+[dependencies]
+community = { package = "segfaultcafe/e2e-community-package", version = "0.1.0" }

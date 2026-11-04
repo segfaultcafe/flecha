@@ -282,6 +282,12 @@ jobs:
             cmake/verify_toolchain.cmake
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: community-package-consumer
+          path: src/tests/fixtures/community_packages/consumer
+          if-no-files-found: error
+
   clean-install:
     name: Clean install (${{ matrix.name }})
     needs:
@@ -368,6 +374,11 @@ jobs:
           name: clean-install-support
           path: test-support
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: community-package-consumer
+          path: community-package-consumer
+
       - name: Report and verify the clean-install toolchain
         shell: bash
         run: >-
@@ -421,6 +432,7 @@ jobs:
           "-DFLECHA_COMPILER=$FLECHA_BUNDLE/bin/flecha${{ matrix.suffix }}"
           "-DLONGBOW=$FLECHA_BUNDLE/bin/longbow${{ matrix.suffix }}"
           "-DOUTPUT_ROOT=$PWD/clean-install-smoke"
+          "-DCOMMUNITY_PACKAGE_ROOT=$PWD/community-package-consumer"
           "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
           -P test-support/release_smoke.cmake
 

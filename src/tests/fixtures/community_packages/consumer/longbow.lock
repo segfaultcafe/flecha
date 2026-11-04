@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "root": "root",
+  "packages": [
+    {
+      "id": "registry-1",
+      "identity": "segfaultcafe/e2e-community-package",
+      "source": {
+        "kind": "registry",
+        "location": "https://registry.flecha-lang.org/v1"
+      },
+      "version": "0.1.0",
+      "checksum": "sha256:ba7b48d07cee4cdbf1a0e37f9efd8b2b7474f90a8e0d16c4312c60f1174f6e7f",
+      "dependencies": {
+        "foundation": "registry-2",
+        "std": "toolchain-std"
+      }
+    },
+    {
+      "id": "registry-2",
+      "identity": "segfaultcafe/e2e-community-leaf",
+      "source": {
+        "kind": "registry",
+        "location": "https://registry.flecha-lang.org/v1"
+      },
+      "version": "0.1.0",
+      "checksum": "sha256:c0485516a85014b05027a8880c1544f739a4092523360c6b99b5e9ffaf16ea88",
+      "dependencies": {
+        "std": "toolchain-std"
+      }
+    },
+    {
+      "id": "root",
+      "identity": "local/community_package_consumer",
+      "source": {
+        "kind": "workspace",
+        "path": "."
+      },
+      "version": "0.1.0",
+      "dependencies": {
+        "community": "registry-1",
+        "std": "toolchain-std"
+      }
+    },
+    {
+      "id": "toolchain-std",
+      "identity": "flecha/std",
+      "source": {
+        "kind": "toolchain"
+      },
+      "dependencies": {}
+    }
+  ]
+}
