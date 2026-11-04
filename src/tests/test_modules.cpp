@@ -85,6 +85,14 @@ TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
 TEST_F(ModuleTests, ResolvesExportedDecorationsThroughModuleAliases) {
     Write("json.fl", R"(module json;
         export decoration json {};
+        export structure Writer {};
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
     )");
     Write("main.fl", R"(module main;
         @imports :: root::json;

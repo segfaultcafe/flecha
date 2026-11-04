@@ -764,10 +764,15 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         const auto& structure =
             static_cast<const StructureDeclaration&>(*declaration);
         const DecorationApplication* structureJson = nullptr;
+        const DecorationDeclaration* jsonDecoration = nullptr;
+        const DecorationApplication* jsonApplication = nullptr;
         for (const auto& application : declaration->decorations) {
             const auto* decoration = resolve(application, *declaration);
-            if (decoration && decoration->Name() == "json")
+            if (decoration && decoration->Name() == "json") {
                 structureJson = &application;
+                jsonDecoration = decoration;
+                jsonApplication = &application;
+            }
         }
 
         JsonDecorationMode mode = JsonDecorationMode::Explicit;
@@ -778,12 +783,18 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
             } else if (structureJson->arguments.size() == 1 &&
                        structureJson->arguments.front().kind ==
                            DecorationArgumentKind::Identifier &&
+                       structureJson->arguments.front().value == "explicit") {
+                mode = JsonDecorationMode::Explicit;
+            } else if (structureJson->arguments.size() == 1 &&
+                       structureJson->arguments.front().kind ==
+                           DecorationArgumentKind::Identifier &&
                        structureJson->arguments.front().value == "default") {
                 mode = JsonDecorationMode::Default;
             } else {
                 Report(diagnostics::DiagnosticCode::InvalidDecoration,
                        structureJson->range,
-                       "structure @json expects no arguments or 'default'");
+                       "structure @json expects 'explicit', 'default', or no "
+                       "arguments");
             }
         }
 
@@ -809,6 +820,10 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
             }
             if (fieldJson) {
                 hasJson = true;
+                if (!jsonApplication) {
+                    jsonApplication = fieldJson;
+                    jsonDecoration = resolve(*fieldJson, *declaration);
+                }
                 if (field->IsPrivate())
                     Report(diagnostics::DiagnosticCode::InvalidDecoration,
                            fieldJson->range,
@@ -848,6 +863,23 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
                 continue;
             }
             metadata.fields.push_back({candidate.field, candidate.name});
+        }
+        if (jsonDecoration && jsonApplication) {
+            metadata.writerTypeName =
+                jsonDecoration->moduleId == structure.moduleId
+                    ? "Writer"
+                    : jsonApplication->path.front() + "::Writer";
+            SetSource(structure.sourceId);
+            const Symbol* writer =
+                _currentScope->Lookup(metadata.writerTypeName);
+            if (!writer || writer->Kind() != SymbolKind::StructureType) {
+                Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                       jsonApplication->range,
+                       "@json requires its decoration module to export "
+                       "structure Writer");
+            } else {
+                metadata.writer = writer->Type().Structure();
+            }
         }
         _model._jsonMetadata.emplace(&structure, std::move(metadata));
     }
@@ -2194,12 +2226,18 @@ void SemanticAnalyzer::RegisterFunction(
         !function.IsCrashable() && owner &&
         (function.Name() == "init" || function.Name() == "zero" ||
          function.Name() == "tear");
+    const JsonStructureMetadata* jsonMetadata =
+        owner ? _model.JsonMetadataFor(*owner->syntax) : nullptr;
+    const bool jsonWriter = !function.IsCrashable() && jsonMetadata &&
+                            function.Name() == "writeJson";
+    const bool jsonFacade =
+        !function.IsCrashable() && jsonMetadata && function.Name() == "json";
     if (function.HasModifier(core::FunctionModifier::Override) !=
-        (lifecycle && !generated))
+        ((lifecycle || jsonWriter || jsonFacade) && !generated))
         Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                function.NameRange(),
-               "override is required exactly when replacing init, zero, or "
-               "tear");
+               "override is required exactly when replacing a "
+               "compiler-generated method");
     if (function.HasModifier(core::FunctionModifier::Private) && !owner &&
         !enumOwner)
         Report(diagnostics::DiagnosticCode::InvalidMember, function.NameRange(),
@@ -2226,6 +2264,45 @@ void SemanticAnalyzer::RegisterFunction(
          parameterTypes[0].Target()->IsConst()))
         Report(diagnostics::DiagnosticCode::InvalidLifecycle, function.Range(),
                "tear must return void and take only &self");
+    if (jsonWriter) {
+        const bool validReceiver =
+            receiver && parameterTypes.size() == 2 &&
+            parameterTypes[0].Kind() == SemanticTypeKind::Reference &&
+            parameterTypes[0].Target()->IsConst();
+        const bool validWriter =
+            parameterTypes.size() == 2 && jsonMetadata->writer &&
+            parameterTypes[1].Kind() == SemanticTypeKind::Reference &&
+            !parameterTypes[1].Target()->IsConst() &&
+            parameterTypes[1].Target()->Kind() == SemanticTypeKind::Structure &&
+            parameterTypes[1].Target()->Structure() == jsonMetadata->writer;
+        if (function.IsUnsafe() ||
+            function.HasModifier(core::FunctionModifier::Private) ||
+            returnType.Kind() != SemanticTypeKind::ErrorValue ||
+            !validReceiver || !validWriter)
+            Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                   function.Range(),
+                   "writeJson override must be safe, public, return error, "
+                   "and take &const self and the mutable @json Writer");
+    }
+    if (jsonFacade) {
+        const bool validReceiver =
+            receiver && parameterTypes.size() == 1 &&
+            parameterTypes[0].Kind() == SemanticTypeKind::Reference &&
+            parameterTypes[0].Target()->IsConst();
+        const bool validResult =
+            returnType.Kind() == SemanticTypeKind::Tuple &&
+            returnType.Elements().size() == 2 &&
+            returnType.Elements()[0].Kind() == SemanticTypeKind::OwnedSlice &&
+            returnType.Elements()[0].Target()->Kind() == SemanticTypeKind::U8 &&
+            returnType.Elements()[1].Kind() == SemanticTypeKind::ErrorValue;
+        if (function.IsUnsafe() ||
+            function.HasModifier(core::FunctionModifier::Private) ||
+            !validReceiver || !validResult)
+            Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                   function.Range(),
+                   "json override must be safe, public, take &const self, "
+                   "and return (own []u8, error)");
+    }
     if (enumOwner && !function.IsCrashable() &&
         (function.Name() == "init" || function.Name() == "zero" ||
          function.Name() == "tear"))
@@ -2419,6 +2496,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     BindImports(unit);
     AnalyzeModuleConstants(unit);
     GenerateInitializers();
+    GenerateJsonWriters();
     BindImports(unit);
     ValidateExports(unit);
     for (const auto& structure : _model._structures)
@@ -6642,6 +6720,238 @@ void SemanticAnalyzer::GenerateInitializers() {
         zero->sourceId = structure->syntax->sourceId;
         RegisterFunction(*zero, true);
         _model._generatedFunctions.push_back(std::move(zero));
+    }
+}
+
+void SemanticAnalyzer::GenerateJsonWriters() {
+    const auto named = [](source::SourceRange range, std::string name) {
+        return std::make_unique<core::NameExpression>(range, std::move(name));
+    };
+    const auto memberCall =
+        [&](source::SourceRange range,
+            std::unique_ptr<core::Expression> receiver, std::string member,
+            std::vector<std::unique_ptr<core::Expression>> arguments = {}) {
+            return std::make_unique<core::MemberCallExpression>(
+                range, std::move(receiver), std::move(member), range,
+                std::move(arguments));
+        };
+
+    for (const auto& structure : _model._structures) {
+        const JsonStructureMetadata* metadata =
+            _model.JsonMetadataFor(*structure->syntax);
+        if (!metadata || !metadata->writer) continue;
+        const source::SourceRange range = structure->syntax->Range();
+        const auto writeJsonMethod = structure->methods.find("writeJson");
+        if (writeJsonMethod == structure->methods.end() ||
+            writeJsonMethod->second.empty()) {
+            std::vector<std::unique_ptr<core::Statement>> statements;
+            bool declaredError = false;
+            const auto appendChecked = [&](std::unique_ptr<core::Expression>
+                                               expression) {
+                if (!declaredError) {
+                    statements.push_back(
+                        std::make_unique<core::VariableDeclarationStatement>(
+                            range, nullptr, "err", std::move(expression),
+                            range));
+                    declaredError = true;
+                } else {
+                    auto assignment =
+                        std::make_unique<core::AssignmentExpression>(
+                            range, named(range, "err"), std::move(expression));
+                    statements.push_back(
+                        std::make_unique<core::ExpressionStatement>(
+                            range, std::move(assignment)));
+                }
+
+                auto condition = std::make_unique<core::BinaryExpression>(
+                    range, named(range, "err"), TokenType::NotEqual,
+                    std::make_unique<core::LiteralExpression>(
+                        range, TokenType::None, "none"));
+                std::vector<std::unique_ptr<core::Statement>> failure;
+                failure.push_back(std::make_unique<core::ReturnStatement>(
+                    range, named(range, "err")));
+                auto branch = std::make_unique<core::ConditionalBranch>(
+                    range, std::move(condition),
+                    std::make_unique<core::BlockStatement>(range,
+                                                           std::move(failure)),
+                    nullptr);
+                statements.push_back(std::make_unique<core::IfStatement>(
+                    range, std::move(branch),
+                    std::vector<std::unique_ptr<core::ConditionalBranch>>{},
+                    nullptr));
+            };
+            const auto writerCall =
+                [&](std::string method,
+                    std::vector<std::unique_ptr<core::Expression>> arguments =
+                        {}) {
+                    return std::make_unique<core::MemberCallExpression>(
+                        range, named(range, "writer"), std::move(method), range,
+                        std::move(arguments), TokenType::Arrow);
+                };
+
+            appendChecked(writerCall("beginObject"));
+            for (const JsonFieldMetadata& jsonField : metadata->fields) {
+                const StructureField* field = nullptr;
+                for (const StructureField& candidate : structure->fields)
+                    if (candidate.syntax == jsonField.field) {
+                        field = &candidate;
+                        break;
+                    }
+                if (!field) continue;
+
+                const bool scalar =
+                    field->type.IsNumeric() ||
+                    field->type.Kind() == SemanticTypeKind::Bool ||
+                    field->type.Kind() == SemanticTypeKind::String ||
+                    field->type.Kind() == SemanticTypeKind::StringView;
+                const JsonStructureMetadata* nested =
+                    field->type.Kind() == SemanticTypeKind::Structure
+                        ? _model.JsonMetadataFor(
+                              *field->type.Structure()->syntax)
+                        : nullptr;
+                const bool nestedJson =
+                    nested && nested->writer == metadata->writer;
+                if (!scalar && !nestedJson) {
+                    Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                           field->syntax->NameRange(),
+                           "field '" + field->name + "' of type '" +
+                               field->type.Name() +
+                               "' is not JSON serializable");
+                    continue;
+                }
+
+                std::vector<std::unique_ptr<core::Expression>> keyArguments;
+                keyArguments.push_back(
+                    std::make_unique<core::LiteralExpression>(
+                        range, TokenType::StringLiteral, jsonField.name));
+                appendChecked(writerCall("key", std::move(keyArguments)));
+
+                auto fieldValue =
+                    std::make_unique<core::MemberAccessExpression>(
+                        range, named(range, "self"), field->name,
+                        field->syntax->NameRange(), TokenType::Arrow);
+                std::vector<std::unique_ptr<core::Expression>> valueArguments;
+                if (nestedJson) {
+                    valueArguments.push_back(named(range, "writer"));
+                    appendChecked(memberCall(range, std::move(fieldValue),
+                                             "writeJson",
+                                             std::move(valueArguments)));
+                } else {
+                    valueArguments.push_back(std::move(fieldValue));
+                    appendChecked(
+                        writerCall("write", std::move(valueArguments)));
+                }
+            }
+            statements.push_back(std::make_unique<core::ReturnStatement>(
+                range, writerCall("endObject")));
+
+            std::vector<std::unique_ptr<core::Parameter>> parameters;
+            auto selfType =
+                std::make_unique<core::TypeNode>(range, structure->name, true);
+            parameters.push_back(std::make_unique<core::Parameter>(
+                range,
+                std::make_unique<core::TypeNode>(
+                    range, core::TypeKind::Reference, std::move(selfType)),
+                "self", range));
+            auto writerType = std::make_unique<core::TypeNode>(
+                range, metadata->writerTypeName);
+            parameters.push_back(std::make_unique<core::Parameter>(
+                range,
+                std::make_unique<core::TypeNode>(
+                    range, core::TypeKind::Reference, std::move(writerType)),
+                "writer", range));
+            auto writeJson = std::make_unique<core::FunctionDeclaration>(
+                range, std::vector<core::FunctionModifier>{},
+                std::make_unique<core::TypeNode>(
+                    range, core::PrimitiveType::ErrorValue),
+                "writeJson", std::move(parameters),
+                std::make_unique<core::BlockStatement>(range,
+                                                       std::move(statements)),
+                range, structure->name);
+            writeJson->moduleId = structure->syntax->moduleId;
+            writeJson->sourceId = structure->syntax->sourceId;
+            RegisterFunction(*writeJson, true);
+            _model._generatedFunctions.push_back(std::move(writeJson));
+        }
+
+        const auto jsonMethod = structure->methods.find("json");
+        if (jsonMethod != structure->methods.end() &&
+            !jsonMethod->second.empty())
+            continue;
+
+        std::vector<std::unique_ptr<core::Statement>> statements;
+        auto writerInitializer = std::make_unique<core::MemberCallExpression>(
+            range, named(range, metadata->writerTypeName), "init", range,
+            std::vector<std::unique_ptr<core::Expression>>{}, TokenType::Scope);
+        statements.push_back(
+            std::make_unique<core::VariableDeclarationStatement>(
+                range, nullptr, "writer", std::move(writerInitializer), range));
+
+        std::vector<std::unique_ptr<core::Expression>> writeArguments;
+        writeArguments.push_back(std::make_unique<core::UnaryExpression>(
+            range, TokenType::Ampersand, named(range, "writer")));
+        auto writeCall = std::make_unique<core::MemberCallExpression>(
+            range, named(range, "self"), "writeJson", range,
+            std::move(writeArguments), TokenType::Arrow);
+        statements.push_back(
+            std::make_unique<core::VariableDeclarationStatement>(
+                range, nullptr, "err", std::move(writeCall), range));
+
+        auto condition = std::make_unique<core::BinaryExpression>(
+            range, named(range, "err"), TokenType::NotEqual,
+            std::make_unique<core::LiteralExpression>(range, TokenType::None,
+                                                      "none"));
+        std::vector<std::unique_ptr<core::Expression>> failureValues;
+        failureValues.push_back(std::make_unique<core::LiteralExpression>(
+            range, TokenType::None, "none"));
+        failureValues.push_back(named(range, "err"));
+        std::vector<std::unique_ptr<core::Statement>> failure;
+        failure.push_back(std::make_unique<core::ReturnStatement>(
+            range, std::make_unique<core::TupleExpression>(
+                       range, std::move(failureValues))));
+        auto branch = std::make_unique<core::ConditionalBranch>(
+            range, std::move(condition),
+            std::make_unique<core::BlockStatement>(range, std::move(failure)),
+            nullptr);
+        statements.push_back(std::make_unique<core::IfStatement>(
+            range, std::move(branch),
+            std::vector<std::unique_ptr<core::ConditionalBranch>>{}, nullptr));
+
+        auto finishCall = std::make_unique<core::MemberCallExpression>(
+            range, named(range, "writer"), "finish", range,
+            std::vector<std::unique_ptr<core::Expression>>{});
+        statements.push_back(std::make_unique<core::ReturnStatement>(
+            range, std::move(finishCall)));
+
+        auto byte =
+            std::make_unique<core::TypeNode>(range, core::PrimitiveType::U8);
+        auto bytes = std::make_unique<core::TypeNode>(
+            range, core::TypeKind::Slice, std::move(byte));
+        bytes->SetContract(core::OwnershipContract::Own);
+        std::vector<std::unique_ptr<core::TypeNode>> results;
+        results.push_back(std::move(bytes));
+        results.push_back(std::make_unique<core::TypeNode>(
+            range, core::PrimitiveType::ErrorValue));
+
+        std::vector<std::unique_ptr<core::Parameter>> parameters;
+        auto selfType =
+            std::make_unique<core::TypeNode>(range, structure->name, true);
+        parameters.push_back(std::make_unique<core::Parameter>(
+            range,
+            std::make_unique<core::TypeNode>(range, core::TypeKind::Reference,
+                                             std::move(selfType)),
+            "self", range));
+        auto json = std::make_unique<core::FunctionDeclaration>(
+            range, std::vector<core::FunctionModifier>{},
+            std::make_unique<core::TypeNode>(range, std::move(results)), "json",
+            std::move(parameters),
+            std::make_unique<core::BlockStatement>(range,
+                                                   std::move(statements)),
+            range, structure->name);
+        json->moduleId = structure->syntax->moduleId;
+        json->sourceId = structure->syntax->sourceId;
+        RegisterFunction(*json, true);
+        _model._generatedFunctions.push_back(std::move(json));
     }
 }
 
