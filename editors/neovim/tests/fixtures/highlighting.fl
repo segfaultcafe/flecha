@@ -81,8 +81,8 @@ unsafe void inspect(lend *const i32 pointer) {}
 // @imports comment
 stringv directive = "@imports string";
 
-decoration json {};
-@json(default)
+decoration json;
+@json(structure)
 structure JsonDefault {
     @json("value") i32 value;
 };

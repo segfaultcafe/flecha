@@ -1082,7 +1082,8 @@ std::vector<DecorationApplication> Parser::ParseDecorations() {
                     const Token* argument = nullptr;
                     DecorationArgumentKind kind =
                         DecorationArgumentKind::Identifier;
-                    if (Check(TokenType::Identifier)) {
+                    if (Check(TokenType::Identifier) ||
+                        Check(TokenType::Structure)) {
                         argument = &Advance();
                     } else if (Check(TokenType::StringLiteral)) {
                         argument = &Advance();
@@ -1108,18 +1109,10 @@ std::vector<DecorationApplication> Parser::ParseDecorations() {
 std::unique_ptr<DecorationDeclaration> Parser::ParseDecorationDeclaration() {
     const source::SourceLocation start = Advance().range.start;
     const Token* name = Consume(TokenType::Identifier, "decoration name");
-    if (!name || !Consume(TokenType::LCurly, "'{' after decoration name"))
-        return nullptr;
-    if (!Check(TokenType::RCurly)) {
-        ReportUnexpectedToken("in declarative decoration body");
-        while (!Check(TokenType::RCurly) && !IsAtEnd()) Advance();
-    }
-    const Token* close =
-        Consume(TokenType::RCurly, "'}' after decoration declaration");
-    const Token* end = close ? Consume(TokenType::SemiColon,
-                                       "';' after decoration declaration")
-                             : nullptr;
-    if (!close || !end) return nullptr;
+    if (!name) return nullptr;
+    const Token* end =
+        Consume(TokenType::SemiColon, "';' after decoration declaration");
+    if (!end) return nullptr;
     return std::make_unique<DecorationDeclaration>(
         source::SourceRange{start, end->range.end}, name->value, name->range);
 }

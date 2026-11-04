@@ -50,6 +50,13 @@ The milestone follows these rules:
 - higher-level protocols enter the standard library only after their lower
   layers have stable contracts.
 
+Decoration declarations in the 0.3.x language are identities for
+compiler-known behavior. Every usable decoration, regardless of where its
+declaration appears, must have a corresponding compiler implementation;
+libraries cannot define new decoration semantics in this release. The
+temporary JSON contract and the planned post-v0.3 migration are specified in
+[`decorations.md`](decorations.md#v03-declaration-rule).
+
 ## Planned module map
 
 The initial public module layout is:
@@ -664,11 +671,32 @@ Flecha 0.3.0 is ready when:
 Concurrency is a stretch gate until its memory-model design is accepted. Its
 absence must not block the remaining application-capable standard library.
 
+## Temporary JSON compiler contract
+
+Flecha 0.3.x intentionally treats the resolved `json` decoration as a
+compiler-known contract while `flecha/json` owns parsing, writing, buffering,
+escaping, and validation. The compiler owns target validation, field
+selection and renaming, supported-type checks, and the generated `writeJson`,
+`json`, `readJson`, and `fromJson` defaults. Consequently, the public Reader
+and Writer protocol used by generated code is tightly coupled to the compiler
+throughout the 0.3.x line and must change only with a coordinated compiler
+update.
+
+The intended 0.4.0 migration replaces this JSON-specific path with a
+restricted decoration behavior and meta-expansion engine. The stable
+`export decoration json;`, `@json(structure)`, `@json("name")`, and generated
+method APIs should survive that migration unchanged. The provisional design,
+safety boundary, and derived-default rules are documented in
+[decorations.md](decorations.md#post-v03-meta-behavior-direction).
+
 ## Explicit non-goals
 
 Flecha 0.3.0 does not require:
 
-- a trait, interface, or protocol system;
+- a trait, interface, or protocol system (the later direction for
+  decoration-derived defaults and virtual requirements is documented in
+  [decorations.md](decorations.md#later-interfaces-and-virtual-requirements));
+- general member reflection or user-defined decoration behavior blocks;
 - variadic generics or partial explicit/inferred type-argument lists;
 - exceptions, garbage collection, reflection, or async language syntax;
 - private registries, private packages, registry federation, or registry

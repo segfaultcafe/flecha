@@ -804,7 +804,7 @@ TEST(NativeCompilerTests, RunsFieldsAndMethodsWithTheSameName) {
 
 TEST(NativeCompilerTests, RunsGeneratedJsonWriterMethods) {
     GeneratedSource result = Generate(R"(
-        decoration json {};
+        decoration json;
 
         structure Writer { i32 trace; };
         Writer Writer::init() override {
@@ -837,7 +837,7 @@ TEST(NativeCompilerTests, RunsGeneratedJsonWriterMethods) {
             return (output, none);
         }
 
-        @json(default)
+        @json(structure)
         structure Response { i32 value; };
 
         i32 main() {
@@ -879,7 +879,7 @@ TEST(NativeCompilerTests, RunsGeneratedJsonWriterMethods) {
 
 TEST(NativeCompilerTests, RunsGeneratedJsonReaderMethods) {
     GeneratedSource result = Generate(R"(
-        decoration json {};
+        decoration json;
         error TestError { Invalid, }
 
         structure Writer {};
@@ -918,7 +918,7 @@ TEST(NativeCompilerTests, RunsGeneratedJsonReaderMethods) {
             return TestError.Invalid;
         }
 
-        @json(default)
+        @json(structure)
         structure Response { i32 value; };
         Response Response::init(i32 initial) override {
             return build Response { self.value = initial; };
