@@ -961,6 +961,115 @@ TEST(RuntimeUdpTests, ExchangesDatagramsAndReportsTruncation) {
               FLECHA_RUNTIME_NETWORK_OK);
 }
 
+TEST(RuntimeUdpTests, SupportsConnectedEmptyAndMaximumSafeDatagrams) {
+    constexpr uint64_t loopback = UINT64_C(0x7f000001);
+    constexpr std::size_t maximumPayload = 65507;
+    void* receiver = nullptr;
+    void* sender = nullptr;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_bind(&receiver, 4, 0, loopback, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_bind(&sender, 4, 0, loopback, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+
+    uint8_t receiverFamily = 0;
+    uint64_t receiverHigh = 0;
+    uint64_t receiverLow = 0;
+    uint16_t receiverPort = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_local_address(
+                  receiver, &receiverFamily, &receiverHigh, &receiverLow,
+                  &receiverPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+    uint8_t senderFamily = 0;
+    uint64_t senderHigh = 0;
+    uint64_t senderLow = 0;
+    uint16_t senderPort = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_local_address(
+                  sender, &senderFamily, &senderHigh, &senderLow, &senderPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_connect(sender, 4, 0, loopback,
+                                                   receiverPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_connect(receiver, 4, 0, loopback,
+                                                   senderPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_set_timeout(receiver, 0, 1, 2, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+
+    uint8_t peerFamily = 0;
+    uint64_t peerHigh = 0;
+    uint64_t peerLow = 0;
+    uint16_t peerPort = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_peer_address(
+                  sender, &peerFamily, &peerHigh, &peerLow, &peerPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(peerFamily, 4);
+    EXPECT_EQ(peerHigh, 0u);
+    EXPECT_EQ(peerLow, loopback);
+    EXPECT_EQ(peerPort, receiverPort);
+
+    size_t count = 99;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_send(sender, nullptr, 0, &count),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(count, 0u);
+    count = 99;
+    ASSERT_EQ(
+        flecha_runtime_v1_udp_socket_receive(receiver, nullptr, 0, &count),
+        FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(count, 0u);
+
+    std::vector<uint8_t> payload(maximumPayload);
+    for (std::size_t index = 0; index < payload.size(); ++index)
+        payload[index] = static_cast<uint8_t>(index);
+    count = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_send(sender, payload.data(),
+                                                payload.size(), &count),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_EQ(count, payload.size());
+
+    std::vector<uint8_t> received(maximumPayload);
+    count = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_receive(receiver, received.data(),
+                                                   received.size(), &count),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(count, received.size());
+    EXPECT_EQ(received, payload);
+
+    payload.push_back(0);
+    count = 99;
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_send(sender, payload.data(),
+                                                payload.size(), &count),
+              FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE);
+    EXPECT_EQ(count, 0u);
+
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_close(receiver),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_close(sender),
+              FLECHA_RUNTIME_NETWORK_OK);
+}
+
+TEST(RuntimeUdpTests, RepeatedBindAndCloseReleasesEveryNativeDescriptor) {
+#ifdef __linux__
+    const std::size_t descriptorsBefore = OpenDescriptorCount();
+#endif
+    constexpr uint64_t loopback = UINT64_C(0x7f000001);
+    constexpr int iterations = 128;
+    for (int iteration = 0; iteration < iterations; ++iteration) {
+        void* socket = nullptr;
+        ASSERT_EQ(flecha_runtime_v1_udp_socket_bind(&socket, 4, 0, loopback, 0),
+                  FLECHA_RUNTIME_NETWORK_OK);
+        ASSERT_NE(socket, nullptr);
+        ASSERT_EQ(flecha_runtime_v1_udp_socket_close(socket),
+                  FLECHA_RUNTIME_NETWORK_OK);
+    }
+#ifdef __linux__
+    const std::size_t descriptorsAfter = OpenDescriptorCount();
+    ASSERT_NE(descriptorsBefore, 0u);
+    ASSERT_NE(descriptorsAfter, 0u);
+    EXPECT_LE(descriptorsAfter, descriptorsBefore + 1);
+#endif
+}
+
 TEST(RuntimeUdpTests, SupportsIpv6LoopbackWhenAvailable) {
     void* receiver = nullptr;
     const int32_t bindStatus =
@@ -1058,6 +1167,13 @@ TEST(RuntimeUdpTests, ResetsOutputsAndRejectsInvalidCalls) {
     EXPECT_EQ(flecha_runtime_v1_udp_socket_send_to(output, nullptr, 0, 3, 0, 0,
                                                    0, &count),
               FLECHA_RUNTIME_NETWORK_UNSUPPORTED_FAMILY);
+    EXPECT_EQ(count, 0u);
+
+    const uint8_t byte = 0;
+    count = 9;
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_send_to(
+                  output, &byte, 65508, 4, 0, UINT64_C(0x7f000001), 9, &count),
+              FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE);
     EXPECT_EQ(count, 0u);
 
     high = 9;

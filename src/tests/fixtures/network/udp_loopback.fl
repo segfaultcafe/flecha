@@ -88,19 +88,100 @@ i32 main() {
         return 11;
     }
 
+    if sender.connect(receiverAddress) != none or
+        receiver.connect(senderAddress) != none {
+        return 12;
+    }
+    senderPeer, senderPeerError := sender.peerAddress();
+    senderPeerIpv4, hasSenderPeerIpv4 := senderPeer.ipv4();
+    receiverPeer, receiverPeerError := receiver.peerAddress();
+    receiverPeerIpv4, hasReceiverPeerIpv4 := receiverPeer.ipv4();
+    if senderPeerError != none or !hasSenderPeerIpv4 or
+        senderPeerIpv4.address() != address::Ipv4Address::loopback() or
+        senderPeerIpv4.port() != receiverIpv4.port() or
+        receiverPeerError != none or !hasReceiverPeerIpv4 or
+        receiverPeerIpv4.address() != address::Ipv4Address::loopback() or
+        receiverPeerIpv4.port() != senderIpv4.port() {
+        return 13;
+    }
+
+    sent, sendError = sender.send(request[:]);
+    if sent != 4 or sendError != none {
+        return 14;
+    }
+    received, receiveError = receiver.receive(response[:]);
+    if received != 4 or receiveError != none or
+        response[0].cast<char> != 'p' or response[1].cast<char> != 'i' or
+        response[2].cast<char> != 'n' or response[3].cast<char> != 'g' {
+        return 15;
+    }
+
+    [0]u8 empty = none;
+    sent, sendError = sender.send(empty[:]);
+    if sent != 0 or sendError != none {
+        return 16;
+    }
+    received, receiveError = receiver.receive(empty[:]);
+    if received != 0 or receiveError != none {
+        return 17;
+    }
+
+    if udp::MAX_DATAGRAM_SIZE != 65507 {
+        return 18;
+    }
+    unsafe {
+        maximum, allocationError := new<[]u8>(udp::MAX_DATAGRAM_SIZE);
+        if allocationError != none {
+            return 19;
+        }
+        defer free(maximum);
+        maximum[0] = 42;
+        maximum[udp::MAX_DATAGRAM_SIZE - 1] = 24;
+        sent, sendError = sender.send(maximum[:udp::MAX_DATAGRAM_SIZE]);
+        if sent != udp::MAX_DATAGRAM_SIZE or sendError != none {
+            return 20;
+        }
+
+        maximumResponse, responseAllocationError :=
+            new<[]u8>(udp::MAX_DATAGRAM_SIZE);
+        if responseAllocationError != none {
+            return 21;
+        }
+        defer free(maximumResponse);
+        received, receiveError = receiver.receive(
+            maximumResponse[:udp::MAX_DATAGRAM_SIZE]
+        );
+        if received != udp::MAX_DATAGRAM_SIZE or receiveError != none or
+            maximumResponse[0] != 42 or
+            maximumResponse[udp::MAX_DATAGRAM_SIZE - 1] != 24 {
+            return 22;
+        }
+
+        const usize OVERSIZED_LENGTH = udp::MAX_DATAGRAM_SIZE + 1;
+        oversized, oversizedAllocationError := new<[]u8>(OVERSIZED_LENGTH);
+        if oversizedAllocationError != none {
+            return 23;
+        }
+        defer free(oversized);
+        sent, sendError = sender.send(oversized[:OVERSIZED_LENGTH]);
+        if sent != 0 or sendError != errors::NetworkError.MessageTooLarge {
+            return 24;
+        }
+    }
+
     if sender.setSendTimeout(
         duration::Duration::fromMilliseconds(250)
     ) != none or sender.clearSendTimeout() != none or
         sender.clearReceiveTimeout() != none {
-        return 12;
+        return 25;
     }
 
     if sender.close() != none or sender.isOpen() or
         sender.close() != errors::NetworkError.Closed {
-        return 13;
+        return 26;
     }
     if receiver.close() != none or receiver.isOpen() {
-        return 14;
+        return 27;
     }
     return 42;
 }

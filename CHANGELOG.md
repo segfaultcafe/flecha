@@ -16,8 +16,9 @@
   resolution with ordered owning results, explicit ports, stable network
   errors, and a versioned native resolver boundary.
 - Added owning blocking UDP sockets with portable IPv4/IPv6 binding,
-  datagram-preserving send and receive, sender-address recovery, explicit
-  truncation errors, independent timeouts, and deterministic teardown.
+  connected and destination-addressed datagram operations, sender and peer
+  address recovery, explicit truncation and payload-boundary errors,
+  independent timeouts, and deterministic teardown.
 - Added `std::tests::benchmark` with validated warmup and sample configuration,
   monotonic in-process timing, setup/teardown hooks, integer summary statistics,
   and deterministic versioned JSON output for CI baselines.

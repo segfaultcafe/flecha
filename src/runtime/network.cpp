@@ -77,6 +77,9 @@ struct UdpHandle final {
     TcpTimeout sendTimeout{};
 };
 
+constexpr size_t MaxUdpPayloadSize = 65507;
+constexpr int UdpBufferCapacity = 131072;
+
 using SteadyClock = std::chrono::steady_clock;
 
 struct Deadline final {
@@ -305,6 +308,22 @@ int32_t ConfigureIpv6Only(NativeSocket socket) {
     if (setsockopt(socket, IPPROTO_IPV6, IPV6_V6ONLY, &enabled,
                    sizeof(enabled)) != 0)
 #endif
+        return MapSocketError(LastSocketError());
+    return FLECHA_RUNTIME_NETWORK_OK;
+}
+
+int32_t ConfigureUdpBuffers(NativeSocket socket) {
+#ifdef _WIN32
+    const auto* capacity = reinterpret_cast<const char*>(&UdpBufferCapacity);
+    const int capacityLength = static_cast<int>(sizeof(UdpBufferCapacity));
+#else
+    const auto* capacity = &UdpBufferCapacity;
+    const socklen_t capacityLength = sizeof(UdpBufferCapacity);
+#endif
+    if (setsockopt(socket, SOL_SOCKET, SO_SNDBUF, capacity, capacityLength) !=
+            0 ||
+        setsockopt(socket, SOL_SOCKET, SO_RCVBUF, capacity, capacityLength) !=
+            0)
         return MapSocketError(LastSocketError());
     return FLECHA_RUNTIME_NETWORK_OK;
 }
@@ -563,6 +582,8 @@ int32_t CreateUdpSocket(uint8_t family, NativeSocket* output) {
     if (socket == InvalidSocket) return MapSocketError(LastSocketError());
 
     int32_t status = ConfigureNonblocking(socket);
+    if (status == FLECHA_RUNTIME_NETWORK_OK)
+        status = ConfigureUdpBuffers(socket);
     if (status == FLECHA_RUNTIME_NETWORK_OK && family == 6)
         status = ConfigureIpv6Only(socket);
     if (status != FLECHA_RUNTIME_NETWORK_OK) {
@@ -584,8 +605,8 @@ int32_t WrapUdpSocket(NativeSocket socket, void** output) {
     }
 }
 
-int32_t UdpSocketAddress(void* opaque, uint8_t* family, uint64_t* high,
-                         uint64_t* low, uint16_t* port) {
+int32_t UdpSocketAddress(void* opaque, bool peer, uint8_t* family,
+                         uint64_t* high, uint64_t* low, uint16_t* port) {
     ResetEndpoint(family, high, low, port);
     UdpHandle* handle = GetUdpHandle(opaque);
     if (handle == nullptr) return FLECHA_RUNTIME_NETWORK_CLOSED;
@@ -596,9 +617,12 @@ int32_t UdpSocketAddress(void* opaque, uint8_t* family, uint64_t* high,
     sockaddr_storage address{};
     NativeSocketLength length =
         static_cast<NativeSocketLength>(sizeof(address));
-    if (getsockname(handle->socket, reinterpret_cast<sockaddr*>(&address),
-                    &length) != 0)
-        return MapSocketError(LastSocketError());
+    const int result =
+        peer ? getpeername(handle->socket,
+                           reinterpret_cast<sockaddr*>(&address), &length)
+             : getsockname(handle->socket,
+                           reinterpret_cast<sockaddr*>(&address), &length);
+    if (result != 0) return MapSocketError(LastSocketError());
     return ReadNativeAddress(reinterpret_cast<const sockaddr*>(&address),
                              length, family, high, low, port);
 }
@@ -1034,6 +1058,28 @@ int32_t flecha_runtime_v1_udp_socket_bind(void** output, uint8_t family,
     return status;
 }
 
+int32_t flecha_runtime_v1_udp_socket_connect(void* opaque, uint8_t family,
+                                             uint64_t high, uint64_t low,
+                                             uint16_t port) {
+    UdpHandle* handle = GetUdpHandle(opaque);
+    if (handle == nullptr) return FLECHA_RUNTIME_NETWORK_CLOSED;
+
+    sockaddr_storage address{};
+    NativeSocketLength addressLength = 0;
+    int32_t status =
+        MakeNativeAddress(family, high, low, port, &address, &addressLength);
+    if (status != FLECHA_RUNTIME_NETWORK_OK) return status;
+
+    for (;;) {
+        if (connect(handle->socket, reinterpret_cast<sockaddr*>(&address),
+                    addressLength) == 0)
+            return FLECHA_RUNTIME_NETWORK_OK;
+        const int error = LastSocketError();
+        if (SocketErrorInterrupted(error)) continue;
+        return MapSocketError(error);
+    }
+}
+
 int32_t flecha_runtime_v1_udp_socket_send_to(void* opaque,
                                              const uint8_t* source,
                                              size_t length, uint8_t family,
@@ -1044,11 +1090,7 @@ int32_t flecha_runtime_v1_udp_socket_send_to(void* opaque,
     if (handle == nullptr) return FLECHA_RUNTIME_NETWORK_CLOSED;
     if (count == nullptr || (source == nullptr && length != 0))
         return FLECHA_RUNTIME_NETWORK_FAILED;
-#ifdef _WIN32
-    if (length > static_cast<size_t>(INT_MAX))
-#else
-    if (length > static_cast<size_t>(std::numeric_limits<ssize_t>::max()))
-#endif
+    if (length > MaxUdpPayloadSize)
         return FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE;
 
     sockaddr_storage address{};
@@ -1075,6 +1117,43 @@ int32_t flecha_runtime_v1_udp_socket_send_to(void* opaque,
         const ssize_t result =
             sendto(handle->socket, source, length, sendFlags,
                    reinterpret_cast<sockaddr*>(&address), addressLength);
+#endif
+        if (result >= 0) {
+            *count = static_cast<size_t>(result);
+            return FLECHA_RUNTIME_NETWORK_OK;
+        }
+        const int error = LastSocketError();
+        if (SocketErrorInterrupted(error) || SocketErrorWouldBlock(error))
+            continue;
+        return MapSocketError(error);
+    }
+}
+
+int32_t flecha_runtime_v1_udp_socket_send(void* opaque, const uint8_t* source,
+                                          size_t length, size_t* count) {
+    if (count != nullptr) *count = 0;
+    UdpHandle* handle = GetUdpHandle(opaque);
+    if (handle == nullptr) return FLECHA_RUNTIME_NETWORK_CLOSED;
+    if (count == nullptr || (source == nullptr && length != 0))
+        return FLECHA_RUNTIME_NETWORK_FAILED;
+    if (length > MaxUdpPayloadSize)
+        return FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE;
+
+    const Deadline deadline = MakeDeadline(handle->sendTimeout);
+    for (;;) {
+        int32_t status = WaitForSocket(handle->socket, true, deadline);
+        if (status != FLECHA_RUNTIME_NETWORK_OK) return status;
+#ifdef _WIN32
+        const int result =
+            send(handle->socket, reinterpret_cast<const char*>(source),
+                 static_cast<int>(length), 0);
+#else
+#ifdef MSG_NOSIGNAL
+        constexpr int sendFlags = MSG_NOSIGNAL;
+#else
+        constexpr int sendFlags = 0;
+#endif
+        const ssize_t result = send(handle->socket, source, length, sendFlags);
 #endif
         if (result >= 0) {
             *count = static_cast<size_t>(result);
@@ -1167,6 +1246,62 @@ int32_t flecha_runtime_v1_udp_socket_receive_from(
     }
 }
 
+int32_t flecha_runtime_v1_udp_socket_receive(void* opaque, uint8_t* destination,
+                                             size_t length, size_t* count) {
+    if (count != nullptr) *count = 0;
+    UdpHandle* handle = GetUdpHandle(opaque);
+    if (handle == nullptr) return FLECHA_RUNTIME_NETWORK_CLOSED;
+    if (count == nullptr || (destination == nullptr && length != 0))
+        return FLECHA_RUNTIME_NETWORK_FAILED;
+#ifdef _WIN32
+    if (length > static_cast<size_t>(ULONG_MAX))
+#else
+    if (length > static_cast<size_t>(std::numeric_limits<ssize_t>::max()))
+#endif
+        return FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE;
+
+    const Deadline deadline = MakeDeadline(handle->receiveTimeout);
+    for (;;) {
+        int32_t status = WaitForSocket(handle->socket, false, deadline);
+        if (status != FLECHA_RUNTIME_NETWORK_OK) return status;
+#ifdef _WIN32
+        WSABUF buffer{};
+        buffer.buf = reinterpret_cast<char*>(destination);
+        buffer.len = static_cast<ULONG>(length);
+        DWORD received = 0;
+        DWORD flags = 0;
+        const int result = WSARecv(handle->socket, &buffer, 1, &received,
+                                   &flags, nullptr, nullptr);
+        if (result == 0) {
+            *count = static_cast<size_t>(received);
+            return FLECHA_RUNTIME_NETWORK_OK;
+        }
+        const int error = LastSocketError();
+        if (error == WSAEMSGSIZE) {
+            *count = static_cast<size_t>(received);
+            return FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE;
+        }
+#else
+        iovec buffer{destination, length};
+        msghdr message{};
+        message.msg_iov = &buffer;
+        message.msg_iovlen = 1;
+        const ssize_t result = recvmsg(handle->socket, &message, MSG_TRUNC);
+        if (result >= 0) {
+            *count = std::min<size_t>(static_cast<size_t>(result), length);
+            return static_cast<size_t>(result) > length ||
+                           (message.msg_flags & MSG_TRUNC) != 0
+                       ? FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE
+                       : FLECHA_RUNTIME_NETWORK_OK;
+        }
+        const int error = LastSocketError();
+#endif
+        if (SocketErrorInterrupted(error) || SocketErrorWouldBlock(error))
+            continue;
+        return MapSocketError(error);
+    }
+}
+
 int32_t flecha_runtime_v1_udp_socket_set_timeout(void* opaque,
                                                  uint8_t direction,
                                                  uint8_t enabled,
@@ -1187,7 +1322,13 @@ int32_t flecha_runtime_v1_udp_socket_local_address(void* handle,
                                                    uint64_t* high,
                                                    uint64_t* low,
                                                    uint16_t* port) {
-    return UdpSocketAddress(handle, family, high, low, port);
+    return UdpSocketAddress(handle, false, family, high, low, port);
+}
+
+int32_t flecha_runtime_v1_udp_socket_peer_address(void* handle, uint8_t* family,
+                                                  uint64_t* high, uint64_t* low,
+                                                  uint16_t* port) {
+    return UdpSocketAddress(handle, true, family, high, low, port);
 }
 
 int32_t flecha_runtime_v1_udp_socket_close(void* handle) {

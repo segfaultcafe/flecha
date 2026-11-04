@@ -115,6 +115,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         NAME RuntimeEnvironmentTests.PreservesStateOnAllocationFailure
         COMMAND test_environment_allocation
     )
+
+    add_executable(test_udp_allocation
+        fixtures/udp_allocation_harness.cpp
+    )
+    target_link_libraries(test_udp_allocation
+        PRIVATE
+            flecha_project_options
+            runtime
+    )
+    target_link_options(test_udp_allocation
+        PRIVATE
+            -Wl,--wrap=_Znwm
+    )
+    add_test(
+        NAME RuntimeUdpTests.ClosesNativeSocketOnAllocationFailure
+        COMMAND test_udp_allocation
+    )
 endif()
 
 add_test(NAME CliTests.FlechaVersion COMMAND $<TARGET_FILE:flecha> --version)
