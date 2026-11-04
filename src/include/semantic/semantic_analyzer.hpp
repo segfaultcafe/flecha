@@ -84,7 +84,7 @@ class SemanticAnalyzer final {
     void RegisterFunction(const core::FunctionDeclaration& function,
                           bool generated = false);
     void GenerateInitializers();
-    void GenerateJsonWriters();
+    void GenerateJsonMethods();
     SemanticType AnalyzeBuild(const core::BuildExpression& expression);
     SemanticType AnalyzeStructureCall(
         const core::MemberCallExpression& expression, SemanticType receiver);
