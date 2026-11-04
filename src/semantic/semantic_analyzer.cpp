@@ -743,11 +743,21 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
                        application.Name() + "'");
         return result;
     };
+    const auto requireCompilerCounterpart =
+        [&](const DecorationApplication& application,
+            const DecorationDeclaration* decoration) {
+        if (!decoration || decoration->Name() == "json") return;
+        Report(diagnostics::DiagnosticCode::InvalidDecoration,
+               application.range,
+               "decoration '@" + decoration->Name() +
+                   "' has no compiler implementation in Flecha 0.3");
+    };
 
     for (const auto& declaration : unit.Declarations()) {
         std::unordered_set<const DecorationDeclaration*> seen;
         for (const auto& application : declaration->decorations) {
             const auto* decoration = resolveOrReport(application, *declaration);
+            requireCompilerCounterpart(application, decoration);
             if (decoration && !seen.insert(decoration).second)
                 Report(diagnostics::DiagnosticCode::InvalidDecoration,
                        application.range,
@@ -778,23 +788,15 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         JsonDecorationMode mode = JsonDecorationMode::Explicit;
         bool hasJson = structureJson != nullptr;
         if (structureJson) {
-            if (structureJson->arguments.empty()) {
-                mode = JsonDecorationMode::Explicit;
-            } else if (structureJson->arguments.size() == 1 &&
-                       structureJson->arguments.front().kind ==
-                           DecorationArgumentKind::Identifier &&
-                       structureJson->arguments.front().value == "explicit") {
-                mode = JsonDecorationMode::Explicit;
-            } else if (structureJson->arguments.size() == 1 &&
-                       structureJson->arguments.front().kind ==
-                           DecorationArgumentKind::Identifier &&
-                       structureJson->arguments.front().value == "default") {
+            if (structureJson->arguments.size() == 1 &&
+                structureJson->arguments.front().kind ==
+                    DecorationArgumentKind::Identifier &&
+                structureJson->arguments.front().value == "structure") {
                 mode = JsonDecorationMode::Default;
             } else {
                 Report(diagnostics::DiagnosticCode::InvalidDecoration,
                        structureJson->range,
-                       "structure @json expects 'explicit', 'default', or no "
-                       "arguments");
+                       "structure @json expects the 'structure' target");
             }
         }
 
@@ -810,6 +812,7 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
             for (const auto& application : field->Decorations()) {
                 const auto* decoration =
                     resolveOrReport(application, *declaration);
+                requireCompilerCounterpart(application, decoration);
                 if (decoration && !seen.insert(decoration).second)
                     Report(diagnostics::DiagnosticCode::InvalidDecoration,
                            application.range,

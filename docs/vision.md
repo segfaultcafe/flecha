@@ -98,6 +98,22 @@ open: declarative macros, compile-time functions, reflection, derives, or a
 combination should be judged by the programs they enable and the clarity of
 their generated code.
 
+Flecha 0.3.x intentionally keeps JSON derivation coupled to a compiler-known
+decoration contract. The intended 0.4 direction is a restricted behavior and
+meta-expansion engine that lets the JSON library own field selection,
+renaming, traversal, and complete default methods without granting packages
+unrestricted compiler execution or arbitrary AST access. Derived signatures
+are registered before bodies are checked, and exact target overrides replace
+defaults. The same foundation may later declare interface conformance and
+virtual requirements. The versioned contract, provisional syntax, and safety
+boundary are recorded in
+[decorations.md](decorations.md#post-v03-meta-behavior-direction).
+
+More generally, every decoration usable in 0.3.x requires a compiler
+counterpart: a source declaration only exposes its name and cannot define new
+semantics. Library-owned decoration behavior begins only after that versioned
+compiler contract is replaced.
+
 ### Compiler-enabling libraries
 
 A self-hosted compiler needs the same foundations as other substantial native
