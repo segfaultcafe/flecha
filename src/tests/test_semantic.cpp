@@ -7359,6 +7359,25 @@ TEST(SemanticGenericTests,
             .diagnostics.HasErrors());
 }
 
+TEST(SemanticGenericTests,
+     SuppressesInstantiationCascadesAfterInvalidDefaultConstruction) {
+    auto result = Analyze(R"(
+        enum Kind { First, Second, }
+        structure Frame { Kind kind; };
+        T fallback<T>() { return none; }
+        (T, error) tupleFallback<T>() { return (none, none); }
+        Frame load() { return fallback<Frame>(); }
+        (Frame, error) loadTuple() { return tupleFallback<Frame>(); }
+    )");
+
+    ASSERT_EQ(result.diagnostics.Diagnostics().size(), 1);
+    EXPECT_EQ(result.diagnostics.Diagnostics().front().code,
+              DiagnosticCode::InvalidStructure);
+    EXPECT_NE(result.diagnostics.Diagnostics().front().message.find(
+                  "has no default variant"),
+              std::string::npos);
+}
+
 TEST(SemanticGenericTests, EnforcesBuiltinTypeSetConstraints) {
     auto valid = Analyze(R"(
         T integer_identity<T: integer>(T value) { return value; }

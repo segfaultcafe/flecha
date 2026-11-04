@@ -1,6 +1,7 @@
 #include "semantic/semantic_type.hpp"
 
 #include <cassert>
+#include <unordered_set>
 #include <utility>
 
 #include "semantic/symbol.hpp"
@@ -82,6 +83,31 @@ bool SemanticType::ContainsReference() const {
         for (const auto& element : Elements())
             if (element.ContainsReference()) return true;
     return false;
+}
+
+bool SemanticType::ContainsInvalidDefaultConstruction() const {
+    std::unordered_set<const StructureType*> visiting;
+    const auto contains = [&](const auto& self, SemanticType type) -> bool {
+        if (type.Kind() == SemanticTypeKind::Structure) {
+            const StructureType* structure = type.Structure();
+            if (structure->invalidDefaultConstruction) return true;
+            if (!visiting.insert(structure).second) return false;
+            for (const auto& field : structure->fields)
+                if (self(self, field.type)) {
+                    visiting.erase(structure);
+                    return true;
+                }
+            visiting.erase(structure);
+            return false;
+        }
+        if (type.Kind() == SemanticTypeKind::Array)
+            return self(self, *type.Target());
+        if (type.Kind() == SemanticTypeKind::Tuple)
+            for (const auto& element : type.Elements())
+                if (self(self, element)) return true;
+        return false;
+    };
+    return contains(contains, *this);
 }
 
 bool SemanticType::IsZeroable() const {
@@ -458,6 +484,9 @@ bool IsAssignable(SemanticType destination, SemanticType source) {
         source.Kind() == SemanticTypeKind::StringView) {
         return true;
     }
+    if (source.Kind() == SemanticTypeKind::None &&
+        destination.ContainsInvalidDefaultConstruction())
+        return true;
     if (source.Kind() == SemanticTypeKind::None &&
         destination.ContainsStructure())
         return destination.IsZeroable();

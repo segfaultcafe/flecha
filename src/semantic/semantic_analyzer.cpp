@@ -6890,31 +6890,38 @@ SemanticType SemanticAnalyzer::AnalyzeBuild(
                    expression.Range(),
                    "reference-bearing field '" + field->name +
                        "' requires direct initialization in build");
+    bool invalidDefaultConstruction = false;
     std::function<void(SemanticType)> checkDefault = [&](SemanticType field) {
-        if (field.Kind() == SemanticTypeKind::Enum && !field.IsZeroable())
+        if (field.Kind() == SemanticTypeKind::Enum && !field.IsZeroable()) {
+            invalidDefaultConstruction = true;
             Report(diagnostics::DiagnosticCode::InvalidStructure,
                    expression.Range(),
                    "field of enum type '" + field.Name() +
                        "' has no default variant");
+        }
         if (field.Kind() == SemanticTypeKind::Structure) {
             const FunctionSymbol* method =
                 zeroBuild ? field.Structure()->zero : field.Structure()->init;
-            if (!method && zeroBuild)
+            if (!method && zeroBuild) {
+                invalidDefaultConstruction = true;
                 Report(diagnostics::DiagnosticCode::InvalidStructure,
                        expression.Range(),
                        "field of type '" + field.Name() +
                            "' has no valid default construction");
+            }
             if (method) {
                 CheckMethodAccess(*method, expression.Range());
                 if (_currentFunction)
                     _functionCalls[_currentFunction].insert(method);
             }
-            if (method && !method->ParameterTypes().empty())
+            if (method && !method->ParameterTypes().empty()) {
+                invalidDefaultConstruction = true;
                 Report(diagnostics::DiagnosticCode::InvalidStructure,
                        expression.Range(),
                        "field of type '" + field.Name() +
                            "' needs an explicit declaration initializer "
                            "because its init requires arguments");
+            }
         }
         if (field.Kind() == SemanticTypeKind::Array)
             checkDefault(*field.Target());
@@ -6925,6 +6932,12 @@ SemanticType SemanticAnalyzer::AnalyzeBuild(
         if (!initializedFields.contains(&field) &&
             (zeroBuild || !field.syntax->Initializer()))
             checkDefault(field.type);
+    if (invalidDefaultConstruction)
+        for (auto& structure : _model._structures)
+            if (structure.get() == type.Structure()) {
+                structure->invalidDefaultConstruction = true;
+                break;
+            }
     Scope* previousScope = _currentScope;
     const Symbol* previousSelf = _buildSelf;
     _currentScope = &AddScope(previousScope);
