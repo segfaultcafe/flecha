@@ -97,5 +97,6 @@ public API. This version does not promise that key material is securely erased
 from memory after use; such a guarantee requires the secure-memory boundary.
 
 HMAC computes authentication tags but does not verify them. Do not compare
-secret tags with an early-exit equality loop; use the constant-time comparison
-API when it becomes available.
+secret tags with an early-exit equality loop. Use
+`std::bytes::sequence::constant_time_equal` for byte slices or
+`std::text::strings::constant_time_equal` for byte-oriented string views.

@@ -147,6 +147,44 @@ host APIs map to status `1`; other host failures map to status `2`. No platform
 error code or deterministic fallback crosses the ABI. The safe standard-library
 contract and deterministic generator are specified in [`random.md`](random.md).
 
+## Constant-time byte comparison
+
+The version 1 security ABI compares two borrowed, equally sized byte regions:
+
+```c
+uint8_t flecha_runtime_v1_constant_time_difference(const uint8_t* left,
+                                                   const uint8_t* right,
+                                                   size_t length);
+```
+
+The operation returns zero only when every corresponding byte is equal and a
+nonzero value otherwise. A zero length accepts null pointers and reports no
+difference. For a nonzero length, either null pointer is invalid and reports a
+nonzero difference. Pointer validity and length are public inputs.
+
+For valid nonempty regions, the implementation performs a volatile read of
+every byte from both inputs and accumulates their differences without
+content-dependent early exit. The loop count depends only on `length`. The
+operation allocates no memory, transfers no ownership, modifies no input,
+maintains no state, does not block, and is safe for concurrent calls. The safe
+`std::bytes::sequence::constant_time_equal` wrapper rejects unequal lengths
+before entering the runtime; `std::text::strings::constant_time_equal` forwards
+the exact bytes of both string views through that wrapper.
+
+The same boundary provides guaranteed zeroing of caller-owned mutable bytes:
+
+```c
+void flecha_runtime_v1_secure_zero(uint8_t* destination, size_t length);
+```
+
+A zero length accepts a null destination. A nonzero length requires a valid
+mutable region of at least `length` bytes. Windows uses `SecureZeroMemory`;
+Linux and macOS use `explicit_bzero`. These host operations prevent the
+overwrite from being removed as a dead store. The safe
+`std::bytes::sequence::zero_bytes` wrapper supplies a valid mutable slice. It
+does not allocate, transfer ownership, or block, and it is safe for concurrent
+calls on disjoint storage.
+
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the
 archive configured with the compiler. A missing archive or linker failure is
