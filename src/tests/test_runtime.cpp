@@ -932,6 +932,64 @@ TEST(RuntimeRandomTests, FillsOnlyTheRequestedRegion) {
     EXPECT_EQ(storage.back(), 165);
 }
 
+TEST(RuntimeSecurityTests, EmptyRegionsAreEqual) {
+    EXPECT_EQ(flecha_runtime_v1_constant_time_difference(nullptr, nullptr, 0),
+              0);
+}
+
+TEST(RuntimeSecurityTests, RejectsNullNonemptyRegions) {
+    const std::array<uint8_t, 1> value{42};
+
+    EXPECT_NE(flecha_runtime_v1_constant_time_difference(nullptr, value.data(),
+                                                         value.size()),
+              0);
+    EXPECT_NE(flecha_runtime_v1_constant_time_difference(value.data(), nullptr,
+                                                         value.size()),
+              0);
+}
+
+TEST(RuntimeSecurityTests, EqualRegionsHaveNoDifference) {
+    const std::array<uint8_t, 5> left{1, 2, 3, 4, 5};
+    const std::array<uint8_t, 5> right{1, 2, 3, 4, 5};
+
+    EXPECT_EQ(flecha_runtime_v1_constant_time_difference(
+                  left.data(), right.data(), left.size()),
+              0);
+}
+
+TEST(RuntimeSecurityTests, DetectsDifferencesThroughoutTheRegion) {
+    const std::array<uint8_t, 5> expected{1, 2, 3, 4, 5};
+    const std::array<uint8_t, 5> first{0, 2, 3, 4, 5};
+    const std::array<uint8_t, 5> middle{1, 2, 0, 4, 5};
+    const std::array<uint8_t, 5> last{1, 2, 3, 4, 0};
+
+    EXPECT_NE(flecha_runtime_v1_constant_time_difference(
+                  expected.data(), first.data(), expected.size()),
+              0);
+    EXPECT_NE(flecha_runtime_v1_constant_time_difference(
+                  expected.data(), middle.data(), expected.size()),
+              0);
+    EXPECT_NE(flecha_runtime_v1_constant_time_difference(
+                  expected.data(), last.data(), expected.size()),
+              0);
+}
+
+TEST(RuntimeSecurityTests, SecureZeroAcceptsAnEmptyDestination) {
+    flecha_runtime_v1_secure_zero(nullptr, 0);
+}
+
+TEST(RuntimeSecurityTests, SecureZeroOverwritesOnlyTheRequestedRegion) {
+    std::array<uint8_t, 7> storage{11, 22, 33, 44, 55, 66, 77};
+
+    flecha_runtime_v1_secure_zero(storage.data() + 1, 5);
+
+    EXPECT_EQ(storage.front(), 11);
+    EXPECT_EQ(storage.back(), 77);
+    for (size_t index = 1; index < storage.size() - 1; ++index) {
+        EXPECT_EQ(storage[index], 0);
+    }
+}
+
 TEST(RuntimeTimeTests, ReturnsNormalizedClockObservations) {
     uint64_t firstSeconds = 0;
     uint32_t firstNanoseconds = 0;

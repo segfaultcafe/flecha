@@ -243,6 +243,19 @@ int32_t flecha_runtime_v1_process_pipe_close(void* handle);
 int32_t flecha_runtime_v1_secure_random_fill(uint8_t* destination,
                                              size_t length);
 
+// Compares two equally sized byte regions without data-dependent early exit.
+// Returns zero when every byte is equal and nonzero otherwise. Null pointers
+// are accepted only when length is zero; invalid nonempty regions compare
+// unequal. Length and pointer validity are not treated as secret.
+uint8_t flecha_runtime_v1_constant_time_difference(const uint8_t* left,
+                                                   const uint8_t* right,
+                                                   size_t length);
+
+// Overwrites the complete mutable byte region with zeroes using a host
+// operation that cannot be removed as a dead store. A null destination is
+// valid only when length is zero.
+void flecha_runtime_v1_secure_zero(uint8_t* destination, size_t length);
+
 // Resolves one ASCII hostname into a runtime-owned ordered set of unique IPv4
 // and IPv6 addresses. International names must be supplied in their ASCII
 // compatible (punycode) form. Every failure leaves output null.
