@@ -107,6 +107,7 @@ class SemanticType final {
     bool ContainsOwnedBuffer() const;
     bool ContainsOwnedSlice() const;
     bool ContainsReference() const;
+    bool ContainsInvalidDefaultConstruction() const;
     bool IsZeroable() const;
     bool IsTriviallyZeroable() const;
     bool IsCopyable() const;
