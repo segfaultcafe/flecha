@@ -228,6 +228,10 @@ struct StructureType final {
     bool zeroIsGenerated = false;
     bool zeroIsTrivial = false;
     bool validLayout = false;
+    // Set after the analyzer has diagnosed that the generated/default build
+    // cannot initialize this structure. Later type checks use this only for
+    // error recovery so dependent expressions do not repeat the root error.
+    bool invalidDefaultConstruction = false;
 };
 
 }  // namespace flecha::semantic
