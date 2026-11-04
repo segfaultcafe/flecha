@@ -33,6 +33,8 @@ struct JsonStructureMetadata final {
     std::vector<JsonFieldMetadata> fields;
     const StructureType* writer = nullptr;
     std::string writerTypeName;
+    const StructureType* reader = nullptr;
+    std::string readerTypeName;
 };
 
 class SemanticModel final {
