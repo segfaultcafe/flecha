@@ -802,6 +802,81 @@ TEST(NativeCompilerTests, RunsFieldsAndMethodsWithTheSameName) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsGeneratedJsonWriterMethods) {
+    GeneratedSource result = Generate(R"(
+        decoration json {};
+
+        structure Writer { i32 trace; };
+        Writer Writer::init() override {
+            return build Writer { self.trace = 0; };
+        }
+        error Writer::beginObject(&self) {
+            self->trace = self->trace * 10 + 1;
+            return none;
+        }
+        error Writer::endObject(&self) {
+            self->trace = self->trace * 10 + 3;
+            return none;
+        }
+        error Writer::key(&self, stringv name) {
+            self->trace = self->trace * 10 + 2;
+            return none;
+        }
+        error Writer::write(&self, i32 value) {
+            self->trace = self->trace * 10 + value;
+            return none;
+        }
+        (own []u8, error) Writer::finish(&const self) {
+            output, err := new<own []u8>(1);
+            if err != none { return (none, err); }
+            if self->trace == 1243 {
+                output[0] = 42;
+            } else {
+                output[0] = 2;
+            }
+            return (output, none);
+        }
+
+        @json(default)
+        structure Response { i32 value; };
+
+        i32 main() {
+            response := Response::init();
+            response.value = 4;
+
+            writer := Writer::init();
+            if response.writeJson(&writer) != none { return 1; }
+            direct, directError := writer.finish();
+            if directError != none or direct.len() != 1 or direct[0] != 42 {
+                return 2;
+            }
+
+            output, err := response.json();
+            if err != none or output.len() != 1 { return 3; }
+            return output[0].cast<i32>;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_generated_json_writer_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "generated_json_writer_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(LlvmCodeGeneratorTests, ExtractsCheckedSliceDataPointers) {
     GeneratedSource result = Generate(R"(
         unsafe i32 first([]const i32 values) { return *values.data(); }
@@ -3547,8 +3622,7 @@ TEST(NativeCompilerTests, RunsStringAndStringViewRanges) {
     ASSERT_NE(result.boundProgram, nullptr);
 
     const std::filesystem::path executablePath =
-        std::filesystem::temp_directory_path() /
-        "flecha_string_range_test";
+        std::filesystem::temp_directory_path() / "flecha_string_range_test";
     std::filesystem::remove(executablePath);
     NativeCompiler compiler;
     ASSERT_TRUE(compiler.Ready()) << compiler.Error();
