@@ -1002,10 +1002,16 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
                                                _tokens.begin() + _position);
             return declaration;
         }
+        std::vector<DecorationApplication> decorations = ParseDecorations();
         bool isPrivate = privateBlock;
         if (Match(TokenType::Private)) {
             isPrivate = true;
             if (Match(TokenType::LCurly)) {
+                if (!decorations.empty())
+                    _diagnostics.Report(
+                        diagnostics::DiagnosticCode::UnexpectedToken,
+                        decorations.front().range,
+                        "decorations cannot target a private field group");
                 if (privateBlock) {
                     ReportUnexpectedToken("in nested private block");
                     return nullptr;
@@ -1044,11 +1050,78 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
                     index == 0 ? fieldStart : field.nameRange.start,
                     end->range.end},
                 CloneType(*type), std::move(field.name), field.nameRange,
-                std::move(field.initializer), isPrivate));
+                std::move(field.initializer), isPrivate, decorations));
         }
     }
     ReportUnexpectedToken("in structure declaration");
     return nullptr;
+}
+
+std::vector<DecorationApplication> Parser::ParseDecorations() {
+    std::vector<DecorationApplication> decorations;
+    while (Check(TokenType::At)) {
+        const source::SourceLocation start = Advance().range.start;
+        DecorationApplication decoration;
+        const Token* segment =
+            Consume(TokenType::Identifier, "decoration name after '@'");
+        if (!segment) break;
+        decoration.path.push_back(segment->value);
+        decoration.pathRanges.push_back(segment->range);
+        source::SourceLocation end = segment->range.end;
+        while (Match(TokenType::Scope)) {
+            segment =
+                Consume(TokenType::Identifier, "decoration name after '::'");
+            if (!segment) break;
+            decoration.path.push_back(segment->value);
+            decoration.pathRanges.push_back(segment->range);
+            end = segment->range.end;
+        }
+        if (Match(TokenType::LParen)) {
+            if (!Check(TokenType::RParen)) {
+                do {
+                    const Token* argument = nullptr;
+                    DecorationArgumentKind kind =
+                        DecorationArgumentKind::Identifier;
+                    if (Check(TokenType::Identifier)) {
+                        argument = &Advance();
+                    } else if (Check(TokenType::StringLiteral)) {
+                        argument = &Advance();
+                        kind = DecorationArgumentKind::String;
+                    } else {
+                        ReportUnexpectedToken("in decoration arguments");
+                        break;
+                    }
+                    decoration.arguments.push_back(
+                        {kind, argument->value, argument->range});
+                } while (Match(TokenType::Comma));
+            }
+            if (const Token* close = Consume(TokenType::RParen,
+                                             "')' after decoration arguments"))
+                end = close->range.end;
+        }
+        decoration.range = {start, end};
+        decorations.push_back(std::move(decoration));
+    }
+    return decorations;
+}
+
+std::unique_ptr<DecorationDeclaration> Parser::ParseDecorationDeclaration() {
+    const source::SourceLocation start = Advance().range.start;
+    const Token* name = Consume(TokenType::Identifier, "decoration name");
+    if (!name || !Consume(TokenType::LCurly, "'{' after decoration name"))
+        return nullptr;
+    if (!Check(TokenType::RCurly)) {
+        ReportUnexpectedToken("in declarative decoration body");
+        while (!Check(TokenType::RCurly) && !IsAtEnd()) Advance();
+    }
+    const Token* close =
+        Consume(TokenType::RCurly, "'}' after decoration declaration");
+    const Token* end = close ? Consume(TokenType::SemiColon,
+                                       "';' after decoration declaration")
+                             : nullptr;
+    if (!close || !end) return nullptr;
+    return std::make_unique<DecorationDeclaration>(
+        source::SourceRange{start, end->range.end}, name->value, name->range);
 }
 
 std::unique_ptr<TypeSetDeclaration> Parser::ParseTypeSetDeclaration() {
@@ -1094,6 +1167,12 @@ Parser::ParseModuleConstantDeclaration() {
 }
 
 std::unique_ptr<Declaration> Parser::ParseDeclaration() {
+    if (Check(TokenType::At)) {
+        std::vector<DecorationApplication> decorations = ParseDecorations();
+        auto declaration = ParseDeclaration();
+        if (declaration) declaration->decorations = std::move(decorations);
+        return declaration;
+    }
     if (Check(TokenType::Export) || Check(TokenType::Quiver)) {
         const Token modifier = Advance();
         auto declaration = ParseDeclaration();
@@ -1117,6 +1196,7 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
     if (Check(TokenType::Test)) return ParseTestDeclaration();
     if (IsModuleConstantDeclaration()) return ParseModuleConstantDeclaration();
     if (Check(TokenType::TypeSet)) return ParseTypeSetDeclaration();
+    if (Check(TokenType::Decoration)) return ParseDecorationDeclaration();
     if (Check(TokenType::Structure)) return ParseStructureDeclaration();
     if (Check(TokenType::Enum)) return ParseEnumDeclaration();
     if (Check(TokenType::Error) && Peek(1).type == TokenType::Identifier &&
@@ -2544,7 +2624,9 @@ void Parser::ParseHeader() {
         if (name) moduleName = name->value;
         Consume(TokenType::SemiColon, "';' after module declaration");
     }
-    if (Match(TokenType::At)) {
+    if (Check(TokenType::At) && Peek(1).type == TokenType::Identifier &&
+        Peek(1).value == "imports") {
+        Advance();
         const Token* directive =
             Consume(TokenType::Identifier, "imports after '@'");
         if (!directive || directive->value != "imports")

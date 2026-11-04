@@ -267,6 +267,7 @@ void Walk(const AstNode& input, const Callback& callback) {
         case AstNodeKind::CompilationUnit:
         case AstNodeKind::AnonymousCapture:
         case AstNodeKind::ErrorDeclaration:
+        case AstNodeKind::DecorationDeclaration:
         case AstNodeKind::ProceedStatement:
         case AstNodeKind::BreakStatement:
         case AstNodeKind::JumpToStatement:
@@ -294,6 +295,8 @@ std::string Name(const Declaration& declaration) {
     if (declaration.Kind() == AstNodeKind::ModuleConstantDeclaration)
         return static_cast<const ModuleConstantDeclaration&>(declaration)
             .Name();
+    if (declaration.Kind() == AstNodeKind::DecorationDeclaration)
+        return static_cast<const DecorationDeclaration&>(declaration).Name();
     return static_cast<const ErrorDeclaration&>(declaration).Name();
 }
 bool Template(const Declaration& d) {
@@ -384,8 +387,7 @@ class Expander {
             if (!inserted && (Template(*method) || Template(*previous->second)))
                 Error(method->Range(),
                       "duplicate method declaration '" + Name(*method) + "'");
-            if (Template(*method) &&
-                !method->IsCrashable() &&
+            if (Template(*method) && !method->IsCrashable() &&
                 owner->Kind() == AstNodeKind::EnumDeclaration)
                 for (const auto& variant :
                      static_cast<const EnumDeclaration*>(owner)->Variants())
@@ -405,8 +407,7 @@ class Expander {
                           "method type parameter shadows its owner's type "
                           "parameter '" +
                               p + "'");
-            if (!method->genericParameters.empty() &&
-                !method->IsCrashable() &&
+            if (!method->genericParameters.empty() && !method->IsCrashable() &&
                 (method->Name() == "init" || method->Name() == "tear"))
                 Error(method->Range(),
                       "lifecycle methods cannot declare additional type "
@@ -1058,6 +1059,7 @@ class Expander {
         concrete->moduleId = origin.moduleId;
         concrete->sourceId = origin.sourceId;
         concrete->quiverId = origin.quiverId;
+        concrete->decorations = origin.decorations;
         // A concrete nominal type can appear in an exported ordinary signature
         // only when both its template and all nominal arguments are exported.
         // A quiver template, or an exported template applied to a quiver type,
@@ -1171,9 +1173,9 @@ class Expander {
                              request.arguments.end());
             if (auto* clone = Clone(*method, arguments, request.concreteName,
                                     request.range, Name(*instance.concrete)))
-                concreteMethods[{instance.concrete,
-                                 request.concreteName +
-                                     (request.crashable ? "!" : "")}] =
+                concreteMethods[{
+                    instance.concrete,
+                    request.concreteName + (request.crashable ? "!" : "")}] =
                     static_cast<FunctionDeclaration*>(clone);
         }
     }
@@ -1201,9 +1203,9 @@ class Expander {
     const Declaration* ResolveName(NameExpression& name,
                                    bool crashable = false) {
         if (Local(name.Name())) return nullptr;
-        const auto* origin = Lookup(name.Name() + (crashable ? "!" : ""),
-                                    current->moduleId,
-                                    name.Range(), !name.typeArguments.empty());
+        const auto* origin =
+            Lookup(name.Name() + (crashable ? "!" : ""), current->moduleId,
+                   name.Range(), !name.typeArguments.empty());
         if (!name.typeArguments.empty()) {
             const auto arguments =
                 ResolveArguments(name.typeArguments, current->moduleId);
@@ -1585,9 +1587,9 @@ class Expander {
             static_cast<const NameExpression&>(call.Callee()));
         if (call.IsCrashable()) crashableCallCallees.insert(&callee);
         if (!callee.typeArguments.empty() || Local(callee.Name())) return;
-        const auto* declaration = Lookup(
-            callee.Name() + (call.IsCrashable() ? "!" : ""),
-            current->moduleId, callee.Range(), false);
+        const auto* declaration =
+            Lookup(callee.Name() + (call.IsCrashable() ? "!" : ""),
+                   current->moduleId, callee.Range(), false);
         if (!declaration ||
             declaration->Kind() != AstNodeKind::FunctionDeclaration ||
             declaration->genericParameters.empty())
@@ -1779,9 +1781,8 @@ class Expander {
                             current->moduleId};
                 }
                 const auto* declaration = ResolveName(
-                    const_cast<NameExpression&>(static_cast<
-                                                const NameExpression&>(
-                        call.Callee())),
+                    const_cast<NameExpression&>(
+                        static_cast<const NameExpression&>(call.Callee())),
                     call.IsCrashable());
                 if (!declaration &&
                     static_cast<const NameExpression&>(call.Callee()).Name() ==
@@ -1818,8 +1819,7 @@ class Expander {
                 const auto* owner = Receiver(call);
                 if (!owner) return {};
                 const auto found = concreteMethods.find(
-                    {owner, call.Member() +
-                                (call.IsCrashable() ? "!" : "")});
+                    {owner, call.Member() + (call.IsCrashable() ? "!" : "")});
                 if (found != concreteMethods.end())
                     return {&found->second->ReturnType(),
                             found->second->moduleId};
@@ -2024,9 +2024,9 @@ class Expander {
                 return;
             }
             const bool crashable = crashableCallCallees.contains(&name);
-            const auto* origin = Lookup(
-                name.Name() + (crashable ? "!" : ""), current->moduleId,
-                name.Range(), !name.typeArguments.empty());
+            const auto* origin =
+                Lookup(name.Name() + (crashable ? "!" : ""), current->moduleId,
+                       name.Range(), !name.typeArguments.empty());
             if (!name.typeArguments.empty()) {
                 for (const auto& argument : name.typeArguments)
                     CheckTypeNames(*argument);
@@ -2105,8 +2105,7 @@ class Expander {
         if (receiverInstance) {
             MaterializeMethod(*receiverInstance, request);
             found = concreteMethods.contains(
-                {owner, request.concreteName +
-                            (request.crashable ? "!" : "")});
+                {owner, request.concreteName + (request.crashable ? "!" : "")});
         }
         if (!found && explicitArguments)
             Error(call.Range(),

@@ -23,6 +23,7 @@ enum class AstNodeKind {
     ErrorDeclaration,
     EnumDeclaration,
     TypeSetDeclaration,
+    DecorationDeclaration,
     ModuleConstantDeclaration,
     StructureDeclaration,
     StructureField,
@@ -83,6 +84,23 @@ class AstNode {
     source::SourceRange _range;
 };
 
+enum class DecorationArgumentKind { Identifier, String };
+
+struct DecorationArgument final {
+    DecorationArgumentKind kind;
+    std::string value;
+    source::SourceRange range;
+};
+
+struct DecorationApplication final {
+    std::vector<std::string> path;
+    std::vector<source::SourceRange> pathRanges;
+    std::vector<DecorationArgument> arguments;
+    source::SourceRange range;
+
+    [[nodiscard]] const std::string& Name() const { return path.back(); }
+};
+
 class Declaration : public AstNode {
    public:
     using AstNode::AstNode;
@@ -109,6 +127,7 @@ class Declaration : public AstNode {
     std::size_t ownerTokenIndex = 0;
     std::vector<source::SourceRange> instantiationOrigins;
     std::string specializationName;
+    std::vector<DecorationApplication> decorations;
 };
 
 class Statement : public AstNode {
@@ -383,22 +402,44 @@ class TypeSetDeclaration final : public Declaration {
     std::vector<std::unique_ptr<TypeNode>> _members;
 };
 
+class DecorationDeclaration final : public Declaration {
+   public:
+    DecorationDeclaration(source::SourceRange range, std::string name,
+                          source::SourceRange nameRange)
+        : Declaration(range), _name(std::move(name)), _nameRange(nameRange) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::DecorationDeclaration;
+    }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] source::SourceRange NameRange() const { return _nameRange; }
+
+   private:
+    std::string _name;
+    source::SourceRange _nameRange;
+};
+
 class StructureField final : public AstNode {
    public:
     StructureField(source::SourceRange range, std::unique_ptr<TypeNode> type,
                    std::string name, source::SourceRange nameRange,
-                   std::unique_ptr<Expression> initializer, bool isPrivate)
+                   std::unique_ptr<Expression> initializer, bool isPrivate,
+                   std::vector<DecorationApplication> decorations = {})
         : AstNode(range),
           _type(std::move(type)),
           _name(std::move(name)),
           _nameRange(nameRange),
           _initializer(std::move(initializer)),
+          _decorations(std::move(decorations)),
           _isPrivate(isPrivate) {}
     AstNodeKind Kind() const override { return AstNodeKind::StructureField; }
     const TypeNode& Type() const { return *_type; }
     const std::string& Name() const { return _name; }
     source::SourceRange NameRange() const { return _nameRange; }
     const Expression* Initializer() const { return _initializer.get(); }
+    const std::vector<DecorationApplication>& Decorations() const {
+        return _decorations;
+    }
     bool IsPrivate() const { return _isPrivate; }
 
    private:
@@ -406,6 +447,7 @@ class StructureField final : public AstNode {
     std::string _name;
     source::SourceRange _nameRange;
     std::unique_ptr<Expression> _initializer;
+    std::vector<DecorationApplication> _decorations;
     bool _isPrivate;
 };
 

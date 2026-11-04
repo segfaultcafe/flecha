@@ -60,6 +60,8 @@ class Parser {
         std::map<std::string, std::string>* constraints = nullptr);
     std::unique_ptr<StructureDeclaration> ParseStructureDeclaration();
     std::unique_ptr<TypeSetDeclaration> ParseTypeSetDeclaration();
+    std::unique_ptr<DecorationDeclaration> ParseDecorationDeclaration();
+    std::vector<DecorationApplication> ParseDecorations();
     std::unique_ptr<ModuleConstantDeclaration> ParseModuleConstantDeclaration();
     std::unique_ptr<ErrorDeclaration> ParseErrorDeclaration();
     std::unique_ptr<EnumDeclaration> ParseEnumDeclaration();

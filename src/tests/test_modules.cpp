@@ -82,6 +82,26 @@ TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
     EXPECT_EQ(Check(), "");
 }
 
+TEST_F(ModuleTests, ResolvesExportedDecorationsThroughModuleAliases) {
+    Write("json.fl", R"(module json;
+        export decoration json {};
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::json;
+        @json(default)
+        structure Response { i32 value; private string secret; };
+        void main() {}
+    )");
+
+    EXPECT_EQ(Check(), "");
+
+    Write("json.fl", R"(module json;
+        decoration json {};
+    )");
+    EXPECT_NE(Check().find("unknown or inaccessible decoration '@json'"),
+              std::string::npos);
+}
+
 TEST_F(ModuleTests, KeepsImportedLifecycleWarningsLocalAndNamesReadable) {
     Write("dependency.fl", R"(module dependency;
         export structure Imported { i32 value; };

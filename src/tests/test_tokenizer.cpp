@@ -328,6 +328,18 @@ TEST(TokenizerTests, RecognizesStringLiterals) {
     EXPECT_EQ(tokens[3].type, TokenType::EOF_TOKEN);
 }
 
+TEST(TokenizerTests, RecognizesDecorationKeyword) {
+    DiagnosticBag diagnostics;
+    const auto tokens =
+        Tokenizer("decoration json {};", diagnostics).Tokenize();
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_GE(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, TokenType::Decoration);
+    EXPECT_EQ(tokens[1].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[1].value, "json");
+}
+
 TEST(TokenizerTests, UnterminatedStringLiteral) {
     DiagnosticBag diagnostics;
     std::vector<Token> tokens =

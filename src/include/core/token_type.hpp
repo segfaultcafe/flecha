@@ -83,6 +83,7 @@ enum class TokenType {
     Test,
     Enum,
     TypeSet,
+    Decoration,
     Structure,
     Private,
     Override,

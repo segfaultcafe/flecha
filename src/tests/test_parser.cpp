@@ -49,6 +49,54 @@ TEST(ParserTests, ParsesEmptyCompilationUnit) {
     EXPECT_TRUE(diagnostics.Empty());
 }
 
+TEST(ParserTests, ParsesDeclarativeDecorationsOnStructuresAndFields) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        export decoration json {};
+
+        @json(default)
+        structure DefaultResponse {
+            i32 value;
+            private string secret;
+        };
+
+        structure ExplicitResponse {
+            @json("test") string testMe;
+        };
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 3u);
+    ASSERT_EQ(unit->Declarations()[0]->Kind(),
+              AstNodeKind::DecorationDeclaration);
+    const auto& declaration =
+        static_cast<const DecorationDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(declaration.Name(), "json");
+    EXPECT_TRUE(declaration.exported);
+
+    const auto& defaults =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(defaults.decorations.size(), 1u);
+    EXPECT_EQ(defaults.decorations[0].Name(), "json");
+    ASSERT_EQ(defaults.decorations[0].arguments.size(), 1u);
+    EXPECT_EQ(defaults.decorations[0].arguments[0].kind,
+              DecorationArgumentKind::Identifier);
+    EXPECT_EQ(defaults.decorations[0].arguments[0].value, "default");
+    EXPECT_FALSE(defaults.Fields()[0]->IsPrivate());
+    EXPECT_TRUE(defaults.Fields()[1]->IsPrivate());
+
+    const auto& explicitResponse =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[2]);
+    ASSERT_EQ(explicitResponse.Fields()[0]->Decorations().size(), 1u);
+    const auto& fieldDecoration =
+        explicitResponse.Fields()[0]->Decorations()[0];
+    ASSERT_EQ(fieldDecoration.arguments.size(), 1u);
+    EXPECT_EQ(fieldDecoration.arguments[0].kind,
+              DecorationArgumentKind::String);
+    EXPECT_EQ(fieldDecoration.arguments[0].value, "test");
+}
+
 TEST(ParserTests, UsesTokenRangesForCompilationUnit) {
     DiagnosticBag diagnostics;
     std::vector<Token> tokens = Lex("i32", diagnostics);
@@ -111,7 +159,8 @@ native_marker:
             nop
         };
         i32 main() { return 2; }
-    )", diagnostics);
+    )",
+                            diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     ASSERT_EQ(unit->foreignSources.size(), 2u);
@@ -144,18 +193,19 @@ TEST(ParserTests, ParsesCrashableDeclarationsAndCalls) {
         structure Worker {};
         void Worker::run!(&const self) { fail!(); }
         void invoke!(Worker worker) { worker.run!(); }
-    )", diagnostics);
+    )",
+                            diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
     ASSERT_EQ(unit->Declarations().size(), 5);
-    const auto& fail = static_cast<const FunctionDeclaration&>(
-        *unit->Declarations()[0]);
-    const auto& forward = static_cast<const FunctionDeclaration&>(
-        *unit->Declarations()[1]);
-    const auto& run = static_cast<const FunctionDeclaration&>(
-        *unit->Declarations()[3]);
-    const auto& invoke = static_cast<const FunctionDeclaration&>(
-        *unit->Declarations()[4]);
+    const auto& fail =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    const auto& forward =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& run =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[3]);
+    const auto& invoke =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[4]);
     EXPECT_TRUE(fail.IsCrashable());
     EXPECT_TRUE(forward.IsCrashable());
     EXPECT_TRUE(run.IsCrashable());
@@ -163,13 +213,13 @@ TEST(ParserTests, ParsesCrashableDeclarationsAndCalls) {
 
     const auto& directStatement = static_cast<const ExpressionStatement&>(
         *forward.Body().Statements()[0]);
-    const auto& direct = static_cast<const CallExpression&>(
-        directStatement.Value());
+    const auto& direct =
+        static_cast<const CallExpression&>(directStatement.Value());
     EXPECT_TRUE(direct.IsCrashable());
-    const auto& memberStatement = static_cast<const ExpressionStatement&>(
-        *invoke.Body().Statements()[0]);
-    const auto& member = static_cast<const MemberCallExpression&>(
-        memberStatement.Value());
+    const auto& memberStatement =
+        static_cast<const ExpressionStatement&>(*invoke.Body().Statements()[0]);
+    const auto& member =
+        static_cast<const MemberCallExpression&>(memberStatement.Value());
     EXPECT_TRUE(member.IsCrashable());
 }
 
@@ -715,8 +765,7 @@ TEST(ParserTests, ParsesCrashableTypedAllocationAfterGenericArguments) {
         static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
     const auto& statement =
         static_cast<const ReturnStatement&>(*function.Body().Statements()[0]);
-    const auto& call =
-        static_cast<const CallExpression&>(*statement.Value());
+    const auto& call = static_cast<const CallExpression&>(*statement.Value());
     EXPECT_TRUE(call.IsCrashable());
     ASSERT_NE(call.TypeArgument(), nullptr);
     EXPECT_EQ(call.TypeArgument()->TypeForm(), TypeKind::Slice);
@@ -1785,8 +1834,7 @@ TEST(ParserTupleTests, DistinguishesBareBindingsFromCallsTypesAndGrouping) {
     EXPECT_FALSE(valid.HasErrors());
     for (const std::string& source :
          {"void f() { i32 a, = (1, 2); }", "void f() { a, b, := (1, 2); }",
-          "void f() { a, b = (1, 2) }",
-          "void f() { a[0], b = (1, 2); }"}) {
+          "void f() { a, b = (1, 2) }", "void f() { a[0], b = (1, 2); }"}) {
         SCOPED_TRACE(source);
         DiagnosticBag diagnostics;
         ParseSource(source, diagnostics);
@@ -1963,7 +2011,8 @@ TEST(ParserStructureTests, ParsesSharedTypedStructureFields) {
             own []string inputs, outputs;
             private { i32 first = 20, second = 22; }
         };
-    )", diagnostics);
+    )",
+                            diagnostics);
 
     for (const auto& diagnostic : diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
@@ -1974,10 +2023,8 @@ TEST(ParserStructureTests, ParsesSharedTypedStructureFields) {
     ASSERT_EQ(structure.Fields().size(), 4);
     EXPECT_EQ(structure.Fields()[0]->Name(), "inputs");
     EXPECT_EQ(structure.Fields()[1]->Name(), "outputs");
-    EXPECT_EQ(structure.Fields()[0]->Type().Contract(),
-              OwnershipContract::Own);
-    EXPECT_EQ(structure.Fields()[1]->Type().Contract(),
-              OwnershipContract::Own);
+    EXPECT_EQ(structure.Fields()[0]->Type().Contract(), OwnershipContract::Own);
+    EXPECT_EQ(structure.Fields()[1]->Type().Contract(), OwnershipContract::Own);
     EXPECT_EQ(structure.Fields()[0]->Type().TypeForm(), TypeKind::Slice);
     EXPECT_EQ(structure.Fields()[1]->Type().TypeForm(), TypeKind::Slice);
     EXPECT_FALSE(structure.Fields()[0]->IsPrivate());

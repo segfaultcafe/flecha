@@ -81,6 +81,15 @@ unsafe void inspect(lend *const i32 pointer) {}
 // @imports comment
 stringv directive = "@imports string";
 
+decoration json {};
+@json(default)
+structure JsonDefault {
+    @json("value") i32 value;
+};
+@annotations::json("test") string decoratedField;
+// @json comment
+stringv decorationText = "@json string";
+
 module integer;
 typeset scalar_numbers {
     signed_integer, unsigned_integer, integer, floating_point, numeric,

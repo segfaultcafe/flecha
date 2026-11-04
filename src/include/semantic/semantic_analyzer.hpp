@@ -21,6 +21,7 @@ class SemanticAnalyzer final {
    private:
     void SetSource(const std::string& id);
     void BindImports(const core::CompilationUnit& unit);
+    void ValidateDecorations(const core::CompilationUnit& unit);
     void ValidateExports(const core::CompilationUnit& unit);
     bool ReportInaccessibleImport(const std::string& name,
                                   source::SourceRange range);
