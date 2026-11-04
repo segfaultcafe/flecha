@@ -169,6 +169,15 @@ managed installations. Cache entries contain a completion marker and are
 rehash-verified before reuse; incomplete or corrupt entries are rejected. The
 cache is disposable and contains no authoritative project state.
 
+The v0.3 release qualifies this contract with a checked transitive community
+package lock. Every relocated release bundle downloads the immutable public
+archives into an empty cache, preserves the lock byte-for-byte, and then
+rebuilds with registry access forced offline. The fixture packages are yanked,
+so only the existing lock may select them; a new unlocked resolution is
+rejected. See the
+[public-registry qualification fixture](package_ecosystem.md#v03-public-registry-qualification-fixture)
+for identities and lifecycle rules.
+
 A runnable multi-module example is in `examples/modules`. From that directory,
 run `../../build/longbow run` after building the tools.
 

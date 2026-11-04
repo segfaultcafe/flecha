@@ -634,6 +634,15 @@ add_test(NAME LongbowTests.Projects
         -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/longbow_projects
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_longbow.cmake)
 
+add_test(NAME LongbowTests.CommunityPackageLifecycle
+    COMMAND ${CMAKE_COMMAND}
+        -DLONGBOW=$<TARGET_FILE:longbow>
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/community_packages
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/community_packages
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_community_packages.cmake)
+
 add_test(NAME NativeExternTests.CAbiAndLinking
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>

@@ -249,6 +249,40 @@ archives, build scripts, and target-specific package payloads require separate
 ABI, security, licensing, and reproducibility designs and are not accepted by
 the first registry.
 
+### v0.3 public-registry qualification fixture
+
+The release gate uses two immutable packages in the dedicated
+`segfaultcafe/e2e-community-*` fixture namespace:
+
+```text
+segfaultcafe/e2e-community-package@0.1.0
+    foundation -> segfaultcafe/e2e-community-leaf@0.1.0
+
+community-package-consumer
+    community -> segfaultcafe/e2e-community-package@0.1.0
+```
+
+Both public versions were published once, selected into the checked consumer
+lock, and then yanked. They must not be republished or reused for ordinary
+packages. Their fixed checksums are asserted by the local protocol test, while
+the yanked public archives remain downloadable only through the existing lock.
+This keeps recurring CI read-only and prevents it from accumulating versions
+or mutating production package history.
+
+Every supported release archive runs that same lock from a relocated
+installation. The first run starts with an empty cache and downloads the two
+archives. CI then deletes the build output, makes the registry unreachable,
+and rebuilds from the verified cached indexes and source archives. The test
+also checks the package-local `foundation` edge, the caller-selected
+`community` alias, deterministic lock preservation, and the final result of
+42. A separate unlocked resolution is required to reject the yanked version.
+
+The source, public lock, and local lifecycle fixture live under
+`src/tests/fixtures/community_packages`. `LongbowTests.CommunityPackageLifecycle`
+repeats dry-run, publish, transitive resolution, deterministic locking,
+yanking, locked reuse, unlocked rejection, and offline rebuilding against an
+isolated file-backed registry without credentials.
+
 ## Longbow commands
 
 The initial user workflow is:

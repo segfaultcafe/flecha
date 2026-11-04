@@ -277,6 +277,15 @@ Stage 4 is complete only when:
 | Standard library | Bundled `lib::std` is selected from the installed toolchain, remains path-overridable for toolchain development, and cannot be replaced by a public-registry package. |
 | Portability and safety | Archives reject traversal, absolute paths, symlinks, case-colliding paths, unsupported native inputs, and platform-specific generated output. The same locked graph builds on every supported host. |
 
+The public lifecycle gate is covered by the immutable transitive fixtures
+documented in
+[`package_ecosystem.md`](package_ecosystem.md#v03-public-registry-qualification-fixture).
+Their versions were published once and yanked after the portable lock was
+created. Recurring CI remains read-only: each relocated Linux, Windows, and
+macOS bundle downloads the locked graph into an empty cache, rebuilds it with
+the registry forced offline, and verifies caller-selected and package-local
+aliases without depending on the source checkout.
+
 ### 5. I/O and operating-system services
 
 Expand the current file and filesystem modules with:

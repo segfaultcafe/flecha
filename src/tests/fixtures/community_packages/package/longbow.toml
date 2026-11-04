@@ -1,0 +1,8 @@
+[package]
+name = "e2e-community-package"
+registry = "segfaultcafe/e2e-community-package"
+version = "0.1.0"
+kind = "library"
+
+[dependencies]
+foundation = { package = "segfaultcafe/e2e-community-leaf", version = "0.1.0" }

@@ -1,0 +1,7 @@
+module e2e_community_package;
+
+@imports :: lib::foundation::e2e_community_leaf;
+
+export i32 answer() {
+    return e2e_community_leaf::base() + 2;
+}

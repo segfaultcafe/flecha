@@ -580,3 +580,84 @@ if(NOT runResult EQUAL 0 OR NOT runOutput STREQUAL "Hello from Flecha!\n")
     message(FATAL_ERROR
         "Longbow smoke failed: ${runOutput}${runError}")
 endif()
+
+if(DEFINED COMMUNITY_PACKAGE_ROOT)
+    get_filename_component(
+        COMMUNITY_PACKAGE_ROOT "${COMMUNITY_PACKAGE_ROOT}" ABSOLUTE)
+    if(NOT EXISTS "${COMMUNITY_PACKAGE_ROOT}/longbow.toml" OR
+       NOT EXISTS "${COMMUNITY_PACKAGE_ROOT}/longbow.lock" OR
+       NOT EXISTS "${COMMUNITY_PACKAGE_ROOT}/src/main.fl")
+        message(FATAL_ERROR
+            "community package fixture is incomplete: "
+            "${COMMUNITY_PACKAGE_ROOT}")
+    endif()
+
+    set(communityProject "${OUTPUT_ROOT}/community-package")
+    set(communityCache "${OUTPUT_ROOT}/community-package-cache")
+    file(MAKE_DIRECTORY "${communityProject}")
+    file(COPY "${COMMUNITY_PACKAGE_ROOT}/" DESTINATION "${communityProject}")
+    file(REMOVE_RECURSE "${communityProject}/target" "${communityCache}")
+    file(SHA256 "${communityProject}/longbow.lock" communityLockBefore)
+
+    # Start from an empty cache and download the immutable versions selected by
+    # the checked lock. Both versions are intentionally yanked, proving that a
+    # lock remains usable after new selection has been disabled.
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "FLECHA_COMPILER=${FLECHA_COMPILER}"
+            "LONGBOW_CACHE_DIR=${communityCache}"
+            "${LONGBOW}" run
+        WORKING_DIRECTORY "${communityProject}"
+        RESULT_VARIABLE communityOnlineResult
+        OUTPUT_VARIABLE communityOnlineOutput
+        ERROR_VARIABLE communityOnlineError)
+    if(NOT communityOnlineResult EQUAL 42)
+        message(FATAL_ERROR
+            "locked community package returned ${communityOnlineResult}, "
+            "expected 42: ${communityOnlineOutput}${communityOnlineError}")
+    endif()
+    file(SHA256 "${communityProject}/longbow.lock" communityLockAfter)
+    if(NOT communityLockBefore STREQUAL communityLockAfter)
+        message(FATAL_ERROR
+            "community package resolution changed the checked lock")
+    endif()
+    file(READ "${communityProject}/target/package-graph.json" communityGraph)
+    foreach(required IN ITEMS
+            "segfaultcafe/e2e-community-package"
+            "segfaultcafe/e2e-community-leaf"
+            "\"community\": \"registry-1\""
+            "\"foundation\": \"registry-2\"")
+        if(NOT communityGraph MATCHES "${required}")
+            message(FATAL_ERROR
+                "installed package graph is missing ${required}: "
+                "${communityGraph}")
+        endif()
+    endforeach()
+
+    # Force registry requests through an unreachable loopback proxy. Longbow
+    # must fall back to the verified cached indexes and archives and rebuild
+    # after its target directory is removed.
+    file(REMOVE_RECURSE "${communityProject}/target")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "FLECHA_COMPILER=${FLECHA_COMPILER}"
+            "LONGBOW_CACHE_DIR=${communityCache}"
+            "HTTPS_PROXY=http://127.0.0.1:1"
+            "HTTP_PROXY=http://127.0.0.1:1"
+            "ALL_PROXY=http://127.0.0.1:1"
+            "NO_PROXY="
+            "https_proxy=http://127.0.0.1:1"
+            "http_proxy=http://127.0.0.1:1"
+            "all_proxy=http://127.0.0.1:1"
+            "no_proxy="
+            "${LONGBOW}" run
+        WORKING_DIRECTORY "${communityProject}"
+        RESULT_VARIABLE communityOfflineResult
+        OUTPUT_VARIABLE communityOfflineOutput
+        ERROR_VARIABLE communityOfflineError)
+    if(NOT communityOfflineResult EQUAL 42)
+        message(FATAL_ERROR
+            "offline community package returned ${communityOfflineResult}, "
+            "expected 42: ${communityOfflineOutput}${communityOfflineError}")
+    endif()
+endif()
