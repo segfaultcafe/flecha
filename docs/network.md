@@ -1,8 +1,9 @@
 # Networking
 
-The initial networking surface provides portable IPv4 and IPv6 address and
-socket-address values plus blocking hostname resolution. Blocking TCP and UDP
-sockets remain later parts of the Stage 6 networking work.
+The networking surface provides portable IPv4 and IPv6 address and
+socket-address values, blocking hostname resolution, owning blocking TCP
+streams and listeners, and owning blocking UDP sockets. Async I/O, HTTP, TLS,
+and service frameworks remain outside the 0.3 standard library.
 
 ## IPv4 addresses
 
@@ -222,3 +223,62 @@ Stable resolution failures are `NameNotFound`, `TemporaryFailure`,
 `AllocationError.OutOfMemory`. Results contain only portable numeric address
 values and never expose native resolver records, pointers, or structure
 layouts.
+
+## Blocking TCP
+
+Import `std::net::tcp` for owning `Stream` and `Listener` values. A listener
+binds a portable socket address, accepts one stream and peer address at a time,
+and reports its selected local address after a port-zero bind. A stream can
+connect with or without a deadline, perform partial reads and writes, create
+borrowing `io::stream` adapters, configure read and write timeouts, inspect its
+local and peer addresses, and shut down either direction.
+
+All TCP operations are blocking unless a zero timeout requests one immediate
+attempt. Reads return zero without an error only for orderly peer EOF. Partial
+counts remain visible when the host reports an error after progress. `close`
+consumes the native handle even when the host close reports failure, and
+destruction closes a still-open handle best-effort.
+
+## Blocking UDP
+
+Import `std::net::udp` and bind an owning socket before sending or receiving:
+
+```flecha
+socket, bindError := udp::Socket::bind(localAddress);
+if bindError != none {
+    return bindError;
+}
+
+sent, sendError := socket.sendTo(payload, destination);
+received, sender, receiveError := socket.receiveFrom(buffer);
+```
+
+`Socket::bind` accepts IPv4 or IPv6 and treats port zero as a request for an
+operating-system-selected port. IPv6 sockets are IPv6-only, so address-family
+behavior is identical across hosts. `localAddress` reports the selected port.
+
+`sendTo` sends one datagram and returns the host-reported byte count.
+`receiveFrom` receives exactly one datagram and returns its sender. Datagram
+boundaries are never merged. If the supplied buffer is too small, the copied
+prefix count and sender remain available and the operation returns
+`NetworkError.MessageTooLarge`; the discarded suffix cannot be retried.
+Zero-length datagrams remain distinguishable from timeouts and other errors.
+
+Receive and send timeouts are configured independently. An enabled zero
+duration requests one immediate non-waiting attempt; clearing a timeout restores
+unbounded blocking. Timeouts use a monotonic deadline and interruptions do not
+restart the requested duration.
+
+`Socket` is move-only because it owns one native handle. Movement transfers the
+close obligation. Explicit `close` relinquishes the handle even if native close
+reports `CloseFailed`; destruction closes an open socket best-effort. Safe
+methods reject a closed value before crossing the runtime boundary. Mutable
+methods borrow the owner, so safe code cannot move, close, or destroy it while
+an operation is active.
+
+The native boundary stores no caller buffers or addresses after a call. It
+validates portable family and timeout fields, resets every output before a
+fallible operation, preserves transferred byte counts, and converts native
+socket errors to stable `NetworkError` values. This preserves Flecha's storage,
+unique-cleanup, loan-validity, exclusivity, interprocedural, and unsafe-
+encapsulation invariants without exposing native socket layouts.

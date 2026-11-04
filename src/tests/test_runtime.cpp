@@ -861,6 +861,218 @@ TEST(RuntimeTcpTests, ResetsOutputsAndValidatesPortableEndpoints) {
     EXPECT_EQ(port, 0);
 }
 
+TEST(RuntimeUdpTests, ExchangesDatagramsAndReportsTruncation) {
+    constexpr uint64_t loopback = UINT64_C(0x7f000001);
+    void* receiver = nullptr;
+    void* sender = nullptr;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_bind(&receiver, 4, 0, loopback, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_bind(&sender, 4, 0, loopback, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+
+    uint8_t receiverFamily = 0;
+    uint64_t receiverHigh = 1;
+    uint64_t receiverLow = 0;
+    uint16_t receiverPort = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_local_address(
+                  receiver, &receiverFamily, &receiverHigh, &receiverLow,
+                  &receiverPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(receiverFamily, 4);
+    EXPECT_EQ(receiverHigh, 0u);
+    EXPECT_EQ(receiverLow, loopback);
+    ASSERT_NE(receiverPort, 0);
+
+    uint8_t senderFamily = 0;
+    uint64_t senderHigh = 1;
+    uint64_t senderLow = 0;
+    uint16_t senderPort = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_local_address(
+                  sender, &senderFamily, &senderHigh, &senderLow, &senderPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_NE(senderPort, 0);
+
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_set_timeout(receiver, 0, 1, 0, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+    std::array<uint8_t, 2> immediate{};
+    size_t immediateCount = 99;
+    uint8_t immediateFamily = 9;
+    uint64_t immediateHigh = 9;
+    uint64_t immediateLow = 9;
+    uint16_t immediatePort = 9;
+    EXPECT_EQ(
+        flecha_runtime_v1_udp_socket_receive_from(
+            receiver, immediate.data(), immediate.size(), &immediateCount,
+            &immediateFamily, &immediateHigh, &immediateLow, &immediatePort),
+        FLECHA_RUNTIME_NETWORK_TIMED_OUT);
+    EXPECT_EQ(immediateCount, 0u);
+    EXPECT_EQ(immediateFamily, 0);
+    EXPECT_EQ(immediateHigh, 0u);
+    EXPECT_EQ(immediateLow, 0u);
+    EXPECT_EQ(immediatePort, 0);
+
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_set_timeout(receiver, 0, 1, 2, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+    const std::array<uint8_t, 4> request{'p', 'i', 'n', 'g'};
+    size_t sent = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_send_to(
+                  sender, request.data(), request.size(), 4, 0, loopback,
+                  receiverPort, &sent),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(sent, request.size());
+
+    std::array<uint8_t, 2> truncated{};
+    size_t received = 0;
+    uint8_t peerFamily = 0;
+    uint64_t peerHigh = 1;
+    uint64_t peerLow = 0;
+    uint16_t peerPort = 0;
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_receive_from(
+                  receiver, truncated.data(), truncated.size(), &received,
+                  &peerFamily, &peerHigh, &peerLow, &peerPort),
+              FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE);
+    EXPECT_EQ(received, truncated.size());
+    EXPECT_EQ(truncated, (std::array<uint8_t, 2>{'p', 'i'}));
+    EXPECT_EQ(peerFamily, 4);
+    EXPECT_EQ(peerHigh, 0u);
+    EXPECT_EQ(peerLow, loopback);
+    EXPECT_EQ(peerPort, senderPort);
+
+    const std::array<uint8_t, 4> reply{'p', 'o', 'n', 'g'};
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_send_to(
+                  receiver, reply.data(), reply.size(), peerFamily, peerHigh,
+                  peerLow, peerPort, &sent),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_set_timeout(sender, 0, 1, 2, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+    std::array<uint8_t, 4> response{};
+    received = 0;
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_receive_from(
+                  sender, response.data(), response.size(), &received,
+                  &peerFamily, &peerHigh, &peerLow, &peerPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(received, response.size());
+    EXPECT_EQ(response, reply);
+    EXPECT_EQ(peerPort, receiverPort);
+
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_close(receiver),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_close(sender),
+              FLECHA_RUNTIME_NETWORK_OK);
+}
+
+TEST(RuntimeUdpTests, SupportsIpv6LoopbackWhenAvailable) {
+    void* receiver = nullptr;
+    const int32_t bindStatus =
+        flecha_runtime_v1_udp_socket_bind(&receiver, 6, 0, 1, 0);
+    if (bindStatus == FLECHA_RUNTIME_NETWORK_UNSUPPORTED_FAMILY ||
+        bindStatus == FLECHA_RUNTIME_NETWORK_ADDRESS_NOT_AVAILABLE) {
+        GTEST_SKIP() << "IPv6 loopback is unavailable on this host";
+    }
+    ASSERT_EQ(bindStatus, FLECHA_RUNTIME_NETWORK_OK);
+
+    uint8_t family = 0;
+    uint64_t high = 1;
+    uint64_t low = 0;
+    uint16_t port = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_local_address(receiver, &family,
+                                                         &high, &low, &port),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(family, 6);
+    EXPECT_EQ(high, 0u);
+    EXPECT_EQ(low, 1u);
+    ASSERT_NE(port, 0);
+
+    void* sender = nullptr;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_bind(&sender, 6, 0, 1, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+    const uint8_t payload = 42;
+    size_t sent = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_send_to(sender, &payload, 1, 6, 0, 1,
+                                                   port, &sent),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_set_timeout(receiver, 0, 1, 2, 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+    uint8_t receivedByte = 0;
+    size_t received = 0;
+    uint16_t peerPort = 0;
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_receive_from(receiver, &receivedByte,
+                                                        1, &received, &family,
+                                                        &high, &low, &peerPort),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(received, 1u);
+    EXPECT_EQ(receivedByte, payload);
+    EXPECT_EQ(family, 6);
+    EXPECT_EQ(high, 0u);
+    EXPECT_EQ(low, 1u);
+    EXPECT_NE(peerPort, 0);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_close(sender),
+              FLECHA_RUNTIME_NETWORK_OK);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_close(receiver),
+              FLECHA_RUNTIME_NETWORK_OK);
+}
+
+TEST(RuntimeUdpTests, ResetsOutputsAndRejectsInvalidCalls) {
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_bind(nullptr, 4, 0,
+                                                UINT64_C(0x7f000001), 0),
+              FLECHA_RUNTIME_NETWORK_FAILED);
+    void* output = reinterpret_cast<void*>(1);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_bind(&output, 3, 0, 0, 0),
+              FLECHA_RUNTIME_NETWORK_UNSUPPORTED_FAMILY);
+    EXPECT_EQ(output, nullptr);
+    output = reinterpret_cast<void*>(1);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_bind(&output, 4, 1,
+                                                UINT64_C(0x7f000001), 0),
+              FLECHA_RUNTIME_NETWORK_UNSUPPORTED_FAMILY);
+    EXPECT_EQ(output, nullptr);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_close(nullptr),
+              FLECHA_RUNTIME_NETWORK_CLOSED);
+
+    size_t count = 9;
+    uint8_t family = 9;
+    uint64_t high = 9;
+    uint64_t low = 9;
+    uint16_t port = 9;
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_receive_from(
+                  nullptr, nullptr, 0, &count, &family, &high, &low, &port),
+              FLECHA_RUNTIME_NETWORK_CLOSED);
+    EXPECT_EQ(count, 0u);
+    EXPECT_EQ(family, 0);
+    EXPECT_EQ(high, 0u);
+    EXPECT_EQ(low, 0u);
+    EXPECT_EQ(port, 0);
+
+    ASSERT_EQ(flecha_runtime_v1_udp_socket_bind(&output, 4, 0,
+                                                UINT64_C(0x7f000001), 0),
+              FLECHA_RUNTIME_NETWORK_OK);
+    ASSERT_NE(output, nullptr);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_set_timeout(output, 2, 1, 0, 0),
+              FLECHA_RUNTIME_NETWORK_FAILED);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_set_timeout(output, 0, 2, 0, 0),
+              FLECHA_RUNTIME_NETWORK_FAILED);
+    EXPECT_EQ(
+        flecha_runtime_v1_udp_socket_set_timeout(output, 0, 1, 0, 1000000000),
+        FLECHA_RUNTIME_NETWORK_FAILED);
+
+    count = 9;
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_send_to(output, nullptr, 0, 3, 0, 0,
+                                                   0, &count),
+              FLECHA_RUNTIME_NETWORK_UNSUPPORTED_FAMILY);
+    EXPECT_EQ(count, 0u);
+
+    high = 9;
+    low = 9;
+    port = 9;
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_local_address(output, nullptr, &high,
+                                                         &low, &port),
+              FLECHA_RUNTIME_NETWORK_FAILED);
+    EXPECT_EQ(high, 0u);
+    EXPECT_EQ(low, 0u);
+    EXPECT_EQ(port, 0);
+    EXPECT_EQ(flecha_runtime_v1_udp_socket_close(output),
+              FLECHA_RUNTIME_NETWORK_OK);
+}
+
 TEST(RuntimeEnvironmentTests, RejectsInvalidNamesAndValuesTransactionally) {
     const std::string name = "FLECHA_RUNTIME_ENVIRONMENT_VALIDATION";
     ScopedRuntimeEnvironment restore(name);

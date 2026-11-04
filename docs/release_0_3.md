@@ -425,6 +425,15 @@ and generic host failures remain distinct. Runtime, Flecha, deterministic
 failure-mapping, cleanup, and localhost integration tests form the foundation
 gate for the later TCP and UDP owners.
 
+The blocking socket gate is implemented. TCP streams and listeners provide
+connect and accept, partial reads and writes, independent deadlines, portable
+endpoint inspection, shutdown, close, and stream adapters. UDP sockets provide
+portable IPv4/IPv6 binding, datagram send and receive with sender recovery,
+explicit truncation reporting, independent receive/send deadlines, and
+deterministic close. Both owners use opaque versioned runtime handles, preserve
+partial counts and stable errors, and have native plus Flecha loopback,
+failure, movement, teardown, and cross-platform coverage.
+
 ### 7. Hashing and security primitives
 
 Provide the primitives required for deterministic integrity checks and the

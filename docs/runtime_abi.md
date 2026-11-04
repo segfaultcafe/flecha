@@ -321,12 +321,36 @@ Network status values are success `0`, out of memory `1`, invalid name `2`,
 name not found `3`, temporary failure `4`, unsupported family `5`, resolution
 failure `6`, closed `7`, timeout `8`, connection refused `9`, connection reset
 `10`, network unreachable `11`, address in use `12`, address unavailable `13`,
-broken pipe `14`, and generic operation failure `15`. Every `dns_resolve`
+broken pipe `14`, generic operation failure `15`, and datagram too large `16`.
+Every `dns_resolve`
 failure leaves its output null.
 The safe `std::net::dns::resolve` wrapper owns the handle while copying every
 result into an exact-size `own []SocketAddress`, attaches the caller-provided
 port, and closes the native handle before returning. Allocation or conversion
 failure closes both partially constructed Flecha storage and the native handle.
+
+## Blocking sockets
+
+The `flecha_runtime_v1_tcp_*` and `flecha_runtime_v1_udp_*` entry points own
+nonblocking native sockets behind opaque handles while presenting blocking
+operations with monotonic user-space deadlines. The runtime retries interrupted
+waits without extending a timeout. IPv6 listeners and UDP sockets are
+IPv6-only, avoiding host-dependent dual-stack behavior.
+
+UDP bind clears its output before validation and transfers one handle only on
+success. `send_to` resets its count and performs one datagram send.
+`receive_from` resets the count and every address field, then returns one
+sender in the same portable family/high/low/port representation used by DNS and
+TCP. A truncated datagram returns status `16` while retaining its copied prefix
+count and sender. The remaining bytes are discarded by the host as part of the
+same datagram receive.
+
+UDP timeout direction zero means receive and direction one means send. Enabled
+and direction fields accept only zero or one, nanoseconds must be normalized,
+and enabled zero-duration timeouts request an immediate poll. Local-address
+queries reset all address outputs before validation. UDP close always consumes
+the opaque handle, releases the platform socket runtime reference, and reports
+any native close failure afterward.
 
 ## File streams
 

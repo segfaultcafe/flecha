@@ -1,0 +1,115 @@
+module udp_runtime;
+
+@imports
+    :: lib::std::net::address
+    :: lib::std::net::errors
+    :: lib::std::net::udp
+    :: lib::std::time::duration;
+
+extern unsafe usize flecha_test_udp_close_count();
+extern unsafe u8 flecha_test_udp_timeout_mask();
+
+address::SocketAddress endpoint(u16 port) {
+    return address::SocketAddress::fromIpv4(
+        address::Ipv4SocketAddress::fromParts(
+            address::Ipv4Address::loopback(),
+            port
+        )
+    );
+}
+
+bool expect_bind_error(u16 port, error expected) {
+    value, actual := udp::Socket::bind(endpoint(port));
+    return actual == expected and !value.isOpen();
+}
+
+i32 main() {
+    if !expect_bind_error(10001, AllocationError.OutOfMemory) {
+        return 1;
+    }
+    if !expect_bind_error(10012, errors::NetworkError.AddressInUse) {
+        return 2;
+    }
+    if !expect_bind_error(10015, errors::NetworkError.BindFailed) {
+        return 3;
+    }
+
+    {
+        socket, bindError := udp::Socket::bind(endpoint(4242));
+        if bindError != none or !socket.isOpen() {
+            return 4;
+        }
+        local, localError := socket.localAddress();
+        localIpv4, hasIpv4 := local.ipv4();
+        if localError != none or !hasIpv4 or localIpv4.port() != 50000 {
+            return 5;
+        }
+
+        [3]u8 payload = [1, 2, 3];
+        count, sendError := socket.sendTo(payload[:], endpoint(9000));
+        if count != 2 or sendError != errors::NetworkError.NetworkUnreachable {
+            return 6;
+        }
+        count, sendError = socket.sendTo(payload[:], endpoint(9000));
+        if count != 1 or sendError != errors::NetworkError.SendFailed {
+            return 7;
+        }
+
+        [2]u8 destination;
+        count, peer, receiveError := socket.receiveFrom(destination[:]);
+        peerIpv6, hasIpv6 := peer.ipv6();
+        if count != 1 or receiveError != errors::NetworkError.MessageTooLarge or
+            destination[0] != 42 or !hasIpv6 or
+            peerIpv6.address() != address::Ipv6Address::loopback() or
+            peerIpv6.port() != 65000 {
+            return 8;
+        }
+        count, _, receiveError = socket.receiveFrom(destination[:]);
+        if count != 0 or receiveError != errors::NetworkError.ReceiveFailed {
+            return 9;
+        }
+
+        if socket.setReceiveTimeout(
+            duration::Duration::fromMilliseconds(1250)
+        ) != none or socket.clearReceiveTimeout() != none or
+            socket.setSendTimeout(
+                duration::Duration::fromMilliseconds(2750)
+            ) != none or socket.clearSendTimeout() != none {
+            return 10;
+        }
+        if socket.close() != none or socket.isOpen() {
+            return 11;
+        }
+    }
+
+    {
+        failedClose, bindError := udp::Socket::bind(endpoint(4243));
+        if bindError != none or
+            failedClose.close() != errors::NetworkError.CloseFailed or
+            failedClose.isOpen() {
+            return 12;
+        }
+    }
+
+    {
+        automatic, bindError := udp::Socket::bind(endpoint(4244));
+        if bindError != none {
+            return 13;
+        }
+        moved := automatic;
+        if !moved.isOpen() {
+            return 14;
+        }
+    }
+
+    usize closes = 0;
+    u8 timeoutMask = 0;
+    unsafe {
+        closes = flecha_test_udp_close_count();
+        timeoutMask = flecha_test_udp_timeout_mask();
+    }
+    if closes != 3 or timeoutMask != 15 {
+        return 15;
+    }
+    return 42;
+}
