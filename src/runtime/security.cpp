@@ -6,8 +6,11 @@
 #ifdef _WIN32
 // SecureZeroMemory is declared by the base Win32 headers.
 #include <windows.h>
-#elif defined(__APPLE__) || defined(__linux__)
+#elif defined(__linux__)
 #include <string.h>
+#elif defined(__APPLE__)
+// Apple does not expose explicit_bzero in every supported SDK. Volatile stores
+// provide the required non-elidable overwrite without another host dependency.
 #else
 #error "Flecha secure memory operations are unsupported on this platform"
 #endif
@@ -40,6 +43,11 @@ void flecha_runtime_v1_secure_zero(uint8_t* destination, size_t length) {
 
 #ifdef _WIN32
     SecureZeroMemory(destination, length);
+#elif defined(__APPLE__)
+    volatile uint8_t* observed_destination = destination;
+    for (size_t index = 0; index < length; ++index) {
+        observed_destination[index] = 0;
+    }
 #else
     explicit_bzero(destination, length);
 #endif

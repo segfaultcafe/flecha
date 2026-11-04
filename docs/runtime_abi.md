@@ -179,11 +179,11 @@ void flecha_runtime_v1_secure_zero(uint8_t* destination, size_t length);
 
 A zero length accepts a null destination. A nonzero length requires a valid
 mutable region of at least `length` bytes. Windows uses `SecureZeroMemory`;
-Linux and macOS use `explicit_bzero`. These host operations prevent the
-overwrite from being removed as a dead store. The safe
-`std::bytes::sequence::zero_bytes` wrapper supplies a valid mutable slice. It
-does not allocate, transfer ownership, or block, and it is safe for concurrent
-calls on disjoint storage.
+Linux uses `explicit_bzero`; and macOS uses explicit volatile byte stores.
+These operations prevent the overwrite from being removed as a dead store. The
+safe `std::bytes::sequence::zero_bytes` wrapper supplies a valid mutable slice.
+It does not allocate, transfer ownership, or block, and it is safe for
+concurrent calls on disjoint storage.
 
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the
