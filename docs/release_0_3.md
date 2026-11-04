@@ -585,8 +585,11 @@ itself:
 3. Provide safe construction of owning strings from validated byte buffers.
 4. Expose arguments, environment, time, randomness, processes, directories,
    and sockets through additive versioned runtime operations.
-5. Define the minimum concurrency and memory-model rules only if concurrency
-   remains in the 0.3.0 release gate.
+5. Preserve the implemented
+   [memory safety invariants](memory_safety_invariants.md). If concurrency
+   remains in the 0.3.0 release gate, replace the pending concurrency section
+   with an accepted concurrent memory model before exposing any general thread,
+   atomic, or synchronization primitive as safe.
 6. Improve allocation-failure injection and lifecycle diagnostics needed to
    verify the new containers.
 7. Accept a package graph whose dependency aliases are scoped to the importing
