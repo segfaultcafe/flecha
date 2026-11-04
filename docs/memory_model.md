@@ -3,6 +3,10 @@
 Status: implemented behavior is identified below; broader ownership sections
 remain design proposals.
 
+The cross-feature safety contract is defined by
+[memory safety invariants](memory_safety_invariants.md). This document explains
+the mechanisms and implementation status that preserve those invariants.
+
 The agreed `own` / `lend` contracts are now implemented as described in
 [ownership contracts](ownership_contracts.md). References never take either
 keyword. Whole-value move-by-default semantics are implemented for

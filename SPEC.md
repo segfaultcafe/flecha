@@ -1000,6 +1000,10 @@ fields, construction limits, examples, and diagnostics.
 ## 14. Memory and runtime model
 
 Flecha should not require a garbage collector. Stack allocation is the ordinary default. The implemented explicit raw allocation API is `new<T>(value)` returning `(*T, error)`, paired with unsafe `free(ptr)`. It uses the system allocation service; custom allocators remain future work.
+The cross-feature contract for safe storage, movement, destruction, borrowing,
+and unsafe encapsulation is defined by the
+[memory safety invariants](docs/memory_safety_invariants.md). Safe concurrency
+remains gated on a separate accepted concurrent memory model.
 Runtime-sized scalar and supported trivially copyable structure storage uses
 `new<[]T>(count)`, returning a move-only `*[]T` owner whose `{data, length}`
 representation supports checked unsafe indexing without allocator queries. See
