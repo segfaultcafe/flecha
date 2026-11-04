@@ -94,6 +94,115 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::U8)));
 }
 
+TEST(SemanticTests, DerivesDeterministicJsonFieldMetadata) {
+    Analysis analysis = Analyze(R"(
+        decoration json {};
+
+        @json(default)
+        structure DefaultResponse {
+            i32 value;
+            @json("test") string testMe;
+            private string secret;
+        };
+
+        structure ExplicitResponse {
+            i32 ignored;
+            @json("value") i32 value;
+            @json("test") string testMe;
+            private string secret;
+        };
+
+        @json(default)
+        structure EmptyObject {
+            private i32 internal;
+        };
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    ASSERT_EQ(analysis.unit->Declarations().size(), 4u);
+    const auto& defaults = static_cast<const StructureDeclaration&>(
+        *analysis.unit->Declarations()[1]);
+    const JsonStructureMetadata* defaultMetadata =
+        analysis.model.JsonMetadataFor(defaults);
+    ASSERT_NE(defaultMetadata, nullptr);
+    EXPECT_EQ(defaultMetadata->mode, JsonDecorationMode::Default);
+    ASSERT_EQ(defaultMetadata->fields.size(), 2u);
+    EXPECT_EQ(defaultMetadata->fields[0].name, "value");
+    EXPECT_EQ(defaultMetadata->fields[1].name, "test");
+
+    const auto& explicitResponse = static_cast<const StructureDeclaration&>(
+        *analysis.unit->Declarations()[2]);
+    const JsonStructureMetadata* explicitMetadata =
+        analysis.model.JsonMetadataFor(explicitResponse);
+    ASSERT_NE(explicitMetadata, nullptr);
+    EXPECT_EQ(explicitMetadata->mode, JsonDecorationMode::Explicit);
+    ASSERT_EQ(explicitMetadata->fields.size(), 2u);
+    EXPECT_EQ(explicitMetadata->fields[0].name, "value");
+    EXPECT_EQ(explicitMetadata->fields[1].name, "test");
+
+    const auto& empty = static_cast<const StructureDeclaration&>(
+        *analysis.unit->Declarations()[3]);
+    const JsonStructureMetadata* emptyMetadata =
+        analysis.model.JsonMetadataFor(empty);
+    ASSERT_NE(emptyMetadata, nullptr);
+    EXPECT_EQ(emptyMetadata->mode, JsonDecorationMode::Default);
+    EXPECT_TRUE(emptyMetadata->fields.empty());
+}
+
+TEST(SemanticTests, RejectsInvalidJsonDecorations) {
+    Analysis analysis = Analyze(R"(
+        decoration json {};
+        decoration other {};
+
+        @missing
+        structure UnknownDecoration { i32 value; };
+
+        @json(default)
+        structure InvalidFields {
+            @json("secret") private string secret;
+            @json("same") i32 first;
+            @json("same") i32 second;
+            @json(default) i32 invalidArgument;
+        };
+
+        @json(default)
+        i32 invalidTarget() { return 0; }
+    )");
+
+    std::size_t invalidDecorations = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::InvalidDecoration)
+            ++invalidDecorations;
+    EXPECT_GE(invalidDecorations, 5u);
+}
+
+TEST(SemanticTests, PreservesDecorationsOnGenericSpecializations) {
+    Analysis analysis = Analyze(R"(
+        decoration json {};
+
+        @json(default)
+        structure Box<T> {
+            @json("item") T value;
+            private i32 internal;
+        };
+
+        void use(Box<i32> value) {}
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    const JsonStructureMetadata* metadata = nullptr;
+    for (const auto& declaration : analysis.unit->Declarations()) {
+        if (declaration->Kind() != AstNodeKind::StructureDeclaration) continue;
+        const auto& structure =
+            static_cast<const StructureDeclaration&>(*declaration);
+        metadata = analysis.model.JsonMetadataFor(structure);
+        if (metadata) break;
+    }
+    ASSERT_NE(metadata, nullptr);
+    ASSERT_EQ(metadata->fields.size(), 1u);
+    EXPECT_EQ(metadata->fields[0].name, "item");
+}
+
 TEST(SemanticTests, AcceptsTrailingDefaultArgumentsAtDirectCallsAndMethods) {
     Analysis analysis = Analyze(R"(
         i32 add(i32 value, i32 amount = 2) { return value + amount; }
@@ -119,11 +228,10 @@ TEST(SemanticTests, EnforcesCrashableFunctionEffects) {
     EXPECT_FALSE(valid.diagnostics.HasErrors());
     EXPECT_EQ(FindDiagnostic(valid, DiagnosticCode::InvalidCrashable), nullptr);
 
-    Analysis crashFromNormal = Analyze(
-        "void main() { crash(\"boom\"); }");
-    EXPECT_NE(FindErrorDiagnostic(crashFromNormal,
-                                  DiagnosticCode::InvalidCrashable),
-              nullptr);
+    Analysis crashFromNormal = Analyze("void main() { crash(\"boom\"); }");
+    EXPECT_NE(
+        FindErrorDiagnostic(crashFromNormal, DiagnosticCode::InvalidCrashable),
+        nullptr);
 
     Analysis missingBang = Analyze(R"(
         void terminal!() { crash("boom"); }
@@ -200,8 +308,9 @@ TEST(SemanticTests, WarnsWhenCrashableFunctionHasNoCrashPath) {
         if (diagnostic.code == DiagnosticCode::InvalidCrashable &&
             diagnostic.severity == DiagnosticSeverity::Warning) {
             ++warnings;
-            EXPECT_NE(diagnostic.message.find("no path leads to a crashable state"),
-                      std::string::npos);
+            EXPECT_NE(
+                diagnostic.message.find("no path leads to a crashable state"),
+                std::string::npos);
         }
     }
     EXPECT_EQ(warnings, 2);
@@ -4060,9 +4169,9 @@ TEST(SemanticAnalyzerTests, RequiresU32StringRangeIndices) {
          {"void f(stringv value) { for (usize i, char c) = range value {} }",
           "void f(string value) { for (i32 i, char c) = range value {} }"}) {
         SCOPED_TRACE(source);
-        EXPECT_NE(FindDiagnostic(Analyze(source),
-                                 DiagnosticCode::IncompatibleType),
-                  nullptr);
+        EXPECT_NE(
+            FindDiagnostic(Analyze(source), DiagnosticCode::IncompatibleType),
+            nullptr);
     }
 }
 
@@ -7811,8 +7920,8 @@ TEST(SemanticOverloadTests, RejectsReturnOnlyAndMixedSafetyOverloads) {
         i32 convert(i32 value) { return value; }
         i64 convert(i32 value) { return value.cast<i64>; }
     )");
-    const Diagnostic* duplicate = FindErrorDiagnostic(
-        returnOnly, DiagnosticCode::DuplicateDeclaration);
+    const Diagnostic* duplicate =
+        FindErrorDiagnostic(returnOnly, DiagnosticCode::DuplicateDeclaration);
     ASSERT_NE(duplicate, nullptr);
     EXPECT_NE(duplicate->message.find("same parameter types"),
               std::string::npos);
@@ -7821,8 +7930,8 @@ TEST(SemanticOverloadTests, RejectsReturnOnlyAndMixedSafetyOverloads) {
         i32 access(i32 value) { return value; }
         unsafe i64 access(i64 value) { return value; }
     )");
-    const Diagnostic* safety = FindErrorDiagnostic(
-        mixedSafety, DiagnosticCode::DuplicateDeclaration);
+    const Diagnostic* safety =
+        FindErrorDiagnostic(mixedSafety, DiagnosticCode::DuplicateDeclaration);
     ASSERT_NE(safety, nullptr);
     EXPECT_NE(safety->message.find("mix safe and unsafe"), std::string::npos);
 }
@@ -7840,8 +7949,8 @@ TEST(SemanticOverloadTests, RejectsExternAndAmbiguousOverloads) {
         u64 choose(u64 value) { return value; }
         void check() { choose(1); }
     )");
-    const Diagnostic* diagnostic = FindErrorDiagnostic(
-        ambiguous, DiagnosticCode::IncompatibleArgument);
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(ambiguous, DiagnosticCode::IncompatibleArgument);
     ASSERT_NE(diagnostic, nullptr);
     EXPECT_NE(diagnostic->message.find("ambiguous overload"),
               std::string::npos);
@@ -7862,8 +7971,7 @@ TEST(SemanticOverloadTests, KeepsUniformlyUnsafeSetsUnsafe) {
         unsafe i64 read(*const i64 value) { return 22; }
         i32 check(*const i32 value) { return read(value); }
     )");
-    EXPECT_NE(FindErrorDiagnostic(invalid,
-                                  DiagnosticCode::UnsafeOperation),
+    EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::UnsafeOperation),
               nullptr);
 }
 
@@ -7882,11 +7990,10 @@ TEST(SemanticOverloadTests, RejectsBareAndDefaultAmbiguousOverloads) {
         i64 choose(i64 value = 1) { return value; }
         void check() { choose(); }
     )");
-    const Diagnostic* ambiguity = FindErrorDiagnostic(
-        defaults, DiagnosticCode::IncompatibleArgument);
+    const Diagnostic* ambiguity =
+        FindErrorDiagnostic(defaults, DiagnosticCode::IncompatibleArgument);
     ASSERT_NE(ambiguity, nullptr);
-    EXPECT_NE(ambiguity->message.find("ambiguous overload"),
-              std::string::npos);
+    EXPECT_NE(ambiguity->message.find("ambiguous overload"), std::string::npos);
 }
 
 TEST(SemanticCastTests, StringViewsCastOnlyToConstByteSlices) {

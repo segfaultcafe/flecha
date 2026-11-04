@@ -594,8 +594,7 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                         static_cast<const core::FunctionDeclaration&>(
                             *declaration);
                     if (!function.Owner().empty()) continue;
-                    name = EffectName(function.Name(),
-                                      function.IsCrashable());
+                    name = EffectName(function.Name(), function.IsCrashable());
                 } else if (declaration->Kind() ==
                            core::AstNodeKind::StructureDeclaration)
                     name = static_cast<const core::StructureDeclaration&>(
@@ -658,14 +657,199 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                     const Symbol* symbol = _model.DeclaredSymbol(*declaration);
                     if (symbol && symbol->Kind() == SymbolKind::Function)
                         (void)scope->DeclareOverloadAs(
-                            name,
-                            *static_cast<const FunctionSymbol*>(symbol));
+                            name, *static_cast<const FunctionSymbol*>(symbol));
                 }
             } else {
                 const Symbol* symbol = _model.DeclaredSymbol(*found.front());
                 if (symbol) (void)scope->DeclareAs(name, *symbol);
             }
         }
+    }
+}
+
+void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
+    using core::AstNodeKind;
+    using core::Declaration;
+    using core::DecorationApplication;
+    using core::DecorationArgumentKind;
+    using core::DecorationDeclaration;
+    using core::StructureDeclaration;
+
+    std::unordered_map<
+        std::string,
+        std::unordered_map<std::string, const DecorationDeclaration*>>
+        declarations;
+    for (const auto& declaration : unit.Declarations()) {
+        if (declaration->Kind() != AstNodeKind::DecorationDeclaration) continue;
+        const auto& decoration =
+            static_cast<const DecorationDeclaration&>(*declaration);
+        auto& names = declarations[declaration->moduleId];
+        const auto [previous, inserted] =
+            names.emplace(decoration.Name(), &decoration);
+        if (!inserted)
+            Report(
+                diagnostics::DiagnosticCode::DuplicateDeclaration,
+                decoration.NameRange(),
+                "duplicate decoration declaration '" + decoration.Name() + "'");
+    }
+
+    const auto sourceModule =
+        [&](const std::string& sourceId) -> const core::Module* {
+        for (const auto& module : unit.modules)
+            if (module.sourceId == sourceId) return &module;
+        return nullptr;
+    };
+    const auto inModule =
+        [&](const std::string& moduleId,
+            const std::string& name) -> const DecorationDeclaration* {
+        const auto module = declarations.find(moduleId);
+        if (module == declarations.end()) return nullptr;
+        const auto found = module->second.find(name);
+        return found == module->second.end() ? nullptr : found->second;
+    };
+    const auto resolve =
+        [&](const DecorationApplication& application,
+            const Declaration& context) -> const DecorationDeclaration* {
+        if (application.path.size() == 1) {
+            if (const auto* local =
+                    inModule(context.moduleId, application.Name()))
+                return local;
+        }
+        const core::Module* module = sourceModule(context.sourceId);
+        if (!module) return nullptr;
+        const std::string alias = application.path.front();
+        const std::string name = application.path.size() == 1
+                                     ? application.path.front()
+                                     : application.path.back();
+        if (application.path.size() > 2) return nullptr;
+        const DecorationDeclaration* result = nullptr;
+        for (const auto& import : module->imports) {
+            if (import.alias != alias) continue;
+            const auto* candidate = inModule(import.resolvedModule, name);
+            if (!candidate || !candidate->exported) continue;
+            if (result && result != candidate) return nullptr;
+            result = candidate;
+        }
+        return result;
+    };
+    const auto resolveOrReport =
+        [&](const DecorationApplication& application,
+            const Declaration& context) -> const DecorationDeclaration* {
+        const auto* result = resolve(application, context);
+        if (!result)
+            Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                   application.range,
+                   "unknown or inaccessible decoration '@" +
+                       application.Name() + "'");
+        return result;
+    };
+
+    for (const auto& declaration : unit.Declarations()) {
+        std::unordered_set<const DecorationDeclaration*> seen;
+        for (const auto& application : declaration->decorations) {
+            const auto* decoration = resolveOrReport(application, *declaration);
+            if (decoration && !seen.insert(decoration).second)
+                Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                       application.range,
+                       "duplicate decoration '@" + decoration->Name() +
+                           "' on the same declaration");
+            if (decoration && decoration->Name() == "json" &&
+                declaration->Kind() != AstNodeKind::StructureDeclaration)
+                Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                       application.range,
+                       "@json can target only structures and their fields");
+        }
+        if (declaration->Kind() != AstNodeKind::StructureDeclaration) continue;
+
+        const auto& structure =
+            static_cast<const StructureDeclaration&>(*declaration);
+        const DecorationApplication* structureJson = nullptr;
+        for (const auto& application : declaration->decorations) {
+            const auto* decoration = resolve(application, *declaration);
+            if (decoration && decoration->Name() == "json")
+                structureJson = &application;
+        }
+
+        JsonDecorationMode mode = JsonDecorationMode::Explicit;
+        bool hasJson = structureJson != nullptr;
+        if (structureJson) {
+            if (structureJson->arguments.empty()) {
+                mode = JsonDecorationMode::Explicit;
+            } else if (structureJson->arguments.size() == 1 &&
+                       structureJson->arguments.front().kind ==
+                           DecorationArgumentKind::Identifier &&
+                       structureJson->arguments.front().value == "default") {
+                mode = JsonDecorationMode::Default;
+            } else {
+                Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                       structureJson->range,
+                       "structure @json expects no arguments or 'default'");
+            }
+        }
+
+        struct Candidate final {
+            const core::StructureField* field;
+            const DecorationApplication* application;
+            std::string name;
+        };
+        std::vector<Candidate> candidates;
+        for (const auto& field : structure.Fields()) {
+            const DecorationApplication* fieldJson = nullptr;
+            std::unordered_set<const DecorationDeclaration*> seen;
+            for (const auto& application : field->Decorations()) {
+                const auto* decoration =
+                    resolveOrReport(application, *declaration);
+                if (decoration && !seen.insert(decoration).second)
+                    Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                           application.range,
+                           "duplicate decoration '@" + decoration->Name() +
+                               "' on field '" + field->Name() + "'");
+                if (decoration && decoration->Name() == "json")
+                    fieldJson = &application;
+            }
+            if (fieldJson) {
+                hasJson = true;
+                if (field->IsPrivate())
+                    Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                           fieldJson->range,
+                           "private field '" + field->Name() +
+                               "' cannot be serialized");
+                if (fieldJson->arguments.size() != 1 ||
+                    fieldJson->arguments.front().kind !=
+                        DecorationArgumentKind::String)
+                    Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                           fieldJson->range,
+                           "field @json expects one string key");
+            }
+            const bool selected =
+                !field->IsPrivate() &&
+                (mode == JsonDecorationMode::Default || fieldJson != nullptr);
+            if (!selected) continue;
+            std::string name = field->Name();
+            if (fieldJson && fieldJson->arguments.size() == 1 &&
+                fieldJson->arguments.front().kind ==
+                    DecorationArgumentKind::String)
+                name = fieldJson->arguments.front().value;
+            candidates.push_back({field.get(), fieldJson, std::move(name)});
+        }
+        if (!hasJson) continue;
+
+        JsonStructureMetadata metadata{mode, {}};
+        std::unordered_map<std::string, const Candidate*> names;
+        for (const auto& candidate : candidates) {
+            const auto [previous, inserted] =
+                names.emplace(candidate.name, &candidate);
+            if (!inserted) {
+                const source::SourceRange range =
+                    candidate.application ? candidate.application->range
+                                          : candidate.field->NameRange();
+                Report(diagnostics::DiagnosticCode::InvalidDecoration, range,
+                       "duplicate JSON key '" + candidate.name + "'");
+                continue;
+            }
+            metadata.fields.push_back({candidate.field, candidate.name});
+        }
+        _model._jsonMetadata.emplace(&structure, std::move(metadata));
     }
 }
 
@@ -855,8 +1039,8 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
         std::all_of(existing.begin(), existing.end(), [](const Symbol* item) {
             return item->Kind() == SymbolKind::Function;
         })) {
-        auto* function = static_cast<FunctionSymbol*>(
-            const_cast<Symbol*>(result));
+        auto* function =
+            static_cast<FunctionSymbol*>(const_cast<Symbol*>(result));
         const auto functions = [&] {
             std::vector<const FunctionSymbol*> values;
             values.reserve(existing.size());
@@ -869,12 +1053,11 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
                                          [](const FunctionSymbol* candidate) {
                                              return candidate->IsExtern();
                                          });
-        const bool mixedSafety =
-            std::any_of(functions.begin(), functions.end(),
-                        [&](const FunctionSymbol* candidate) {
-                            return candidate->IsUnsafe() !=
-                                   function->IsUnsafe();
-                        });
+        const bool mixedSafety = std::any_of(
+            functions.begin(), functions.end(),
+            [&](const FunctionSymbol* candidate) {
+                return candidate->IsUnsafe() != function->IsUnsafe();
+            });
         const bool duplicate =
             std::any_of(functions.begin(), functions.end(),
                         [&](const FunctionSymbol* candidate) {
@@ -894,8 +1077,8 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
                    "duplicate overload of '" + localName +
                        "' with the same parameter types");
         } else {
-            declared = declarationScope->DeclareOverloadAs(localName,
-                                                            *function);
+            declared =
+                declarationScope->DeclareOverloadAs(localName, *function);
             function->SetLinkName(OverloadLinkName(*function));
             for (const FunctionSymbol* candidate : functions)
                 const_cast<FunctionSymbol*>(candidate)->SetLinkName(
@@ -908,8 +1091,7 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
         if (result->Kind() == SymbolKind::Function &&
             !declarationScope->LookupAllLocal(result->Name()).empty())
             (void)declarationScope->DeclareOverloadAs(
-                result->Name(),
-                *static_cast<const FunctionSymbol*>(result));
+                result->Name(), *static_cast<const FunctionSymbol*>(result));
         else
             (void)declarationScope->Declare(*result);
     }
@@ -1516,8 +1698,7 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     {
         auto signature = std::make_shared<CallableSignature>();
         signature->result = SemanticType(SemanticTypeKind::String);
-        signature->parameters = {
-            SemanticType(SemanticTypeKind::StringView)};
+        signature->parameters = {SemanticType(SemanticTypeKind::StringView)};
         signature->isCrashable = true;
         auto function = std::make_unique<FunctionSymbol>(
             "__sprintf_crash", std::move(signature), source::SourceRange{},
@@ -2009,9 +2190,10 @@ void SemanticAnalyzer::RegisterFunction(
                    function.NameRange(),
                    "extern declarations using raw pointers must be unsafe");
     }
-    const bool lifecycle = !function.IsCrashable() &&
-        owner && (function.Name() == "init" || function.Name() == "zero" ||
-                  function.Name() == "tear");
+    const bool lifecycle =
+        !function.IsCrashable() && owner &&
+        (function.Name() == "init" || function.Name() == "zero" ||
+         function.Name() == "tear");
     if (function.HasModifier(core::FunctionModifier::Override) !=
         (lifecycle && !generated))
         Report(diagnostics::DiagnosticCode::InvalidLifecycle,
@@ -2063,7 +2245,7 @@ void SemanticAnalyzer::RegisterFunction(
     if (enumOwner && enumOwner->syntax->moduleId != function.moduleId)
         Report(diagnostics::DiagnosticCode::PrivateAccess, function.Range(),
                "methods must be defined in their enum's module");
-    std::string name = owner ? owner->name + "::" + function.Name()
+    std::string name = owner       ? owner->name + "::" + function.Name()
                        : enumOwner ? enumOwner->name + "::" + function.Name()
                                    : TopName(function, function.Name());
     if (function.IsCrashable() && name != "main") name += "!";
@@ -2198,6 +2380,11 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                     name = static_cast<const core::ModuleConstantDeclaration&>(
                                *declaration)
                                .Name();
+                if (declaration->Kind() ==
+                    core::AstNodeKind::DecorationDeclaration)
+                    name = static_cast<const core::DecorationDeclaration&>(
+                               *declaration)
+                               .Name();
                 if (name == import.alias)
                     Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
                            import.range,
@@ -2225,6 +2412,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     bindGenericAliases();
     BindImports(unit);
     ResolveStructureFields();
+    ValidateDecorations(unit);
     ResolveCallableTypes(unit);
     RegisterFunctions(unit);
     bindGenericAliases();
@@ -2545,8 +2733,8 @@ void SemanticAnalyzer::AnalyzeVariadicFunction(
 
     const auto& callee =
         static_cast<const core::NameExpression&>(call.Callee());
-    const Symbol* targetBase = _currentScope->Lookup(
-        EffectName(callee.Name(), call.IsCrashable()));
+    const Symbol* targetBase =
+        _currentScope->Lookup(EffectName(callee.Name(), call.IsCrashable()));
     if (targetBase == nullptr || targetBase->Kind() != SymbolKind::Function) {
         invalid(callee.Range(), "variadic forwarding target '" + callee.Name() +
                                     "' is not a function");
@@ -4194,9 +4382,8 @@ SemanticType SemanticAnalyzer::AnalyzeCast(
 
 SemanticType SemanticAnalyzer::AnalyzeName(
     const core::NameExpression& expression) {
-    const std::string lookupName =
-        EffectName(expression.Name(),
-                   _analyzingCallCallee && _callCalleeCrashable);
+    const std::string lookupName = EffectName(
+        expression.Name(), _analyzingCallCallee && _callCalleeCrashable);
     if (ReportAmbiguousImport(lookupName, expression.Range()))
         return SemanticType::Error();
     const Symbol* symbol = _currentScope->Lookup(lookupName);
@@ -4208,8 +4395,7 @@ SemanticType SemanticAnalyzer::AnalyzeName(
     }
     if (!_analyzingCallCallee && symbol->Kind() == SymbolKind::Function &&
         LookupFunctions(lookupName).size() > 1) {
-        Report(diagnostics::DiagnosticCode::InvalidOperand,
-               expression.Range(),
+        Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
                "overloaded function '" + expression.Name() +
                    "' must be selected by a call");
         return SemanticType::Error();
@@ -5328,9 +5514,10 @@ SemanticType SemanticAnalyzer::AnalyzeHashCall(
     return result;
 }
 
-void SemanticAnalyzer::ValidateCrashableCall(
-    bool markedCrashable, const CallableSignature& signature,
-    const FunctionSymbol* function, source::SourceRange range) {
+void SemanticAnalyzer::ValidateCrashableCall(bool markedCrashable,
+                                             const CallableSignature& signature,
+                                             const FunctionSymbol* function,
+                                             source::SourceRange range) {
     if (function && function->BuiltIn() == BuiltInFunction::Crash) {
         if (markedCrashable)
             Report(diagnostics::DiagnosticCode::InvalidCrashable, range,
@@ -5362,16 +5549,14 @@ void SemanticAnalyzer::ValidateCrashableCall(
         return;
     }
 
-    if (!function ||
-        function->BuiltIn() == BuiltInFunction::StringFormatCrash)
+    if (!function || function->BuiltIn() == BuiltInFunction::StringFormatCrash)
         _directCrashFunctions.insert(_currentFunction);
     else
         _crashableCalls[_currentFunction].insert(function);
 }
 
 void SemanticAnalyzer::WarnForCrashlessFunctions() {
-    std::unordered_set<const FunctionSymbol*> canCrash =
-        _directCrashFunctions;
+    std::unordered_set<const FunctionSymbol*> canCrash = _directCrashFunctions;
     bool changed = true;
     while (changed) {
         changed = false;
@@ -5437,14 +5622,12 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
                 unary.OperatorType() != TokenType::Sub)
                 return false;
             value = &unary.Operand();
-            while (value->Kind() ==
-                   core::AstNodeKind::ParenthesizedExpression)
+            while (value->Kind() == core::AstNodeKind::ParenthesizedExpression)
                 value =
                     &static_cast<const core::ParenthesizedExpression&>(*value)
                          .Inner();
         }
-        if (value->Kind() != core::AstNodeKind::LiteralExpression)
-            return false;
+        if (value->Kind() != core::AstNodeKind::LiteralExpression) return false;
         const auto token =
             static_cast<const core::LiteralExpression&>(*value).LiteralType();
         return token == TokenType::NumberLiteral ||
@@ -5473,8 +5656,7 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
                 }
             }
         }
-        if (arguments.size() < minimum || arguments.size() > maximum)
-            continue;
+        if (arguments.size() < minimum || arguments.size() > maximum) continue;
 
         std::size_t score = 0;
         bool viable = true;
@@ -5505,11 +5687,11 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
                    "' accepts the supplied argument types");
         return nullptr;
     }
-    const auto best = std::min_element(
-        matches.begin(), matches.end(),
-        [](const Match& left, const Match& right) {
-            return left.score < right.score;
-        });
+    const auto best =
+        std::min_element(matches.begin(), matches.end(),
+                         [](const Match& left, const Match& right) {
+                             return left.score < right.score;
+                         });
     if (std::count_if(matches.begin(), matches.end(), [&](const Match& match) {
             return match.score == best->score;
         }) != 1) {
@@ -5596,9 +5778,9 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
             EffectName(callee.Name(), expression.IsCrashable());
         const auto overloads = LookupFunctions(lookupName);
         if (overloads.size() > 1) {
-            function = ResolveOverload(callee.Name(), overloads,
-                                       expression.Arguments(),
-                                       expression.Range());
+            function =
+                ResolveOverload(callee.Name(), overloads,
+                                expression.Arguments(), expression.Range());
             if (!function) return SemanticType::Error();
             _model._bindings.insert_or_assign(&callee, function);
             _model._types.insert_or_assign(&callee, function->Type());
@@ -5615,8 +5797,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         _callCalleeCrashable = previousCrashableCallee;
         if (expression.Callee().Kind() == core::AstNodeKind::NameExpression) {
             const Symbol* symbol = _model.SymbolFor(
-                static_cast<const core::NameExpression&>(
-                    expression.Callee()));
+                static_cast<const core::NameExpression&>(expression.Callee()));
             if (symbol != nullptr && symbol->Kind() == SymbolKind::Function)
                 function = static_cast<const FunctionSymbol*>(symbol);
         }
@@ -5829,15 +6010,15 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         }
         return function->ReturnType().WithoutConst();
     }
-    if (function && (function->BuiltIn() == BuiltInFunction::Stdout ||
-                     function->BuiltIn() == BuiltInFunction::StdoutLine ||
-                     function->BuiltIn() == BuiltInFunction::StdoutFormat ||
-                     function->BuiltIn() == BuiltInFunction::Stderr ||
-                     function->BuiltIn() == BuiltInFunction::StderrLine ||
-                     function->BuiltIn() == BuiltInFunction::StderrFormat ||
-                     function->BuiltIn() == BuiltInFunction::StringFormat ||
-                     function->BuiltIn() ==
-                         BuiltInFunction::StringFormatCrash)) {
+    if (function &&
+        (function->BuiltIn() == BuiltInFunction::Stdout ||
+         function->BuiltIn() == BuiltInFunction::StdoutLine ||
+         function->BuiltIn() == BuiltInFunction::StdoutFormat ||
+         function->BuiltIn() == BuiltInFunction::Stderr ||
+         function->BuiltIn() == BuiltInFunction::StderrLine ||
+         function->BuiltIn() == BuiltInFunction::StderrFormat ||
+         function->BuiltIn() == BuiltInFunction::StringFormat ||
+         function->BuiltIn() == BuiltInFunction::StringFormatCrash)) {
         const bool stringFormat =
             function->BuiltIn() == BuiltInFunction::StringFormat ||
             function->BuiltIn() == BuiltInFunction::StringFormatCrash;
@@ -5986,10 +6167,8 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
             return SemanticType::Error();
         }
         const SemanticType cursor = AnalyzeExpression(
-            *expression.Arguments()[0],
-            SemanticType(SemanticTypeKind::USize));
-        if (!cursor.IsError() &&
-            cursor.Kind() != SemanticTypeKind::USize) {
+            *expression.Arguments()[0], SemanticType(SemanticTypeKind::USize));
+        if (!cursor.IsError() && cursor.Kind() != SemanticTypeKind::USize) {
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                    expression.Arguments()[0]->Range(),
                    "internal range cursor must have type 'usize'");
@@ -5997,8 +6176,7 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
         if (receiver.Kind() == SemanticTypeKind::StringView ||
             receiver.Kind() == SemanticTypeKind::String)
             return SemanticType(SemanticTypeKind::U32);
-        if (receiver.IsSequence())
-            return SemanticType(SemanticTypeKind::USize);
+        if (receiver.IsSequence()) return SemanticType(SemanticTypeKind::USize);
         return SemanticType::Error();
     }
     if (receiver.Kind() == SemanticTypeKind::Structure ||
@@ -6817,8 +6995,7 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
             return SemanticType::Error();
         }
         Report(diagnostics::DiagnosticCode::InvalidMember,
-               expression.MemberRange(),
-               "unknown method '" + methodName + "'");
+               expression.MemberRange(), "unknown method '" + methodName + "'");
         return SemanticType::Error();
     }
     const auto& overloads = methods->at(methodName);

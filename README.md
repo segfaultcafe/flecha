@@ -312,6 +312,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/semantic_analysis.md`](docs/semantic_analysis.md) — name binding, types, scopes, and analysis pipeline
 - [`docs/llvm_codegen.md`](docs/llvm_codegen.md) — current LLVM backend scope and limitations
 - [`docs/modules.md`](docs/modules.md) — current modules, imports, and package libraries
+- [`docs/decorations.md`](docs/decorations.md) — declarative decoration metadata and the JSON derivation proof of concept
 - [`docs/module_composition.md`](docs/module_composition.md) — corrected 0.2.1 logical-module model
 - [`docs/memory_safety_invariants.md`](docs/memory_safety_invariants.md) — normative safety properties and the concurrency gate
 - [`docs/memory_model.md`](docs/memory_model.md) — memory model proposal and implementation status

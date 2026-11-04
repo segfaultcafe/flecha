@@ -21,6 +21,18 @@ struct ClosureCapture final {
     const VariableSymbol* variable;
 };
 
+enum class JsonDecorationMode { Default, Explicit };
+
+struct JsonFieldMetadata final {
+    const core::StructureField* field;
+    std::string name;
+};
+
+struct JsonStructureMetadata final {
+    JsonDecorationMode mode;
+    std::vector<JsonFieldMetadata> fields;
+};
+
 class SemanticModel final {
    public:
     SemanticModel() = default;
@@ -72,6 +84,11 @@ class SemanticModel final {
         const Symbol& variable) const;
     const auto& Structures() const { return _structures; }
     const auto& Enums() const { return _enums; }
+    [[nodiscard]] const JsonStructureMetadata* JsonMetadataFor(
+        const core::StructureDeclaration& structure) const {
+        const auto found = _jsonMetadata.find(&structure);
+        return found == _jsonMetadata.end() ? nullptr : &found->second;
+    }
     [[nodiscard]] const Scope& GlobalScope() const { return *_scopes.front(); }
     [[nodiscard]] const std::vector<std::unique_ptr<Symbol>>& Symbols() const {
         return _symbols;
@@ -84,6 +101,8 @@ class SemanticModel final {
     friend class SemanticAnalyzer;
     std::vector<std::unique_ptr<StructureType>> _structures;
     std::vector<std::unique_ptr<EnumType>> _enums;
+    std::unordered_map<const core::StructureDeclaration*, JsonStructureMetadata>
+        _jsonMetadata;
     std::vector<std::unique_ptr<core::FunctionDeclaration>> _generatedFunctions;
     std::vector<const core::FunctionDeclaration*> _anonymousFunctions;
     std::unordered_map<const core::FunctionDeclaration*,

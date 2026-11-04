@@ -70,7 +70,7 @@
     },
     "imports": {
       "name": "keyword.control.import.flecha",
-      "match": "@imports\\b"
+      "match": "@[A-Za-z_][A-Za-z0-9_]*(?:\\s*::\\s*[A-Za-z_][A-Za-z0-9_]*)*\\b"
     },
     "tests": {
       "name": "keyword.other.test.flecha",
@@ -148,7 +148,7 @@
     },
     "control": {
       "name": "keyword.control.flecha",
-      "match": "\\b(?:module|enum|structure|build|return|defer|yield|if|match|else|also|while|for|loop|range|proceed|break|jumpto|as)\\b"
+      "match": "\\b(?:module|enum|structure|decoration|build|return|defer|yield|if|match|else|also|while|for|loop|range|proceed|break|jumpto|as)\\b"
     },
     "borrowAllArguments": {
       "match": "(<-)(\\s*)(\\.\\.\\.)(\\s*)(args)\\b",

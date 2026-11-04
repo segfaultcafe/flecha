@@ -4,7 +4,7 @@ endif
 
 syntax case match
 
-syntax match flechaImports /@imports\>/
+syntax match flechaImports /@[A-Za-z_][A-Za-z0-9_]*\%(\s*::\s*[A-Za-z_][A-Za-z0-9_]*\)*\>/
 
 syntax keyword flechaType i8 i16 i32 i64 isize
 syntax keyword flechaType u8 u16 u32 u64 usize
@@ -19,7 +19,7 @@ syntax match flechaTypeSetName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaTest test
 syntax keyword flechaConditional if else also match
 syntax keyword flechaRepeat while for loop range
-syntax keyword flechaStatement return yield proceed break defer enum structure build
+syntax keyword flechaStatement return yield proceed break defer enum structure decoration build
 syntax keyword flechaStatement module nextgroup=flechaModuleName skipwhite
 syntax match flechaModuleName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaJump jumpto nextgroup=flechaJumpTarget skipwhite
