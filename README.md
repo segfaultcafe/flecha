@@ -313,6 +313,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/llvm_codegen.md`](docs/llvm_codegen.md) — current LLVM backend scope and limitations
 - [`docs/modules.md`](docs/modules.md) — current modules, imports, and package libraries
 - [`docs/module_composition.md`](docs/module_composition.md) — corrected 0.2.1 logical-module model
+- [`docs/memory_safety_invariants.md`](docs/memory_safety_invariants.md) — normative safety properties and the concurrency gate
 - [`docs/memory_model.md`](docs/memory_model.md) — memory model proposal and implementation status
 - [`docs/ownership_contracts.md`](docs/ownership_contracts.md) — `own` and `lend` contracts
 - [`docs/checked_references.md`](docs/checked_references.md) — checked reference behavior
