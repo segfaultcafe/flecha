@@ -331,7 +331,7 @@ TEST(TokenizerTests, RecognizesStringLiterals) {
 TEST(TokenizerTests, RecognizesDecorationKeyword) {
     DiagnosticBag diagnostics;
     const auto tokens =
-        Tokenizer("decoration json {};", diagnostics).Tokenize();
+        Tokenizer("decoration json;", diagnostics).Tokenize();
 
     ASSERT_FALSE(diagnostics.HasErrors());
     ASSERT_GE(tokens.size(), 2u);

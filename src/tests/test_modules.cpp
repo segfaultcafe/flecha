@@ -84,7 +84,7 @@ TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
 
 TEST_F(ModuleTests, ResolvesExportedDecorationsThroughModuleAliases) {
     Write("json.fl", R"(module json;
-        export decoration json {};
+        export decoration json;
         export structure Writer {};
         error Writer::beginObject(&self) { return none; }
         error Writer::endObject(&self) { return none; }
@@ -96,7 +96,7 @@ TEST_F(ModuleTests, ResolvesExportedDecorationsThroughModuleAliases) {
     )");
     Write("main.fl", R"(module main;
         @imports :: root::json;
-        @json(default)
+        @json(structure)
         structure Response { i32 value; private string secret; };
         void main() {}
     )");
@@ -104,7 +104,7 @@ TEST_F(ModuleTests, ResolvesExportedDecorationsThroughModuleAliases) {
     EXPECT_EQ(Check(), "");
 
     Write("json.fl", R"(module json;
-        decoration json {};
+        decoration json;
     )");
     EXPECT_NE(Check().find("unknown or inaccessible decoration '@json'"),
               std::string::npos);

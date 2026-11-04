@@ -804,7 +804,7 @@ TEST(NativeCompilerTests, RunsFieldsAndMethodsWithTheSameName) {
 
 TEST(NativeCompilerTests, RunsGeneratedJsonWriterMethods) {
     GeneratedSource result = Generate(R"(
-        decoration json {};
+        decoration json;
 
         structure Writer { i32 trace; };
         Writer Writer::init() override {
@@ -837,7 +837,7 @@ TEST(NativeCompilerTests, RunsGeneratedJsonWriterMethods) {
             return (output, none);
         }
 
-        @json(default)
+        @json(structure)
         structure Response { i32 value; };
 
         i32 main() {
@@ -869,6 +869,80 @@ TEST(NativeCompilerTests, RunsGeneratedJsonWriterMethods) {
     ASSERT_TRUE(compiler.Ready()) << compiler.Error();
     ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
                                          "generated_json_writer_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RunsGeneratedJsonReaderMethods) {
+    GeneratedSource result = Generate(R"(
+        decoration json;
+        error TestError { Invalid, }
+
+        structure Writer {};
+        Writer Writer::init() override { return build Writer {}; }
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+
+        structure Reader { i32 stage; };
+        Reader Reader::init([]const u8 source) override {
+            return build Reader { self.stage = 0; };
+        }
+        error Reader::beginObject(&self) { return none; }
+        (bool, error) Reader::nextObjectField(&self) {
+            if self->stage == 0 {
+                self->stage = 1;
+                return (true, none);
+            }
+            return (false, none);
+        }
+        bool Reader::keyIs(&const self, stringv expected) {
+            return expected == "value";
+        }
+        error Reader::read(&self, &i32 output) {
+            *output = 42;
+            self->stage = 2;
+            return none;
+        }
+        error Reader::skipValue(&self) { return none; }
+        error Reader::finish(&self) {
+            if self->stage == 2 { return none; }
+            return TestError.Invalid;
+        }
+
+        @json(structure)
+        structure Response { i32 value; };
+        Response Response::init(i32 initial) override {
+            return build Response { self.value = initial; };
+        }
+
+        i32 main() {
+            response, err := Response::fromJson("{}".cast<[]const u8>);
+            if err != none { return 1; }
+            return response.value;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_generated_json_reader_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "generated_json_reader_test",
                                          executablePath.string()))
         << compiler.Error();
     const std::string executablePathText = executablePath.string();

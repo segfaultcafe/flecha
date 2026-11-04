@@ -52,9 +52,9 @@ TEST(ParserTests, ParsesEmptyCompilationUnit) {
 TEST(ParserTests, ParsesDeclarativeDecorationsOnStructuresAndFields) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(R"(
-        export decoration json {};
+        export decoration json;
 
-        @json(default)
+        @json(structure)
         structure DefaultResponse {
             i32 value;
             private string secret;
@@ -82,7 +82,7 @@ TEST(ParserTests, ParsesDeclarativeDecorationsOnStructuresAndFields) {
     ASSERT_EQ(defaults.decorations[0].arguments.size(), 1u);
     EXPECT_EQ(defaults.decorations[0].arguments[0].kind,
               DecorationArgumentKind::Identifier);
-    EXPECT_EQ(defaults.decorations[0].arguments[0].value, "default");
+    EXPECT_EQ(defaults.decorations[0].arguments[0].value, "structure");
     EXPECT_FALSE(defaults.Fields()[0]->IsPrivate());
     EXPECT_TRUE(defaults.Fields()[1]->IsPrivate());
 
@@ -95,6 +95,15 @@ TEST(ParserTests, ParsesDeclarativeDecorationsOnStructuresAndFields) {
     EXPECT_EQ(fieldDecoration.arguments[0].kind,
               DecorationArgumentKind::String);
     EXPECT_EQ(fieldDecoration.arguments[0].value, "test");
+}
+
+TEST(ParserTests, DecorationDeclarationsDoNotAcceptBodies) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource("decoration json {};", diagnostics);
+
+    ASSERT_NE(unit, nullptr);
+    EXPECT_TRUE(diagnostics.HasErrors());
+    EXPECT_TRUE(unit->Declarations().empty());
 }
 
 TEST(ParserTests, UsesTokenRangesForCompilationUnit) {
