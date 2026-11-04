@@ -3,6 +3,7 @@ module strings;
 @imports
     :: root::text::runtime
     :: root::text::utf8
+    :: root::bytes::sequence
     :: root::bytes::buffer;
 
 // Builds byte-oriented text incrementally with explicit allocation failures.
@@ -214,4 +215,13 @@ export (string, error) string_from_bytes([]const u8 value) {
     }
 
     return (result, none);
+}
+
+// Reports byte equality without data-dependent early exit for equal lengths.
+// Length is public: unequal lengths return immediately.
+export bool constant_time_equal(stringv left, stringv right) {
+    return sequence::constant_time_equal(
+        left.cast<[]const u8>,
+        right.cast<[]const u8>
+    );
 }

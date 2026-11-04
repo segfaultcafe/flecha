@@ -713,3 +713,36 @@ test replace_preserves_arbitrary_bytes(&testing::UnitTest t) {
         "replacement is byte-oriented and preserves embedded nulls"
     );
 }
+
+test constant_time_equal_compares_string_views_as_complete_byte_sequences(
+    &testing::UnitTest t
+) {
+    [3]u8 embeddedNull = [65, 0, 66];
+    [3]u8 sameEmbeddedNull = [65, 0, 66];
+    [3]u8 differentAfterNull = [65, 0, 67];
+
+    left := strings::stringv_from_bytes(embeddedNull[:]);
+    same := strings::stringv_from_bytes(sameEmbeddedNull[:]);
+    different := strings::stringv_from_bytes(differentAfterNull[:]);
+
+    asserts::is_true(
+        t,
+        strings::constant_time_equal(left, same),
+        "identical string views compare equal"
+    );
+    asserts::is_false(
+        t,
+        strings::constant_time_equal(left, different),
+        "comparison includes bytes after embedded nulls"
+    );
+    asserts::is_false(
+        t,
+        strings::constant_time_equal("flecha", "flech"),
+        "different string-view lengths compare unequal"
+    );
+    asserts::is_true(
+        t,
+        strings::constant_time_equal("", ""),
+        "empty string views compare equal"
+    );
+}

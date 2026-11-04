@@ -4,6 +4,10 @@
 
 ### Added
 
+- Added allocation-free constant-time equality for byte slices and `stringv`
+  values plus guaranteed zeroing of mutable byte slices, backed by versioned
+  native boundaries that preserve both security-sensitive operations through
+  optimization.
 - Added allocation-free `std::cryptography::sha2` and
   `std::cryptography::hmac` modules with portable SHA-256, SHA-512,
   HMAC-SHA-256, and HMAC-SHA-512, including one-shot and incremental APIs,

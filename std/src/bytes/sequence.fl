@@ -1,5 +1,7 @@
 module sequence;
 
+@imports :: root::bytes::runtime;
+
 // Reports whether two byte slices have equal lengths and contents.
 export bool equal([]const u8 left, []const u8 right) {
     if left.len() != right.len() {
@@ -112,4 +114,32 @@ export (usize, bool) index_of([]const u8 haystack, []const u8 needle) {
     }
 
     return (none, false);
+}
+
+// Reports equality without data-dependent early exit for equal-length inputs.
+// Length is public: unequal lengths return immediately.
+export bool constant_time_equal([]const u8 left, []const u8 right) {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    unsafe {
+        u8 difference = runtime::flecha_runtime_v1_constant_time_difference(
+            left.data(),
+            right.data(),
+            left.len().cast<usize>
+        );
+
+        return difference == 0;
+    }
+}
+
+// Overwrites every byte with zero using a non-elidable runtime operation.
+export void zero_bytes([]u8 value) {
+    unsafe {
+        runtime::flecha_runtime_v1_secure_zero(
+            value.data(),
+            value.len()
+        );
+    }
 }

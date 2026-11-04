@@ -30,6 +30,67 @@ test equal_requires_identical_lengths_and_bytes(&testing::UnitTest t) {
     );
 }
 
+test constant_time_equal_checks_every_equal_length_position(
+    &testing::UnitTest t
+) {
+    [5]u8 expected = [1, 2, 3, 4, 5];
+    [5]u8 same = [1, 2, 3, 4, 5];
+    [5]u8 first = [0, 2, 3, 4, 5];
+    [5]u8 middle = [1, 2, 0, 4, 5];
+    [5]u8 last = [1, 2, 3, 4, 0];
+    [4]u8 shorter = [1, 2, 3, 4];
+    [0]u8 empty = none;
+
+    asserts::is_true(
+        t,
+        sequence::constant_time_equal(expected[:], same[:]),
+        "identical byte sequences compare equal"
+    );
+    asserts::is_false(
+        t,
+        sequence::constant_time_equal(expected[:], first[:]),
+        "a first-byte difference is detected"
+    );
+    asserts::is_false(
+        t,
+        sequence::constant_time_equal(expected[:], middle[:]),
+        "a middle-byte difference is detected"
+    );
+    asserts::is_false(
+        t,
+        sequence::constant_time_equal(expected[:], last[:]),
+        "a last-byte difference is detected"
+    );
+    asserts::is_false(
+        t,
+        sequence::constant_time_equal(expected[:], shorter[:]),
+        "different lengths compare unequal"
+    );
+    asserts::is_true(
+        t,
+        sequence::constant_time_equal(empty[:], empty[:]),
+        "empty byte sequences compare equal"
+    );
+}
+
+test zero_bytes_clears_exactly_the_supplied_mutable_slice(
+    &testing::UnitTest t
+) {
+    [7]u8 storage = [11, 22, 33, 44, 55, 66, 77];
+    [0]u8 empty = none;
+
+    sequence::zero_bytes(storage[1:6]);
+    sequence::zero_bytes(empty[:]);
+
+    asserts::is_true(
+        t,
+        storage[0] == 11 and storage[1] == 0 and storage[2] == 0 and
+            storage[3] == 0 and storage[4] == 0 and storage[5] == 0 and
+            storage[6] == 77,
+        "zeroing changes every supplied byte and preserves adjacent storage"
+    );
+}
+
 test comparison_uses_unsigned_lexicographic_order(&testing::UnitTest t) {
     [2]u8 lower = [1, 2];
     [2]u8 higher = [1, 3];

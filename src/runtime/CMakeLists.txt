@@ -1,6 +1,7 @@
 add_library(runtime STATIC runtime.cpp crash.cpp allocation.cpp environment.cpp
                            filesystem.cpp file_stream.cpp process.cpp time.cpp
-                           random.cpp network.cpp standard_stream.cpp)
+                           random.cpp security.cpp network.cpp
+                           standard_stream.cpp)
 target_include_directories(runtime PUBLIC ${PROJECT_SOURCE_DIR}/src/include)
 target_link_libraries(runtime PRIVATE flecha_project_options)
 if(WIN32)

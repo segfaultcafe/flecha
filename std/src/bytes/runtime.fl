@@ -1,0 +1,12 @@
+module runtime;
+
+quiver extern unsafe void flecha_runtime_v1_secure_zero(
+    *u8 value,
+    usize length
+);
+
+quiver extern unsafe u8 flecha_runtime_v1_constant_time_difference(
+    *const u8 left,
+    *const u8 right,
+    usize length
+);
