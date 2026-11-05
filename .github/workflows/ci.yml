@@ -129,6 +129,7 @@ jobs:
         run: cmake --build build-tests --parallel
 
       - name: Run fast deterministic stateful soak
+        # The setup action may install CTest outside /usr/bin; resolve it from PATH.
         run: >-
           cmake
           -DFLECHA_TEST_BINARY=$PWD/build-tests/src/tests/test_flecha
