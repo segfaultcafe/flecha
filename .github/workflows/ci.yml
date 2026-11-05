@@ -447,6 +447,12 @@ jobs:
           path: examples/workspace_guard
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ledger-example
+          path: examples/ledger
+          if-no-files-found: error
+
   clean-install:
     # Keep the protected check names on the downstream archive consumers so a
     # package cannot satisfy branch protection before its clean-install test.
@@ -545,6 +551,11 @@ jobs:
           name: workspace-guard-example
           path: workspace-guard-example
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: ledger-example
+          path: ledger-example
+
       - name: Report and verify the clean-install toolchain
         shell: bash
         run: >-
@@ -600,5 +611,6 @@ jobs:
           "-DOUTPUT_ROOT=$PWD/clean-install-smoke"
           "-DCOMMUNITY_PACKAGE_ROOT=$PWD/community-package-consumer"
           "-DWORKSPACE_GUARD_ROOT=$PWD/workspace-guard-example"
+          "-DLEDGER_ROOT=$PWD/ledger-example"
           "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
           -P test-support/release_smoke.cmake

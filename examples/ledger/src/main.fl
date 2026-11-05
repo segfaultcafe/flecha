@@ -1,0 +1,67 @@
+module main;
+
+@imports
+    :: root::commands
+    :: root::model
+    :: lib::std::fmt
+    :: lib::std::os::arguments;
+
+i32 main() {
+    values, captureError := arguments::capture();
+    if captureError != none {
+        fmt::eprintln("ledger: cannot capture command-line arguments");
+        return 3;
+    }
+    if values.len() < 2 {
+        print_usage();
+        return 2;
+    }
+
+    command := values[1].view();
+    error result = none;
+    if command == "create" and values.len() == 3 {
+        result = commands::create(values[2].view());
+    } else if command == "append" and values.len() == 4 {
+        result = commands::append(values[2].view(), values[3].view());
+    } else if command == "verify" and values.len() == 3 {
+        result = commands::verify(values[2].view());
+    } else if command == "list" and values.len() == 3 {
+        result = commands::list(values[2].view());
+    } else if command == "help" or command == "--help" or command == "-h" {
+        print_usage();
+        return 0;
+    } else {
+        result = model::LedgerError.Usage;
+    }
+
+    if result == none {
+        return 0;
+    }
+    if result == model::LedgerError.Usage {
+        print_usage();
+        return 2;
+    }
+    if result == model::LedgerError.InvalidFormat or
+        result == model::LedgerError.PayloadTooLarge {
+        fmt::eprintln("ledger: invalid ledger format");
+        return 4;
+    }
+    if result == model::LedgerError.IntegrityFailure {
+        fmt::eprintln("ledger: integrity verification failed");
+        return 5;
+    }
+
+    fmt::eprintln("ledger: operation failed");
+    return 3;
+}
+
+void print_usage() {
+    fmt::println("ledger - deterministic append-only SHA-256 chain");
+    fmt::println("");
+    fmt::println("usage:");
+    fmt::println("  ledger create <file>");
+    fmt::println("  ledger append <file> <payload>");
+    fmt::println("  ledger verify <file>");
+    fmt::println("  ledger list <file>");
+}
+

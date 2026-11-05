@@ -654,6 +654,16 @@ add_test(NAME LongbowTests.WorkspaceGuardNorthStar
 set_tests_properties(LongbowTests.WorkspaceGuardNorthStar PROPERTIES
     TIMEOUT 180)
 
+add_test(NAME LongbowTests.LedgerNorthStar
+    COMMAND ${CMAKE_COMMAND}
+        -DLONGBOW=$<TARGET_FILE:longbow>
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFIXTURE=${PROJECT_SOURCE_DIR}/examples/ledger
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/ledger
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_ledger.cmake)
+set_tests_properties(LongbowTests.LedgerNorthStar PROPERTIES TIMEOUT 180)
+
 add_test(NAME NativeExternTests.CAbiAndLinking
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>

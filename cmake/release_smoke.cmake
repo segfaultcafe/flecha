@@ -805,3 +805,134 @@ kind = "program"
             "${workspaceGuardMismatchOutput}${workspaceGuardMismatchError}")
     endif()
 endif()
+
+if(DEFINED LEDGER_ROOT)
+    get_filename_component(LEDGER_ROOT "${LEDGER_ROOT}" ABSOLUTE)
+    foreach(source IN ITEMS
+        main.fl model.fl codec.fl storage.fl commands.fl codec_test.fl)
+        if(NOT EXISTS "${LEDGER_ROOT}/src/${source}")
+            message(FATAL_ERROR
+                "ledger fixture is missing src/${source}: ${LEDGER_ROOT}")
+        endif()
+    endforeach()
+
+    set(ledgerProject "${OUTPUT_ROOT}/ledger")
+    file(MAKE_DIRECTORY "${ledgerProject}")
+    file(COPY "${LEDGER_ROOT}/src" DESTINATION "${ledgerProject}")
+    file(WRITE "${ledgerProject}/longbow.toml" [=[
+[package]
+name = "ledger"
+version = "0.1.0"
+kind = "program"
+
+[dependencies]
+]=])
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "FLECHA_COMPILER=${FLECHA_COMPILER}"
+            "${LONGBOW}" test
+        WORKING_DIRECTORY "${ledgerProject}"
+        RESULT_VARIABLE ledgerTestResult
+        OUTPUT_VARIABLE ledgerTestOutput
+        ERROR_VARIABLE ledgerTestError)
+    if(NOT ledgerTestResult EQUAL 0)
+        message(FATAL_ERROR
+            "installed ledger golden tests failed: "
+            "${ledgerTestOutput}${ledgerTestError}")
+    endif()
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "FLECHA_COMPILER=${FLECHA_COMPILER}"
+            "${LONGBOW}" build
+        WORKING_DIRECTORY "${ledgerProject}"
+        RESULT_VARIABLE ledgerBuildResult
+        OUTPUT_VARIABLE ledgerBuildOutput
+        ERROR_VARIABLE ledgerBuildError)
+    if(NOT ledgerBuildResult EQUAL 0)
+        message(FATAL_ERROR
+            "installed ledger build failed: "
+            "${ledgerBuildOutput}${ledgerBuildError}")
+    endif()
+
+    set(ledgerExecutable
+        "${ledgerProject}/target/ledger${EXECUTABLE_SUFFIX}")
+    if(NOT EXISTS "${ledgerExecutable}")
+        message(FATAL_ERROR "installed ledger executable was not produced")
+    endif()
+
+    set(ledgerFirst "${OUTPUT_ROOT}/ledger-first.fld")
+    set(ledgerSecond "${OUTPUT_ROOT}/ledger-second.fld")
+    foreach(ledgerPath IN ITEMS "${ledgerFirst}" "${ledgerSecond}")
+        execute_process(
+            COMMAND "${ledgerExecutable}" create "${ledgerPath}"
+            RESULT_VARIABLE ledgerCreateResult
+            OUTPUT_VARIABLE ledgerCreateOutput
+            ERROR_VARIABLE ledgerCreateError)
+        if(NOT ledgerCreateResult EQUAL 0)
+            message(FATAL_ERROR
+                "installed ledger create failed: "
+                "${ledgerCreateOutput}${ledgerCreateError}")
+        endif()
+        execute_process(
+            COMMAND "${ledgerExecutable}" append "${ledgerPath}" alpha
+            RESULT_VARIABLE ledgerAlphaResult
+            OUTPUT_VARIABLE ledgerAlphaOutput
+            ERROR_VARIABLE ledgerAlphaError)
+        if(NOT ledgerAlphaResult EQUAL 0)
+            message(FATAL_ERROR
+                "installed ledger genesis append failed: "
+                "${ledgerAlphaOutput}${ledgerAlphaError}")
+        endif()
+        execute_process(
+            COMMAND "${ledgerExecutable}" append "${ledgerPath}" beta
+            RESULT_VARIABLE ledgerBetaResult
+            OUTPUT_VARIABLE ledgerBetaOutput
+            ERROR_VARIABLE ledgerBetaError)
+        if(NOT ledgerBetaResult EQUAL 0)
+            message(FATAL_ERROR
+                "installed ledger second append failed: "
+                "${ledgerBetaOutput}${ledgerBetaError}")
+        endif()
+    endforeach()
+
+    execute_process(
+        COMMAND "${ledgerExecutable}" verify "${ledgerFirst}"
+        RESULT_VARIABLE ledgerVerifyResult
+        OUTPUT_VARIABLE ledgerVerifyOutput
+        ERROR_VARIABLE ledgerVerifyError)
+    string(REPLACE "\r\n" "\n" ledgerVerifyOutput "${ledgerVerifyOutput}")
+    if(NOT ledgerVerifyResult EQUAL 0 OR
+       NOT ledgerVerifyOutput STREQUAL
+           "verified: 2 blocks d4298ba679357d6f92c5ea1da21f8895a3e6d514b35e51b3e68081744d9f6b4a\n")
+        message(FATAL_ERROR
+            "installed ledger verification failed: "
+            "${ledgerVerifyOutput}${ledgerVerifyError}")
+    endif()
+
+    file(SHA256 "${ledgerFirst}" ledgerFirstHash)
+    file(SHA256 "${ledgerSecond}" ledgerSecondHash)
+    if(NOT ledgerFirstHash STREQUAL
+       "8597adac0ae2a0efee59c082eb1ea4e68fa5752d2ab30bfdfc7d5b6743a95847" OR
+       NOT ledgerFirstHash STREQUAL ledgerSecondHash)
+        message(FATAL_ERROR
+            "installed ledger did not reproduce its canonical bytes")
+    endif()
+
+    file(WRITE "${OUTPUT_ROOT}/ledger-malformed.fld" "not-a-ledger")
+    execute_process(
+        COMMAND "${ledgerExecutable}" verify
+            "${OUTPUT_ROOT}/ledger-malformed.fld"
+        RESULT_VARIABLE ledgerMalformedResult
+        OUTPUT_VARIABLE ledgerMalformedOutput
+        ERROR_VARIABLE ledgerMalformedError)
+    string(REPLACE "\r\n" "\n"
+        ledgerMalformedError "${ledgerMalformedError}")
+    if(NOT ledgerMalformedResult EQUAL 4 OR
+       NOT ledgerMalformedError STREQUAL "ledger: invalid ledger format\n")
+        message(FATAL_ERROR
+            "installed ledger malformed-input contract failed: "
+            "${ledgerMalformedOutput}${ledgerMalformedError}")
+    endif()
+endif()

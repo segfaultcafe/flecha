@@ -1,0 +1,54 @@
+module model;
+
+export error LedgerError {
+    Usage,
+    InvalidFormat,
+    IntegrityFailure,
+    PayloadTooLarge
+}
+
+export structure Block {
+    private u64 blockIndex;
+    private [32]u8 previousDigest;
+    private string payloadValue;
+    private [32]u8 blockDigest;
+};
+
+Block Block::init(
+    u64 blockIndex,
+    [32]u8 previousDigest,
+    string payloadValue,
+    [32]u8 blockDigest
+) override {
+    return build Block {
+        self.blockIndex = blockIndex;
+        self.previousDigest = previousDigest;
+        self.payloadValue = payloadValue;
+        self.blockDigest = blockDigest;
+    };
+}
+
+u64 Block::index(&const self) {
+    return self->blockIndex;
+}
+
+[]const u8 Block::previousHash(&const self) <-self {
+    return self->previousDigest[:];
+}
+
+stringv Block::payload(&const self) <-self {
+    return self->payloadValue.view();
+}
+
+[]const u8 Block::hash(&const self) <-self {
+    return self->blockDigest[:];
+}
+
+export [32]u8 copy_digest([]const u8 source) {
+    [32]u8 result = none;
+    loop usize index = 0; index < result.len(); index++ {
+        result[index] = source[index];
+    }
+    return result;
+}
+
