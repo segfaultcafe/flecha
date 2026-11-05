@@ -182,7 +182,8 @@ foreach(round RANGE 0 ${last_round})
             "[round ${round}] ${test_name}\n${test_output}${test_error}\n")
         if(NOT test_result STREQUAL "0")
             message(FATAL_ERROR
-                "stateful test ${test_name} failed in round ${round}; see ${log}")
+                "stateful test ${test_name} failed in round ${round} "
+                "(${test_result}); see ${log}\n${test_output}${test_error}")
         endif()
     endforeach()
 endforeach()
