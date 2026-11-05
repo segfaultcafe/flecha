@@ -1,0 +1,215 @@
+module main;
+
+@imports
+    :: lib::std::containers::collections
+    :: lib::std::cryptography::sha2
+    :: lib::std::io::buffered
+    :: lib::std::io::stream
+    :: lib::std::os::arguments
+    :: lib::std::text::strings
+    :: lib::std::text::utf8;
+
+const usize ROUND_COUNT = 10000000;
+const usize COLLECTION_COUNT = 4000000;
+const usize COLLECTION_GROWTH_COUNT = 1000000;
+const usize UTF8_GROUPS = 8192;
+const usize UTF8_REPETITIONS = 128;
+const usize FNV_BYTES = 262144;
+const usize FNV_REPETITIONS = 64;
+const usize SHA_BYTES = 4096;
+const usize SHA_REPETITIONS = 128;
+const usize BUFFER_BYTES = 4096;
+const usize BUFFER_REPETITIONS = 256;
+
+u64 rotate_left(u64 value, usize count) {
+    return (value << count) | (value >> (64 - count));
+}
+
+(u64, error) rounds() {
+    u64 left = 81985529216486895;
+    u64 right = 18364758544493064720;
+    loop usize index = 0; index < ROUND_COUNT; index++ {
+        left = rotate_left(left, 7) ^ right;
+        right = rotate_left(right, 13) + left + index.cast<u64>;
+        left = left ^ rotate_left(right, 17);
+    }
+    return (left ^ right, none);
+}
+
+(u64, error) collections_workload() {
+    values := collections::Array<u64>::init();
+    reserveError := values.reserve(COLLECTION_COUNT);
+    if reserveError != none {
+        return (none, reserveError);
+    }
+
+    loop usize index = 0; index < COLLECTION_COUNT; index++ {
+        pushError := values.push(index.cast<u64>);
+        if pushError != none {
+            return (none, pushError);
+        }
+    }
+
+    u64 total = 0;
+    view := values.view();
+    loop usize index = 0; index < view.len(); index++ {
+        total = total + view[index];
+    }
+    return (total, none);
+}
+
+(u64, error) collections_growth_workload() {
+    values := collections::Array<u64>::init();
+    loop usize index = 0; index < COLLECTION_GROWTH_COUNT; index++ {
+        pushError := values.push(index.cast<u64>);
+        if pushError != none {
+            return (none, pushError);
+        }
+    }
+
+    u64 total = 0;
+    view := values.view();
+    loop usize index = 0; index < view.len(); index++ {
+        total = total + view[index];
+    }
+    return (total, none);
+}
+
+(u64, error) utf8_workload() {
+    bytes := collections::Array<u8>::init();
+    reserveError := bytes.reserve(UTF8_GROUPS * 10);
+    if reserveError != none {
+        return (none, reserveError);
+    }
+
+    [10]u8 group = [
+        65,
+        194, 162,
+        226, 130, 172,
+        240, 159, 152, 128,
+    ];
+    loop usize index = 0; index < UTF8_GROUPS; index++ {
+        appendError := bytes.append(group[:]);
+        if appendError != none {
+            return (none, appendError);
+        }
+    }
+
+    text := strings::stringv_from_bytes(bytes.view());
+    u64 total = 0;
+    loop usize index = 0; index < UTF8_REPETITIONS; index++ {
+        count, countError := utf8::count_code_points(text);
+        if countError != none {
+            return (none, countError);
+        }
+        total = total + count.cast<u64>;
+    }
+    return (total, none);
+}
+
+(u64, error) fnv_workload() {
+    bytes := collections::Array<u8>::init();
+    reserveError := bytes.reserve(FNV_BYTES);
+    if reserveError != none {
+        return (none, reserveError);
+    }
+    loop usize index = 0; index < FNV_BYTES; index++ {
+        pushError := bytes.push((index * 31 + 7).cast<u8>);
+        if pushError != none {
+            return (none, pushError);
+        }
+    }
+
+    u64 hash = 14695981039346656037;
+    view := bytes.view();
+    loop usize repetition = 0; repetition < FNV_REPETITIONS; repetition++ {
+        loop usize index = 0; index < view.len(); index++ {
+            hash = (hash ^ view[index].cast<u64>) * 1099511628211;
+        }
+    }
+    return (hash, none);
+}
+
+(u64, error) sha256_workload() {
+    [4096]u8 bytes = none;
+    loop usize index = 0; index < bytes.len(); index++ {
+        bytes[index] = (index * 31 + 7).cast<u8>;
+    }
+
+    u64 checksum = 0;
+    loop usize repetition = 0; repetition < SHA_REPETITIONS; repetition++ {
+        digest, digestError := sha2::sha256(bytes[:]);
+        if digestError != none {
+            return (none, digestError);
+        }
+        value := digest.bytes();
+        checksum = checksum + value[repetition % value.len()].cast<u64>;
+    }
+    return (checksum, none);
+}
+
+(u64, error) buffered_workload() {
+    [4096]u8 bytes = none;
+    loop usize index = 0; index < bytes.len(); index++ {
+        bytes[index] = (index * 17 + 11).cast<u8>;
+    }
+
+    usize accepted = 0;
+    writer := stream::Writer::init(
+        [&accepted](source) => {
+            accepted = accepted + source.len();
+            return (source.len(), none);
+        }
+    );
+    output, allocationError :=
+        buffered::BufferedWriter::withCapacity(writer, 257);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    loop usize repetition = 0; repetition < BUFFER_REPETITIONS; repetition++ {
+        writeError := output.writeAll(bytes[:]);
+        if writeError != none {
+            return (none, writeError);
+        }
+    }
+    flushError := output.flush();
+    if flushError != none {
+        return (none, flushError);
+    }
+    return (accepted.cast<u64>, none);
+}
+
+i32 main() {
+    values, captureError := arguments::capture();
+    if captureError != none or values.len() != 2 {
+        return 2;
+    }
+
+    stringv workload = values[1].view();
+    u64 checksum = 0;
+    error workloadError = none;
+    if workload == "rounds" {
+        checksum, workloadError = rounds();
+    } else if workload == "collections" {
+        checksum, workloadError = collections_workload();
+    } else if workload == "collections_growth" {
+        checksum, workloadError = collections_growth_workload();
+    } else if workload == "utf8" {
+        checksum, workloadError = utf8_workload();
+    } else if workload == "fnv" {
+        checksum, workloadError = fnv_workload();
+    } else if workload == "sha256" {
+        checksum, workloadError = sha256_workload();
+    } else if workload == "buffered" {
+        checksum, workloadError = buffered_workload();
+    } else {
+        return 3;
+    }
+
+    if workloadError != none {
+        return 4;
+    }
+    stdoutln(checksum);
+    return 0;
+}

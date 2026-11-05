@@ -546,7 +546,10 @@ sanitizer, and release-qualification profiles documented in
 [`compiler_stress.md`](compiler_stress.md). Deterministic adversarial/property
 inputs plus reordered failure-injection and stateful soak profiles are
 documented in [`hardening.md`](hardening.md). Performance baselines and final
-installed-package qualification remain separate release-gate work.
+installed-package qualification remain separate release-gate work. The
+versioned v0.3 workload contract, competitive tier policy, commands, sampling
+budgets, and baseline lifecycle are documented in
+[`performance.md`](performance.md).
 
 ## Milestone discoveries
 
