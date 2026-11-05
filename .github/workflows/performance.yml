@@ -1,9 +1,6 @@
 name: Performance qualification
 
 on:
-  push:
-    branches:
-      - codex/v0.3-performance-baselines
   schedule:
     - cron: "17 5 * * 2"
   workflow_dispatch:
