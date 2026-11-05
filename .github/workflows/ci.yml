@@ -128,9 +128,6 @@ jobs:
       - name: Build
         run: cmake --build build-tests --parallel
 
-      - name: Run compiler and runtime tests
-        run: ctest --test-dir build-tests --output-on-failure
-
       - name: Run fast deterministic stateful soak
         run: >-
           cmake
@@ -140,6 +137,9 @@ jobs:
           -DFLECHA_OUTPUT=$PWD/build-tests/src/tests/hardening-soak-fast
           -DFLECHA_PROFILE=fast
           -P src/tests/run_hardening_soak.cmake
+
+      - name: Run compiler and runtime tests
+        run: ctest --test-dir build-tests --output-on-failure
 
       - name: Run Neovim syntax tests
         run: make test-neovim
