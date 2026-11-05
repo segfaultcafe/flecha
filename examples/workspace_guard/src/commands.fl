@@ -1,0 +1,176 @@
+module commands;
+
+@imports
+    :: root::manifest
+    :: root::model
+    :: root::scanner
+    :: lib::std::containers::collections
+    :: lib::std::fmt
+    :: lib::std::process::command;
+
+export error snapshot(stringv rootPath, stringv manifestPath) {
+    entries, scanError := scanner::scan(rootPath);
+    if scanError != none {
+        return scanError;
+    }
+    writeError := manifest::write(manifestPath, &entries);
+    if writeError != none {
+        return writeError;
+    }
+    fmt::print("snapshot: ");
+    fmt::print(entries.len());
+    fmt::println(" files");
+    return none;
+}
+
+export error verify(stringv rootPath, stringv manifestPath, bool quiet = false) {
+    expected, manifestError := manifest::read(manifestPath);
+    if manifestError != none {
+        return manifestError;
+    }
+    actual, scanError := scanner::scan(rootPath);
+    if scanError != none {
+        return scanError;
+    }
+
+    usize differences = compare(&expected, &actual, false);
+    if differences != 0 {
+        fmt::eprint("workspace_guard: ");
+        fmt::eprint(differences);
+        fmt::eprintln(" workspace differences");
+        return model::GuardError.Mismatch;
+    }
+    if !quiet {
+        fmt::print("verified: ");
+        fmt::print(actual.len());
+        fmt::println(" files");
+    }
+    return none;
+}
+
+export error diff(stringv oldManifest, stringv newManifest) {
+    oldEntries, oldError := manifest::read(oldManifest);
+    if oldError != none {
+        return oldError;
+    }
+    newEntries, newError := manifest::read(newManifest);
+    if newError != none {
+        return newError;
+    }
+
+    usize differences = compare(&oldEntries, &newEntries, true);
+    fmt::print("diff: ");
+    fmt::print(differences);
+    fmt::println(" differences");
+    return none;
+}
+
+usize compare(
+    &const collections::Array<model::Entry> expected,
+    &const collections::Array<model::Entry> actual,
+    bool standardOutput
+) {
+    expectedValues := expected->view();
+    actualValues := actual->view();
+    usize expectedIndex = 0;
+    usize actualIndex = 0;
+    usize differences = 0;
+
+    while expectedIndex < expectedValues.len() or
+        actualIndex < actualValues.len() {
+        if expectedIndex == expectedValues.len() {
+            report("added", actualValues[actualIndex].path(), standardOutput);
+            actualIndex++;
+            differences++;
+            proceed;
+        }
+        if actualIndex == actualValues.len() {
+            report("removed", expectedValues[expectedIndex].path(), standardOutput);
+            expectedIndex++;
+            differences++;
+            proceed;
+        }
+
+        expectedPath := expectedValues[expectedIndex].path();
+        actualPath := actualValues[actualIndex].path();
+        if model::text_less(expectedPath, actualPath) {
+            report("removed", expectedPath, standardOutput);
+            expectedIndex++;
+            differences++;
+            proceed;
+        }
+        if model::text_less(actualPath, expectedPath) {
+            report("added", actualPath, standardOutput);
+            actualIndex++;
+            differences++;
+            proceed;
+        }
+
+        if !model::same_content(
+            &expectedValues[expectedIndex],
+            &actualValues[actualIndex]
+        ) {
+            report("modified", expectedPath, standardOutput);
+            differences++;
+        }
+        expectedIndex++;
+        actualIndex++;
+    }
+
+    return differences;
+}
+
+void report(stringv kind, stringv path, bool standardOutput) {
+    if standardOutput {
+        fmt::print(kind);
+        fmt::print(" ");
+        fmt::println(path);
+    } else {
+        fmt::eprint(kind);
+        fmt::eprint(" ");
+        fmt::eprintln(path);
+    }
+}
+
+export (u32, error) run(
+    stringv rootPath,
+    stringv manifestPath,
+    []const string arguments
+) {
+    verifyError := verify(rootPath, manifestPath, true);
+    if verifyError != none {
+        return (none, verifyError);
+    }
+    if arguments.len() == 0 {
+        return (none, model::GuardError.Usage);
+    }
+
+    executable, copyError := model::copy_text(arguments[0].view());
+    if copyError != none {
+        return (none, copyError);
+    }
+    childCommand := command::Command::init(executable);
+    loop usize index = 1; index < arguments.len(); index++ {
+        argument, argumentError := model::copy_text(arguments[index].view());
+        if argumentError != none {
+            return (none, argumentError);
+        }
+        if childCommand.arg(argument) != none {
+            return (none, AllocationError.OutOfMemory);
+        }
+    }
+
+    child, spawnError := childCommand.spawn();
+    if spawnError != none {
+        return (none, spawnError);
+    }
+    status, waitError := child.wait();
+    if waitError != none {
+        return (none, waitError);
+    }
+    if !status.exited() {
+        return (none, model::GuardError.ProcessFailure);
+    }
+    return (status.detail(), none);
+}
+

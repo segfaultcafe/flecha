@@ -1,0 +1,117 @@
+module main;
+
+@imports
+    :: root::commands
+    :: root::model
+    :: lib::std::fmt
+    :: lib::std::os::arguments
+    :: lib::std::os::environment;
+
+const stringv ROOT_ENVIRONMENT = "FLECHA_GUARD_ROOT";
+
+i32 main() {
+    values, captureError := arguments::capture();
+    if captureError != none {
+        fmt::eprintln("workspace_guard: cannot capture command-line arguments");
+        return 3;
+    }
+    if values.len() < 2 {
+        print_usage();
+        return 2;
+    }
+
+    command := values[1].view();
+    error result = none;
+    u32 childStatus = 0;
+
+    if command == "snapshot" or command == "verify" {
+        result = snapshot_or_verify(values[:], command == "snapshot");
+    } else if command == "diff" and values.len() == 4 {
+        result = commands::diff(values[2].view(), values[3].view());
+    } else if command == "run" and values.len() >= 6 and values[4] == "--" {
+        childStatus, result = commands::run(
+            values[2].view(),
+            values[3].view(),
+            values[5:]
+        );
+        if result == none {
+            return childStatus.cast<i32>;
+        }
+    } else if command == "help" or command == "--help" or command == "-h" {
+        print_usage();
+        return 0;
+    } else {
+        result = model::GuardError.Usage;
+    }
+
+    if result == none {
+        return 0;
+    }
+    if result == model::GuardError.Usage {
+        print_usage();
+        return 2;
+    }
+    if result == model::GuardError.InvalidManifest {
+        fmt::eprintln("workspace_guard: invalid manifest");
+        return 4;
+    }
+    if result == model::GuardError.Mismatch {
+        return 5;
+    }
+    if result == model::GuardError.UnsupportedEntry {
+        return 6;
+    }
+    if result == model::GuardError.ProcessFailure {
+        fmt::eprintln("workspace_guard: child process terminated abnormally");
+        return 7;
+    }
+
+    fmt::eprintln("workspace_guard: operation failed");
+    return 3;
+}
+
+error snapshot_or_verify([]const string values, bool createSnapshot) {
+    string root = none;
+    stringv manifestPath = "";
+    if values.len() == 4 {
+        error copyError;
+        root, copyError = model::copy_text(values[2].view());
+        if copyError != none {
+            return copyError;
+        }
+        manifestPath = values[3].view();
+    } else if values.len() == 3 {
+        bool present;
+        error environmentError;
+        root, present, environmentError = environment::get(ROOT_ENVIRONMENT);
+        if environmentError != none {
+            return environmentError;
+        }
+        if !present or root.len() == 0 {
+            fmt::eprint("workspace_guard: set ");
+            fmt::eprintln(ROOT_ENVIRONMENT);
+            return model::GuardError.Usage;
+        }
+        manifestPath = values[2].view();
+    } else {
+        return model::GuardError.Usage;
+    }
+
+    if createSnapshot {
+        return commands::snapshot(root.view(), manifestPath);
+    }
+    return commands::verify(root.view(), manifestPath);
+}
+
+void print_usage() {
+    fmt::println("workspace_guard - deterministic workspace snapshots");
+    fmt::println("");
+    fmt::println("usage:");
+    fmt::println("  workspace_guard snapshot <root> <manifest>");
+    fmt::println("  workspace_guard snapshot <manifest>  # root from FLECHA_GUARD_ROOT");
+    fmt::println("  workspace_guard verify <root> <manifest>");
+    fmt::println("  workspace_guard verify <manifest>    # root from FLECHA_GUARD_ROOT");
+    fmt::println("  workspace_guard diff <old-manifest> <new-manifest>");
+    fmt::println("  workspace_guard run <root> <manifest> -- <program> [arguments...]");
+}
+

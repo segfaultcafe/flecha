@@ -632,6 +632,26 @@ of a concrete standard-library API. It must not become an unrelated language
 feature wave. Any new syntax or source-incompatible behavior requires an
 explicit scope decision and the normal versioning review.
 
+## North-star command-line application
+
+The application-facing command-line gate is
+[`examples/workspace_guard`](../examples/workspace_guard). It recursively
+scans portable directory trees, streams every regular file through SHA-256,
+writes a canonical sorted manifest, verifies trees with deterministic
+diagnostics, compares manifests, and executes a child process only after a
+successful verification. The manifest excludes absolute paths, timestamps,
+permissions, and native filesystem identifiers, so identical relocated trees
+produce identical bytes on every supported target.
+
+This example integrates process arguments, environment defaults, text parsing
+and formatting, logical modules, owning collections, directory and path APIs,
+buffered I/O, hashing, stable errors, cleanup, and child-process status. Its
+focused lifecycle test covers success, malformed input, missing and changed
+resources, preserved destinations, deterministic relocation, and child
+success/failure. Every clean installed release package builds and runs the
+same source on Linux, Windows, and macOS without an application-specific
+native shim.
+
 ## North-star ledger
 
 The ledger example validates several stages together. It must:

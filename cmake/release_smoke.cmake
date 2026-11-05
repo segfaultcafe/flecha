@@ -661,3 +661,147 @@ if(DEFINED COMMUNITY_PACKAGE_ROOT)
             "expected 42: ${communityOfflineOutput}${communityOfflineError}")
     endif()
 endif()
+
+if(DEFINED WORKSPACE_GUARD_ROOT)
+    get_filename_component(WORKSPACE_GUARD_ROOT
+        "${WORKSPACE_GUARD_ROOT}" ABSOLUTE)
+    foreach(source IN ITEMS main.fl model.fl scanner.fl manifest.fl commands.fl)
+        if(NOT EXISTS "${WORKSPACE_GUARD_ROOT}/src/${source}")
+            message(FATAL_ERROR
+                "workspace_guard fixture is missing src/${source}: "
+                "${WORKSPACE_GUARD_ROOT}")
+        endif()
+    endforeach()
+
+    set(workspaceGuardProject "${OUTPUT_ROOT}/workspace-guard")
+    set(workspaceGuardTree "${OUTPUT_ROOT}/workspace-guard-tree")
+    set(workspaceGuardRelocated "${OUTPUT_ROOT}/workspace-guard-relocated")
+    file(MAKE_DIRECTORY
+        "${workspaceGuardProject}"
+        "${workspaceGuardTree}/nested"
+        "${workspaceGuardRelocated}/nested")
+    file(COPY "${WORKSPACE_GUARD_ROOT}/src"
+        DESTINATION "${workspaceGuardProject}")
+    file(WRITE "${workspaceGuardProject}/longbow.toml" [=[
+[package]
+name = "workspace_guard"
+version = "0.1.0"
+kind = "program"
+
+[dependencies]
+]=])
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "FLECHA_COMPILER=${FLECHA_COMPILER}"
+            "${LONGBOW}" build
+        WORKING_DIRECTORY "${workspaceGuardProject}"
+        RESULT_VARIABLE workspaceGuardBuildResult
+        OUTPUT_VARIABLE workspaceGuardBuildOutput
+        ERROR_VARIABLE workspaceGuardBuildError)
+    if(NOT workspaceGuardBuildResult EQUAL 0)
+        message(FATAL_ERROR
+            "installed workspace_guard build failed: "
+            "${workspaceGuardBuildOutput}${workspaceGuardBuildError}")
+    endif()
+
+    set(workspaceGuardExecutable
+        "${workspaceGuardProject}/target/workspace_guard${EXECUTABLE_SUFFIX}")
+    if(NOT EXISTS "${workspaceGuardExecutable}")
+        message(FATAL_ERROR
+            "installed workspace_guard executable was not produced")
+    endif()
+
+    file(WRITE "${workspaceGuardTree}/alpha.txt" "alpha\n")
+    file(WRITE "${workspaceGuardTree}/nested/beta.txt" "beta\n")
+    file(WRITE "${workspaceGuardTree}/space name.txt" "space\n")
+    file(COPY "${workspaceGuardTree}/alpha.txt"
+        DESTINATION "${workspaceGuardRelocated}")
+    file(COPY "${workspaceGuardTree}/nested/beta.txt"
+        DESTINATION "${workspaceGuardRelocated}/nested")
+    file(COPY "${workspaceGuardTree}/space name.txt"
+        DESTINATION "${workspaceGuardRelocated}")
+
+    set(workspaceGuardManifest "${OUTPUT_ROOT}/workspace-guard.manifest")
+    set(workspaceGuardRelocatedManifest
+        "${OUTPUT_ROOT}/workspace-guard-relocated.manifest")
+    execute_process(
+        COMMAND "${workspaceGuardExecutable}" snapshot
+            "${workspaceGuardTree}" "${workspaceGuardManifest}"
+        RESULT_VARIABLE workspaceGuardSnapshotResult
+        OUTPUT_VARIABLE workspaceGuardSnapshotOutput
+        ERROR_VARIABLE workspaceGuardSnapshotError)
+    string(REPLACE "\r\n" "\n"
+        workspaceGuardSnapshotOutput "${workspaceGuardSnapshotOutput}")
+    if(NOT workspaceGuardSnapshotResult EQUAL 0 OR
+       NOT workspaceGuardSnapshotOutput STREQUAL "snapshot: 3 files\n")
+        message(FATAL_ERROR
+            "installed workspace_guard snapshot failed: "
+            "${workspaceGuardSnapshotOutput}${workspaceGuardSnapshotError}")
+    endif()
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "FLECHA_GUARD_ROOT=${workspaceGuardTree}"
+            "${workspaceGuardExecutable}" verify "${workspaceGuardManifest}"
+        RESULT_VARIABLE workspaceGuardVerifyResult
+        OUTPUT_VARIABLE workspaceGuardVerifyOutput
+        ERROR_VARIABLE workspaceGuardVerifyError)
+    string(REPLACE "\r\n" "\n"
+        workspaceGuardVerifyOutput "${workspaceGuardVerifyOutput}")
+    if(NOT workspaceGuardVerifyResult EQUAL 0 OR
+       NOT workspaceGuardVerifyOutput STREQUAL "verified: 3 files\n")
+        message(FATAL_ERROR
+            "installed workspace_guard verification failed: "
+            "${workspaceGuardVerifyOutput}${workspaceGuardVerifyError}")
+    endif()
+
+    execute_process(
+        COMMAND "${workspaceGuardExecutable}" snapshot
+            "${workspaceGuardRelocated}" "${workspaceGuardRelocatedManifest}"
+        RESULT_VARIABLE workspaceGuardRelocatedResult
+        OUTPUT_VARIABLE workspaceGuardRelocatedOutput
+        ERROR_VARIABLE workspaceGuardRelocatedError)
+    if(NOT workspaceGuardRelocatedResult EQUAL 0)
+        message(FATAL_ERROR
+            "relocated workspace_guard snapshot failed: "
+            "${workspaceGuardRelocatedOutput}${workspaceGuardRelocatedError}")
+    endif()
+    file(SHA256 "${workspaceGuardManifest}" workspaceGuardHash)
+    file(SHA256 "${workspaceGuardRelocatedManifest}"
+        workspaceGuardRelocatedHash)
+    if(NOT workspaceGuardHash STREQUAL workspaceGuardRelocatedHash)
+        message(FATAL_ERROR
+            "relocated workspace_guard tree changed its canonical manifest")
+    endif()
+
+    execute_process(
+        COMMAND "${workspaceGuardExecutable}" run
+            "${workspaceGuardTree}" "${workspaceGuardManifest}" --
+            "${CMAKE_COMMAND}" -E true
+        RESULT_VARIABLE workspaceGuardRunResult
+        OUTPUT_VARIABLE workspaceGuardRunOutput
+        ERROR_VARIABLE workspaceGuardRunError)
+    if(NOT workspaceGuardRunResult EQUAL 0)
+        message(FATAL_ERROR
+            "installed workspace_guard child execution failed: "
+            "${workspaceGuardRunOutput}${workspaceGuardRunError}")
+    endif()
+
+    file(WRITE "${workspaceGuardTree}/nested/beta.txt" "changed\n")
+    execute_process(
+        COMMAND "${workspaceGuardExecutable}" verify
+            "${workspaceGuardTree}" "${workspaceGuardManifest}"
+        RESULT_VARIABLE workspaceGuardMismatchResult
+        OUTPUT_VARIABLE workspaceGuardMismatchOutput
+        ERROR_VARIABLE workspaceGuardMismatchError)
+    string(REPLACE "\r\n" "\n"
+        workspaceGuardMismatchError "${workspaceGuardMismatchError}")
+    if(NOT workspaceGuardMismatchResult EQUAL 5 OR
+       NOT workspaceGuardMismatchError STREQUAL
+           "modified nested/beta.txt\nworkspace_guard: 1 workspace differences\n")
+        message(FATAL_ERROR
+            "installed workspace_guard mismatch contract failed: "
+            "${workspaceGuardMismatchOutput}${workspaceGuardMismatchError}")
+    endif()
+endif()
