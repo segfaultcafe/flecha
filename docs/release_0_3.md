@@ -639,9 +639,10 @@ itself:
 8. Provide allocation-free compile-time forwarding packs for the small Flecha
    wrappers over typed standard-output and standard-error operations, without
    exposing a native variadic ABI or a runtime pack value.
-9. Add an MSVC toolchain path that builds Flecha, Longbow, and the runtime with
-   `cl.exe`, emits the LLVM `windows-msvc` ABI, compiles embedded C through the
-   MSVC driver, and links generated programs with `link.exe` or `lld-link`.
+9. Keep the supported Windows path on MSYS2 UCRT64 with Clang and the MinGW
+   ABI. Native `cl.exe` builds, the LLVM `windows-msvc` ABI, embedded C through
+   the MSVC driver, and `link.exe` or `lld-link` are deferred to the focused
+   [0.3.1 toolchain patch](https://github.com/segfaultcafe/flecha/issues/188).
 
 This work should be delivered as focused compiler or runtime changes in support
 of a concrete standard-library API. It must not become an unrelated language
@@ -706,10 +707,9 @@ Flecha 0.3.0 is ready when:
    build and run from clean, relocated release packages.
 3. The complete suite passes on Linux x86-64, Windows x86-64, macOS x86-64,
    and macOS arm64 where those release runners remain supported.
-4. The Windows matrix covers both the existing MSYS2 UCRT64/MinGW path and an
-   MSVC path. The MSVC job builds Flecha, Longbow, and the runtime with
-   `cl.exe`, then builds and runs clean-install native and embedded-C smoke
-   programs targeting the `windows-msvc` ABI.
+4. The Windows 0.3.0 matrix builds and consumes clean, relocated packages
+   through the supported MSYS2 UCRT64/MinGW path. Native MSVC qualification is
+   explicitly deferred to 0.3.1 and is not advertised as 0.3.0 support.
 5. Compiler, runtime, and native examples pass AddressSanitizer and
    UndefinedBehaviorSanitizer checks on supported sanitizer hosts.
 6. Resource-owning APIs pass injected allocation and operating-system failure
