@@ -1,5 +1,8 @@
 # Formatting and console output
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-fmt).
+
 Import `lib::std::fmt` for the standard formatting facade:
 
 ```flecha

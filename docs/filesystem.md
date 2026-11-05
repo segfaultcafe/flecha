@@ -1,5 +1,8 @@
 # Filesystem
 
+The exact v0.3 I/O declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-io-file).
+
 Import the standard I/O modules with `lib::std::io::filesystem` and
 `lib::std::io::errors`:
 

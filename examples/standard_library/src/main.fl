@@ -1,0 +1,112 @@
+module main;
+
+// This is deliberately exhaustive. It is the executable package-layout check
+// for every public standard-library module documented for Flecha 0.3.
+@imports
+    :: lib::std::bytes::buffer
+    :: lib::std::bytes::sequence
+    :: lib::std::containers::collections
+    :: lib::std::containers::errors as container_errors
+    :: lib::std::containers::raw_array
+    :: lib::std::cryptography::hmac
+    :: lib::std::cryptography::sha2
+    :: lib::std::encoding::base64
+    :: lib::std::encoding::binary
+    :: lib::std::encoding::hex
+    :: lib::std::fmt
+    :: lib::std::hashing::hashing
+    :: lib::std::io::buffered
+    :: lib::std::io::errors as io_errors
+    :: lib::std::io::file
+    :: lib::std::io::filesystem
+    :: lib::std::io::path
+    :: lib::std::io::stdio
+    :: lib::std::io::stream
+    :: lib::std::math::bits
+    :: lib::std::math::errors as math_errors
+    :: lib::std::math::float
+    :: lib::std::math::integer
+    :: lib::std::math::math
+    :: lib::std::memory::errors as memory_errors
+    :: lib::std::memory::slices
+    :: lib::std::memory::storage
+    :: lib::std::net::address
+    :: lib::std::net::dns
+    :: lib::std::net::errors as network_errors
+    :: lib::std::net::tcp
+    :: lib::std::net::udp
+    :: lib::std::os::arguments
+    :: lib::std::os::environment
+    :: lib::std::os::errors as os_errors
+    :: lib::std::process::command
+    :: lib::std::process::errors as process_errors
+    :: lib::std::random::errors as random_errors
+    :: lib::std::random::generator
+    :: lib::std::random::secure
+    :: lib::std::tests::asserts
+    :: lib::std::tests::benchmark
+    :: lib::std::tests::fixtures
+    :: lib::std::tests::golden
+    :: lib::std::tests::testing
+    :: lib::std::text::ascii
+    :: lib::std::text::errors as text_errors
+    :: lib::std::text::strings
+    :: lib::std::text::utf8
+    :: lib::std::time::clock
+    :: lib::std::time::duration
+    :: lib::std::time::errors as time_errors;
+
+const stringv EXPECTED_DIGEST =
+    "439423c8afa809cdef80b6b29f41d4fab9a9123917841f573c3c5e9aec6fb397";
+
+i32 main() {
+    bytes, allocationError := buffer::Buffer::withCapacity(8);
+    if allocationError != none or bytes.writeString("Flecha") != none {
+        return 1;
+    }
+
+    digest, digestError := sha2::sha256(bytes.bytes());
+    if digestError != none {
+        return 2;
+    }
+    encoded, encodingError := hex::encode_bytes(digest.bytes());
+    if encodingError != none or encoded.view() != EXPECTED_DIGEST {
+        return 3;
+    }
+
+    values := collections::Array<i32>::init();
+    if values.push(7) != none or values.push(35) != none {
+        return 4;
+    }
+    first, firstError := values.get(0);
+    second, secondError := values.get(1);
+    if firstError != none or secondError != none or
+        math::max(first, second) != 35 {
+        return 5;
+    }
+
+    copied, copyError := buffer::Buffer::withCapacity(bytes.len());
+    if copyError != none or copied.write(bytes.bytes()) != none or
+        !sequence::equal(copied.bytes(), bytes.bytes()) {
+        return 6;
+    }
+
+    random := generator::Generator::fromSeed(3);
+    if random.integer<u64>() != 12740027877540924608 {
+        return 7;
+    }
+
+    text, textError := strings::StringBuilder::withCapacity(16);
+    if textError != none or text.append("standard library API tour: ") != none or
+        text.appendBool(true) != none {
+        return 8;
+    }
+    message, messageError := text.toString();
+    if messageError != none or
+        message.view() != "standard library API tour: true" {
+        return 9;
+    }
+
+    fmt::println("standard library API tour: ok");
+    return 0;
+}

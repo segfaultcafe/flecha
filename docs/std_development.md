@@ -17,6 +17,23 @@ do not promise implementation details that callers cannot rely on. Private
 helpers need comments only when their invariants or purpose are otherwise
 unclear.
 
+## Update the public API reference
+
+Every file that adds, removes, or changes an `export` declaration or a public
+method on an exported type also updates the matching entry in
+[`standard_library_modules.json`](standard_library_modules.json). Regenerate
+the checked-in declaration index with:
+
+```sh
+python3 tools/generate_std_api_reference.py
+python3 tools/generate_std_api_reference.py --check
+```
+
+The generator requires an exact match between public modules discovered under
+`std/src` and the metadata manifest. Pull-request CI runs the check, while the
+installed `examples/standard_library` fixture verifies the documented import
+layout against every release bundle.
+
 ## Expand nonempty brace-delimited bodies
 
 Never put a nonempty body on one line, even when it contains only one statement.

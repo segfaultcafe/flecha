@@ -1,5 +1,8 @@
 # Lexical paths
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-io-path).
+
 Import `lib::std::io::path` for platform-aware lexical path operations. These
 operations examine bytes and do not access the filesystem, follow symbolic
 links, make a path absolute, or determine whether a path exists.

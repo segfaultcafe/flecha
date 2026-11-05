@@ -141,6 +141,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify standard-library public API reference
+        run: python3 tools/generate_std_api_reference.py --check
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -453,6 +456,12 @@ jobs:
           path: examples/ledger
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: standard-library-example
+          path: examples/standard_library
+          if-no-files-found: error
+
   clean-install:
     # Keep the protected check names on the downstream archive consumers so a
     # package cannot satisfy branch protection before its clean-install test.
@@ -556,6 +565,11 @@ jobs:
           name: ledger-example
           path: ledger-example
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: standard-library-example
+          path: standard-library-example
+
       - name: Report and verify the clean-install toolchain
         shell: bash
         run: >-
@@ -612,5 +626,6 @@ jobs:
           "-DCOMMUNITY_PACKAGE_ROOT=$PWD/community-package-consumer"
           "-DWORKSPACE_GUARD_ROOT=$PWD/workspace-guard-example"
           "-DLEDGER_ROOT=$PWD/ledger-example"
+          "-DSTANDARD_LIBRARY_EXAMPLE_ROOT=$PWD/standard-library-example"
           "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
           -P test-support/release_smoke.cmake

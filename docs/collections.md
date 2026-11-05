@@ -1,5 +1,8 @@
 # Collection ownership contracts
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-containers-collections).
+
 This document defines the Stage 2 ownership contract for Flecha's growable
 collections. It is both a design and acceptance contract. Implementation lands
 incrementally; an operation is supported only after its required storage path

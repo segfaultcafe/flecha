@@ -1,5 +1,8 @@
 # Randomness
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-random-generator).
+
 Flecha separates cryptographically secure operating-system randomness from
 deterministic general-purpose generation:
 

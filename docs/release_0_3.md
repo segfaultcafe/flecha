@@ -57,9 +57,12 @@ libraries cannot define new decoration semantics in this release. The
 temporary JSON contract and the planned post-v0.3 migration are specified in
 [`decorations.md`](decorations.md#v03-declaration-rule).
 
-## Planned module map
+## Public module map
 
-The initial public module layout is:
+The exact shipped module layout, every exported declaration, operational
+contracts, and a focused example or test for each module live in the generated
+and CI-checked [v0.3 standard-library reference](standard_library.md). The
+category map is:
 
 ```text
 std::fmt                 typed console and owning-string formatting
@@ -72,7 +75,7 @@ std::containers::collections
 std::containers::raw_array
                           low-level compatibility array
 std::containers::errors   collection errors
-std::text::*              ascii, utf8, builder, parse, format
+std::text::*              ascii, utf8, strings, errors
 std::encoding::*          binary, hex, base64
 std::io::*                errors, file, buffered, stdio, filesystem, path
 std::os::*                arguments, environment
@@ -83,7 +86,6 @@ std::net::*               errors, address, dns, tcp, udp
 std::hashing::*           structural, non-cryptographic hashes
 std::cryptography::sha2   sha256, sha512
 std::cryptography::hmac   hmac-sha256, hmac-sha512
-std::cryptography::*      constant_time, secure_memory
 std::tests::*             testing, asserts, fixtures, golden, benchmark
 ```
 
@@ -93,6 +95,9 @@ in one cohesive module; submodules are reserved for independently useful API
 families. Safe containers and their algorithms share the cohesive
 `std::containers::collections` module; low-level raw storage remains separate.
 Moving an existing public declaration requires compatibility review.
+The installed [`standard_library` API tour](../examples/standard_library/README.md)
+imports this complete layout and is built, tested, and run from each relocated
+release bundle.
 
 ## Implementation sequence
 

@@ -1,5 +1,8 @@
 # Networking
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-net-address).
+
 The networking surface provides portable IPv4 and IPv6 address and
 socket-address values, blocking hostname resolution, owning blocking TCP
 streams and listeners, and owning blocking UDP sockets. Async I/O, HTTP, TLS,
