@@ -318,7 +318,10 @@ def tool_path(value: str) -> str:
     found = shutil.which(value)
     if found is None:
         raise FileNotFoundError(f"required tool is unavailable: {value}")
-    return str(Path(found).resolve())
+    # Preserve launcher symlinks. In rustup installations, `rustc` is a symlink
+    # to the rustup binary and its invoked name selects the compiler frontend.
+    # Resolving the final component would execute `rustup -C ...` instead.
+    return os.path.abspath(found)
 
 
 def compile_command(
@@ -972,6 +975,11 @@ def write_json(value: dict[str, object], path: Path) -> None:
 
 
 def self_test() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        launcher = Path(temporary) / "tool-launcher"
+        launcher.symlink_to(sys.executable)
+        assert tool_path(str(launcher)) == str(launcher.absolute())
+
     synthetic = ProcessResult(("true",), 0, 100, 20, "", "")
     summary = summarize(
         "runtime.flecha.synthetic",
