@@ -7,6 +7,17 @@ namespace flecha::diagnostics {
 
 void DiagnosticBag::Report(DiagnosticCode code, source::SourceRange range,
                            std::string message, DiagnosticSeverity severity) {
+    if (_diagnostics.size() >= MAX_DIAGNOSTICS) {
+        if (!_limitReported) {
+            _diagnostics.push_back(Diagnostic{
+                DiagnosticCode::TooManyDiagnostics, DiagnosticSeverity::Error,
+                "too many diagnostics; stopping after " +
+                    std::to_string(MAX_DIAGNOSTICS),
+                range});
+            _limitReported = true;
+        }
+        return;
+    }
     _diagnostics.push_back(
         Diagnostic{code, severity, std::move(message), range});
 }

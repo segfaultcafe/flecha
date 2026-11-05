@@ -160,6 +160,8 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-C0004";
         case DiagnosticCode::ForeignCompilationFailed:
             return "FLECHA-C0005";
+        case DiagnosticCode::TooManyDiagnostics:
+            return "FLECHA-C0006";
     }
     return "FLECHA-UNKNOWN";
 }

@@ -19,6 +19,18 @@ target_compile_definitions(test_flecha PRIVATE
 )
 add_dependencies(test_flecha process_fixture)
 
+add_executable(compiler_stress compiler_stress.cpp)
+target_link_libraries(compiler_stress
+    PRIVATE
+        flecha_project_options
+        core
+        LLVM
+)
+target_include_directories(compiler_stress SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(compiler_stress PRIVATE
+    FLECHA_EXECUTABLE_SUFFIX="${CMAKE_EXECUTABLE_SUFFIX}"
+)
+
 target_link_libraries(test_flecha
     PRIVATE
         flecha_project_options
@@ -37,6 +49,19 @@ target_link_libraries(test_flecha
 
 include(GoogleTest)
 gtest_discover_tests(test_flecha DISCOVERY_MODE PRE_TEST)
+
+add_test(
+    NAME CompilerStress.Fast
+    COMMAND compiler_stress
+        $<TARGET_FILE:flecha>
+        ${PROJECT_SOURCE_DIR}/std/src
+        ${CMAKE_CURRENT_BINARY_DIR}/compiler-stress-fast
+        fast
+)
+set_tests_properties(CompilerStress.Fast PROPERTIES
+    LABELS "stress"
+    TIMEOUT 300
+)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(

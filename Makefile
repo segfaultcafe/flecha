@@ -16,7 +16,8 @@ HOST_NVIM_CONFIG ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/nvim,$(HOME)/.con
 
 .DEFAULT_GOAL := build
 
-.PHONY: help configure build configure-tests build-tests test \
+.PHONY: help configure build configure-tests build-tests test test-stress \
+	test-stress-campaign \
 	test-semantic llvm-poc native-poc native-if-also native-functions \
 	native-callables native-while native-loop-control native-casts native-string-view \
 	native-string-view-operations native-owning-string native-stdout \
@@ -27,6 +28,8 @@ help:
 	@echo "Flecha build targets:"
 	@echo "  make build          Configure and build Flecha"
 	@echo "  make test           Configure, build, and run all tests"
+	@echo "  make test-stress    Run the fast deterministic compiler corpus"
+	@echo "  make test-stress-campaign Run release-qualification compiler stress"
 	@echo "  make test-semantic  Run only semantic and scope tests"
 	@echo "  make test-neovim    Test Neovim filetype and syntax support"
 	@echo "  make package-vscode Build and verify the installable VSIX"
@@ -104,6 +107,15 @@ build-tests: configure-tests
 test: build-tests
 	$(CMAKE) --build $(TEST_BUILD_DIR) --target test
 
+test-stress: build-tests
+	ctest --test-dir $(TEST_BUILD_DIR) --output-on-failure \
+		-R '^CompilerStress\.Fast$$'
+
+test-stress-campaign: build-tests
+	$(TEST_BUILD_DIR)/src/tests/compiler_stress \
+		$(TEST_BUILD_DIR)/flecha std/src \
+		$(TEST_BUILD_DIR)/src/tests/compiler-stress-campaign campaign
+
 test-semantic: build-tests
 	$(TEST_BUILD_DIR)/src/tests/test_flecha \
 		--gtest_filter='Semantic*:*ScopeTests*'
@@ -135,6 +147,11 @@ test-sanitizers:
 	ASAN_OPTIONS=detect_leaks=1 \
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 		$(SANITIZER_BUILD_DIR)/src/tests/test_flecha
+	ASAN_OPTIONS=detect_leaks=1 \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+		$(SANITIZER_BUILD_DIR)/src/tests/compiler_stress \
+		$(SANITIZER_BUILD_DIR)/flecha std/src \
+		$(SANITIZER_BUILD_DIR)/src/tests/compiler-stress-sanitizer sanitizer
 	ASAN_OPTIONS=detect_leaks=1 \
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \
