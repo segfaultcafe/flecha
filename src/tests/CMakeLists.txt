@@ -643,6 +643,17 @@ add_test(NAME LongbowTests.CommunityPackageLifecycle
         -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/community_packages
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_community_packages.cmake)
 
+add_test(NAME LongbowTests.WorkspaceGuardNorthStar
+    COMMAND ${CMAKE_COMMAND}
+        -DLONGBOW=$<TARGET_FILE:longbow>
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFIXTURE=${PROJECT_SOURCE_DIR}/examples/workspace_guard
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/workspace_guard
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_workspace_guard.cmake)
+set_tests_properties(LongbowTests.WorkspaceGuardNorthStar PROPERTIES
+    TIMEOUT 180)
+
 add_test(NAME NativeExternTests.CAbiAndLinking
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>

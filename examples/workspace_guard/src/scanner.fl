@@ -1,0 +1,164 @@
+module scanner;
+
+@imports
+    :: root::model
+    :: lib::std::containers::collections
+    :: lib::std::cryptography::sha2
+    :: lib::std::encoding::hex
+    :: lib::std::fmt
+    :: lib::std::io::buffered
+    :: lib::std::io::file
+    :: lib::std::io::path
+    :: lib::std::text::utf8;
+
+const usize READ_CAPACITY = 32768;
+
+export (collections::Array<model::Entry>, error) scan(stringv rootPath) {
+    entries := collections::Array<model::Entry>::init();
+    scanError := collect(rootPath, "", &entries);
+    if scanError != none {
+        return (entries, scanError);
+    }
+
+    entries.sortBy(model::entry_less);
+    return (entries, none);
+}
+
+error collect(
+    stringv rootPath,
+    stringv relativePath,
+    &collections::Array<model::Entry> entries
+) {
+    string directoryPath = none;
+    if relativePath.len() == 0 {
+        error copyError;
+        directoryPath, copyError = model::copy_text(rootPath);
+        if copyError != none {
+            return copyError;
+        }
+    } else {
+        error joinError;
+        directoryPath, joinError = path::join(rootPath, relativePath);
+        if joinError != none {
+            return joinError;
+        }
+    }
+
+    directory, openError := file::Directory::open(directoryPath.view());
+    if openError != none {
+        fmt::eprint("workspace_guard: cannot open directory: ");
+        fmt::eprintln(directoryPath.view());
+        return openError;
+    }
+
+    while true {
+        entry, present, readError := directory.next();
+        if readError != none {
+            return readError;
+        }
+        if !present {
+            break;
+        }
+        if utf8::validate(entry.name()) != none {
+            fmt::eprintln("workspace_guard: non-UTF-8 path is unsupported");
+            return model::GuardError.UnsupportedEntry;
+        }
+
+        childRelative, relativeError :=
+            model::child_path(relativePath, entry.name());
+        if relativeError != none {
+            return relativeError;
+        }
+        if !model::valid_relative_path(childRelative.view()) {
+            fmt::eprint("workspace_guard: non-portable path: ");
+            fmt::eprintln(childRelative.view());
+            return model::GuardError.UnsupportedEntry;
+        }
+
+        if entry.kind() == file::EntryType.Directory {
+            recurseError := collect(rootPath, childRelative.view(), entries);
+            if recurseError != none {
+                return recurseError;
+            }
+            proceed;
+        }
+        if entry.kind() != file::EntryType.File {
+            fmt::eprint("workspace_guard: unsupported entry: ");
+            fmt::eprintln(childRelative.view());
+            return model::GuardError.UnsupportedEntry;
+        }
+
+        actualPath, joinError := path::join(rootPath, childRelative.view());
+        if joinError != none {
+            return joinError;
+        }
+        digest, size, hashError := hash_file(actualPath.view());
+        if hashError != none {
+            fmt::eprint("workspace_guard: cannot hash file: ");
+            fmt::eprintln(childRelative.view());
+            return hashError;
+        }
+
+        pushError := entries->push(
+            model::Entry::init(childRelative, digest, size)
+        );
+        if pushError != none {
+            return pushError;
+        }
+    }
+
+    return directory.close();
+}
+
+(string, u64, error) hash_file(stringv filePath) {
+    input, openError := file::File::open(filePath, file::OpenOptions::readOnly());
+    if openError != none {
+        return (none, none, openError);
+    }
+
+    hasher := sha2::Sha256::init();
+    u64 total = 0;
+    error result = none;
+    {
+        adapter := input.reader();
+        reader, readerError :=
+            buffered::BufferedReader::withCapacity(adapter, READ_CAPACITY);
+        if readerError != none {
+            return (none, none, readerError);
+        }
+
+        [32768]u8 chunk = none;
+        while true {
+            count, readError := reader.read(chunk[:]);
+            if count > 0 {
+                const u64 NEXT = total + count.cast<u64>;
+                if NEXT < total {
+                    return (none, none, AllocationError.OutOfMemory);
+                }
+                total = NEXT;
+                result = hasher.update(chunk[:count]);
+                if result != none {
+                    return (none, none, result);
+                }
+            }
+            if readError != none {
+                return (none, none, readError);
+            }
+            if count == 0 {
+                break;
+            }
+        }
+    }
+
+    closeError := input.close();
+    if closeError != none {
+        return (none, none, closeError);
+    }
+    digest, digestError := hasher.finalize();
+    if digestError != none {
+        return (none, none, digestError);
+    }
+    encoded, encodeError := hex::encode_bytes(digest.bytes());
+    return (encoded, total, encodeError);
+}
+
