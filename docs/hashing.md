@@ -1,5 +1,8 @@
 # Hashing
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-hashing-hashing).
+
 The `hashing` module provides non-cryptographic hashes for in-memory data
 structures:
 

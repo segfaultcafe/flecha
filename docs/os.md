@@ -1,5 +1,8 @@
 # Operating-system context
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-os-arguments).
+
 Import `lib::std::os::arguments` to capture the command-line arguments
 supplied to the current program:
 
@@ -83,5 +86,5 @@ processes. Concurrent reads and mutations require external synchronization.
 denial, and unclassified read or write failures. Allocation failure is reported
 as `AllocationError.OutOfMemory`.
 
-Child-process creation, exit-status handling, and pipes remain separate Stage
-5 work under `std::process`.
+Child-process creation, exit-status handling, and pipes live under
+`std::process`; see [Child processes](process.md).

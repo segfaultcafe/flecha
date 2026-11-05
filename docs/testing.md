@@ -1,5 +1,8 @@
 # Testing assertions
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-tests-testing).
+
 Flecha test modules receive a `testing::UnitTest` and record checks through
 `lib::std::tests::asserts`:
 

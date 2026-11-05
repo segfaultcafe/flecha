@@ -1,5 +1,8 @@
 # Encoding
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-encoding-binary).
+
 The `encoding` namespace owns transformations between values and canonical
 byte representations. Raw byte storage and sequence operations remain in the
 [`bytes` namespace](bytes.md).

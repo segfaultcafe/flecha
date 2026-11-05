@@ -1,5 +1,8 @@
 # Math
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-math-math).
+
 The foundational numeric and integer modules are imported separately:
 
 ```flecha

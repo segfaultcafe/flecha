@@ -74,8 +74,8 @@ cmake --build build --target package
 The archives contain the Flecha compiler, Longbow, their required shared
 runtime dependencies, the Flecha runtime and standard library, reference
 documentation, and Visual Studio Code and Neovim support.
-See [`docs/release_0_1.md`](docs/release_0_1.md) for the Linux, Windows, and
-macOS release gates.
+See [`docs/release_0_3.md`](docs/release_0_3.md) for the current Linux,
+Windows, and macOS release gates.
 
 ### Docker sandbox
 
@@ -308,6 +308,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/release_0_2.md`](docs/release_0_2.md) — v0.2.0 language and tooling design targets
 - [`docs/release_0_2_1.md`](docs/release_0_2_1.md) — v0.2.1 module-correctness milestone
 - [`docs/release_0_3.md`](docs/release_0_3.md) — v0.3.0 application-capable standard-library milestone
+- [`docs/standard_library.md`](docs/standard_library.md) — complete v0.3 public module and declaration index
 - [`docs/toolchains.md`](docs/toolchains.md) — supported compiler, LLVM, linker, SDK, and CI versions
 - [`docs/semantic_analysis.md`](docs/semantic_analysis.md) — name binding, types, scopes, and analysis pipeline
 - [`docs/llvm_codegen.md`](docs/llvm_codegen.md) — current LLVM backend scope and limitations
@@ -330,6 +331,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/cryptography.md`](docs/cryptography.md) — SHA-256 and SHA-512 secure hashing
 - [`docs/generics.md`](docs/generics.md) — generic specialization and direct-call inference
 - [`docs/os.md`](docs/os.md) — command-line arguments and environment variables
+- [`docs/process.md`](docs/process.md) — child commands, pipes, and exit status
 - [`docs/path.md`](docs/path.md) — lexical POSIX and Windows path operations
 - [`docs/time.md`](docs/time.md) — durations, clocks, timestamps, and blocking sleep
 - [`docs/network.md`](docs/network.md) — IPv4/IPv6 addresses, socket addresses, and hostname resolution

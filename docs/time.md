@@ -1,5 +1,8 @@
 # Time
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-time-duration).
+
 Flecha separates amounts of time, monotonic observations, and wall-clock
 timestamps. These values have different domains and are not interchangeable:
 

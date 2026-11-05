@@ -1,0 +1,368 @@
+{
+  "modules": [
+    {
+      "name": "std::bytes::buffer",
+      "summary": "Growable owning byte storage",
+      "contract": "Allocates explicitly; mutation can fail without corrupting the initialized prefix; deterministic and nonblocking.",
+      "reference": "docs/bytes.md#buffer",
+      "example": "std/src/bytes/buffer_test.fl"
+    },
+    {
+      "name": "std::bytes::sequence",
+      "summary": "Byte equality and lexicographic comparison",
+      "contract": "Borrows both inputs, performs no allocation, is deterministic, and does not block.",
+      "reference": "docs/bytes.md#sequence",
+      "example": "std/src/bytes/sequence_test.fl"
+    },
+    {
+      "name": "std::containers::collections",
+      "summary": "Owning collections and collection algorithms",
+      "contract": "Ownership transfer and allocation failure are explicit; ordering is deterministic only where the selected container or policy promises it.",
+      "reference": "docs/collections.md",
+      "example": "std/src/containers/array_test.fl"
+    },
+    {
+      "name": "std::containers::errors",
+      "summary": "Collection error families",
+      "contract": "Stable typed failures for bounds, capacity, and empty-container operations; no allocation or blocking.",
+      "reference": "docs/collections.md#failure-and-cleanup-guarantees",
+      "example": "std/src/containers/deque_test.fl"
+    },
+    {
+      "name": "std::containers::raw_array",
+      "summary": "Low-level compatibility owning array",
+      "contract": "Owns its allocation and exposes explicit failure; prefer the safe collection layer for new APIs.",
+      "reference": "docs/collections.md",
+      "example": "std/src/containers/raw_array_test.fl"
+    },
+    {
+      "name": "std::cryptography::hmac",
+      "summary": "Streaming and one-shot HMAC-SHA-2",
+      "contract": "Borrows key/message bytes, returns fixed-size tags, is deterministic and nonblocking, and reports invalid state or input length.",
+      "reference": "docs/cryptography.md#hmac",
+      "example": "std/src/cryptography/hmac_test.fl"
+    },
+    {
+      "name": "std::cryptography::sha2",
+      "summary": "Streaming and one-shot SHA-256/SHA-512",
+      "contract": "Borrows input and returns fixed-size digests; deterministic, nonblocking, and independent of host byte order.",
+      "reference": "docs/cryptography.md",
+      "example": "std/src/cryptography/sha2_test.fl"
+    },
+    {
+      "name": "std::encoding::base64",
+      "summary": "Canonical padded Base64 encoding",
+      "contract": "Owning results allocate; decoding rejects malformed or noncanonical input; output is deterministic across platforms.",
+      "reference": "docs/encoding.md#base64",
+      "example": "std/src/encoding/base64_test.fl"
+    },
+    {
+      "name": "std::encoding::binary",
+      "summary": "Endian primitives, bounded readers/writers, and varints",
+      "contract": "Explicitly bounded and endian-stable; growable buffers may allocate; malformed/truncated input returns typed errors without overread.",
+      "reference": "docs/encoding.md#binary",
+      "example": "std/src/encoding/binary_reader_test.fl"
+    },
+    {
+      "name": "std::encoding::hex",
+      "summary": "Canonical hexadecimal encoding",
+      "contract": "Owning results allocate; decoding validates complete byte pairs; deterministic and nonblocking.",
+      "reference": "docs/encoding.md#hexadecimal",
+      "example": "std/src/encoding/hex_test.fl"
+    },
+    {
+      "name": "std::fmt",
+      "summary": "Typed formatting and console output facade",
+      "contract": "String formatting allocates and returns errors; console writes are blocking host I/O and preserve argument order.",
+      "reference": "docs/formatting.md",
+      "example": "std/src/fmt_test.fl"
+    },
+    {
+      "name": "std::hashing::hashing",
+      "summary": "Structural non-cryptographic hashing",
+      "contract": "Borrows values, performs no allocation or blocking, and is deterministic only for the documented toolchain representation; never use for cryptography.",
+      "reference": "docs/hashing.md",
+      "example": "std/src/hashing/hashing_test.fl"
+    },
+    {
+      "name": "std::io::buffered",
+      "summary": "Buffered reader and writer adapters",
+      "contract": "Owns internal buffers, may allocate, and inherits blocking and error behavior from the wrapped stream.",
+      "reference": "docs/filesystem.md#buffered-streams",
+      "example": "std/src/io/buffered_test.fl"
+    },
+    {
+      "name": "std::io::errors",
+      "summary": "Portable I/O error family",
+      "contract": "Normalizes host failures into stable variants while preserving platform-dependent operation availability.",
+      "reference": "docs/filesystem.md",
+      "example": "std/src/io/file_test.fl"
+    },
+    {
+      "name": "std::io::file",
+      "summary": "Files, directories, and temporary resources",
+      "contract": "Owns native handles, blocks on host I/O, requires explicit close where exposed, and reports portable I/O errors.",
+      "reference": "docs/filesystem.md#file-streams",
+      "example": "std/src/io/temporary_file_test.fl"
+    },
+    {
+      "name": "std::io::filesystem",
+      "summary": "Whole-file and filesystem operations",
+      "contract": "Reads allocate owning results; operations block and can vary with host permissions/filesystem semantics; errors are explicit.",
+      "reference": "docs/filesystem.md",
+      "example": "std/src/io/filesystem_test.fl"
+    },
+    {
+      "name": "std::io::path",
+      "summary": "Lexical POSIX and Windows path manipulation",
+      "contract": "Lexical operations do not touch the filesystem; owning results may allocate; flavor selection makes platform rules explicit.",
+      "reference": "docs/path.md",
+      "example": "std/src/io/path_test.fl"
+    },
+    {
+      "name": "std::io::stdio",
+      "summary": "Standard input, output, and error streams",
+      "contract": "Borrows written data, may allocate for line reads, blocks on host streams, and returns I/O or parse failures.",
+      "reference": "docs/filesystem.md#standard-output-and-error",
+      "example": "std/src/io/stdio_test.fl"
+    },
+    {
+      "name": "std::io::stream",
+      "summary": "Reader/writer callable contracts and stream copying",
+      "contract": "Copying uses caller-visible errors and may block according to its endpoints; callables do not own endpoint storage.",
+      "reference": "docs/filesystem.md#file-streams",
+      "example": "std/src/io/stream_test.fl"
+    },
+    {
+      "name": "std::math::bits",
+      "summary": "Unsigned bit counting, rotation, reversal, and rounding",
+      "contract": "Pure, nonallocating, nonblocking, deterministic operations with checked overflow where a result may be unrepresentable.",
+      "reference": "docs/math.md#bit-operations",
+      "example": "std/src/math/bits_test.fl"
+    },
+    {
+      "name": "std::math::errors",
+      "summary": "Arithmetic error family",
+      "contract": "Stable overflow and invalid-arithmetic variants; no allocation, blocking, or platform state.",
+      "reference": "docs/math.md#checked-arithmetic",
+      "example": "std/src/math/integer_test.fl"
+    },
+    {
+      "name": "std::math::float",
+      "summary": "Floating-point classification",
+      "contract": "Pure and nonallocating; follows IEEE classification for supported target floats and is deterministic for the same bit pattern.",
+      "reference": "docs/math.md#floating-point-classification",
+      "example": "std/src/math/float_test.fl"
+    },
+    {
+      "name": "std::math::integer",
+      "summary": "Integer predicates, powers, divisors, and overflow modes",
+      "contract": "Pure and nonallocating; checked, saturating, and wrapping behavior is named explicitly and target-width behavior follows the integer type.",
+      "reference": "docs/math.md#integer-operations",
+      "example": "std/src/math/integer_test.fl"
+    },
+    {
+      "name": "std::math::math",
+      "summary": "Ordered numeric minimum, maximum, clamp, absolute, and sign",
+      "contract": "Pure, deterministic, nonallocating operations; caller must provide an ordered clamp range.",
+      "reference": "docs/math.md#numeric-operations",
+      "example": "std/src/math/numeric_test.fl"
+    },
+    {
+      "name": "std::memory::errors",
+      "summary": "Safe slice operation errors",
+      "contract": "Stable bounds/range failures with no allocation, blocking, or partial mutation.",
+      "reference": "docs/memory.md#slice-errors",
+      "example": "std/src/memory/slices_test.fl"
+    },
+    {
+      "name": "std::memory::slices",
+      "summary": "Typed slice copying, filling, and swapping",
+      "contract": "Borrows storage, does not allocate or block, preserves overlap semantics, and validates before mutation.",
+      "reference": "docs/memory.md",
+      "example": "std/src/memory/slices_test.fl"
+    },
+    {
+      "name": "std::memory::storage",
+      "summary": "Initialized-prefix raw storage for owning containers",
+      "contract": "Owns allocation and explicit live-element state; unsafe internals are wrapped by lifecycle-preserving operations and allocation errors.",
+      "reference": "docs/collections.md#initialized-prefix-storage",
+      "example": "std/src/memory/raw_storage_test.fl"
+    },
+    {
+      "name": "std::net::address",
+      "summary": "IPv4, IPv6, and portable socket addresses",
+      "contract": "Parsing/formatting is deterministic; owning text may allocate; no network access occurs and address-family errors are explicit.",
+      "reference": "docs/network.md",
+      "example": "std/src/net/address_test.fl"
+    },
+    {
+      "name": "std::net::dns",
+      "summary": "Hostname and service resolution",
+      "contract": "Returns owning address storage, may allocate and block on host resolution, and exposes platform/network failures.",
+      "reference": "docs/network.md#hostname-resolution",
+      "example": "cmake/release_smoke.cmake"
+    },
+    {
+      "name": "std::net::errors",
+      "summary": "Portable networking error family",
+      "contract": "Normalizes host socket and resolver failures while retaining explicit unsupported-family and address errors.",
+      "reference": "docs/network.md",
+      "example": "cmake/release_smoke.cmake"
+    },
+    {
+      "name": "std::net::tcp",
+      "summary": "Blocking TCP streams and listeners",
+      "contract": "Owns native sockets; connect, accept, read, and write block; close/shutdown and all host failures are explicit.",
+      "reference": "docs/network.md#blocking-tcp",
+      "example": "cmake/release_smoke.cmake"
+    },
+    {
+      "name": "std::net::udp",
+      "summary": "Blocking UDP sockets and datagrams",
+      "contract": "Owns a native socket; send/receive can block, datagram bounds are checked, and host behavior/errors are exposed portably.",
+      "reference": "docs/network.md#blocking-udp",
+      "example": "cmake/release_smoke.cmake"
+    },
+    {
+      "name": "std::os::arguments",
+      "summary": "Process command-line argument capture",
+      "contract": "Allocates an owning string array, snapshots host arguments deterministically for the process, and reports allocation/conversion errors.",
+      "reference": "docs/os.md",
+      "example": "std/src/os/arguments_test.fl"
+    },
+    {
+      "name": "std::os::environment",
+      "summary": "Process environment access and mutation",
+      "contract": "Reads allocate owning strings; operations affect process-global host state, may be platform-sensitive, and return explicit errors.",
+      "reference": "docs/os.md#environment-variables",
+      "example": "std/src/os/environment_test.fl"
+    },
+    {
+      "name": "std::os::errors",
+      "summary": "Operating-system context errors",
+      "contract": "Stable argument/environment failures with platform details normalized at the runtime boundary.",
+      "reference": "docs/os.md",
+      "example": "std/src/os/environment_test.fl"
+    },
+    {
+      "name": "std::process::command",
+      "summary": "Child-process commands, pipes, and exit status",
+      "contract": "Command values own arguments; spawn creates native resources, wait and pipe I/O block, and termination/platform failures are explicit.",
+      "reference": "docs/process.md",
+      "example": "examples/workspace_guard/src/commands.fl"
+    },
+    {
+      "name": "std::process::errors",
+      "summary": "Child-process error family",
+      "contract": "Normalizes spawn, pipe, wait, and unsupported-host failures without hiding abnormal termination status.",
+      "reference": "docs/process.md",
+      "example": "examples/workspace_guard/src/commands.fl"
+    },
+    {
+      "name": "std::random::errors",
+      "summary": "Randomness error family",
+      "contract": "Separates entropy-source and range failures; deterministic generator methods do not report host entropy errors.",
+      "reference": "docs/random.md#errors",
+      "example": "std/src/random/secure_test.fl"
+    },
+    {
+      "name": "std::random::generator",
+      "summary": "Seeded deterministic pseudorandom generator",
+      "contract": "Owns only its small state, does not allocate or block for generation, and reproduces the documented sequence across supported targets.",
+      "reference": "docs/random.md#deterministic-generator",
+      "example": "std/src/random/generator_test.fl"
+    },
+    {
+      "name": "std::random::secure",
+      "summary": "Host cryptographic entropy",
+      "contract": "Fills caller storage without allocation; may block at the OS boundary and reports unavailable/host entropy failures.",
+      "reference": "docs/random.md#secure-bytes",
+      "example": "std/src/random/secure_test.fl"
+    },
+    {
+      "name": "std::tests::asserts",
+      "summary": "Typed test assertions",
+      "contract": "Borrows compared values, records failures in the test context, may allocate diagnostic text, and does not terminate the test by default.",
+      "reference": "docs/testing.md",
+      "example": "std/src/tests/asserts_test.fl"
+    },
+    {
+      "name": "std::tests::benchmark",
+      "summary": "Deterministic benchmark sampling and summaries",
+      "contract": "Runs supplied operations repeatedly, allocates sample storage, uses the monotonic clock, and returns configuration/operation errors.",
+      "reference": "docs/testing.md#deterministic-benchmarks",
+      "example": "std/src/tests/benchmark_test.fl"
+    },
+    {
+      "name": "std::tests::fixtures",
+      "summary": "Temporary resources and seeded test data",
+      "contract": "Temporary fixtures own cleanup responsibility and perform blocking host I/O; seeded data is deterministic; failures are explicit.",
+      "reference": "docs/testing.md#temporary-fixtures-and-deterministic-data",
+      "example": "std/src/tests/fixtures_test.fl"
+    },
+    {
+      "name": "std::tests::golden",
+      "summary": "Golden text and byte assertions",
+      "contract": "Reads/writes files synchronously, makes update mode explicit, allocates diagnostics, and returns I/O or mismatch failures.",
+      "reference": "docs/testing.md#golden-files",
+      "example": "std/src/tests/golden_test.fl"
+    },
+    {
+      "name": "std::tests::testing",
+      "summary": "Unit-test state and failure accounting",
+      "contract": "Owns test name/state, records deterministic counts, may allocate diagnostics, and exposes failures without hidden process exit.",
+      "reference": "docs/testing.md",
+      "example": "std/src/tests/asserts_test.fl"
+    },
+    {
+      "name": "std::text::ascii",
+      "summary": "ASCII classification and case conversion",
+      "contract": "Pure byte-oriented operations with no allocation, errors, blocking, locale, or platform dependence.",
+      "reference": "docs/text.md",
+      "example": "std/src/text/ascii_test.fl"
+    },
+    {
+      "name": "std::text::errors",
+      "summary": "Text parse, format, and UTF-8 errors",
+      "contract": "Stable typed failures for conversion and validation; declaring/propagating them does not allocate or block.",
+      "reference": "docs/text.md",
+      "example": "std/src/text/utf8_test.fl"
+    },
+    {
+      "name": "std::text::strings",
+      "summary": "String building, search, trim, transform, replace, parse, and format",
+      "contract": "Views borrow input; owning transformations allocate; byte/ASCII semantics are explicit; parsing and formatting return errors.",
+      "reference": "docs/text.md",
+      "example": "std/src/text/strings_test.fl"
+    },
+    {
+      "name": "std::text::utf8",
+      "summary": "UTF-8 validation, decoding, counting, and encoding",
+      "contract": "Borrows byte-oriented strings, does not allocate, is deterministic, and reports exact malformed/truncated input errors.",
+      "reference": "docs/text.md",
+      "example": "std/src/text/utf8_test.fl"
+    },
+    {
+      "name": "std::time::clock",
+      "summary": "Monotonic instants, wall timestamps, and sleep",
+      "contract": "Clock reads use host state; sleep blocks; elapsed monotonic durations are stable while wall time and precision are platform-dependent.",
+      "reference": "docs/time.md",
+      "example": "std/src/time/clock_test.fl"
+    },
+    {
+      "name": "std::time::duration",
+      "summary": "Normalized signed time durations",
+      "contract": "Value operations do not allocate or block; normalization and checked arithmetic are deterministic across targets.",
+      "reference": "docs/time.md#duration",
+      "example": "std/src/time/duration_test.fl"
+    },
+    {
+      "name": "std::time::errors",
+      "summary": "Clock, duration, and sleep errors",
+      "contract": "Stable overflow, range, and host-clock failures with no hidden fallback behavior.",
+      "reference": "docs/time.md#errors",
+      "example": "std/src/time/clock_test.fl"
+    }
+  ]
+}

@@ -1,5 +1,8 @@
 # Bytes
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-bytes-buffer).
+
 The `bytes` namespace owns raw byte storage and sequence operations. It does
 not own serialization formats, textual codecs, or structured data formats.
 

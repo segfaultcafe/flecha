@@ -1,0 +1,5 @@
+module public_api;
+
+export stringv expected_digest() {
+    return "439423c8afa809cdef80b6b29f41d4fab9a9123917841f573c3c5e9aec6fb397";
+}

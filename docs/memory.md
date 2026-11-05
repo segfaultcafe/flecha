@@ -1,5 +1,8 @@
 # Memory
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-memory-slices).
+
 The `memory` namespace owns safe operations on typed borrowed slices. These
 operations copy, replace, and destroy elements according to the ordinary
 language rules for `T`; they never treat a typed slice as unstructured bytes.

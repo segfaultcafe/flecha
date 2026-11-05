@@ -1,5 +1,8 @@
 # Text utilities
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-text-strings).
+
 Flecha's standard text modules build on the byte-oriented `string` and
 `stringv` types described in [strings](string.md). They do not change string
 indexing or length semantics: both continue to count bytes.

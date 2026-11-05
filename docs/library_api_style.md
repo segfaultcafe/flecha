@@ -2,8 +2,10 @@
 
 These rules govern APIs supplied to Flecha programs by the language and its
 libraries: primitive members, compiler built-ins, the runtime-facing prelude,
-and the future standard library. They do not govern ordinary user-defined
-Flecha functions, and they do not replace the C++ implementation rules in
+and the standard library. The complete v0.3 surface is recorded in the
+[standard-library reference](standard_library.md). These rules do not govern
+ordinary user-defined Flecha functions, and they do not replace the C++
+implementation rules in
 [`CODE_STYLE.md`](../CODE_STYLE.md).
 
 For Flecha source formatting in `std/`, also follow the
@@ -26,15 +28,15 @@ owned.cast<stringv>;
 An acronym is treated as a word, such as `isUtf8()` rather than `isUTF8()`.
 Generic member forms such as `cast<type>` follow the same naming rule even
 when their syntax does not include parentheses.
-Existing language members that are already public API should be migrated to
-this convention before compatibility guarantees are introduced.
+The checked-in v0.3 API reference records the compatibility baseline. Renaming
+an existing public member now requires compatibility review and release notes.
 
 When a text-oriented destination accepts both strings and raw byte slices,
 the concise operation name is reserved for text: use `write(stringv)` and
 `writeAll(stringv)`. Name the raw variants `writeBytes([]const u8)` and
 `writeAllBytes([]const u8)` instead of adding `String` to the text operation.
-Existing library APIs should migrate to this convention before compatibility
-guarantees are introduced.
+New APIs follow this convention. Changing a listed v0.3 API requires the same
+compatibility review as any other public rename.
 
 ## Free functions
 

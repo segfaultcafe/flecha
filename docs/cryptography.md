@@ -1,5 +1,8 @@
 # Cryptography
 
+The exact v0.3 declarations and focused tests are indexed in the
+[standard-library reference](standard_library.md#std-cryptography-sha2).
+
 The `std::cryptography::sha2` module provides portable SHA-256 and SHA-512.
 It is separate from `std::hashing`, whose structural hashes are not suitable
 for cryptographic use.

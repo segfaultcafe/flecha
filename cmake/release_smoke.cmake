@@ -662,6 +662,80 @@ if(DEFINED COMMUNITY_PACKAGE_ROOT)
     endif()
 endif()
 
+if(DEFINED STANDARD_LIBRARY_EXAMPLE_ROOT)
+    get_filename_component(STANDARD_LIBRARY_EXAMPLE_ROOT
+        "${STANDARD_LIBRARY_EXAMPLE_ROOT}" ABSOLUTE)
+    foreach(source IN ITEMS main.fl public_api.fl public_api_test.fl)
+        if(NOT EXISTS "${STANDARD_LIBRARY_EXAMPLE_ROOT}/src/${source}")
+            message(FATAL_ERROR
+                "standard-library example is missing src/${source}: "
+                "${STANDARD_LIBRARY_EXAMPLE_ROOT}")
+        endif()
+    endforeach()
+
+    set(standardLibraryProject "${OUTPUT_ROOT}/standard-library")
+    file(MAKE_DIRECTORY "${standardLibraryProject}")
+    file(COPY "${STANDARD_LIBRARY_EXAMPLE_ROOT}/src"
+        DESTINATION "${standardLibraryProject}")
+    file(WRITE "${standardLibraryProject}/longbow.toml" [=[
+[package]
+name = "standard_library"
+version = "0.1.0"
+kind = "program"
+
+[dependencies]
+]=])
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "FLECHA_COMPILER=${FLECHA_COMPILER}"
+            "${LONGBOW}" test
+        WORKING_DIRECTORY "${standardLibraryProject}"
+        RESULT_VARIABLE standardLibraryTestResult
+        OUTPUT_VARIABLE standardLibraryTestOutput
+        ERROR_VARIABLE standardLibraryTestError)
+    if(NOT standardLibraryTestResult EQUAL 0)
+        message(FATAL_ERROR
+            "installed standard-library example tests failed: "
+            "${standardLibraryTestOutput}${standardLibraryTestError}")
+    endif()
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "FLECHA_COMPILER=${FLECHA_COMPILER}"
+            "${LONGBOW}" build
+        WORKING_DIRECTORY "${standardLibraryProject}"
+        RESULT_VARIABLE standardLibraryBuildResult
+        OUTPUT_VARIABLE standardLibraryBuildOutput
+        ERROR_VARIABLE standardLibraryBuildError)
+    if(NOT standardLibraryBuildResult EQUAL 0)
+        message(FATAL_ERROR
+            "installed standard-library example build failed: "
+            "${standardLibraryBuildOutput}${standardLibraryBuildError}")
+    endif()
+
+    set(standardLibraryExecutable
+        "${standardLibraryProject}/target/standard_library${EXECUTABLE_SUFFIX}")
+    if(NOT EXISTS "${standardLibraryExecutable}")
+        message(FATAL_ERROR
+            "installed standard-library example executable was not produced")
+    endif()
+    execute_process(
+        COMMAND "${standardLibraryExecutable}"
+        RESULT_VARIABLE standardLibraryRunResult
+        OUTPUT_VARIABLE standardLibraryRunOutput
+        ERROR_VARIABLE standardLibraryRunError)
+    string(REPLACE "\r\n" "\n"
+        standardLibraryRunOutput "${standardLibraryRunOutput}")
+    if(NOT standardLibraryRunResult EQUAL 0 OR
+       NOT standardLibraryRunOutput STREQUAL
+           "standard library API tour: ok\n")
+        message(FATAL_ERROR
+            "installed standard-library example run failed: "
+            "${standardLibraryRunOutput}${standardLibraryRunError}")
+    endif()
+endif()
+
 if(DEFINED WORKSPACE_GUARD_ROOT)
     get_filename_component(WORKSPACE_GUARD_ROOT
         "${WORKSPACE_GUARD_ROOT}" ABSOLUTE)
