@@ -125,6 +125,7 @@ jobs:
             xcode_version: "16.4"
             sdk_major: 15
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -348,6 +349,7 @@ jobs:
             xcode_version: "16.4"
             sdk_major: 15
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - name: Install host linker (Linux)
         if: runner.os == 'Linux'
@@ -460,17 +462,29 @@ jobs:
 
       - name: Exercise the relocated installation
         shell: bash
-        run: >-
-          cmake
-          "-DFLECHA_COMPILER=$FLECHA_BUNDLE/bin/flecha${{ matrix.suffix }}"
-          "-DLONGBOW=$FLECHA_BUNDLE/bin/longbow${{ matrix.suffix }}"
-          "-DOUTPUT_ROOT=$PWD/clean-install-smoke"
-          "-DCOMMUNITY_PACKAGE_ROOT=$PWD/community-package-consumer"
-          "-DWORKSPACE_GUARD_ROOT=$PWD/workspace-guard-example"
-          "-DLEDGER_ROOT=$PWD/ledger-example"
-          "-DSTANDARD_LIBRARY_EXAMPLE_ROOT=$PWD/standard-library-example"
-          "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
-          -P test-support/release_smoke.cmake
+        run: |
+          set -o pipefail
+          cmake \
+            "-DFLECHA_COMPILER=$FLECHA_BUNDLE/bin/flecha${{ matrix.suffix }}" \
+            "-DLONGBOW=$FLECHA_BUNDLE/bin/longbow${{ matrix.suffix }}" \
+            "-DOUTPUT_ROOT=$PWD/clean-install-smoke" \
+            "-DCOMMUNITY_PACKAGE_ROOT=$PWD/community-package-consumer" \
+            "-DWORKSPACE_GUARD_ROOT=$PWD/workspace-guard-example" \
+            "-DLEDGER_ROOT=$PWD/ledger-example" \
+            "-DSTANDARD_LIBRARY_EXAMPLE_ROOT=$PWD/standard-library-example" \
+            "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}" \
+            -P test-support/release_smoke.cmake \
+            2>&1 | tee package-qualification.log
+
+      - name: Retain installed-package qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-qualification-${{ matrix.name }}
+          path: |
+            package-qualification.log
+            clean-install-smoke/qualification-report.txt
+          if-no-files-found: warn
 
   publish-assets:
     name: Attach bundles to GitHub Release

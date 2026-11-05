@@ -186,6 +186,7 @@ jobs:
     name: AddressSanitizer and UBSan
     needs: contribution-policy
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -293,6 +294,58 @@ jobs:
           ctest --test-dir build-sanitizers --output-on-failure
           -R '^(StandardLibraryTests\.BufferedIo\..*|CompilerDiagnostics\.BufferedIo)$'
 
+      - name: Build and relocate the sanitizer-enabled package
+        run: |
+          set -euo pipefail
+          cmake --build build-sanitizers --target package
+          shopt -s nullglob
+          archives=(build-sanitizers/flecha-*.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "Expected one sanitizer archive, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          mkdir sanitized-unpacked sanitized-relocated
+          (
+            cd sanitized-unpacked
+            cmake -E tar xf "../${archives[0]}"
+          )
+          bundles=(sanitized-unpacked/flecha-*/)
+          if [[ ${#bundles[@]} -ne 1 ]]; then
+            echo "Expected one sanitizer bundle, found ${#bundles[@]}" >&2
+            exit 1
+          fi
+          mv "${bundles[0]}" sanitized-relocated/flecha
+
+      - name: Exercise the relocated sanitizer-enabled package
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          set -o pipefail
+          cmake \
+            "-DINSTALL_ROOT=$PWD/sanitized-relocated/flecha" \
+            -P cmake/verify_bundle.cmake
+          cmake \
+            "-DFLECHA_COMPILER=$PWD/sanitized-relocated/flecha/bin/flecha" \
+            "-DLONGBOW=$PWD/sanitized-relocated/flecha/bin/longbow" \
+            "-DOUTPUT_ROOT=$PWD/sanitized-package-smoke" \
+            "-DCOMMUNITY_PACKAGE_ROOT=$PWD/src/tests/fixtures/community_packages/consumer" \
+            "-DWORKSPACE_GUARD_ROOT=$PWD/examples/workspace_guard" \
+            "-DLEDGER_ROOT=$PWD/examples/ledger" \
+            "-DSTANDARD_LIBRARY_EXAMPLE_ROOT=$PWD/examples/standard_library" \
+            -P cmake/release_smoke.cmake \
+            2>&1 | tee sanitized-package-qualification.log
+
+      - name: Retain sanitizer package qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-package-qualification
+          path: |
+            sanitized-package-qualification.log
+            sanitized-package-smoke/qualification-report.txt
+          if-no-files-found: warn
+
   platform-build:
     name: Create package (${{ matrix.name }})
     needs: contribution-policy
@@ -333,6 +386,7 @@ jobs:
             xcode_version: "16.4"
             sdk_major: 15
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -541,6 +595,7 @@ jobs:
             xcode_version: "16.4"
             sdk_major: 15
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - name: Install host linker (Linux)
         if: runner.os == 'Linux'
@@ -653,14 +708,26 @@ jobs:
 
       - name: Exercise the relocated installation
         shell: bash
-        run: >-
-          cmake
-          "-DFLECHA_COMPILER=$FLECHA_BUNDLE/bin/flecha${{ matrix.suffix }}"
-          "-DLONGBOW=$FLECHA_BUNDLE/bin/longbow${{ matrix.suffix }}"
-          "-DOUTPUT_ROOT=$PWD/clean-install-smoke"
-          "-DCOMMUNITY_PACKAGE_ROOT=$PWD/community-package-consumer"
-          "-DWORKSPACE_GUARD_ROOT=$PWD/workspace-guard-example"
-          "-DLEDGER_ROOT=$PWD/ledger-example"
-          "-DSTANDARD_LIBRARY_EXAMPLE_ROOT=$PWD/standard-library-example"
-          "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
-          -P test-support/release_smoke.cmake
+        run: |
+          set -o pipefail
+          cmake \
+            "-DFLECHA_COMPILER=$FLECHA_BUNDLE/bin/flecha${{ matrix.suffix }}" \
+            "-DLONGBOW=$FLECHA_BUNDLE/bin/longbow${{ matrix.suffix }}" \
+            "-DOUTPUT_ROOT=$PWD/clean-install-smoke" \
+            "-DCOMMUNITY_PACKAGE_ROOT=$PWD/community-package-consumer" \
+            "-DWORKSPACE_GUARD_ROOT=$PWD/workspace-guard-example" \
+            "-DLEDGER_ROOT=$PWD/ledger-example" \
+            "-DSTANDARD_LIBRARY_EXAMPLE_ROOT=$PWD/standard-library-example" \
+            "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}" \
+            -P test-support/release_smoke.cmake \
+            2>&1 | tee package-qualification.log
+
+      - name: Retain installed-package qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-qualification-${{ matrix.name }}
+          path: |
+            package-qualification.log
+            clean-install-smoke/qualification-report.txt
+          if-no-files-found: warn
