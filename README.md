@@ -308,6 +308,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/release_0_2.md`](docs/release_0_2.md) — v0.2.0 language and tooling design targets
 - [`docs/release_0_2_1.md`](docs/release_0_2_1.md) — v0.2.1 module-correctness milestone
 - [`docs/release_0_3.md`](docs/release_0_3.md) — v0.3.0 application-capable standard-library milestone
+- [`docs/release_0_3_0.md`](docs/release_0_3_0.md) — v0.3.0 release notes and upgrade guide
 - [`docs/standard_library.md`](docs/standard_library.md) — complete v0.3 public module and declaration index
 - [`docs/toolchains.md`](docs/toolchains.md) — supported compiler, LLVM, linker, SDK, and CI versions
 - [`docs/semantic_analysis.md`](docs/semantic_analysis.md) — name binding, types, scopes, and analysis pipeline
