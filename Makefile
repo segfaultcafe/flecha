@@ -3,6 +3,8 @@ CMAKE_GENERATOR ?= Ninja
 BUILD_DIR ?= build
 TEST_BUILD_DIR ?= build-tests
 SANITIZER_BUILD_DIR ?= build-sanitizers
+PERFORMANCE_BUILD_DIR ?= build-performance
+PERFORMANCE_OUTPUT_DIR ?= build/performance
 GTEST_SOURCE_DIR ?=
 NPM ?= npm
 VSCODE_DIR ?= editors/vscode
@@ -22,7 +24,7 @@ HOST_NVIM_CONFIG ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/nvim,$(HOME)/.con
 	native-callables native-while native-loop-control native-casts native-string-view \
 	native-string-view-operations native-owning-string native-stdout \
 	native-definite-assignment package-vscode test-neovim test-sanitizers clean \
-	sandbox enter-sandbox
+	performance-self-test performance sandbox enter-sandbox
 
 help:
 	@echo "Flecha build targets:"
@@ -36,6 +38,8 @@ help:
 	@echo "  make test-neovim    Test Neovim filetype and syntax support"
 	@echo "  make package-vscode Build and verify the installable VSIX"
 	@echo "  make test-sanitizers Run unit tests with ASan and UBSan"
+	@echo "  make performance-self-test Validate performance scoring and baselines"
+	@echo "  make performance    Run the controlled v0.3 performance campaign"
 	@echo "  make sandbox        Build and start the current Flecha Docker sandbox"
 	@echo "  make enter-sandbox  Open an interactive shell in the sandbox"
 	@echo "  make llvm-poc       Emit and execute the LLVM proof of concept"
@@ -56,6 +60,27 @@ help:
 	@echo "Overrides: CMAKE, CMAKE_GENERATOR, BUILD_DIR, TEST_BUILD_DIR, NPM, VSCODE_DIR"
 	@echo "           DOCKER, SANDBOX_IMAGE, SANDBOX_CONTAINER, SANDBOX_DOCKERFILE"
 	@echo "           SANDBOX_BUILD_VERSION, HOST_NVIM_CONFIG"
+	@echo "           PERFORMANCE_BUILD_DIR, PERFORMANCE_OUTPUT_DIR"
+
+performance-self-test:
+	python3 tools/performance.py self-test
+
+performance:
+	$(CMAKE) -S . -B $(PERFORMANCE_BUILD_DIR) -G "$(CMAKE_GENERATOR)" \
+		-DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
+	$(CMAKE) --build $(PERFORMANCE_BUILD_DIR) \
+		--target flecha longbow --parallel
+	python3 tools/performance.py run \
+		--flecha $(PERFORMANCE_BUILD_DIR)/flecha \
+		--longbow $(PERFORMANCE_BUILD_DIR)/longbow \
+		--std std/src \
+		--build-dir $(PERFORMANCE_OUTPUT_DIR)/work \
+		--samples 11 --warmups 3 --timeout 120 \
+		--output $(PERFORMANCE_OUTPUT_DIR)/results.json \
+		--markdown $(PERFORMANCE_OUTPUT_DIR)/results.md \
+		--svg $(PERFORMANCE_OUTPUT_DIR)/results.svg
+	python3 tools/performance.py competitive-check \
+		--results $(PERFORMANCE_OUTPUT_DIR)/results.json --minimum C
 
 sandbox:
 	$(DOCKER) build --file $(SANDBOX_DOCKERFILE) \

@@ -1,0 +1,97 @@
+name: Performance qualification
+
+on:
+  schedule:
+    - cron: "17 5 * * 2"
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Measured samples per compiler and runtime workload
+        required: true
+        default: 11
+        type: number
+      warmups:
+        description: Warmup rounds per compiler and runtime workload
+        required: true
+        default: 3
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qualification:
+    name: Ubuntu x86_64 controlled campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PERFORMANCE_SAMPLES: ${{ inputs.samples || 11 }}
+      PERFORMANCE_WARMUPS: ${{ inputs.warmups || 3 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
+
+      - name: Install compiler dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-14 g++-14 llvm-18-dev ninja-build
+
+      - name: Configure qualification build
+        run: >-
+          cmake -S . -B build-performance -G Ninja
+          -DBUILD_TESTING=OFF
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=/usr/bin/gcc-14
+          -DCMAKE_CXX_COMPILER=/usr/bin/g++-14
+          "-DLLVM_DIR=$(/usr/bin/llvm-config-18 --cmakedir)"
+
+      - name: Build Flecha and Longbow
+        run: >-
+          cmake --build build-performance
+          --target flecha longbow --parallel
+
+      - name: Run interleaved versioned campaign
+        env:
+          CC: /usr/bin/gcc-14
+        run: >-
+          python3 tools/performance.py run
+          --flecha build-performance/flecha
+          --longbow build-performance/longbow
+          --std std/src
+          --build-dir build/performance/work
+          --samples "$PERFORMANCE_SAMPLES"
+          --warmups "$PERFORMANCE_WARMUPS"
+          --timeout 120
+          --output build/performance/results.json
+          --markdown build/performance/results.md
+          --svg build/performance/results.svg
+
+      - name: Enforce v0.3 competitive floor
+        run: >-
+          python3 tools/performance.py competitive-check
+          --results build/performance/results.json
+          --minimum C
+
+      - name: Enforce reviewed Ubuntu baseline
+        run: >-
+          python3 tools/performance.py check
+          --results build/performance/results.json
+          --baseline benchmarks/performance/baselines/ubuntu-24.04-x86_64.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-qualification-${{ github.run_id }}
+          path: build/performance
+          if-no-files-found: error

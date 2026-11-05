@@ -518,6 +518,48 @@ TEST(LlvmCodeGeneratorTests, CarriesRuntimeArrayLengthInTheOwningValue) {
     EXPECT_EQ(ir.find("flecha_runtime_v1_allocation_count"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, OmitsTrivialRawStorageDestruction) {
+    GeneratedSource result = Generate(
+        "unsafe void discard(*i32 storage) { "
+        "__storage_destroy(storage, 0); }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("flecha_runtime_v1_allocation_count"), std::string::npos);
+    EXPECT_NE(ir.find("array.out.of.bounds"), std::string::npos);
+    EXPECT_EQ(ir.find("store i32 0, ptr"), std::string::npos);
+}
+
+TEST(LlvmCodeGeneratorTests, UsesCountedUninitializedBufferChecks) {
+    GeneratedSource result = Generate(
+        "unsafe i32 main() { storage, err := __storage_new<[]i32>(2); "
+        "if err != none { return 1; } __storage_initialize(storage, 1, 42); "
+        "__storage_destroy(storage, 1); __storage_free(storage); return 0; }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("storage.capacity"), std::string::npos);
+    EXPECT_NE(ir.find("array.out.of.bounds"), std::string::npos);
+    EXPECT_EQ(ir.find("flecha_runtime_v1_allocation_count"), std::string::npos);
+}
+
+TEST(LlvmCodeGeneratorTests, DoesNotClearTrivialRelocationSource) {
+    GeneratedSource result = Generate(
+        "unsafe void move(*i32 destination, *i32 source) { "
+        "__storage_relocate(destination, 0, source, 0); }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("storage.moved"), std::string::npos);
+    EXPECT_EQ(ir.find("store i32 0, ptr"), std::string::npos);
+}
+
 TEST(LlvmCodeGeneratorTests, AutomaticallyDestroysSafeOwningSlices) {
     GeneratedSource result = Generate(R"(
         own []i32 make() {

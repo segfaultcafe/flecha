@@ -349,7 +349,6 @@ export structure RawArray<T> {
 // Public methods
 RawArray<T> RawArray<T>::init() override;
 void RawArray<T>::tear(&self) override;
-RawArray<T> RawArray<T>::zero() override;
 usize RawArray<T>::len(&const self);
 usize RawArray<T>::capacity(&const self);
 unsafe error RawArray<T>::reserve(&self, usize capacity);

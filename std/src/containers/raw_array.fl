@@ -4,14 +4,15 @@ module raw_array;
 
 // Owns low-level growable storage whose element access requires unsafe.
 export structure RawArray<T> {
-    private own *T storage;
+    private own *[]T storage;
     private usize length;
-    private usize allocated;
 };
 
 // Creates an empty raw array with no allocation.
 RawArray<T> RawArray<T>::init() override {
-    return build RawArray<T> {};
+    unsafe {
+        return build RawArray<T> {};
+    }
 }
 
 // Releases the owned storage.
@@ -27,15 +28,6 @@ void RawArray<T>::tear(&self) override {
     }
 }
 
-// Constructs the null, empty representation used by none.
-RawArray<T> RawArray<T>::zero() override {
-    return build RawArray<T> {
-        self.storage = null;
-        self.length = 0;
-        self.allocated = 0;
-    };
-}
-
 // Returns the number of logical elements.
 usize RawArray<T>::len(&const self) {
     return self->length;
@@ -43,12 +35,14 @@ usize RawArray<T>::len(&const self) {
 
 // Returns the number of allocated element slots.
 usize RawArray<T>::capacity(&const self) {
-    return self->allocated;
+    unsafe {
+        return self->storage[:].len();
+    }
 }
 
 // Grows storage to at least capacity while preserving logical elements.
 unsafe error RawArray<T>::reserve(&self, usize capacity) {
-    if capacity <= self->allocated {
+    if capacity <= self->storage[:].len() {
         return none;
     }
 
@@ -65,7 +59,6 @@ unsafe error RawArray<T>::reserve(&self, usize capacity) {
 
     previous := take(self->storage);
     self->storage = replacement;
-    self->allocated = capacity;
     __storage_free(previous);
 
     return none;
@@ -73,21 +66,18 @@ unsafe error RawArray<T>::reserve(&self, usize capacity) {
 
 // Appends value into an uninitialized slot, relocating elements during growth.
 unsafe error RawArray<T>::push(&self, T value) {
-    if self->length != self->allocated {
-        __storage_initialize(self->storage, self->length, value);
-        self->length++;
-        return none;
+    if self->length == self->storage[:].len() {
+        return self->pushWithGrowth(value);
     }
 
-    const usize CAPACITY_FACTOR = 2;
-    usize capacity = 4;
-    if self->allocated != 0 {
-        capacity = self->allocated * CAPACITY_FACTOR;
-    } also capacity <= self->allocated {
-        return AllocationError.OutOfMemory;
-    }
+    __storage_initialize(self->storage, self->length, value);
+    self->length++;
+    return none;
+}
 
-    err := self->reserve(capacity);
+// Handles the uncommon capacity-exhausted case outside the reserved fast path.
+private unsafe error RawArray<T>::pushWithGrowth(&self, T value) {
+    err := self->grow();
     if err != none {
         return err;
     }
@@ -95,6 +85,21 @@ unsafe error RawArray<T>::push(&self, T value) {
     __storage_initialize(self->storage, self->length, value);
     self->length++;
     return none;
+}
+
+// Keeps the common push path small enough for native inlining while isolating
+// allocation and overflow handling on the capacity-exhausted path.
+private unsafe error RawArray<T>::grow(&self) {
+    const usize CAPACITY_FACTOR = 2;
+    const usize CURRENT_CAPACITY = self->storage[:].len();
+    usize capacity = 4;
+    if CURRENT_CAPACITY != 0 {
+        capacity = CURRENT_CAPACITY * CAPACITY_FACTOR;
+    } also capacity <= CURRENT_CAPACITY {
+        return AllocationError.OutOfMemory;
+    }
+
+    return self->reserve(capacity);
 }
 
 // Copies the indexed element or reports ArrayError.IndexOutOfBounds.

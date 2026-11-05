@@ -102,13 +102,49 @@ export (usize, error) count_code_points(stringv value) {
     const usize LENGTH = value.len().cast<usize>;
 
     while offset < LENGTH {
-        _, nextOffset, err := decode(value, offset);
-        if err != none {
-            return (none, err);
+        const u8 FIRST = value[offset.cast<u32>];
+        usize width = 1;
+        if FIRST <= 127 {
+            width = 1;
+        } else if FIRST >= 194 and FIRST <= 223 {
+            width = 2;
+            if LENGTH - offset < width {
+                return (none, errors::Utf8Error.Truncated);
+            }
+            if !is_continuation(value[(offset + 1).cast<u32>]) {
+                return (none, errors::Utf8Error.InvalidEncoding);
+            }
+        } else if FIRST >= 224 and FIRST <= 239 {
+            width = 3;
+            if LENGTH - offset < width {
+                return (none, errors::Utf8Error.Truncated);
+            }
+            const u8 SECOND = value[(offset + 1).cast<u32>];
+            if !is_continuation(SECOND) or
+                !is_continuation(value[(offset + 2).cast<u32>]) or
+                (FIRST == 224 and SECOND < 160) or
+                (FIRST == 237 and SECOND > 159) {
+                return (none, errors::Utf8Error.InvalidEncoding);
+            }
+        } else if FIRST >= 240 and FIRST <= 244 {
+            width = 4;
+            if LENGTH - offset < width {
+                return (none, errors::Utf8Error.Truncated);
+            }
+            const u8 SECOND = value[(offset + 1).cast<u32>];
+            if !is_continuation(SECOND) or
+                !is_continuation(value[(offset + 2).cast<u32>]) or
+                !is_continuation(value[(offset + 3).cast<u32>]) or
+                (FIRST == 240 and SECOND < 144) or
+                (FIRST == 244 and SECOND > 143) {
+                return (none, errors::Utf8Error.InvalidEncoding);
+            }
+        } else {
+            return (none, errors::Utf8Error.InvalidEncoding);
         }
 
         count++;
-        offset = nextOffset;
+        offset = offset + width;
     }
 
     return (count, none);

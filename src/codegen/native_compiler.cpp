@@ -290,7 +290,18 @@ bool NativeCompiler::EmitFlechaObject(const lowering::BoundProgram& program,
     llvm::FunctionAnalysisManager functionAnalyses;
     llvm::CGSCCAnalysisManager cgsccAnalyses;
     llvm::ModuleAnalysisManager moduleAnalyses;
-    llvm::PassBuilder passBuilder(_targetMachine.get());
+    // Flecha's lowered cleanup edges can make LLVM's generic unroll cost model
+    // duplicate loop-carried state in tight scalar kernels. Keep vectorization
+    // and interleaving enabled, but leave source loops rolled until lowering
+    // exposes a canonical shape that the unroller can cost accurately.
+    llvm::PipelineTuningOptions tuning;
+    tuning.LoopUnrolling = false;
+    // The default O2 threshold aggressively clones Flecha's uncommon
+    // allocation/error paths into collection callers. A smaller threshold
+    // keeps those paths out of reserved push loops while still inlining their
+    // compact success paths, and also reduces native text size.
+    tuning.InlinerThreshold = 100;
+    llvm::PassBuilder passBuilder(_targetMachine.get(), tuning);
     passBuilder.registerModuleAnalyses(moduleAnalyses);
     passBuilder.registerCGSCCAnalyses(cgsccAnalyses);
     passBuilder.registerFunctionAnalyses(functionAnalyses);

@@ -99,6 +99,9 @@ jobs:
         continue-on-error: true
         run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
 
+      - name: Validate deterministic performance policy
+        run: python3 tools/performance.py self-test
+
       - name: Install dependencies
         run: |
           sudo apt-get update

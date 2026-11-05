@@ -1200,8 +1200,8 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInStringFormat(
 
     if (expression.Function().BuiltIn() ==
         semantic::BuiltInFunction::StringFormatCrash) {
-        auto* crashBlock = llvm::BasicBlock::Create(
-            _context, "sprintf.crash", _currentFunction);
+        auto* crashBlock = llvm::BasicBlock::Create(_context, "sprintf.crash",
+                                                    _currentFunction);
         auto* successBlock = llvm::BasicBlock::Create(
             _context, "sprintf.success", _currentFunction);
         _builder.CreateCondBr(failed, crashBlock, successBlock);
@@ -1216,8 +1216,8 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInStringFormat(
         _builder.SetInsertPoint(successBlock);
 
         auto* owned = CreateOwnedStringTemporary("sprintf.owned.result");
-        llvm::Value* value = _builder.CreateLoad(
-            StringType(), output, "sprintf.string");
+        llvm::Value* value =
+            _builder.CreateLoad(StringType(), output, "sprintf.string");
         _builder.CreateStore(value, owned);
         value = _builder.CreateLoad(StringType(), owned, "sprintf.owned");
         _freshOwnedStrings.emplace(value, owned);
@@ -1263,16 +1263,14 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInStringFormat(
 
 llvm::Value* LlvmCodeGenerator::EmitCrash(llvm::Value* message,
                                           source::SourceRange range) {
-    const std::string functionName =
-        _currentFunctionSymbol == nullptr ? "<unknown>"
-                                          : _currentFunctionSymbol->Name();
+    const std::string functionName = _currentFunctionSymbol == nullptr
+                                         ? "<unknown>"
+                                         : _currentFunctionSymbol->Name();
     const lowering::BoundLiteralExpression fileLiteral(
-        range,
-        semantic::SemanticType(semantic::SemanticTypeKind::StringView),
+        range, semantic::SemanticType(semantic::SemanticTypeKind::StringView),
         range.start.file);
     const lowering::BoundLiteralExpression functionLiteral(
-        range,
-        semantic::SemanticType(semantic::SemanticTypeKind::StringView),
+        range, semantic::SemanticType(semantic::SemanticTypeKind::StringView),
         functionName);
     llvm::Value* file = EmitLiteral(fileLiteral);
     llvm::Value* function = EmitLiteral(functionLiteral);
@@ -1282,28 +1280,27 @@ llvm::Value* LlvmCodeGenerator::EmitCrash(llvm::Value* message,
         MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
     auto* pointerType = llvm::PointerType::getUnqual(_context);
     auto* lineType = llvm::Type::getInt32Ty(_context);
-    llvm::FunctionType* crashType = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(_context),
-        {pointerType, sizeType, pointerType, sizeType, pointerType, sizeType,
-         lineType, lineType},
-        false);
-    llvm::FunctionCallee crash = _module->getOrInsertFunction(
-        "flecha_runtime_v1_crash", crashType);
+    llvm::FunctionType* crashType =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(_context),
+                                {pointerType, sizeType, pointerType, sizeType,
+                                 pointerType, sizeType, lineType, lineType},
+                                false);
+    llvm::FunctionCallee crash =
+        _module->getOrInsertFunction("flecha_runtime_v1_crash", crashType);
     if (auto* functionValue =
             llvm::dyn_cast<llvm::Function>(crash.getCallee())) {
         functionValue->addFnAttr(llvm::Attribute::NoReturn);
         functionValue->addFnAttr(llvm::Attribute::Cold);
     }
     llvm::CallInst* call = _builder.CreateCall(
-        crash,
-        {_builder.CreateExtractValue(message, 0),
-         _builder.CreateExtractValue(message, 1),
-         _builder.CreateExtractValue(file, 0),
-         _builder.CreateExtractValue(file, 1),
-         _builder.CreateExtractValue(function, 0),
-         _builder.CreateExtractValue(function, 1),
-         llvm::ConstantInt::get(lineType, range.start.line),
-         llvm::ConstantInt::get(lineType, range.start.column)});
+        crash, {_builder.CreateExtractValue(message, 0),
+                _builder.CreateExtractValue(message, 1),
+                _builder.CreateExtractValue(file, 0),
+                _builder.CreateExtractValue(file, 1),
+                _builder.CreateExtractValue(function, 0),
+                _builder.CreateExtractValue(function, 1),
+                llvm::ConstantInt::get(lineType, range.start.line),
+                llvm::ConstantInt::get(lineType, range.start.column)});
     call->setDoesNotReturn();
     _builder.CreateUnreachable();
     return call;
@@ -1539,6 +1536,22 @@ llvm::Value* LlvmCodeGenerator::EmitStringViewOperation(
     }
 
     if (expression.Operation() == lowering::StringViewOperation::At) {
+        llvm::Value* index = arguments.front();
+        llvm::Value* extendedIndex = _builder.CreateZExt(
+            index, length->getType(), "stringv.index.extended");
+        llvm::Value* inBounds =
+            _builder.CreateICmpULT(extendedIndex, length, "stringv.in.bounds");
+        auto* valid = llvm::BasicBlock::Create(_context, "stringv.at.valid",
+                                               _currentFunction);
+        auto* invalid = llvm::BasicBlock::Create(_context, "stringv.at.invalid",
+                                                 _currentFunction);
+        _builder.CreateCondBr(inBounds, valid, invalid);
+
+        // Keep the established runtime diagnostic on the cold failure path,
+        // but make the checked fast path visible to LLVM. Previously every
+        // byte access crossed the runtime ABI, preventing bounds-check
+        // elimination and dominating text-processing loops.
+        _builder.SetInsertPoint(invalid);
         llvm::FunctionType* atType =
             llvm::FunctionType::get(llvm::Type::getInt8Ty(_context),
                                     {data->getType(), length->getType(),
@@ -1546,7 +1559,14 @@ llvm::Value* LlvmCodeGenerator::EmitStringViewOperation(
                                     false);
         llvm::FunctionCallee at = _module->getOrInsertFunction(
             "flecha_runtime_v1_string_view_at", atType);
-        return _builder.CreateCall(at, {data, length, arguments.front()},
+        _builder.CreateCall(at, {data, length, index});
+        _builder.CreateUnreachable();
+
+        _builder.SetInsertPoint(valid);
+        llvm::Value* address =
+            _builder.CreateInBoundsGEP(llvm::Type::getInt8Ty(_context), data,
+                                       extendedIndex, "stringv.at.address");
+        return _builder.CreateLoad(llvm::Type::getInt8Ty(_context), address,
                                    "stringv.at");
     }
 
@@ -2669,8 +2689,8 @@ llvm::Value* LlvmCodeGenerator::EmitCast(
         result = _builder.CreateInsertValue(
             result, _builder.CreateExtractValue(value, 0, "stringv.data"), 0);
         return _builder.CreateInsertValue(
-            result, _builder.CreateExtractValue(value, 1, "stringv.length"),
-            1, "stringv.slice");
+            result, _builder.CreateExtractValue(value, 1, "stringv.length"), 1,
+            "stringv.slice");
     }
     if ((sourceType.Kind() == semantic::SemanticTypeKind::U8 &&
          expression.Type().Kind() == semantic::SemanticTypeKind::Char) ||
@@ -3882,8 +3902,7 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 call.Function().BuiltIn() ==
                     semantic::BuiltInFunction::StringFormatCrash)
                 return EmitBuiltInStringFormat(call, arguments);
-            if (call.Function().BuiltIn() ==
-                semantic::BuiltInFunction::Crash)
+            if (call.Function().BuiltIn() == semantic::BuiltInFunction::Crash)
                 return EmitCrash(arguments.front(), call.Range());
             if (call.Function().BuiltIn() == semantic::BuiltInFunction::Stdin ||
                 call.Function().BuiltIn() ==
@@ -4473,17 +4492,25 @@ llvm::Value* LlvmCodeGenerator::EmitFree(llvm::Value* owner,
 
 llvm::Value* LlvmCodeGenerator::EmitStorageAddress(
     llvm::Value* owner, semantic::SemanticType ownerType, llvm::Value* index) {
+    const bool countedOwner =
+        ownerType.Kind() == semantic::SemanticTypeKind::OwnedBuffer;
     llvm::Value* data =
-        ownerType.Kind() == semantic::SemanticTypeKind::OwnedBuffer
-            ? _builder.CreateExtractValue(owner, 0, "storage.data")
-            : owner;
-    llvm::Type* sizeType =
-        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
-    const auto getCount = _module->getOrInsertFunction(
-        "flecha_runtime_v1_allocation_count",
-        llvm::FunctionType::get(sizeType, {data->getType()}, false));
-    llvm::Value* count =
-        _builder.CreateCall(getCount, {data}, "storage.capacity");
+        countedOwner ? _builder.CreateExtractValue(owner, 0, "storage.data")
+                     : owner;
+    // Uninitialized owning buffers carry the exact allocation count. Preserve
+    // that descriptor through collection fields instead of querying allocator
+    // metadata for every element operation.
+    llvm::Value* count = nullptr;
+    if (countedOwner) {
+        count = _builder.CreateExtractValue(owner, 1, "storage.capacity");
+    } else {
+        llvm::Type* sizeType =
+            MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
+        const auto getCount = _module->getOrInsertFunction(
+            "flecha_runtime_v1_allocation_count",
+            llvm::FunctionType::get(sizeType, {data->getType()}, false));
+        count = _builder.CreateCall(getCount, {data}, "storage.capacity");
+    }
     EmitBoundsCheck(_builder.CreateICmpULT(index, count));
     return _builder.CreateInBoundsGEP(MapType(*ownerType.Target()), data, index,
                                       "storage.slot");
@@ -4511,11 +4538,15 @@ llvm::Value* LlvmCodeGenerator::EmitStorageCall(
     const semantic::SemanticType element = *parameters[0].Target();
     llvm::Value* destination =
         EmitStorageAddress(arguments[0], parameters[0], arguments[1]);
+    if (intrinsic == semantic::BuiltInFunction::StorageDestroy &&
+        !RequiresTypedDestruction(element))
+        return llvm::UndefValue::get(llvm::Type::getInt1Ty(_context));
     if (intrinsic == semantic::BuiltInFunction::StorageExtract) {
         llvm::Value* value = _builder.CreateLoad(MapType(element), destination,
                                                  "storage.extracted");
-        _builder.CreateStore(llvm::Constant::getNullValue(MapType(element)),
-                             destination);
+        if (RequiresTypedDestruction(element))
+            _builder.CreateStore(llvm::Constant::getNullValue(MapType(element)),
+                                 destination);
         return value;
     }
     if (intrinsic == semantic::BuiltInFunction::StorageInitialize) {
@@ -4529,9 +4560,18 @@ llvm::Value* LlvmCodeGenerator::EmitStorageCall(
         llvm::Value* value =
             _builder.CreateLoad(MapType(element), source, "storage.moved");
         _builder.CreateStore(value, destination);
-        _builder.CreateStore(llvm::Constant::getNullValue(MapType(element)),
-                             source);
+        // A trivially destructible source becomes logically uninitialized and
+        // does not need a physical zero write. Ownership-bearing values must
+        // still be cleared so the old slot cannot retain a live owner.
+        if (RequiresTypedDestruction(element))
+            _builder.CreateStore(llvm::Constant::getNullValue(MapType(element)),
+                                 source);
     } else if (intrinsic == semantic::BuiltInFunction::StorageDestroy) {
+        // Destroying a scalar or another trivially destructible value has no
+        // observable work. In particular, do not clear a raw slot that is
+        // about to be released: doing so turns collection teardown into a
+        // redundant O(n) write pass. Nontrivial values are still destroyed
+        // and cleared so moved ownership cannot remain in the slot.
         EmitDestroyAt(destination, element);
         _builder.CreateStore(llvm::Constant::getNullValue(MapType(element)),
                              destination);
