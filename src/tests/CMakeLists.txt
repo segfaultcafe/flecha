@@ -24,9 +24,8 @@ target_link_libraries(compiler_stress
     PRIVATE
         flecha_project_options
         core
-        LLVM
+        llvm_codegen
 )
-target_include_directories(compiler_stress SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(compiler_stress PRIVATE
     FLECHA_EXECUTABLE_SUFFIX="${CMAKE_EXECUTABLE_SUFFIX}"
 )
