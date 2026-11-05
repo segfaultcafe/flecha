@@ -1,0 +1,100 @@
+module hmac;
+
+@imports :: root::cryptography::sha2;
+
+(HmacSha256, error) HmacSha256::create([]const u8 key) {
+    [64]u8 normalizedKey = [0x00; 64];
+
+    if key.len() > 64 {
+        digest, digestErr := sha2::sha256(key);
+        if digestErr != none {
+            return (none, digestErr);
+        }
+
+        digestBytes := digest.bytes();
+        loop usize index = 0; index < digestBytes.len(); index++ {
+            normalizedKey[index] = digestBytes[index];
+        }
+    } else {
+        loop usize index = 0; index < key.len(); index++ {
+            normalizedKey[index] = key[index];
+        }
+    }
+
+    [64]u8 innerPad, outerPad;
+    loop usize index = 0; index < 64; index++ {
+        innerPad[index] = normalizedKey[index] ^ 0x36;
+        outerPad[index] = normalizedKey[index] ^ 0x5c;
+    }
+
+    inner := sha2::Sha256::init();
+    innerErr := inner.update(innerPad[:]);
+    if innerErr != none {
+        return (none, innerErr);
+    }
+
+    return (build HmacSha256 {
+        self.inner = inner;
+        self.outerPad = outerPad;
+        self.initialized = true;
+    }, none);
+}
+
+error HmacSha256::update(&self, []const u8 input) {
+    if !self->initialized {
+        return HmacError.NotInitialized;
+    }
+
+    updateErr := self->inner.update(input);
+    if updateErr != none {
+        return updateErr;
+    }
+
+    return none;
+}
+
+(HmacSha256Tag, error) HmacSha256::finalize(&self) {
+    if !self->initialized {
+        return (none, HmacError.NotInitialized);
+    }
+
+    innerDigest, innerErr := self->inner.finalize();
+    if innerErr != none {
+        return (none, innerErr);
+    }
+
+    outer := sha2::Sha256::init();
+    outerPadErr := outer.update(self->outerPad[:]);
+    if outerPadErr != none {
+        return (none, outerPadErr);
+    }
+
+    digestErr := outer.update(innerDigest.bytes());
+    if digestErr != none {
+        return (none, digestErr);
+    }
+
+    outerDigest, finalizeErr := outer.finalize();
+    if finalizeErr != none {
+        return (none, finalizeErr);
+    }
+
+    [32]u8 tagBytes;
+    digestBytes := outerDigest.bytes();
+
+    loop usize index = 0; index < tagBytes.len(); index++ {
+        tagBytes[index] = digestBytes[index];
+    }
+
+    return (HmacSha256Tag::init(tagBytes), none);
+}
+
+HmacSha256Tag HmacSha256Tag::init([32]u8 value) override {
+    return build HmacSha256Tag {
+        self.value = value;
+    };
+}
+
+[]const u8 HmacSha256Tag::bytes(&const self) <-self {
+    return self->value[:];
+}

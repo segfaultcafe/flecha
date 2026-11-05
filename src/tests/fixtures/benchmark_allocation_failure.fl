@@ -1,0 +1,115 @@
+module benchmark_allocation_failure;
+
+@imports :: lib::std::tests::benchmark;
+
+quiver extern unsafe void benchmark_fail_next_array_allocation();
+quiver extern unsafe void benchmark_fail_next_realloc();
+
+export i32 sample_storage_allocation_failure_test() {
+    config, configError := benchmark::Config::create(0, 1, 2);
+    if configError != none {
+        return 1;
+    }
+    usize operations = 0;
+    benchmark::Operation operation = [&operations]() => (error) {
+        operations++;
+        return none;
+    };
+
+    unsafe { benchmark_fail_next_array_allocation(); }
+    result, runError := benchmark::run(
+        "allocation.run",
+        config,
+        operation
+    );
+    if runError != AllocationError.OutOfMemory {
+        return 2;
+    }
+    if result.sampleCount() != 0 or result.name().len() != 0 {
+        return 3;
+    }
+    if operations != 0 {
+        return 4;
+    }
+    return 42;
+}
+
+export i32 supplied_sample_allocation_failure_test() {
+    config, configError := benchmark::Config::create(0, 1, 2);
+    if configError != none {
+        return 1;
+    }
+    [2]u64 samples = [10, 20];
+
+    unsafe { benchmark_fail_next_array_allocation(); }
+    result, summaryError := benchmark::summarize(
+        "allocation.summarize",
+        config,
+        samples[:]
+    );
+    if summaryError != AllocationError.OutOfMemory {
+        return 2;
+    }
+    if result.sampleCount() != 0 or result.name().len() != 0 {
+        return 3;
+    }
+    return 42;
+}
+
+export i32 machine_output_allocation_failure_test() {
+    config, configError := benchmark::Config::create(0, 1, 2);
+    if configError != none {
+        return 1;
+    }
+    [2]u64 samples = [10, 20];
+    result, summaryError := benchmark::summarize(
+        "allocation.output",
+        config,
+        samples[:]
+    );
+    if summaryError != none {
+        return 2;
+    }
+
+    unsafe { benchmark_fail_next_realloc(); }
+    output, outputError := result.machineLine();
+    if outputError != AllocationError.OutOfMemory {
+        return 3;
+    }
+    if output.len() != 0 {
+        return 4;
+    }
+    return 42;
+}
+
+export i32 deterministic_clock_overhead_test() {
+    config, configError := benchmark::Config::create(2, 3, 2);
+    if configError != none {
+        return 1;
+    }
+    result, runError := benchmark::run(
+        "overhead.clock",
+        config,
+        () => (error) { return none; }
+    );
+    if runError != none {
+        return 2;
+    }
+
+    minimumDuration := result.minimumDuration();
+    medianDuration := result.medianDuration();
+    meanDuration := result.meanDuration();
+    maximumDuration := result.maximumDuration();
+    minimum, minimumError := minimumDuration.totalNanoseconds();
+    median, medianError := medianDuration.totalNanoseconds();
+    mean, meanError := meanDuration.totalNanoseconds();
+    maximum, maximumError := maximumDuration.totalNanoseconds();
+    if minimumError != none or medianError != none or meanError != none or
+        maximumError != none {
+        return 3;
+    }
+    if minimum != 30 or median != 45 or mean != 45 or maximum != 60 {
+        return 4;
+    }
+    return 42;
+}

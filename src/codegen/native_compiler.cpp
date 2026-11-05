@@ -152,6 +152,60 @@ std::string ReadLinkerOutput(const llvm::SmallString<256>& path) {
     return output;
 }
 
+int ExecuteTool(const std::string& executable,
+                const std::vector<std::string>& ownedArguments,
+                std::string& executionError, bool& executionFailed,
+                std::string& standardError) {
+    std::vector<llvm::StringRef> arguments;
+    arguments.reserve(ownedArguments.size());
+    for (const auto& argument : ownedArguments)
+        arguments.emplace_back(argument);
+
+    llvm::SmallString<256> errorPath;
+    const std::error_code captureError =
+        llvm::sys::fs::createTemporaryFile("flecha-tool", "stderr", errorPath);
+    std::optional<llvm::StringRef> redirects[3];
+    llvm::ArrayRef<std::optional<llvm::StringRef>> redirectRefs;
+    if (!captureError) {
+        redirects[2] = errorPath.str();
+        redirectRefs = redirects;
+    }
+    const int result = llvm::sys::ExecuteAndWait(
+        executable, arguments, std::nullopt, redirectRefs, 0, 0,
+        &executionError, &executionFailed);
+    standardError = ReadLinkerOutput(errorPath);
+    if (!errorPath.empty()) std::filesystem::remove(errorPath.c_str());
+    return result;
+}
+
+std::string EscapeLineFile(std::string file) {
+    if (file.empty()) return "<flecha foreign c>";
+    std::string escaped;
+    escaped.reserve(file.size());
+    for (const char character : file) {
+        if (character == '\\' || character == '"') escaped += '\\';
+        escaped += character;
+    }
+    return escaped;
+}
+
+void RemoveFiles(const std::vector<std::string>& paths) {
+    for (const auto& path : paths) {
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+}
+
+class ScopedFileCleanup final {
+   public:
+    explicit ScopedFileCleanup(const std::vector<std::string>& paths)
+        : _paths(paths) {}
+    ~ScopedFileCleanup() { RemoveFiles(_paths); }
+
+   private:
+    const std::vector<std::string>& _paths;
+};
+
 }  // namespace
 
 namespace flecha::codegen {
@@ -208,9 +262,9 @@ bool NativeCompiler::Fail(diagnostics::DiagnosticCode code,
     return false;
 }
 
-bool NativeCompiler::EmitObject(const lowering::BoundProgram& program,
-                                const std::string& moduleName,
-                                const std::string& objectPath) {
+bool NativeCompiler::EmitFlechaObject(const lowering::BoundProgram& program,
+                                      const std::string& moduleName,
+                                      const std::string& objectPath) {
     _error.clear();
     _diagnostic.reset();
     if (_targetMachine == nullptr) {
@@ -236,7 +290,18 @@ bool NativeCompiler::EmitObject(const lowering::BoundProgram& program,
     llvm::FunctionAnalysisManager functionAnalyses;
     llvm::CGSCCAnalysisManager cgsccAnalyses;
     llvm::ModuleAnalysisManager moduleAnalyses;
-    llvm::PassBuilder passBuilder(_targetMachine.get());
+    // Flecha's lowered cleanup edges can make LLVM's generic unroll cost model
+    // duplicate loop-carried state in tight scalar kernels. Keep vectorization
+    // and interleaving enabled, but leave source loops rolled until lowering
+    // exposes a canonical shape that the unroller can cost accurately.
+    llvm::PipelineTuningOptions tuning;
+    tuning.LoopUnrolling = false;
+    // The default O2 threshold aggressively clones Flecha's uncommon
+    // allocation/error paths into collection callers. A smaller threshold
+    // keeps those paths out of reserved push loops while still inlining their
+    // compact success paths, and also reduces native text size.
+    tuning.InlinerThreshold = 100;
+    llvm::PassBuilder passBuilder(_targetMachine.get(), tuning);
     passBuilder.registerModuleAnalyses(moduleAnalyses);
     passBuilder.registerCGSCCAnalyses(cgsccAnalyses);
     passBuilder.registerFunctionAnalyses(functionAnalyses);
@@ -275,6 +340,159 @@ bool NativeCompiler::EmitObject(const lowering::BoundProgram& program,
     return true;
 }
 
+bool NativeCompiler::CompileForeignSources(
+    const lowering::BoundProgram& program, const std::string& compilerPath,
+    std::vector<std::string>& objectPaths,
+    std::vector<std::string>& temporaryPaths) {
+    for (std::size_t index = 0; index < program.ForeignSources().size();
+         ++index) {
+        const auto& foreign = program.ForeignSources()[index];
+        const bool isC = foreign.language == lowering::BoundForeignLanguage::C;
+        llvm::SmallString<256> sourcePath;
+        std::error_code error = llvm::sys::fs::createTemporaryFile(
+            "flecha-foreign", isC ? "c" : "s", sourcePath);
+        if (error) {
+            return Fail(diagnostics::DiagnosticCode::ForeignCompilationFailed,
+                        "unable to create temporary foreign source: " +
+                            error.message());
+        }
+        temporaryPaths.push_back(sourcePath.str().str());
+
+        std::string sourceText;
+        if (isC) {
+            sourceText = "#line " + std::to_string(foreign.bodyLine) + " \"" +
+                         EscapeLineFile(foreign.range.start.file) + "\"\n";
+        }
+        sourceText += foreign.source;
+        if (sourceText.empty() || sourceText.back() != '\n') sourceText += '\n';
+        {
+            std::error_code writeError;
+            llvm::raw_fd_ostream sourceOutput(sourcePath, writeError,
+                                              llvm::sys::fs::OF_None);
+            if (writeError) {
+                return Fail(
+                    diagnostics::DiagnosticCode::ForeignCompilationFailed,
+                    "unable to write temporary foreign source: " +
+                        writeError.message());
+            }
+            sourceOutput << sourceText;
+            sourceOutput.flush();
+            if (sourceOutput.has_error()) {
+                return Fail(
+                    diagnostics::DiagnosticCode::ForeignCompilationFailed,
+                    "failed while writing temporary foreign source");
+            }
+        }
+
+        llvm::SmallString<256> objectPath;
+        error = llvm::sys::fs::createTemporaryFile(
+            "flecha-foreign", FLECHA_OBJECT_SUFFIX, objectPath);
+        if (error) {
+            return Fail(diagnostics::DiagnosticCode::ForeignCompilationFailed,
+                        "unable to create temporary foreign object: " +
+                            error.message());
+        }
+        temporaryPaths.push_back(objectPath.str().str());
+        objectPaths.push_back(objectPath.str().str());
+
+        std::vector<std::string> arguments{compilerPath};
+#ifndef _WIN32
+        arguments.emplace_back("-fPIC");
+#endif
+#ifdef FLECHA_SANITIZED_RUNTIME
+        arguments.emplace_back("-fsanitize=address,undefined");
+        arguments.emplace_back("-fno-omit-frame-pointer");
+#endif
+        arguments.insert(arguments.end(), {"-x", isC ? "c" : "assembler", "-c",
+                                           sourcePath.str().str(), "-o",
+                                           objectPath.str().str()});
+        std::string executionError;
+        std::string compilerOutput;
+        bool executionFailed = false;
+        const int result = ExecuteTool(compilerPath, arguments, executionError,
+                                       executionFailed, compilerOutput);
+        if (executionFailed || result != 0) {
+            std::string message =
+                std::string(isC ? "C" : "assembly") + " foreign block " +
+                std::to_string(index + 1) + " failed to compile with '" +
+                compilerPath + "' (exit code " + std::to_string(result) + ")";
+            if (!executionError.empty()) message += ": " + executionError;
+            if (!compilerOutput.empty())
+                message += "\ncompiler output:\n" + compilerOutput;
+            return Fail(diagnostics::DiagnosticCode::ForeignCompilationFailed,
+                        std::move(message));
+        }
+    }
+    return true;
+}
+
+bool NativeCompiler::MergeObjects(const std::string& compilerPath,
+                                  const std::vector<std::string>& objectPaths,
+                                  const std::string& outputPath) {
+    // A relocatable merge must contain only the supplied objects. In
+    // particular, MinGW compiler drivers otherwise inject CRT startup objects
+    // even with -r, causing duplicate entry points during the final link.
+    std::vector<std::string> arguments{compilerPath, "-nostdlib", "-r"};
+    arguments.insert(arguments.end(), objectPaths.begin(), objectPaths.end());
+    arguments.emplace_back("-o");
+    arguments.push_back(outputPath);
+    std::string executionError;
+    std::string linkerOutput;
+    bool executionFailed = false;
+    const int result = ExecuteTool(compilerPath, arguments, executionError,
+                                   executionFailed, linkerOutput);
+    if (executionFailed || result != 0) {
+        std::string message =
+            "unable to merge Flecha and foreign objects with '" + compilerPath +
+            "' (exit code " + std::to_string(result) + ")";
+        if (!executionError.empty()) message += ": " + executionError;
+        if (!linkerOutput.empty())
+            message += "\nlinker output:\n" + linkerOutput;
+        return Fail(diagnostics::DiagnosticCode::ObjectEmissionFailed,
+                    std::move(message));
+    }
+    return true;
+}
+
+bool NativeCompiler::EmitObject(const lowering::BoundProgram& program,
+                                const std::string& moduleName,
+                                const std::string& objectPath) {
+    if (program.ForeignSources().empty())
+        return EmitFlechaObject(program, moduleName, objectPath);
+
+    _error.clear();
+    _diagnostic.reset();
+    const LinkerSearchResult compiler = FindLinkerDriver();
+    if (!compiler.path.has_value()) {
+        return Fail(
+            diagnostics::DiagnosticCode::ForeignCompilationFailed,
+            "unable to find a native compiler for foreign source blocks; "
+            "tried: " +
+                AttemptedLinkers(compiler.attempted) + ". " +
+                PlatformToolchainHint());
+    }
+
+    std::vector<std::string> temporaryPaths;
+    ScopedFileCleanup cleanup(temporaryPaths);
+    llvm::SmallString<256> flechaObject;
+    const std::error_code temporaryError = llvm::sys::fs::createTemporaryFile(
+        "flecha-generated", FLECHA_OBJECT_SUFFIX, flechaObject);
+    if (temporaryError) {
+        return Fail(diagnostics::DiagnosticCode::ObjectEmissionFailed,
+                    "unable to create temporary Flecha object: " +
+                        temporaryError.message());
+    }
+    temporaryPaths.push_back(flechaObject.str().str());
+    if (!EmitFlechaObject(program, moduleName, flechaObject.str().str()))
+        return false;
+
+    std::vector<std::string> objectPaths{flechaObject.str().str()};
+    if (!CompileForeignSources(program, *compiler.path, objectPaths,
+                               temporaryPaths))
+        return false;
+    return MergeObjects(*compiler.path, objectPaths, objectPath);
+}
+
 bool NativeCompiler::LinkExecutable(
     const std::string& objectPath, const std::string& outputPath,
     const std::vector<std::string>& linkInputs) {
@@ -300,6 +518,18 @@ bool NativeCompiler::LinkExecutable(
     ownedArguments.insert(ownedArguments.end(), linkInputs.begin(),
                           linkInputs.end());
     ownedArguments.push_back(_runtimeLibraryPath);
+#if defined(__linux__)
+    // Crash reports use the executable's dynamic symbol table to name Flecha
+    // frames in their native stack trace.
+    ownedArguments.emplace_back("-rdynamic");
+#endif
+#ifdef _WIN32
+    // The static runtime uses BCryptGenRandom for secure randomness and
+    // temporary-file names. Consumers must link the Windows import library
+    // after the runtime archive so its unresolved symbols are satisfied.
+    ownedArguments.emplace_back("-lbcrypt");
+    ownedArguments.emplace_back("-lws2_32");
+#endif
 #ifdef FLECHA_SANITIZED_RUNTIME
     ownedArguments.emplace_back("-fsanitize=address,undefined");
 #endif
@@ -352,10 +582,39 @@ bool NativeCompiler::BuildExecutable(
                     "unable to create temporary object for '" + outputPath +
                         "': " + temporaryError.message());
     }
-    llvm::FileRemover removeObject(objectPath);
     const std::string objectPathText = objectPath.str().str();
-    if (!EmitObject(program, moduleName, objectPathText)) return false;
-    return LinkExecutable(objectPathText, outputPath, linkInputs);
+    std::vector<std::string> temporaryPaths{objectPathText};
+    ScopedFileCleanup cleanup(temporaryPaths);
+    if (program.ForeignSources().empty()) {
+        if (!EmitFlechaObject(program, moduleName, objectPathText)) return false;
+        return LinkExecutable(objectPathText, outputPath, linkInputs);
+    }
+
+    const LinkerSearchResult compiler = FindLinkerDriver();
+    if (!compiler.path.has_value()) {
+        return Fail(
+            diagnostics::DiagnosticCode::ForeignCompilationFailed,
+            "unable to find a native compiler for foreign source blocks; "
+            "tried: " +
+                AttemptedLinkers(compiler.attempted) + ". " +
+                PlatformToolchainHint());
+    }
+
+    if (!EmitFlechaObject(program, moduleName, objectPathText)) return false;
+
+    std::vector<std::string> objectPaths{objectPathText};
+    if (!CompileForeignSources(program, *compiler.path, objectPaths,
+                               temporaryPaths))
+        return false;
+
+    // Executables can consume each object directly. Avoiding an intermediate
+    // relocatable merge is also required on MinGW, where ld -r output can
+    // produce a final PE image that Windows refuses to load.
+    std::vector<std::string> combinedLinkInputs(objectPaths.begin() + 1,
+                                                objectPaths.end());
+    combinedLinkInputs.insert(combinedLinkInputs.end(), linkInputs.begin(),
+                              linkInputs.end());
+    return LinkExecutable(objectPathText, outputPath, combinedLinkInputs);
 }
 
 }  // namespace flecha::codegen

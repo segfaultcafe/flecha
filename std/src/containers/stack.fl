@@ -1,0 +1,48 @@
+module collections;
+
+@imports
+    :: root::containers::errors;
+
+export structure Stack<T> {
+    private Array<T> inner;
+};
+
+error Stack<T>::push(&self, T value) {
+    return self->inner.push(value);
+}
+
+(T, error) Stack<T>::pop(&self) {
+    if self->empty() {
+        return (none, errors::StackError.Empty);
+    }
+
+    return self->inner.pop();
+}
+
+(T, error) Stack<T>::top(&const self) {
+    if self->empty() {
+        return (none, errors::StackError.Empty);
+    }
+
+    return self->inner.last();
+}
+
+void Stack<T>::clear(&self) {
+    self->inner.clear();
+}
+
+usize Stack<T>::len(&const self) {
+    return self->inner.len();
+}
+
+usize Stack<T>::capacity(&const self) {
+    return self->inner.capacity();
+}
+
+bool Stack<T>::empty(&const self) {
+    return self->inner.empty();
+}
+
+error Stack<T>::reserve(&self, usize capacity) {
+    return self->inner.reserve(capacity);
+}

@@ -1,6 +1,7 @@
 #ifndef FLECHA_LOWERING_BOUND_IR_HPP
 #define FLECHA_LOWERING_BOUND_IR_HPP
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -46,6 +47,9 @@ enum class BoundNodeKind {
     UnaryExpression,
     IncrementExpression,
     BinaryExpression,
+    IntegerLimitExpression,
+    FloatingConstantExpression,
+    OverflowingArithmeticExpression,
     AssignmentExpression,
     CallExpression,
     IndirectCallExpression,
@@ -491,31 +495,110 @@ class BoundBinaryExpression final : public BoundExpression {
     std::unique_ptr<BoundExpression> _right;
 };
 
+enum class OverflowingArithmeticOperation {
+    Add,
+    Subtract,
+    Multiply,
+};
+
+class BoundOverflowingArithmeticExpression final : public BoundExpression {
+   public:
+    BoundOverflowingArithmeticExpression(
+        source::SourceRange range, semantic::SemanticType type,
+        OverflowingArithmeticOperation operation,
+        std::unique_ptr<BoundExpression> left,
+        std::unique_ptr<BoundExpression> right)
+        : BoundExpression(range, type),
+          _operation(operation),
+          _left(std::move(left)),
+          _right(std::move(right)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::OverflowingArithmeticExpression;
+    }
+    [[nodiscard]] OverflowingArithmeticOperation Operation() const {
+        return _operation;
+    }
+    [[nodiscard]] const BoundExpression& Left() const { return *_left; }
+    [[nodiscard]] const BoundExpression& Right() const { return *_right; }
+
+   private:
+    OverflowingArithmeticOperation _operation;
+    std::unique_ptr<BoundExpression> _left;
+    std::unique_ptr<BoundExpression> _right;
+};
+
+class BoundIntegerLimitExpression final : public BoundExpression {
+   public:
+    BoundIntegerLimitExpression(source::SourceRange range,
+                                semantic::SemanticType type, bool maximum)
+        : BoundExpression(range, type), _maximum(maximum) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::IntegerLimitExpression;
+    }
+    [[nodiscard]] bool IsMaximum() const { return _maximum; }
+
+   private:
+    bool _maximum;
+};
+
+enum class FloatingConstant {
+    NaN,
+    Infinity,
+    NegativeInfinity,
+    Minimum,
+    Maximum,
+    MinimumPositive,
+    Epsilon,
+};
+
+class BoundFloatingConstantExpression final : public BoundExpression {
+   public:
+    BoundFloatingConstantExpression(source::SourceRange range,
+                                    semantic::SemanticType type,
+                                    FloatingConstant constant)
+        : BoundExpression(range, type), _constant(constant) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::FloatingConstantExpression;
+    }
+    [[nodiscard]] FloatingConstant Constant() const { return _constant; }
+
+   private:
+    FloatingConstant _constant;
+};
+
 class BoundIncrementExpression final : public BoundExpression {
    public:
     BoundIncrementExpression(source::SourceRange range,
-                             std::unique_ptr<BoundPlaceExpression> target)
+                             std::unique_ptr<BoundPlaceExpression> target,
+                             TokenType operatorType)
         : BoundExpression(range, target->Type().WithoutConst()),
-          _target(std::move(target)) {}
+          _target(std::move(target)),
+          _operatorType(operatorType) {}
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::IncrementExpression;
     }
     [[nodiscard]] const BoundPlaceExpression& Target() const {
         return *_target;
     }
+    [[nodiscard]] TokenType OperatorType() const { return _operatorType; }
 
    private:
     std::unique_ptr<BoundPlaceExpression> _target;
+    TokenType _operatorType;
 };
 
 class BoundAssignmentExpression final : public BoundExpression {
    public:
     BoundAssignmentExpression(source::SourceRange range,
                               std::unique_ptr<BoundPlaceExpression> target,
-                              std::unique_ptr<BoundExpression> value)
+                              std::unique_ptr<BoundExpression> value,
+                              TokenType operatorType = TokenType::Assign,
+                              bool initializes = false)
         : BoundExpression(range, target->Type()),
           _target(std::move(target)),
-          _value(std::move(value)) {}
+          _value(std::move(value)),
+          _operatorType(operatorType),
+          _initializes(initializes) {}
     [[nodiscard]] BoundNodeKind Kind() const override {
         return BoundNodeKind::AssignmentExpression;
     }
@@ -523,10 +606,14 @@ class BoundAssignmentExpression final : public BoundExpression {
         return *_target;
     }
     [[nodiscard]] const BoundExpression& Value() const { return *_value; }
+    [[nodiscard]] TokenType OperatorType() const { return _operatorType; }
+    [[nodiscard]] bool Initializes() const { return _initializes; }
 
    private:
     std::unique_ptr<BoundPlaceExpression> _target;
     std::unique_ptr<BoundExpression> _value;
+    TokenType _operatorType;
+    bool _initializes;
 };
 
 class BoundAllocationExpression final : public BoundExpression {
@@ -536,16 +623,21 @@ class BoundAllocationExpression final : public BoundExpression {
                               semantic::SemanticType element,
                               semantic::SemanticType failure,
                               std::unique_ptr<BoundExpression> initializer,
-                              bool dynamic = false)
+                              bool dynamic = false, bool uninitialized = false,
+                              bool crashesOnFailure = false)
         : BoundExpression(range, result),
           _element(element),
           _failure(failure),
           _initializer(std::move(initializer)),
-          _dynamic(dynamic) {}
+          _dynamic(dynamic),
+          _uninitialized(uninitialized),
+          _crashesOnFailure(crashesOnFailure) {}
     BoundNodeKind Kind() const override {
         return BoundNodeKind::AllocationExpression;
     }
     bool IsDynamic() const { return _dynamic; }
+    bool IsUninitialized() const { return _uninitialized; }
+    bool CrashesOnFailure() const { return _crashesOnFailure; }
     semantic::SemanticType ElementType() const { return _element; }
     semantic::SemanticType FailureType() const { return _failure; }
     const BoundExpression& Initializer() const { return *_initializer; }
@@ -555,6 +647,8 @@ class BoundAllocationExpression final : public BoundExpression {
     semantic::SemanticType _failure;
     std::unique_ptr<BoundExpression> _initializer;
     bool _dynamic;
+    bool _uninitialized;
+    bool _crashesOnFailure;
 };
 
 class BoundCallExpression final : public BoundExpression {
@@ -869,10 +963,21 @@ class BoundFunction final {
     std::unique_ptr<BoundBlockStatement> _body;
 };
 
+enum class BoundForeignLanguage { C, Assembly };
+
+struct BoundForeignSource final {
+    BoundForeignLanguage language;
+    std::string source;
+    source::SourceRange range;
+    std::uint32_t bodyLine = 1;
+};
+
 class BoundProgram final {
    public:
-    explicit BoundProgram(std::vector<std::unique_ptr<BoundFunction>> functions)
-        : _functions(std::move(functions)) {}
+    explicit BoundProgram(std::vector<std::unique_ptr<BoundFunction>> functions,
+                          std::vector<BoundForeignSource> foreignSources = {})
+        : _functions(std::move(functions)),
+          _foreignSources(std::move(foreignSources)) {}
     BoundProgram(const BoundProgram&) = delete;
     BoundProgram& operator=(const BoundProgram&) = delete;
     BoundProgram(BoundProgram&&) = default;
@@ -881,9 +986,14 @@ class BoundProgram final {
         const {
         return _functions;
     }
+    [[nodiscard]] const std::vector<BoundForeignSource>& ForeignSources()
+        const {
+        return _foreignSources;
+    }
 
    private:
     std::vector<std::unique_ptr<BoundFunction>> _functions;
+    std::vector<BoundForeignSource> _foreignSources;
 };
 
 }  // namespace flecha::lowering

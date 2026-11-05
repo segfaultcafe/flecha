@@ -1,0 +1,236 @@
+module codec_test;
+
+@imports
+    :: root::codec
+    :: root::model
+    :: lib::std::bytes::buffer
+    :: lib::std::bytes::sequence
+    :: lib::std::encoding::hex
+    :: lib::std::tests::asserts
+    :: lib::std::tests::testing
+    :: lib::std::text::strings;
+
+const stringv ALPHA_DIGEST =
+    "aba5ed27f8ee302525deccc60adfb950fd3d71699082bb3b5c0bcad6a36ec139";
+const stringv BETA_DIGEST =
+    "d4298ba679357d6f92c5ea1da21f8895a3e6d514b35e51b3e68081744d9f6b4a";
+const stringv ALPHA_RECORD =
+    "000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000000616c706861aba5ed27f8ee302525deccc60adfb950fd3d71699082bb3b5c0bcad6a36ec139";
+
+test canonical_block_matches_published_golden_vector(&testing::UnitTest t) {
+    [32]u8 genesis = none;
+    record, digest, encodeError := codec::encode_block(
+        0,
+        genesis[:],
+        "alpha"
+    );
+    asserts::is_true(t, encodeError == none, "golden block encodes");
+    if encodeError != none {
+        return;
+    }
+
+    recordHex, recordHexError := hex::encode_bytes(record.bytes());
+    digestHex, digestHexError := hex::encode_bytes(digest[:]);
+    asserts::is_true(
+        t,
+        recordHexError == none and recordHex.view() == ALPHA_RECORD,
+        "canonical record bytes match the golden vector"
+    );
+    asserts::is_true(
+        t,
+        digestHexError == none and digestHex.view() == ALPHA_DIGEST,
+        "domain-separated block hash matches the golden vector"
+    );
+}
+
+test chain_round_trips_and_links_every_block(&testing::UnitTest t) {
+    chain, chainError := make_chain("alpha", "beta");
+    asserts::is_true(t, chainError == none, "chain construction succeeds");
+    if chainError != none {
+        return;
+    }
+
+    blocks, parseError := codec::parse(chain.view());
+    asserts::is_true(t, parseError == none, "canonical chain parses");
+    asserts::is_true(t, blocks.len() == 2, "both blocks reload");
+    if parseError != none or blocks.len() != 2 {
+        return;
+    }
+
+    values := blocks.view();
+    firstDigest, firstHexError := hex::encode_bytes(values[0].hash());
+    secondDigest, secondHexError := hex::encode_bytes(values[1].hash());
+    asserts::is_true(
+        t,
+        values[0].index() == 0 and values[0].payload() == "alpha",
+        "the genesis block preserves its fields"
+    );
+    asserts::is_true(
+        t,
+        values[1].index() == 1 and values[1].payload() == "beta",
+        "the second block preserves its fields"
+    );
+    asserts::is_true(
+        t,
+        firstHexError == none and firstDigest.view() == ALPHA_DIGEST,
+        "genesis digest is stable"
+    );
+    asserts::is_true(
+        t,
+        secondHexError == none and secondDigest.view() == BETA_DIGEST,
+        "head digest is stable"
+    );
+    asserts::is_true(
+        t,
+        sequence::equal(values[1].previousHash(), values[0].hash()),
+        "the second block links to the genesis digest"
+    );
+}
+
+test identical_chains_produce_identical_bytes(&testing::UnitTest t) {
+    first, firstError := make_chain("alpha", "beta");
+    second, secondError := make_chain("alpha", "beta");
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none and
+            first.view() == second.view(),
+        "the canonical chain is reproducible"
+    );
+}
+
+test malformed_and_truncated_storage_is_rejected(&testing::UnitTest t) {
+    malformed, malformedError := codec::parse("not-a-ledger");
+    asserts::is_true(
+        t,
+        malformedError == model::LedgerError.InvalidFormat and
+            malformed.empty(),
+        "a malformed header is rejected"
+    );
+
+    chain, chainError := make_chain("alpha", "beta");
+    if chainError != none {
+        t->fail();
+        return;
+    }
+    truncated, truncatedError := codec::parse(
+        chain.view().substr(0, chain.len() - 1)
+    );
+    asserts::is_true(
+        t,
+        truncatedError == model::LedgerError.InvalidFormat and
+            truncated.len() == 1,
+        "a truncated final digest is rejected after the valid prefix"
+    );
+}
+
+test tampered_payload_and_digest_are_rejected(&testing::UnitTest t) {
+    chain, chainError := make_chain("alpha", "beta");
+    if chainError != none {
+        t->fail();
+        return;
+    }
+
+    tamperedPayload, payloadError := changed_byte(chain.view(), 64, 'A');
+    if payloadError != none {
+        t->fail();
+        return;
+    }
+    _, tamperError := codec::parse(tamperedPayload.view());
+    asserts::is_true(
+        t,
+        tamperError == model::LedgerError.IntegrityFailure,
+        "payload tampering is detected"
+    );
+
+    tamperedDigest, digestError := changed_byte(chain.view(), 84, 0);
+    if digestError != none {
+        t->fail();
+        return;
+    }
+    _, storedDigestError := codec::parse(tamperedDigest.view());
+    asserts::is_true(
+        t,
+        storedDigestError == model::LedgerError.IntegrityFailure,
+        "stored digest tampering is detected"
+    );
+}
+
+test reordered_blocks_are_rejected(&testing::UnitTest t) {
+    chain, chainError := make_chain("alpha", "bravo");
+    if chainError != none {
+        t->fail();
+        return;
+    }
+
+    source := chain.view().cast<[]const u8>;
+    reordered, allocationError := buffer::Buffer::withCapacity(source.len());
+    if allocationError != none or
+        reordered.write(codec::FILE_HEADER.cast<[]const u8>) != none or
+        reordered.write(source[101:186]) != none or
+        reordered.write(source[16:101]) != none {
+        t->fail();
+        return;
+    }
+    reorderedText, textError := strings::string_from_bytes(reordered.bytes());
+    if textError != none {
+        t->fail();
+        return;
+    }
+
+    _, parseError := codec::parse(reorderedText.view());
+    asserts::is_true(
+        t,
+        parseError == model::LedgerError.IntegrityFailure,
+        "record reordering breaks the index and hash chain"
+    );
+}
+
+(string, error) make_chain(stringv firstPayload, stringv secondPayload) {
+    output, allocationError := buffer::Buffer::withCapacity(256);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+    error writeError = output.write(codec::FILE_HEADER.cast<[]const u8>);
+    if writeError != none {
+        return (none, writeError);
+    }
+
+    [32]u8 genesis = none;
+    first, firstDigest, firstError := codec::encode_block(
+        0,
+        genesis[:],
+        firstPayload
+    );
+    if firstError != none {
+        return (none, firstError);
+    }
+    second, _, secondError := codec::encode_block(
+        1,
+        firstDigest[:],
+        secondPayload
+    );
+    if secondError != none {
+        return (none, secondError);
+    }
+    writeError = output.write(first.bytes());
+    if writeError == none {
+        writeError = output.write(second.bytes());
+    }
+    if writeError != none {
+        return (none, writeError);
+    }
+    return strings::string_from_bytes(output.bytes());
+}
+
+(string, error) changed_byte(stringv source, usize offset, u8 value) {
+    bytes, allocationError := new<own []u8>(source.len().cast<usize>);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+    loop usize index = 0; index < bytes.len(); index++ {
+        bytes[index] = source[index.cast<u32>];
+    }
+    bytes[offset] = value;
+    return strings::string_from_bytes(bytes[:]);
+}
+

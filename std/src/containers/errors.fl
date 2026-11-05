@@ -1,6 +1,30 @@
 module errors;
 
+// Reports failures from owning and raw array operations.
 export error ArrayError {
     Empty,
     IndexOutOfBounds
+}
+
+export error DequeError {
+    Empty,
+    IndexOutOfBounds
+}
+
+export error StackError {
+    Empty
+}
+
+export error QueueError {
+    Empty
+}
+
+export error HeapError {
+    Empty
+}
+
+// Reports failures from hash-map key lookup and removal.
+export error HashMapError {
+    // No entry has a key equal to the requested key.
+    KeyNotFound
 }

@@ -10,12 +10,17 @@ executable for the host platform.
 ```text
 flecha --version
 flecha check INPUT [--root DIR] [--lib NAME=DIR ...]
+                   [--package-graph GRAPH]
 flecha build INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
+             [--package-graph GRAPH]
              [--link OBJECT-OR-LIBRARY ...]
 flecha test INPUT_TEST [--root DIR] [--lib NAME=DIR ...] [--verbose]
+            [--package-graph GRAPH]
             [--link OBJECT-OR-LIBRARY ...]
 flecha --emit-llvm INPUT [-o OUTPUT] [--root DIR] [--lib NAME=DIR ...]
+                         [--package-graph GRAPH]
 flecha --emit-object INPUT -o OUTPUT [--root DIR] [--lib NAME=DIR ...]
+                                      [--package-graph GRAPH]
 ```
 
 Release builds report the package version, such as `flecha 0.1.1`. Builds from
@@ -39,13 +44,22 @@ their detailed `testing::UnitTest` output beneath the failed test and include
 the test declaration's `file:line:column` location. This location identifies
 the test function, not an inferred defect inside the production function.
 Both modes report the number of passed and failed tests. `--emit-object` stops
-before linking.
+before final executable linking. When the loaded sources contain embedded
+`foreign c` or `foreign asm` blocks, their temporary objects are relocatably
+merged into the emitted object.
 `--emit-llvm` writes textual LLVM IR, or prints it when `-o` is omitted.
 
 `--root` supplies the source root used by `root::` imports. Each `--lib`
 option maps one `lib::` namespace to a source directory. `--link` adds a native
 object or library when building or testing code containing `extern`
 declarations.
+
+Longbow uses `--package-graph` to supply the versioned resolved graph described
+in [the package ecosystem](package_ecosystem.md). Within that graph,
+`lib::<alias>` is resolved through the dependency map of the package containing
+the importing source, while `root` remains that package's own source root. The
+graph option cannot be combined with `--root` or `--lib`. Direct compiler users
+may continue using those legacy options for a flat set of local libraries.
 
 The compiler invokes a host C++ linker driver for executable builds. Release
 packages validate this path on Linux, Windows, and macOS.
@@ -68,7 +82,10 @@ does require a host C++ linker driver and the platform's native SDK components:
 - macOS requires the Xcode command-line tools, including `clang++` and the
   macOS SDK. Install them with `xcode-select --install` when they are absent.
 
-`flecha check` and `flecha --emit-object` do not invoke the system linker.
+`flecha check` does not invoke native tools. `flecha --emit-object` ordinarily
+uses LLVM directly; programs containing embedded foreign blocks additionally
+invoke the configured native driver to compile and relocatably merge those
+blocks.
 Building Flecha itself from source still requires the LLVM development package
 listed in the repository build requirements. The exact supported ranges,
 platform packages, and release baselines are maintained in

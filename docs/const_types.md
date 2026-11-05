@@ -21,10 +21,12 @@ i32 main() {
 }
 ```
 
-- A const local requires an initializer, which may execute at runtime.
+- A const local of trivially zeroable type may omit its initializer; this is
+  shorthand for `= none`. Other const locals require an explicit initializer,
+  which may execute at runtime.
 - Const parameters receive their initial value from the caller.
 - Assignment to either is `FLECHA-S0005`, pointing at the assignment target.
-- Missing const local initialization is `FLECHA-S0023`, pointing at its name.
+- Invalid initializer omission is reported at the local's name.
 - Reads produce values without the outer binding qualifier. Copies and inferred
   declarations remain mutable unless their own declaration says `const`.
 - Top-level const on return and cast types does not make the receiving binding
@@ -37,7 +39,30 @@ i32 main() {
 - `string` retains its owning copy behavior; `stringv` still requires an
   initializer and must not outlive its owner. Const does not extend lifetimes.
 - Only typed const declarations are implemented; `const name := value` is not
-  part of this milestone. Const does not imply compile-time evaluation.
+  part of this milestone.
+
+## Module constants
+
+At module scope, a typed const declaration is a compile-time constant rather
+than a runtime local:
+
+```flecha
+module buffer;
+
+const usize INITIAL_CAPACITY = 8;
+export const usize LARGE_CAPACITY = INITIAL_CAPACITY * 4;
+```
+
+Its initializer may contain literals, other module constants, unary and binary
+operators, casts, `isof`, numeric limits, floating-point constants, enum
+variants, and error values. It cannot call functions, allocate storage, refer
+to runtime values, or participate in a dependency cycle. Module constants
+support numeric, `bool`, `char`, `stringv`, enum, and error-value types.
+
+All files contributing to one logical module share its constants. Unmodified
+constants remain module-private; `quiver` and `export` apply the ordinary
+top-level visibility rules. A use is lowered as the immutable constant
+expression, so this feature introduces no mutable global initialization.
 
 ## Recursive types and aliases
 

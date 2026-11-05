@@ -3,12 +3,39 @@ add_executable(test_flecha
     test_codegen.cpp
     test_diagnostics.cpp
     test_lowering.cpp
+    test_longbow.cpp
     test_modules.cpp
     test_main.cpp
     test_parser.cpp
     test_runtime.cpp
     test_semantic.cpp
     test_tokenizer.cpp
+)
+
+add_executable(process_fixture fixtures/process_fixture.cpp)
+target_link_libraries(process_fixture PRIVATE flecha_project_options)
+target_compile_definitions(test_flecha PRIVATE
+    FLECHA_PROCESS_FIXTURE="$<TARGET_FILE:process_fixture>"
+)
+add_dependencies(test_flecha process_fixture)
+
+add_executable(compiler_stress compiler_stress.cpp)
+target_link_libraries(compiler_stress
+    PRIVATE
+        flecha_project_options
+        core
+        llvm_codegen
+)
+target_compile_definitions(compiler_stress PRIVATE
+    FLECHA_EXECUTABLE_SUFFIX="${CMAKE_EXECUTABLE_SUFFIX}"
+)
+
+add_executable(hardening_campaign hardening_campaign.cpp)
+target_link_libraries(hardening_campaign
+    PRIVATE
+        flecha_project_options
+        core
+        longbow_model
 )
 
 target_link_libraries(test_flecha
@@ -18,6 +45,7 @@ target_link_libraries(test_flecha
         core
         semantic
         lowering
+        longbow_model
         llvm_codegen
         memory
         runtime
@@ -29,6 +57,127 @@ target_link_libraries(test_flecha
 include(GoogleTest)
 gtest_discover_tests(test_flecha DISCOVERY_MODE PRE_TEST)
 
+add_test(
+    NAME CompilerStress.Fast
+    COMMAND compiler_stress
+        $<TARGET_FILE:flecha>
+        ${PROJECT_SOURCE_DIR}/std/src
+        ${CMAKE_CURRENT_BINARY_DIR}/compiler-stress-fast
+        fast
+)
+set_tests_properties(CompilerStress.Fast PROPERTIES
+    LABELS "stress"
+    TIMEOUT 300
+)
+
+add_test(
+    NAME HardeningCampaign.Fast
+    COMMAND hardening_campaign
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/community_packages/package
+        ${CMAKE_CURRENT_BINARY_DIR}/hardening-campaign-fast
+        fast
+)
+set_tests_properties(HardeningCampaign.Fast PROPERTIES
+    LABELS "hardening;property"
+    TIMEOUT 300
+)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(
+        NAME CrashableFunctionTests.NativeCrashReport
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crash_report.fl
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/crash_report_test
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crash_report.cmake
+    )
+
+    add_executable(test_directory_allocation
+        fixtures/directory_allocation_harness.cpp
+    )
+    target_link_libraries(test_directory_allocation
+        PRIVATE
+            flecha_project_options
+            runtime
+    )
+    target_link_options(test_directory_allocation
+        PRIVATE
+            -Wl,--wrap=malloc
+    )
+    add_test(
+        NAME RuntimeFilesystemMutationTests.PreservesPendingEntryOnAllocationFailure
+        COMMAND test_directory_allocation
+    )
+
+    add_executable(test_temporary_file_allocation
+        fixtures/temporary_file_allocation_harness.cpp
+    )
+    target_link_libraries(test_temporary_file_allocation
+        PRIVATE
+            flecha_project_options
+            runtime
+    )
+    target_link_options(test_temporary_file_allocation
+        PRIVATE
+            -Wl,--wrap=malloc
+    )
+    add_test(
+        NAME RuntimeFileStreamTests.CleansUpTemporaryFilesOnAllocationFailure
+        COMMAND test_temporary_file_allocation
+    )
+
+    add_executable(test_temporary_directory_allocation
+        fixtures/temporary_directory_allocation_harness.cpp
+    )
+    target_link_libraries(test_temporary_directory_allocation
+        PRIVATE
+            flecha_project_options
+            runtime
+    )
+    target_link_options(test_temporary_directory_allocation
+        PRIVATE
+            -Wl,--wrap=malloc
+    )
+    add_test(
+        NAME RuntimeFilesystemMutationTests.CleansUpTemporaryDirectoriesOnAllocationFailure
+        COMMAND test_temporary_directory_allocation
+    )
+
+    add_executable(test_environment_allocation
+        fixtures/environment_allocation_harness.cpp
+    )
+    target_link_libraries(test_environment_allocation
+        PRIVATE
+            flecha_project_options
+            runtime
+    )
+    target_link_options(test_environment_allocation
+        PRIVATE
+            -Wl,--wrap=malloc
+    )
+    add_test(
+        NAME RuntimeEnvironmentTests.PreservesStateOnAllocationFailure
+        COMMAND test_environment_allocation
+    )
+
+    add_executable(test_udp_allocation
+        fixtures/udp_allocation_harness.cpp
+    )
+    target_link_libraries(test_udp_allocation
+        PRIVATE
+            flecha_project_options
+            runtime
+    )
+    target_link_options(test_udp_allocation
+        PRIVATE
+            -Wl,--wrap=_Znwm
+    )
+    add_test(
+        NAME RuntimeUdpTests.ClosesNativeSocketOnAllocationFailure
+        COMMAND test_udp_allocation
+    )
+endif()
+
 add_test(NAME CliTests.FlechaVersion COMMAND $<TARGET_FILE:flecha> --version)
 set_tests_properties(CliTests.FlechaVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^flecha ${PROJECT_VERSION}"
@@ -36,6 +185,51 @@ set_tests_properties(CliTests.FlechaVersion PROPERTIES
 add_test(NAME CliTests.LongbowVersion COMMAND $<TARGET_FILE:longbow> --version)
 set_tests_properties(CliTests.LongbowVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^longbow ${PROJECT_VERSION}"
+)
+
+add_test(
+    NAME NativeCompilerTests.EmbeddedForeignSourceFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/foreign_source.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/foreign_source_test${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_foreign_source.cmake
+)
+
+add_test(
+    NAME NativeCompilerTests.ForeignSourceAcrossModuleFiles
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/foreign_module/main.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/foreign_module_test${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_foreign_source.cmake
+)
+
+add_test(
+    NAME CrashableFunctionTests.SprintfSuccess
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crashable/sprintf.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/crashable_sprintf_test
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_sprintf.cmake
+)
+
+add_test(
+    NAME CrashableFunctionTests.StringBuilderAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crashable/string_builder_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crashable/string_builder_allocation_failure_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/crashable_string_builder_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_STRING_FAIL_CALL=1
+        -DFLECHA_ALLOCATION_SYMBOL=malloc
+        "-DFLECHA_EXPECTED_MESSAGE=failed to format string builder contents"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake
 )
 
 add_test(
@@ -84,6 +278,60 @@ add_test(
 )
 
 add_test(
+    NAME LanguageTestTests.GoldenFailureDiagnostics
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/golden_tests/golden_failure_test.fl
+        -DFLECHA_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/golden_tests
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_golden_failure.cmake
+)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(
+        NAME StandardLibraryTests.AssertionAllocationFailure
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assertion_allocation_failure.fl
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assertion_allocation_failure_harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/assertion_allocation_failure_test
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_assertion_allocation_failure.cmake
+    )
+
+    add_test(
+        NAME StandardLibraryTests.TestSupportAllocationFailure
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/test_support_allocation_failure.fl
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/test_support_allocation_failure_harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/test_support_allocation_failure_test
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_test_support_allocation_failure.cmake
+    )
+
+    add_test(
+        NAME StandardLibraryTests.BenchmarkAllocationFailure
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/benchmark_allocation_failure.fl
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/benchmark_allocation_failure_harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/benchmark_allocation_failure_test
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_benchmark_allocation_failure.cmake
+    )
+endif()
+
+add_test(
     NAME LanguageTestTests.LongbowDiscovery
     COMMAND ${CMAKE_COMMAND} -E env
         FLECHA_COMPILER=$<TARGET_FILE:flecha>
@@ -119,6 +367,34 @@ add_test(
 set_tests_properties(StandardLibraryTests.FlechaModules PROPERTIES
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/std
 )
+
+add_test(NAME CompilerDiagnostics.SliceCopyability
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/slice_copy_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_slice_copy_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.CollectionAlgorithms
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/collection_algorithm_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_collection_algorithm_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.TemporaryFileOwnership
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/temporary_file_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_temporary_file_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.TemporaryDirectoryOwnership
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/temporary_directory_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_temporary_directory_diagnostics.cmake)
 
 add_test(NAME EditorTests.VSCodeManifest
     COMMAND ${CMAKE_COMMAND}
@@ -402,6 +678,36 @@ add_test(NAME LongbowTests.Projects
         -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/longbow_projects
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_longbow.cmake)
 
+add_test(NAME LongbowTests.CommunityPackageLifecycle
+    COMMAND ${CMAKE_COMMAND}
+        -DLONGBOW=$<TARGET_FILE:longbow>
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/community_packages
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/community_packages
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_community_packages.cmake)
+
+add_test(NAME LongbowTests.WorkspaceGuardNorthStar
+    COMMAND ${CMAKE_COMMAND}
+        -DLONGBOW=$<TARGET_FILE:longbow>
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFIXTURE=${PROJECT_SOURCE_DIR}/examples/workspace_guard
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/workspace_guard
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_workspace_guard.cmake)
+set_tests_properties(LongbowTests.WorkspaceGuardNorthStar PROPERTIES
+    TIMEOUT 180)
+
+add_test(NAME LongbowTests.LedgerNorthStar
+    COMMAND ${CMAKE_COMMAND}
+        -DLONGBOW=$<TARGET_FILE:longbow>
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFIXTURE=${PROJECT_SOURCE_DIR}/examples/ledger
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/ledger
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_ledger.cmake)
+set_tests_properties(LongbowTests.LedgerNorthStar PROPERTIES TIMEOUT 180)
+
 add_test(NAME NativeExternTests.CAbiAndLinking
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
@@ -417,12 +723,369 @@ add_test(NAME StandardLibraryTests.FilesystemReadFile
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/filesystem_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_filesystem.cmake)
 
+add_test(NAME StandardLibraryTests.FilesystemCopyAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/filesystem/copy_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/filesystem_copy_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_ARRAY_FAIL_CALL=5
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+
+add_test(NAME StandardLibraryTests.Directory
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/directory_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_directory.cmake)
+
 add_test(NAME StandardLibraryTests.FileStream
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/file_stream_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_file_stream.cmake)
+
+add_test(NAME StandardLibraryTests.StandardStream
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/standard_stream.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/standard_stream_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_standard_stream.cmake)
+
+add_test(NAME StandardLibraryTests.ProcessArguments
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/process_arguments/main.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/process_arguments_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_process_arguments.cmake)
+
+add_test(NAME StandardLibraryTests.ProcessArgumentsAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/process_arguments/allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/process_arguments_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_ARRAY_FAIL_CALL=1
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+
+add_test(NAME StandardLibraryTests.ProcessArgumentsCaptureFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/process_arguments/capture_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/process_arguments/capture_failure_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/process_arguments_capture_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_process_argument_capture_failure.cmake)
+
+add_test(NAME StandardLibraryTests.ChildProcess
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/process/main.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_PROCESS_FIXTURE=$<TARGET_FILE:process_fixture>
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/child_process_test${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_process.cmake)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    foreach(failCall IN ITEMS 2 3)
+        add_test(NAME StandardLibraryTests.ChildProcessAllocationFailure.${failCall}
+            COMMAND ${CMAKE_COMMAND}
+                -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+                -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/process/allocation_failure.fl
+                -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+                -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+                -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/child_process_allocation_failure_${failCall}
+                -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+                -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+                -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+                -DFLECHA_ARRAY_FAIL_CALL=${failCall}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+    endforeach()
+endif()
+
+add_test(NAME StandardLibraryTests.EnvironmentAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/environment/allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/environment/allocation_failure_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/environment_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_environment_allocation_failure.cmake)
+
+add_test(NAME StandardLibraryTests.RandomGeneratorRuntimeFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/random/generator_runtime.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/random/generator_runtime_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/random_generator_runtime
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_random_generator.cmake)
+
+add_test(NAME StandardLibraryTests.Sha256Fixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cryptography/sha256.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/sha256_fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_sha256.cmake)
+
+add_test(NAME StandardLibraryTests.Sha512Fixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cryptography/sha512.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/sha512_fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_sha512.cmake)
+
+add_test(NAME StandardLibraryTests.HmacFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cryptography/hmac.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/hmac_fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_hmac.cmake)
+
+add_test(NAME StandardLibraryTests.NetworkAddressRuntimeFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/address_runtime.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_address_runtime
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_network_address.cmake)
+
+add_test(NAME StandardLibraryTests.DnsFailureMapping
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/dns_failure_mapping.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/dns_failure_mapping_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/dns_failure_mapping
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dns_failure_mapping.cmake)
+
+add_test(NAME StandardLibraryTests.TcpRuntimeFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/tcp_runtime.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/tcp_runtime_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tcp_runtime
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_tcp_runtime.cmake)
+
+add_test(NAME StandardLibraryTests.TcpLoopbackFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/tcp_loopback.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/tcp_loopback_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tcp_loopback
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_tcp_loopback.cmake)
+
+add_test(NAME StandardLibraryTests.UdpLoopbackFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/udp_loopback.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/udp_loopback
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_udp_loopback.cmake)
+
+add_test(NAME StandardLibraryTests.UdpRuntimeFixture
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/udp_runtime.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/udp_runtime_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/udp_runtime
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/src/include
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_udp_runtime.cmake)
+
+add_test(NAME StandardLibraryTests.NetworkAddressAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/address_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_address_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_ARRAY_FAIL_CALL=1
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+
+foreach(failCall IN ITEMS 1 2)
+    add_test(NAME StandardLibraryTests.NetworkSocketAddressAllocationFailure.${failCall}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/socket_address_allocation_failure.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/socket_address_allocation_failure_harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_socket_address_allocation_failure_${failCall}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_STRING_FAIL_CALL=${failCall}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_network_socket_address_allocation_failure.cmake)
+endforeach()
+
+add_test(NAME StandardLibraryTests.NetworkAddressCrashableAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/address_crashable_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/socket_address_allocation_failure_harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_address_crashable_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_STRING_FAIL_CALL=1
+        "-DFLECHA_EXPECTED_MESSAGE=failed to format IPv4 address"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake)
+
+add_test(NAME StandardLibraryTests.NetworkIpv6AddressCrashableAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/ipv6_address_crashable_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_ipv6_address_crashable_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_STRING_FAIL_CALL=1
+        -DFLECHA_ALLOCATION_SYMBOL=array
+        "-DFLECHA_EXPECTED_MESSAGE=failed to format IPv6 address"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake)
+
+add_test(NAME StandardLibraryTests.NetworkIpv6SocketAddressCrashableAllocationFailure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/ipv6_socket_address_crashable_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_ipv6_socket_address_crashable_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_STRING_FAIL_CALL=1
+        -DFLECHA_ALLOCATION_SYMBOL=array
+        "-DFLECHA_EXPECTED_MESSAGE=failed to format IPv6 socket address"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake)
+
+foreach(failCall IN ITEMS 1 2)
+    add_test(NAME StandardLibraryTests.NetworkSocketAddressCrashableAllocationFailure.${failCall}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/socket_address_crashable_allocation_failure.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/network/socket_address_allocation_failure_harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/network_socket_address_crashable_allocation_failure_${failCall}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_STRING_FAIL_CALL=${failCall}
+            "-DFLECHA_EXPECTED_MESSAGE=failed to format IPv4 socket address"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake)
+endforeach()
+
+foreach(case IN ITEMS reader_allocation_failure writer_allocation_failure)
+    add_test(NAME StandardLibraryTests.BufferedIo.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/buffered_io/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/buffered_io_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=1
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+add_test(NAME StandardLibraryTests.Path.join_allocation_failure
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/path/join_allocation_failure.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/path_join_allocation_failure
+        -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+        -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+        -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+        -DFLECHA_ARRAY_FAIL_CALL=1
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+
+foreach(fail_call RANGE 1 2)
+    add_test(NAME StandardLibraryTests.Path.normalize_allocation_failure_${fail_call}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/path/normalize_allocation_failure.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/path_normalize_allocation_failure_${fail_call}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+add_test(NAME CompilerDiagnostics.Path
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/path_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_path_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.BufferedIo
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/buffered_io_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_buffered_io_diagnostics.cmake)
 
 add_test(NAME NativeSemanticTests.RuntimeArrays
     COMMAND ${CMAKE_COMMAND}
@@ -533,9 +1196,18 @@ foreach(case IN ITEMS
         swap_remove
         structure_mutations
         algorithms
+        algorithms_move_only
+        move_only_initial_failure
+        move_only_push
+        move_only_lifecycle
+        owning_elements
+        nested_ownership
+        borrow_views
         own_capture)
     set(array_fail_call 0)
-    if(case STREQUAL "main")
+    if(case STREQUAL "move_only_initial_failure")
+        set(array_fail_call 1)
+    elseif(case STREQUAL "main" OR case STREQUAL "move_only_push")
         set(array_fail_call 2)
     endif()
     add_test(NAME StandardLibraryTests.SafeArray.${case}
@@ -551,6 +1223,212 @@ foreach(case IN ITEMS
             -DFLECHA_ARRAY_FAIL_CALL=${array_fail_call}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
 endforeach()
+
+# Deque hardening uses the allocation-auditing collection harness. Failure
+# cases inject at the initial allocation and at the first growth allocation;
+# the remaining cases run under the configured sanitizers without injection.
+foreach(case IN ITEMS
+        move_only_initial_failure
+        move_only_growth_failure
+        move_only_front_growth_failure
+        move_only_lifecycle
+        owning_elements
+        nested_ownership)
+    set(deque_fail_call 0)
+    if(case STREQUAL "move_only_initial_failure")
+        set(deque_fail_call 1)
+    elseif(case STREQUAL "move_only_growth_failure" OR
+           case STREQUAL "move_only_front_growth_failure")
+        set(deque_fail_call 2)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeDeque.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/deque/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_deque_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${deque_fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+foreach(case IN ITEMS
+        move_only_initial_failure
+        move_only_growth_failure
+        move_only_lifecycle
+        nested_ownership)
+    set(stack_fail_call 0)
+    if(case STREQUAL "move_only_initial_failure")
+        set(stack_fail_call 1)
+    elseif(case STREQUAL "move_only_growth_failure")
+        set(stack_fail_call 2)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeStack.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/stack/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_stack_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${stack_fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+function(add_hash_map_case name source fail_call)
+    set(compile_timeout 30)
+    if(name STREQUAL "nested_ownership")
+        set(compile_timeout 90)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeHashMap.${name}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/hash_map/${source}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_hash_map_${name}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${fail_call}
+            -DFLECHA_COMPILE_TIMEOUT=${compile_timeout}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endfunction()
+
+add_hash_map_case(initial_state_failure move_only_initial_failure 1)
+add_hash_map_case(initial_key_failure move_only_initial_failure 2)
+add_hash_map_case(initial_value_failure move_only_initial_failure 3)
+add_hash_map_case(growth_state_failure move_only_growth_failure 4)
+add_hash_map_case(growth_key_failure move_only_growth_failure 5)
+add_hash_map_case(growth_value_failure move_only_growth_failure 6)
+add_hash_map_case(move_only_lifecycle move_only_lifecycle 0)
+add_hash_map_case(nested_ownership nested_ownership 0)
+
+function(add_hash_set_case name source fail_call)
+    set(compile_timeout 30)
+    if(name STREQUAL "nested_ownership")
+        set(compile_timeout 90)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeHashSet.${name}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/hash_set/${source}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_hash_set_${name}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${fail_call}
+            -DFLECHA_COMPILE_TIMEOUT=${compile_timeout}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endfunction()
+
+add_hash_set_case(initial_state_failure move_only_initial_failure 1)
+add_hash_set_case(initial_key_failure move_only_initial_failure 2)
+add_hash_set_case(initial_marker_failure move_only_initial_failure 3)
+add_hash_set_case(growth_state_failure move_only_growth_failure 4)
+add_hash_set_case(growth_key_failure move_only_growth_failure 5)
+add_hash_set_case(growth_marker_failure move_only_growth_failure 6)
+add_hash_set_case(move_only_lifecycle move_only_lifecycle 0)
+add_hash_set_case(nested_ownership nested_ownership 0)
+
+foreach(case IN ITEMS
+        move_only_initial_failure
+        move_only_growth_failure
+        move_only_lifecycle
+        nested_ownership)
+    set(binary_heap_fail_call 0)
+    if(case STREQUAL "move_only_initial_failure")
+        set(binary_heap_fail_call 1)
+    elseif(case STREQUAL "move_only_growth_failure")
+        set(binary_heap_fail_call 2)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeBinaryHeap.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/binary_heap/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_binary_heap_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${binary_heap_fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+foreach(case IN ITEMS
+        move_only_initial_failure
+        move_only_growth_failure
+        move_only_lifecycle
+        nested_ownership)
+    set(queue_fail_call 0)
+    if(case STREQUAL "move_only_initial_failure")
+        set(queue_fail_call 1)
+    elseif(case STREQUAL "move_only_growth_failure")
+        set(queue_fail_call 2)
+    endif()
+    add_test(NAME StandardLibraryTests.SafeQueue.${case}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/queue/${case}.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/dynamic_array/harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_queue_${case}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${queue_fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
+add_test(NAME CompilerDiagnostics.SafeDeque
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_deque_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_deque_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.SafeStack
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_stack_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_stack_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.SafeQueue
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_queue_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_queue_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.SafeBinaryHeap
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_binary_heap_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_binary_heap_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.SafeHashMap
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_hash_map_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_hash_map_diagnostics.cmake)
+
+add_test(NAME CompilerDiagnostics.SafeHashSet
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_hash_set_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_hash_set_diagnostics.cmake)
 
 add_test(NAME CompilerDiagnostics.SafeArray
     COMMAND ${CMAKE_COMMAND}

@@ -1,0 +1,169 @@
+module tcp;
+
+@imports
+    :: root::fmt
+    :: root::net::address
+    :: root::net::errors
+    :: root::net::runtime;
+
+// Owns one listening TCP socket.
+export structure Listener {
+    private *void handle;
+};
+
+Listener Listener::zero() override {
+    return build Listener {
+        self.handle = null;
+    };
+}
+
+void Listener::tear(&self) override {
+    if self->handle == null {
+        return;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+    unsafe {
+        runtime::flecha_runtime_v1_tcp_listener_close(handle);
+    }
+}
+
+// Binds and starts listening.
+//
+// Binding to port zero lets the operating system choose an available port.
+// Call localAddress() afterward to retrieve it.
+(Listener, error) Listener::bind(
+    address::SocketAddress host,
+    u32 backlog
+) {
+    family, high, low, port := encode_address(host);
+
+    *void handle = null;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_tcp_listener_bind(
+            &raw handle,
+            family,
+            high,
+            low,
+            port,
+            backlog
+        );
+
+        err := errors::from_runtime(
+            status,
+            errors::NetworkError.BindFailed
+        );
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return (build Listener {
+        self.handle = handle;
+    }, none);
+}
+
+bool Listener::isOpen(&const self) {
+    return self->handle != null;
+}
+
+// Blocks until a connection is accepted.
+//
+// The returned address is the connected peer address.
+(Stream, address::SocketAddress, error) Listener::accept(&self) {
+    if !self->isOpen() {
+        return (none, none, errors::NetworkError.Closed);
+    }
+
+    *void streamHandle = null;
+    u8 family = 0;
+    u64 high = 0;
+    u64 low = 0;
+    u16 port = 0;
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_tcp_listener_accept(
+            self->handle,
+            &raw streamHandle,
+            &raw family,
+            &raw high,
+            &raw low,
+            &raw port
+        );
+
+        err := errors::from_runtime(
+            status,
+            errors::NetworkError.AcceptFailed
+        );
+        if err != none {
+            return (none, none, err);
+        }
+    }
+
+    peer, addressError := decode_address(family, high, low, port);
+    if addressError != none {
+        unsafe {
+            runtime::flecha_runtime_v1_tcp_stream_close(streamHandle);
+        }
+        return (none, none, addressError);
+    }
+
+    return (
+        Stream::fromHandle(streamHandle),
+        peer,
+        none
+    );
+}
+
+(address::SocketAddress, error) Listener::localAddress(&const self) {
+    if !self->isOpen() {
+        return (none, errors::NetworkError.Closed);
+    }
+
+    u8 family = 0;
+    u64 high = 0;
+    u64 low = 0;
+    u16 port = 0;
+
+    unsafe {
+        i32 status =
+            runtime::flecha_runtime_v1_tcp_listener_local_address(
+                self->handle,
+                &raw family,
+                &raw high,
+                &raw low,
+                &raw port
+            );
+
+        err := errors::from_runtime(
+            status,
+            errors::NetworkError.AddressFailed
+        );
+        if err != none {
+            return (none, err);
+        }
+    }
+
+    return decode_address(family, high, low, port);
+}
+
+// Relinquishes the listener. A close failure still leaves it closed.
+error Listener::close(&self) {
+    if !self->isOpen() {
+        return errors::NetworkError.Closed;
+    }
+
+    *void handle = self->handle;
+    self->handle = null;
+
+    unsafe {
+        i32 status =
+            runtime::flecha_runtime_v1_tcp_listener_close(handle);
+
+        return errors::from_runtime(
+            status,
+            errors::NetworkError.CloseFailed
+        );
+    }
+}

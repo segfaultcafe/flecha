@@ -1,6 +1,7 @@
 stringv Echo(stringv value) {
     // NOTE: exercise current Flecha syntax.
     count := 42;
+    digest_word := 0x6a09e667;
     ratio := 4.2;
     letter := '\n';
     message := "flecha\n";
@@ -19,6 +20,13 @@ stringv Echo(stringv value) {
     #final_position
     return value;
 }
+
+void explode!() { crash("boom"); }
+void call_explode!() { explode!(); if !false {} }
+T generic_explode<T>!(T value) { crash("generic boom"); }
+structure CrashableWorker {};
+void CrashableWorker::method!(&const self) { crash("method boom"); }
+void crash_handler() {}
 
 T generic_identity<T>(T value) { return value; }
 i32 generic_result = generic_identity<i32>(42);
@@ -58,6 +66,8 @@ error genericError = MathError.Overflow;
 structure Box { private i32 x; };
 Box Box::init() override { return build Box {}; }
 i32 Box::value(&self) { return self->x; }
+&const i32 borrow_all(&const i32 args) <- ...args { return args; }
+args := 0;
 
 unsafe { pointer, err := new<u8>(42); defer free(pointer); }
 error allocError = AllocationError.OutOfMemory;
@@ -71,7 +81,35 @@ unsafe void inspect(lend *const i32 pointer) {}
 // @imports comment
 stringv directive = "@imports string";
 
-module highlighting;
+decoration json;
+@json(structure)
+structure JsonDefault {
+    @json("value") i32 value;
+};
+@annotations::json("test") string decoratedField;
+// @json comment
+stringv decorationText = "@json string";
+
+module integer;
+typeset scalar_numbers {
+    signed_integer, unsigned_integer, integer, floating_point, numeric,
+};
+T constrained<T: numeric>(T value) { return value; }
+bool integer_value<T>() { return T.isof<integer>; }
+i32 signed_low = i32.min_value;
+usize native_high = usize.max_value;
+T generic_high<T: integer>() { return T.max_value; }
+f32 quiet_nan = f32.nan;
+f64 positive_infinity = f64.infinity;
+f32 negative_infinity = f32.negative_infinity;
+f32 smallest_finite = f32.min_value;
+f32 largest_finite = f32.max_value;
+f32 smallest_normal = f32.min_positive;
+T generic_epsilon<T: floating_point>() { return T.epsilon; }
+min_value := 0;
+max_value := 1;
+u8 bit_mask = ~(15 as u8) & (12 as u8) | (1 as u8) << 3 >> 1;
+i32 namespaced_answer = integer::answer();
 func Mapper<T>(T) => (T);
 once func Action() => ();
 Mapper<i32> integerMapper = (value) => { return value; };
@@ -84,5 +122,6 @@ Action action = once []() => () {};
 test gold_keyword(&testing::UnitTest t) {}
 export i32 exported_function() { return 42; }
 quiver i32 quiver_function() { return 42; }
+foreign c { int native_value(void) { return 42; } }
 
 unsafe { old := take(self->storage); buffer, err := new<[]i32>(count); }

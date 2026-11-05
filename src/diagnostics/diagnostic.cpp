@@ -126,6 +126,14 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-S0059";
         case DiagnosticCode::InvalidFormat:
             return "FLECHA-S0060";
+        case DiagnosticCode::InvalidDefaultArgument:
+            return "FLECHA-S0061";
+        case DiagnosticCode::InvalidVariadic:
+            return "FLECHA-S0062";
+        case DiagnosticCode::InvalidCrashable:
+            return "FLECHA-S0063";
+        case DiagnosticCode::InvalidDecoration:
+            return "FLECHA-S0064";
         case DiagnosticCode::InvalidGeneric:
             return "FLECHA-S0054";
         case DiagnosticCode::InvalidAllocation:
@@ -150,6 +158,10 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-C0003";
         case DiagnosticCode::LinkerFailed:
             return "FLECHA-C0004";
+        case DiagnosticCode::ForeignCompilationFailed:
+            return "FLECHA-C0005";
+        case DiagnosticCode::TooManyDiagnostics:
+            return "FLECHA-C0006";
     }
     return "FLECHA-UNKNOWN";
 }

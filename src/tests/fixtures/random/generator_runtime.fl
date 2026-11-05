@@ -1,0 +1,28 @@
+module generator_runtime;
+
+@imports
+    :: lib::std::random::errors
+    :: lib::std::random::generator
+    :: lib::std::random::secure;
+
+i32 main() {
+    [1]u8 unavailable = none;
+    if secure::fill(unavailable[:]) != errors::RandomError.Unavailable {
+        return 1;
+    }
+
+    [2]u8 failed = none;
+    if secure::fill(failed[:]) != errors::RandomError.GenerationFailed {
+        return 2;
+    }
+
+    rng, seedError := generator::Generator::fromSecure();
+    if seedError != none {
+        return 3;
+    }
+    if rng.integer<u64>() != 13557399450712487245 {
+        return 4;
+    }
+
+    return 42;
+}

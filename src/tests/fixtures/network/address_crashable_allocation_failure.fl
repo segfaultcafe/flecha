@@ -1,0 +1,12 @@
+module address_crashable_allocation_failure;
+
+@imports :: lib::std::net::address;
+
+quiver extern unsafe void socket_address_begin_allocation_failure();
+
+i32 main!() {
+    value := address::Ipv4Address::fromOctets(192, 0, 2, 1);
+    unsafe { socket_address_begin_allocation_failure(); }
+    text := value.toString!();
+    return text.len().cast<i32>;
+}

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -46,6 +47,63 @@ TEST(ParserTests, ParsesEmptyCompilationUnit) {
     EXPECT_TRUE(unit->Declarations().empty());
     EXPECT_TRUE(unit->Range().Empty());
     EXPECT_TRUE(diagnostics.Empty());
+}
+
+TEST(ParserTests, ParsesDeclarativeDecorationsOnStructuresAndFields) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        export decoration json;
+
+        @json(structure)
+        structure DefaultResponse {
+            i32 value;
+            private string secret;
+        };
+
+        structure ExplicitResponse {
+            @json("test") string testMe;
+        };
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 3u);
+    ASSERT_EQ(unit->Declarations()[0]->Kind(),
+              AstNodeKind::DecorationDeclaration);
+    const auto& declaration =
+        static_cast<const DecorationDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(declaration.Name(), "json");
+    EXPECT_TRUE(declaration.exported);
+
+    const auto& defaults =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(defaults.decorations.size(), 1u);
+    EXPECT_EQ(defaults.decorations[0].Name(), "json");
+    ASSERT_EQ(defaults.decorations[0].arguments.size(), 1u);
+    EXPECT_EQ(defaults.decorations[0].arguments[0].kind,
+              DecorationArgumentKind::Identifier);
+    EXPECT_EQ(defaults.decorations[0].arguments[0].value, "structure");
+    EXPECT_FALSE(defaults.Fields()[0]->IsPrivate());
+    EXPECT_TRUE(defaults.Fields()[1]->IsPrivate());
+
+    const auto& explicitResponse =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[2]);
+    ASSERT_EQ(explicitResponse.Fields()[0]->Decorations().size(), 1u);
+    const auto& fieldDecoration =
+        explicitResponse.Fields()[0]->Decorations()[0];
+    ASSERT_EQ(fieldDecoration.arguments.size(), 1u);
+    EXPECT_EQ(fieldDecoration.arguments[0].kind,
+              DecorationArgumentKind::String);
+    EXPECT_EQ(fieldDecoration.arguments[0].value, "test");
+}
+
+TEST(ParserTests, DecorationDeclarationsDoNotAcceptBodies) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource("decoration json {};", diagnostics);
+
+    ASSERT_NE(unit, nullptr);
+    EXPECT_TRUE(diagnostics.HasErrors());
+    EXPECT_TRUE(unit->Declarations().empty());
 }
 
 TEST(ParserTests, UsesTokenRangesForCompilationUnit) {
@@ -101,6 +159,99 @@ TEST(ParserTests, ParsesCompleteFunctionWithReturnStatement) {
     EXPECT_EQ(unit->Range().end.offset, 24);
 }
 
+TEST(ParserTests, ParsesCAndAssemblyForeignUnits) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        foreign c { int native_value(void) { return 40; } }
+        foreign asm { .text
+native_marker:
+            nop
+        };
+        i32 main() { return 2; }
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->foreignSources.size(), 2u);
+    EXPECT_EQ(unit->foreignSources[0].language, ForeignLanguage::C);
+    EXPECT_NE(unit->foreignSources[0].source.find("native_value"),
+              std::string::npos);
+    EXPECT_EQ(unit->foreignSources[1].language, ForeignLanguage::Assembly);
+    EXPECT_NE(unit->foreignSources[1].source.find("native_marker"),
+              std::string::npos);
+    ASSERT_EQ(unit->Declarations().size(), 1u);
+}
+
+TEST(ParserTests, RejectsUnknownForeignLanguages) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource("foreign rust { fn value() {} }", diagnostics);
+
+    ASSERT_NE(unit, nullptr);
+    EXPECT_TRUE(unit->foreignSources.empty());
+    ASSERT_TRUE(diagnostics.HasErrors());
+    EXPECT_NE(diagnostics.Diagnostics()[0].message.find(
+                  "unsupported foreign language 'rust'"),
+              std::string::npos);
+}
+
+TEST(ParserTests, ParsesCrashableDeclarationsAndCalls) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        void fail!() { crash("boom"); }
+        void forward!() { fail!(); }
+        structure Worker {};
+        void Worker::run!(&const self) { fail!(); }
+        void invoke!(Worker worker) { worker.run!(); }
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 5);
+    const auto& fail =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    const auto& forward =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& run =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[3]);
+    const auto& invoke =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[4]);
+    EXPECT_TRUE(fail.IsCrashable());
+    EXPECT_TRUE(forward.IsCrashable());
+    EXPECT_TRUE(run.IsCrashable());
+    EXPECT_TRUE(invoke.IsCrashable());
+
+    const auto& directStatement = static_cast<const ExpressionStatement&>(
+        *forward.Body().Statements()[0]);
+    const auto& direct =
+        static_cast<const CallExpression&>(directStatement.Value());
+    EXPECT_TRUE(direct.IsCrashable());
+    const auto& memberStatement =
+        static_cast<const ExpressionStatement&>(*invoke.Body().Statements()[0]);
+    const auto& member =
+        static_cast<const MemberCallExpression&>(memberStatement.Value());
+    EXPECT_TRUE(member.IsCrashable());
+}
+
+TEST(ParserTests, ParsesModuleConstantsWithoutConfusingConstFunctions) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "export const usize LIMIT = 4 * 2; const i32 answer() { return 42; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    ASSERT_EQ(unit->Declarations()[0]->Kind(),
+              AstNodeKind::ModuleConstantDeclaration);
+    const auto& constant =
+        static_cast<const ModuleConstantDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(constant.Name(), "LIMIT");
+    EXPECT_TRUE(constant.Type().IsConst());
+    EXPECT_TRUE(constant.exported);
+    EXPECT_EQ(constant.Initializer().Kind(), AstNodeKind::BinaryExpression);
+    EXPECT_EQ(unit->Declarations()[1]->Kind(),
+              AstNodeKind::FunctionDeclaration);
+}
+
 TEST(ParserTests, ParsesTypedParametersAndBareReturn) {
     DiagnosticBag diagnostics;
     std::vector<Token> tokens =
@@ -121,6 +272,81 @@ TEST(ParserTests, ParsesTypedParametersAndBareReturn) {
     const ReturnStatement& returnStatement =
         static_cast<const ReturnStatement&>(*function.Body().Statements()[0]);
     EXPECT_EQ(returnStatement.Value(), nullptr);
+}
+
+TEST(ParserTests, ParsesVariadicPackExpansionAndPackBorrowSource) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        stringv forward(stringv fallback, values...)
+            <- (fallback, ...values) {
+            return target(fallback, values...);
+        }
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations().front());
+    ASSERT_EQ(function.Parameters().size(), 1);
+    EXPECT_TRUE(function.HasVariadicPack());
+    EXPECT_EQ(function.VariadicPackName(), "values");
+    ASSERT_EQ(function.BorrowSources().size(), 1);
+    EXPECT_EQ(function.BorrowSources()[0], "fallback");
+    EXPECT_TRUE(function.BorrowsVariadicPack());
+
+    const auto& returned = static_cast<const ReturnStatement&>(
+        *function.Body().Statements().front());
+    const auto& call = static_cast<const CallExpression&>(*returned.Value());
+    ASSERT_EQ(call.Arguments().size(), 2);
+    EXPECT_FALSE(call.ArgumentIsExpanded(0));
+    EXPECT_TRUE(call.ArgumentIsExpanded(1));
+}
+
+TEST(ParserTests, KeepsLegacyAllParameterBorrowShorthandWithoutAPack) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "stringv choose(stringv left, stringv right) <- ...args { "
+        "return left; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations().front());
+    ASSERT_EQ(function.BorrowSources().size(), 2);
+    EXPECT_EQ(function.BorrowSources()[0], "left");
+    EXPECT_EQ(function.BorrowSources()[1], "right");
+    EXPECT_FALSE(function.BorrowsVariadicPack());
+}
+
+TEST(ParserTests, PackNamedArgsTakesPrecedenceOverLegacyBorrowShorthand) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        stringv forward(stringv fixed, args...) <- ...args {
+            return target(fixed, args...);
+        }
+    )",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations().front());
+    EXPECT_TRUE(function.BorrowSources().empty());
+    EXPECT_TRUE(function.BorrowsVariadicPack());
+}
+
+TEST(ParserTests, RequiresVariadicPackToBeFinal) {
+    DiagnosticBag diagnostics;
+    (void)ParseSource(
+        "void invalid(values..., i32 later) { stdout(values...); }",
+        diagnostics);
+
+    ASSERT_TRUE(diagnostics.HasErrors());
+    EXPECT_TRUE(std::any_of(
+        diagnostics.Diagnostics().begin(), diagnostics.Diagnostics().end(),
+        [](const Diagnostic& diagnostic) {
+            return diagnostic.code == DiagnosticCode::InvalidVariadic;
+        }));
 }
 
 TEST(ParserTests, ParsesNamedCallableSignatures) {
@@ -240,6 +466,39 @@ TEST(ParserTests, ParsesGenericCallableSignatures) {
     EXPECT_EQ(transform.genericParameters[1], "U");
     EXPECT_EQ(transform.Parameters()[0]->Type().Name(), "T");
     EXPECT_EQ(transform.Results()[0]->Name(), "U");
+}
+
+TEST(ParserTests, ParsesTypeSetsAndGenericConstraints) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        typeset indices { u8, u16, usize, };
+        structure Box<T: indices> { T value; };
+        bool accepts<T: numeric, U: indices>(T value, U index) {
+            return T.isof<floating_point>;
+        }
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 3u);
+    const auto& set =
+        static_cast<const TypeSetDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_EQ(set.Name(), "indices");
+    ASSERT_EQ(set.Members().size(), 3u);
+    EXPECT_EQ(set.Members()[2]->Type(), PrimitiveType::USize);
+
+    const auto& box =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[1]);
+    EXPECT_EQ(box.genericConstraints.at("T"), "indices");
+    const auto& accepts =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[2]);
+    EXPECT_EQ(accepts.genericConstraints.at("T"), "numeric");
+    EXPECT_EQ(accepts.genericConstraints.at("U"), "indices");
+    const auto& returned = static_cast<const ReturnStatement&>(
+        *accepts.Body().Statements().front());
+    EXPECT_EQ(returned.Value()->Kind(), AstNodeKind::IsOfExpression);
 }
 
 TEST(ParserTests, ParsesCapturelessAnonymousFunctionForms) {
@@ -406,10 +665,56 @@ TEST(ParserTests, ParsesBorrowResultSourceAfterParameters) {
     ASSERT_EQ(unit->Declarations().size(), 1);
     const auto& function =
         static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
-    EXPECT_TRUE(function.HasBorrowSource());
-    EXPECT_EQ(function.BorrowSource(), "value");
-    EXPECT_EQ(function.BorrowSourceRange().start.offset, 41);
-    EXPECT_EQ(function.BorrowSourceRange().end.offset, 46);
+    EXPECT_TRUE(function.HasBorrowSources());
+    ASSERT_EQ(function.BorrowSources().size(), 1);
+    ASSERT_EQ(function.BorrowSourceRanges().size(), 1);
+    EXPECT_EQ(function.BorrowSources()[0], "value");
+    EXPECT_EQ(function.BorrowSourceRanges()[0].start.offset, 41);
+    EXPECT_EQ(function.BorrowSourceRanges()[0].end.offset, 46);
+}
+
+TEST(ParserTests, ParsesGroupedBorrowResultSources) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "&const i32 choose(&const i32 left, &const i32 right) "
+        "<- (left, right) { return left; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(function.BorrowSources().size(), 2);
+    EXPECT_EQ(function.BorrowSources()[0], "left");
+    EXPECT_EQ(function.BorrowSources()[1], "right");
+}
+
+TEST(ParserTests, ExpandsAllArgumentBorrowResultSources) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "&const i32 choose(&const i32 args, &const i32 other) "
+        "<- ...args { return args; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(function.BorrowSources().size(), 2);
+    EXPECT_EQ(function.BorrowSources()[0], "args");
+    EXPECT_EQ(function.BorrowSources()[1], "other");
+}
+
+TEST(ParserTests, RequiresArgsOrADeclaredPackAfterBorrowSourceEllipsis) {
+    DiagnosticBag diagnostics;
+    (void)ParseSource(
+        "&const i32 invalid(&const i32 value) <- ...values { return value; }",
+        diagnostics);
+
+    EXPECT_TRUE(diagnostics.HasErrors());
+    ASSERT_FALSE(diagnostics.Diagnostics().empty());
+    EXPECT_EQ(diagnostics.Diagnostics().front().code,
+              DiagnosticCode::InvalidBorrowContract);
 }
 
 TEST(ParserTests, RequiresBorrowSourceAfterLeftArrow) {
@@ -421,6 +726,76 @@ TEST(ParserTests, RequiresBorrowSourceAfterLeftArrow) {
     ASSERT_FALSE(diagnostics.Diagnostics().empty());
     EXPECT_EQ(diagnostics.Diagnostics().front().code,
               DiagnosticCode::ExpectedToken);
+}
+
+TEST(ParserTests, ParsesOwningSliceTypesInDeclarationsAndAllocations) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "structure Buffer { own []const u8 bytes; }; "
+        "own []i32 allocate(usize count) { values, failure := "
+        "new<own []i32>(count); return values; }",
+        diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& structure =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(structure.Fields().size(), 1);
+    EXPECT_EQ(structure.Fields()[0]->Type().TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(structure.Fields()[0]->Type().Contract(), OwnershipContract::Own);
+    EXPECT_TRUE(structure.Fields()[0]->Type().Target()->IsConst());
+
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    EXPECT_EQ(function.ReturnType().TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(function.ReturnType().Contract(), OwnershipContract::Own);
+    const auto& declaration = static_cast<const DestructureStatement&>(
+        *function.Body().Statements()[0]);
+    const auto& call = static_cast<const CallExpression&>(declaration.Value());
+    ASSERT_NE(call.TypeArgument(), nullptr);
+    EXPECT_EQ(call.TypeArgument()->TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(call.TypeArgument()->Contract(), OwnershipContract::Own);
+}
+
+TEST(ParserTests, ParsesCrashableTypedAllocationAfterGenericArguments) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "own []string allocate!(usize count) { return "
+        "new<own []string>!(count); }",
+        diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    const auto& statement =
+        static_cast<const ReturnStatement&>(*function.Body().Statements()[0]);
+    const auto& call = static_cast<const CallExpression&>(*statement.Value());
+    EXPECT_TRUE(call.IsCrashable());
+    ASSERT_NE(call.TypeArgument(), nullptr);
+    EXPECT_EQ(call.TypeArgument()->TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(call.TypeArgument()->Contract(), OwnershipContract::Own);
+}
+
+TEST(ParserTests, ParsesTypedHashIntrinsicCalls) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "usize hash_value(&const i32 value) { return __hash<i32>(value); }",
+        diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& call =
+        static_cast<const CallExpression&>(ReturnedExpression(*unit));
+    ASSERT_NE(call.TypeArgument(), nullptr);
+    EXPECT_EQ(call.TypeArgument()->TypeForm(), TypeKind::Primitive);
+    EXPECT_EQ(call.TypeArgument()->Type(), PrimitiveType::I32);
+    ASSERT_EQ(call.Arguments().size(), 1);
 }
 
 TEST(ParserTests, ParsesExternDeclarationWithSemicolonAndModifiers) {
@@ -479,7 +854,8 @@ TEST(ParserTests, AppendsMissingEndOfFileTokenSafely) {
 TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
-        "bool check() { return a or b and c ^ d == e < f + g * h; }",
+        "bool check() { return a or b and c | d ^ e & f == g < h << i + j * "
+        "k; }",
         diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
@@ -491,20 +867,32 @@ TEST(ParserExpressionTests, AppliesCompletePrecedenceTable) {
         static_cast<const BinaryExpression&>(logicalOr.Right());
     EXPECT_EQ(logicalAnd.OperatorType(), TokenType::And);
 
-    const BinaryExpression& xorExpression =
+    const BinaryExpression& bitwiseOr =
         static_cast<const BinaryExpression&>(logicalAnd.Right());
+    EXPECT_EQ(bitwiseOr.OperatorType(), TokenType::BitOr);
+
+    const BinaryExpression& xorExpression =
+        static_cast<const BinaryExpression&>(bitwiseOr.Right());
     EXPECT_EQ(xorExpression.OperatorType(), TokenType::Xor);
 
-    const BinaryExpression& equality =
+    const BinaryExpression& bitwiseAnd =
         static_cast<const BinaryExpression&>(xorExpression.Right());
+    EXPECT_EQ(bitwiseAnd.OperatorType(), TokenType::Ampersand);
+
+    const BinaryExpression& equality =
+        static_cast<const BinaryExpression&>(bitwiseAnd.Right());
     EXPECT_EQ(equality.OperatorType(), TokenType::Equal);
 
     const BinaryExpression& comparison =
         static_cast<const BinaryExpression&>(equality.Right());
     EXPECT_EQ(comparison.OperatorType(), TokenType::Less);
 
-    const BinaryExpression& addition =
+    const BinaryExpression& shift =
         static_cast<const BinaryExpression&>(comparison.Right());
+    EXPECT_EQ(shift.OperatorType(), TokenType::ShiftLeft);
+
+    const BinaryExpression& addition =
+        static_cast<const BinaryExpression&>(shift.Right());
     EXPECT_EQ(addition.OperatorType(), TokenType::Add);
 
     const BinaryExpression& multiplication =
@@ -599,6 +987,31 @@ TEST(ParserAssignmentTests, AssignmentsAssociateRight) {
     EXPECT_EQ(outer.Value().Kind(), AstNodeKind::AssignmentExpression);
 }
 
+TEST(ParserAssignmentTests, ParsesCompoundAssignmentsAndPostfixDecrement) {
+    for (const auto& [text, operation] :
+         std::vector<std::pair<std::string, TokenType>>{
+             {"+=", TokenType::AddAssign},
+             {"-=", TokenType::SubAssign},
+             {"*=", TokenType::MulAssign},
+             {"/=", TokenType::DivAssign},
+             {"^=", TokenType::XorAssign}}) {
+        DiagnosticBag diagnostics;
+        auto unit = ParseSource("i32 check() { return value " + text + " 2; }",
+                                diagnostics);
+        ASSERT_FALSE(diagnostics.HasErrors()) << text;
+        const auto& assignment =
+            static_cast<const AssignmentExpression&>(ReturnedExpression(*unit));
+        EXPECT_EQ(assignment.OperatorType(), operation) << text;
+    }
+
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource("i32 check() { return value--; }", diagnostics);
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& decrement =
+        static_cast<const UnaryExpression&>(ReturnedExpression(*unit));
+    EXPECT_EQ(decrement.OperatorType(), TokenType::Decrement);
+}
+
 TEST(ParserAssignmentTests, ReportsInvalidAssignmentTarget) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
@@ -630,6 +1043,7 @@ TEST(ParserVariableDeclarationTests, ParsesTypedInitializedVariables) {
     EXPECT_EQ(x.Name(), "x");
     ASSERT_NE(x.Initializer(), nullptr);
     EXPECT_EQ(x.Initializer()->Kind(), AstNodeKind::LiteralExpression);
+    EXPECT_FALSE(x.IsImplicitlyDefaulted());
 
     const VariableDeclarationStatement& y =
         static_cast<const VariableDeclarationStatement&>(
@@ -641,9 +1055,10 @@ TEST(ParserVariableDeclarationTests, ParsesTypedInitializedVariables) {
     EXPECT_EQ(
         static_cast<const LiteralExpression&>(*y.Initializer()).LiteralType(),
         TokenType::False);
+    EXPECT_FALSE(y.IsImplicitlyDefaulted());
 }
 
-TEST(ParserVariableDeclarationTests, ParsesTypedDeclarationWithoutInitializer) {
+TEST(ParserVariableDeclarationTests, DefaultsTypedDeclarationToNone) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit =
         ParseSource("void check() { i32 value; }", diagnostics);
@@ -658,7 +1073,37 @@ TEST(ParserVariableDeclarationTests, ParsesTypedDeclarationWithoutInitializer) {
     ASSERT_NE(variable.ExplicitType(), nullptr);
     EXPECT_EQ(variable.ExplicitType()->Type(), PrimitiveType::I32);
     EXPECT_EQ(variable.Name(), "value");
-    EXPECT_EQ(variable.Initializer(), nullptr);
+    ASSERT_NE(variable.Initializer(), nullptr);
+    ASSERT_EQ(variable.Initializer()->Kind(), AstNodeKind::LiteralExpression);
+    EXPECT_EQ(static_cast<const LiteralExpression&>(*variable.Initializer())
+                  .LiteralType(),
+              TokenType::None);
+    EXPECT_TRUE(variable.IsImplicitlyDefaulted());
+}
+
+TEST(ParserVariableDeclarationTests, ParsesSharedTypedDeclarations) {
+    DiagnosticBag diagnostics;
+    std::unique_ptr<CompilationUnit> unit = ParseSource(
+        "void check() { error firstError, closeErr; }", diagnostics);
+
+    ASSERT_NE(unit, nullptr);
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const FunctionDeclaration& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(function.Body().Statements().size(), 2);
+
+    const auto& first = static_cast<const VariableDeclarationStatement&>(
+        *function.Body().Statements()[0]);
+    const auto& second = static_cast<const VariableDeclarationStatement&>(
+        *function.Body().Statements()[1]);
+    ASSERT_NE(first.ExplicitType(), nullptr);
+    ASSERT_NE(second.ExplicitType(), nullptr);
+    EXPECT_EQ(first.ExplicitType()->Type(), PrimitiveType::ErrorValue);
+    EXPECT_EQ(second.ExplicitType()->Type(), PrimitiveType::ErrorValue);
+    EXPECT_EQ(first.Name(), "firstError");
+    EXPECT_EQ(second.Name(), "closeErr");
+    EXPECT_TRUE(first.IsImplicitlyDefaulted());
+    EXPECT_TRUE(second.IsImplicitlyDefaulted());
 }
 
 TEST(ParserVariableDeclarationTests, ParsesInferredVariables) {
@@ -1398,8 +1843,7 @@ TEST(ParserTupleTests, DistinguishesBareBindingsFromCallsTypesAndGrouping) {
     EXPECT_FALSE(valid.HasErrors());
     for (const std::string& source :
          {"void f() { i32 a, = (1, 2); }", "void f() { a, b, := (1, 2); }",
-          "void f() { i32 a, b; }", "void f() { a, b = (1, 2) }",
-          "void f() { a[0], b = (1, 2); }"}) {
+          "void f() { a, b = (1, 2) }", "void f() { a[0], b = (1, 2); }"}) {
         SCOPED_TRACE(source);
         DiagnosticBag diagnostics;
         ParseSource(source, diagnostics);
@@ -1569,6 +2013,74 @@ TEST(ParserStructureTests, ParsesPrivateFieldsMethodsReceiversAndConstruction) {
     EXPECT_EQ(access.Access(), TokenType::Arrow);
 }
 
+TEST(ParserStructureTests, ParsesSharedTypedStructureFields) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        structure Options {
+            own []string inputs, outputs;
+            private { i32 first = 20, second = 22; }
+        };
+    )",
+                            diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& structure =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(structure.Fields().size(), 4);
+    EXPECT_EQ(structure.Fields()[0]->Name(), "inputs");
+    EXPECT_EQ(structure.Fields()[1]->Name(), "outputs");
+    EXPECT_EQ(structure.Fields()[0]->Type().Contract(), OwnershipContract::Own);
+    EXPECT_EQ(structure.Fields()[1]->Type().Contract(), OwnershipContract::Own);
+    EXPECT_EQ(structure.Fields()[0]->Type().TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(structure.Fields()[1]->Type().TypeForm(), TypeKind::Slice);
+    EXPECT_FALSE(structure.Fields()[0]->IsPrivate());
+    EXPECT_FALSE(structure.Fields()[1]->IsPrivate());
+    EXPECT_TRUE(structure.Fields()[2]->IsPrivate());
+    EXPECT_TRUE(structure.Fields()[3]->IsPrivate());
+    EXPECT_NE(structure.Fields()[2]->Initializer(), nullptr);
+    EXPECT_NE(structure.Fields()[3]->Initializer(), nullptr);
+}
+
+TEST(ParserStructureTests, ParsesContextualOwningSelfReceiver) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "structure Box { i32 value; }; "
+        "Box Box::withValue(self, i32 value) { "
+        "self.value = value; return self; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+    const auto& method =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(method.Parameters().size(), 2);
+    EXPECT_EQ(method.Parameters()[0]->Name(), "self");
+    EXPECT_EQ(method.Parameters()[0]->Type().TypeForm(), TypeKind::Named);
+    EXPECT_EQ(method.Parameters()[0]->Type().Name(), "Box");
+}
+
+TEST(ParserCallableTests, ParsesSpecializedGenericFunctionValues) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "func Mapper<T>(T) => (T); T identity<T>(T value) { return value; } "
+        "void use() { Mapper<i32> mapper = identity<i32>; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& use =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[2]);
+    const auto& declaration = static_cast<const VariableDeclarationStatement&>(
+        *use.Body().Statements()[0]);
+    const auto& value =
+        static_cast<const NameExpression&>(*declaration.Initializer());
+    ASSERT_EQ(value.typeArguments.size(), 1);
+    EXPECT_EQ(value.typeArguments[0]->TypeForm(), TypeKind::Primitive);
+    EXPECT_EQ(value.typeArguments[0]->Type(), PrimitiveType::I32);
+}
+
 TEST(ParserStructureTests, RejectsMalformedStructureSyntax) {
     for (const std::string& source :
          {"structure Box { i32 x; }", "structure { i32 x; };",
@@ -1704,4 +2216,23 @@ TEST(ParserTests, RejectsDuplicateAndConflictingVisibilityModifiers) {
                   std::string::npos)
             << source;
     }
+}
+
+TEST(ParserTests, ParsesTrailingDefaultParameterValues) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "i32 format(i32 value, u8 base = 10) { return value; }", diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations().front());
+    ASSERT_EQ(function.Parameters().size(), 2);
+    EXPECT_EQ(function.Parameters()[0]->DefaultValue(), nullptr);
+    ASSERT_NE(function.Parameters()[1]->DefaultValue(), nullptr);
+    const auto& value = static_cast<const LiteralExpression&>(
+        *function.Parameters()[1]->DefaultValue());
+    EXPECT_EQ(value.Value(), "10");
+    EXPECT_EQ(function.Parameters()[1]->Range().end.offset,
+              function.Parameters()[1]->DefaultValue()->Range().end.offset);
 }

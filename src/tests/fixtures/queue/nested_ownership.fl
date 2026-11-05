@@ -1,0 +1,100 @@
+module nested_ownership;
+
+@imports :: lib::std::containers::collections;
+
+i32 checkTwoLevels() {
+    outer := collections::Queue<collections::Queue<i32>>::init();
+
+    loop i32 row = 0; row < 5; row++ {
+        inner := collections::Queue<i32>::init();
+
+        loop i32 column = 0; column < 5; column++ {
+            if inner.enqueue(row * 10 + column) != none {
+                return 1;
+            }
+        }
+
+        if inner.capacity() != 8 or outer.enqueue(inner) != none {
+            return 2;
+        }
+    }
+
+    if outer.len() != 5 or outer.capacity() != 8 {
+        return 3;
+    }
+
+    inner, outerDequeueError := outer.dequeue();
+    if outerDequeueError != none or inner.len() != 5 or
+        inner.capacity() != 8 {
+        return 4;
+    }
+
+    value, innerDequeueError := inner.dequeue();
+    if innerDequeueError != none or value != 0 {
+        return 5;
+    }
+
+    outer.clear();
+    if !outer.empty() or outer.capacity() != 8 {
+        return 6;
+    }
+
+    return 42;
+}
+
+i32 checkThreeLevels() {
+    outer := collections::Queue<collections::Queue<collections::Queue<i32>>>::init();
+
+    loop i32 group = 0; group < 5; group++ {
+        middle := collections::Queue<collections::Queue<i32>>::init();
+
+        loop i32 row = 0; row < 5; row++ {
+            inner := collections::Queue<i32>::init();
+
+            loop i32 column = 0; column < 5; column++ {
+                if inner.enqueue(group * 100 + row * 10 + column) != none {
+                    return 7;
+                }
+            }
+
+            if middle.enqueue(inner) != none {
+                return 8;
+            }
+        }
+
+        if middle.capacity() != 8 or outer.enqueue(middle) != none {
+            return 9;
+        }
+    }
+
+    middle, outerDequeueError := outer.dequeue();
+    if outerDequeueError != none {
+        return 10;
+    }
+
+    inner, middleDequeueError := middle.dequeue();
+    if middleDequeueError != none {
+        return 11;
+    }
+
+    value, innerDequeueError := inner.dequeue();
+    if innerDequeueError != none or value != 0 {
+        return 12;
+    }
+
+    outer.clear();
+    if !outer.empty() or outer.capacity() != 8 {
+        return 13;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    result := checkTwoLevels();
+    if result != 42 {
+        return result;
+    }
+
+    return checkThreeLevels();
+}

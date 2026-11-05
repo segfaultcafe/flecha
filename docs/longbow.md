@@ -47,6 +47,10 @@ kind = "program"
 [dependencies]
 ```
 
+Publishable libraries also set `registry = "owner/package"` in `[package]`.
+That owner-scoped identity is metadata; imports still use the consumer's local
+dependency alias and the library's Flecha module names.
+
 Project names may contain letters, digits, spaces, hyphens, underscores, and
 dots. They must begin with a letter or digit. Longbow normalizes a library
 project's name into a lowercase Flecha identifier for its entry filename and
@@ -58,6 +62,16 @@ module declaration, so `math-tools` uses `src/math_tools.fl` and declares
 | `longbow new NAME` | Create a new directory and program scaffold |
 | `longbow new NAME --lib` | Create a library with an exported example function |
 | `longbow init [--lib]` | Scaffold the current existing directory without overwriting source or a manifest |
+| `longbow add OWNER/PACKAGE@REQUIREMENT [--as ALIAS]` | Add an owner-scoped registry dependency to the manifest |
+| `longbow remove ALIAS` | Remove one dependency from the manifest |
+| `longbow fetch [PROJECT]` | Resolve, verify, cache, and lock dependencies without compiling |
+| `longbow update [ALIAS]` | Re-resolve all registry dependencies, or one selected alias, outside its previous lock |
+| `longbow login` | Authorize this machine through GitHub or Google in the browser and store a revocable registry credential |
+| `longbow whoami` | Show the account associated with the active registry credential |
+| `longbow logout` | Revoke the active registry credential and remove it locally |
+| `longbow publish [PROJECT] --dry-run` | Validate and list the normalized source archive without uploading |
+| `longbow publish [PROJECT]` | Publish the immutable version using the logged-in account or `LONGBOW_TOKEN` |
+| `longbow yank VERSION` | Prevent new selection of a published version while preserving locked builds |
 | `longbow check [PROJECT]` | Load and check source and its reachable imports without emitting artifacts |
 | `longbow build [PROJECT]` | Compile a program, or emit a host-native object for a library |
 | `longbow run [PROJECT] -- ARGS` | Build, then run the program and propagate its exit status |
@@ -68,8 +82,26 @@ Without `PROJECT`, commands locate the nearest ancestor `longbow.toml`, so they
 also work inside `src`. A supplied project directory is used directly, including
 paths such as `test-me` and `"hi mom"`. Artifacts go to `target`. Failed compilation prevents `run` from executing
 an older binary. Arguments are passed directly without a shell. The current
-language entry-point signatures do not yet expose command-line arguments to
-Flecha code. Existing `.gitignore` files are preserved by `init`.
+language entry-point remains parameterless; programs capture the forwarded
+arguments through `lib::std::os::arguments`. Existing `.gitignore` files
+are preserved by `init`.
+
+Registry traffic uses `https://registry.flecha-lang.org/v1` by default. Set
+`LONGBOW_REGISTRY` to select a development endpoint. `longbow login` uses a
+short-lived device code: approve it at `packages.flecha-lang.org` with GitHub
+or Google, then Longbow stores the resulting Flecha registry token in the
+user's configuration directory with owner-only permissions. `LONGBOW_TOKEN`
+overrides the stored token for CI and release automation; `LONGBOW_TOKEN_FILE`
+overrides the credential path for managed installations and tests.
+
+HTTPS requests use the platform `curl` executable;
+bearer tokens are passed through an owner-only temporary header file rather
+than command-line arguments. Registry access remains entirely in Longbow.
+
+`longbow add OWNER/PACKAGE@latest` is shorthand for the stable-version `*`
+requirement. Longbow stores `*` in the manifest, selects the newest active
+non-prerelease version during resolution, and records the exact version and
+checksum in `longbow.lock`.
 
 Since Flecha 0.2.1, test discovery reads module declarations rather than file
 suffixes. Several arbitrarily named files may contribute to one logical test
@@ -92,8 +124,10 @@ numbers = { path = "../numbers" }
 ```
 
 Paths are relative to the application's manifest and identify the dependency
-project directory. Longbow maps its `src` directory into the compiler's library
-search map. Source code imports a particular module:
+project directory. Longbow reads path dependency manifests recursively and
+generates `target/package-graph.json`. Each package receives its own dependency
+alias map, so two packages can reuse the same alias for different dependencies.
+Source code imports a particular module:
 
 ```flecha
 @imports
@@ -102,20 +136,47 @@ search map. Source code imports a particular module:
 
 The call is `numbers::answer()`. An alias can shorten or distinguish this local
 namespace. The standard library bundled beside an installed Longbow executable
-is available automatically as `lib::std`. A `std` entry in `[dependencies]`
-overrides that bundled copy, which is useful while developing the standard
-library. `FLECHA_STANDARD_LIBRARY` can also name a standard-library source
-directory for build-tree and custom-toolchain use; an explicit manifest entry
-still takes precedence.
+is injected into every package as `lib::std`. A root `std` entry in
+`[dependencies]` overrides that bundled copy for the entire graph, which is
+useful while developing the standard library. Nested packages cannot replace
+it. `FLECHA_STANDARD_LIBRARY` can also name a standard-library source directory
+for build-tree and custom-toolchain use; an explicit root manifest entry still
+takes precedence.
 
-The first manifest reader supports only the shown package string keys and local
-path dependency entries, with blank lines and comments. Unsupported TOML forms,
-unknown keys, duplicate entries, and malformed values are diagnosed. Dependency
-versions, recursive manifest resolution, registries, downloads, lockfiles,
-workspaces, release profiles, test filtering, and formatting commands are
-future work.
-Nonstandard library imports currently use the source map explicitly configured
-by the root project. Prebuilt library objects are not used to resolve imports.
+The manifest reader validates SemVer package versions, Flecha toolchain ranges,
+path dependencies, pinned Git dependency declarations, registry owner/package
+requirements, and registry dependencies with development path overrides.
+Unsupported TOML forms, unknown keys, duplicate entries, invalid source
+combinations, malformed versions, registry attempts to replace `std`, and path
+dependency cycles are diagnosed. Recursive local paths, pinned Git commits, and
+registry dependencies with path overrides build now. Git packages are exported
+as source blobs without executing checkout hooks, filters, submodules, or
+package code. Floating Git branches and tags are rejected. Registry
+declarations without an override are acquired by the registry resolver layer.
+Prebuilt library objects are not used to resolve imports.
+
+Resolution writes a deterministic `longbow.lock` beside the manifest. It
+records graph node identities, exact package versions, source kinds and paths,
+full Git revisions, package-local dependency edges, Flecha compatibility
+ranges, and SHA-256 content checksums. The root workspace is intentionally not
+content-locked so normal application edits do not invalidate dependency state.
+Toolchain `std` is recorded by source kind rather than a host-specific
+installation path, keeping the lock portable across installed toolchains.
+
+Verified source trees are stored by SHA-256 under the platform-native user
+cache directory. Set `LONGBOW_CACHE_DIR` to use an explicit cache root in CI or
+managed installations. Cache entries contain a completion marker and are
+rehash-verified before reuse; incomplete or corrupt entries are rejected. The
+cache is disposable and contains no authoritative project state.
+
+The v0.3 release qualifies this contract with a checked transitive community
+package lock. Every relocated release bundle downloads the immutable public
+archives into an empty cache, preserves the lock byte-for-byte, and then
+rebuilds with registry access forced offline. The fixture packages are yanked,
+so only the existing lock may select them; a new unlocked resolution is
+rejected. See the
+[public-registry qualification fixture](package_ecosystem.md#v03-public-registry-qualification-fixture)
+for identities and lifecycle rules.
 
 A runnable multi-module example is in `examples/modules`. From that directory,
 run `../../build/longbow run` after building the tools.

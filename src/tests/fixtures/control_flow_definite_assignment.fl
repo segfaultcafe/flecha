@@ -1,6 +1,6 @@
 i32 returning(bool early) {
     i32 answer;
-    string message;
+    string message = none;
     if early {
         return 0;
     } else {
@@ -25,7 +25,7 @@ i32 backward_exit(i32 mode) {
                 else { jumpto outside; }
             }
             count = count + 1;
-            string late;
+            string late = none;
             late = "late" + " temporary";
             jumpto again;
         }
@@ -39,12 +39,12 @@ i32 nested_jumps() {
     answer := 0;
     while true {
         jumpto inner;
-        string skipped;
+        string skipped = none;
         #outer
         answer = 42;
         break;
         while true {
-            string text;
+            string text = none;
             #inner
             text = "entered through a position";
             jumpto outer;
@@ -58,7 +58,7 @@ i32 also_paths() {
     counter := 0;
     while counter < 3 {
         counter = counter + 1;
-        string local;
+        string local = none;
         local = "body";
         if counter == 1 { proceed; }
         else { answer = 42; }

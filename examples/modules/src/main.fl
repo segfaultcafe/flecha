@@ -1,11 +1,11 @@
 module main;
 
 @imports
-    :: lib::std::containers::algorithms;
+    :: lib::std::containers::collections;
 
 i32 main() {
     [5]i32 values = [10, 20, 30, 20, 40];
-    index, found := algorithms::index_of<i32>(values[:], 30);
+    index, found := collections::index_of<i32>(values[:], 30);
 
     if found {
         stdout("Found at index: ");

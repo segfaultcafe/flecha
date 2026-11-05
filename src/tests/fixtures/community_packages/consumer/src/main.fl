@@ -1,0 +1,7 @@
+module main;
+
+@imports :: lib::community::e2e_community_package;
+
+i32 main() {
+    return e2e_community_package::answer();
+}

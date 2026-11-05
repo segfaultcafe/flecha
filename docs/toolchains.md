@@ -1,6 +1,6 @@
 # Supported toolchains
 
-Flecha 0.1.1 uses explicit major-version ranges for source builds and pinned
+Flecha 0.3.0 uses explicit major-version ranges for source builds and pinned
 major-version baselines for release production. Patch releases within a listed
 major version are accepted. Versions outside these ranges are not supported
 until they pass the complete CI, sanitizer, packaging, installed-layout, and
@@ -16,6 +16,12 @@ clean-install matrix.
 | GCC C/C++ compiler | 13 through 16 |
 | Apple Clang | 16 through 17 |
 | Microsoft Visual C++ | Not supported |
+
+Microsoft Visual C++ is not supported by 0.3.0. Native `cl.exe` builds and
+generated programs using the `windows-msvc` ABI are tracked for the
+[0.3.1 toolchain patch](https://github.com/segfaultcafe/flecha/issues/188).
+The supported 0.3.0 Windows path remains MSYS2 UCRT64 with Clang and the MinGW
+ABI.
 
 The C and C++ compilers must come from the same toolchain and support C++23.
 CMake rejects unsupported compiler and LLVM versions during configuration.

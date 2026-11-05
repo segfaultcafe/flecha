@@ -50,6 +50,28 @@ class ModuleTests : public ::testing::Test {
                 diagnostic.range.start.file + ":" + diagnostic.message + "\n";
         return messages;
     }
+    std::string CheckGraph(const std::string& graph,
+                           const std::string& entry = "app/main.fl",
+                           flecha::core::ModuleLoadMode mode =
+                               flecha::core::ModuleLoadMode::Runtime) {
+        Write("target/package-graph.json", graph);
+        std::string error;
+        const auto packages = flecha::core::PackageGraph::Load(
+            root / "target/package-graph.json", error);
+        if (!packages) return "package graph error: " + error;
+        flecha::diagnostics::DiagnosticBag diagnostics;
+        flecha::core::ModuleLoader loader(diagnostics);
+        auto unit = loader.Load(root / entry, *packages, mode);
+        if (!diagnostics.HasErrors()) {
+            flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+            auto model = analyzer.Analyze(*unit);
+        }
+        std::string messages;
+        for (const auto& diagnostic : diagnostics.Diagnostics())
+            messages +=
+                diagnostic.range.start.file + ":" + diagnostic.message + "\n";
+        return messages;
+    }
 };
 TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
     Write("a/calc.fl", "module calc; export i32 value() { return 20; }");
@@ -58,6 +80,80 @@ TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
           "module main; @imports :: root::a::calc :: root::b::calc as other; "
           "i32 main() { return calc::value() + other::value(); }");
     EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, ResolvesExportedDecorationsThroughModuleAliases) {
+    Write("json.fl", R"(module json;
+        export decoration json;
+        export structure Writer {};
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::json;
+        @json(structure)
+        structure Response { i32 value; private string secret; };
+        void main() {}
+    )");
+
+    EXPECT_EQ(Check(), "");
+
+    Write("json.fl", R"(module json;
+        decoration json;
+    )");
+    EXPECT_NE(Check().find("unknown or inaccessible decoration '@json'"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, KeepsImportedLifecycleWarningsLocalAndNamesReadable) {
+    Write("dependency.fl", R"(module dependency;
+        export structure Imported { i32 value; };
+        Imported Imported::zero() override {
+            return build Imported { self.value = 1; };
+        }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::dependency;
+        structure Local { i32 value; };
+        Local Local::zero() override {
+            return build Local { self.value = 1; };
+        }
+        void main() {}
+    )");
+
+    const std::string messages = Check();
+    EXPECT_NE(messages.find("structure 'Local' is not trivially zeroed"),
+              std::string::npos);
+    EXPECT_EQ(messages.find("structure 'Imported' is not trivially zeroed"),
+              std::string::npos);
+    EXPECT_EQ(messages.find("$m"), std::string::npos);
+}
+
+TEST_F(ModuleTests, NominalTypeDiagnosticsNeverExposeInternalModuleNames) {
+    Write("dependency.fl", R"(module dependency;
+        export structure Record { i32 value; };
+        export enum State { default Ready, }
+        export error Failure { Broken }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::dependency;
+        void main() {
+            dependency::Record record = 1;
+            dependency::State state = 1;
+            dependency::Failure failure = 1;
+        }
+    )");
+
+    const std::string messages = Check();
+    EXPECT_NE(messages.find("Record"), std::string::npos);
+    EXPECT_NE(messages.find("State"), std::string::npos);
+    EXPECT_NE(messages.find("Failure"), std::string::npos);
+    EXPECT_EQ(messages.find("$m"), std::string::npos);
 }
 TEST_F(ModuleTests, ComposesLogicalModulesAcrossArbitraryFilenames) {
     Write("first_piece.fl", R"(module shared;
@@ -78,8 +174,88 @@ TEST_F(ModuleTests, ComposesLogicalModulesAcrossArbitraryFilenames) {
     EXPECT_NE(Check().find("cannot open module 'first_piece'"),
               std::string::npos);
 }
+
+TEST_F(ModuleTests, ComposesAndImportsOverloadsAcrossSourceUnits) {
+    Write("first_piece.fl", R"(module shared;
+        export i32 choose(i32 value) { return value + 1; }
+    )");
+    Write("second_piece.fl", R"(module shared;
+        export i64 choose(i64 value) { return value + 2; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::shared;
+        i32 main() {
+            i32 small = shared::choose(19);
+            i64 large = shared::choose(20.cast<i64>);
+            return small + large.cast<i32>;
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, ExportsVariadicForwardingFunctionsAcrossModules) {
+    Write("output.fl", R"(module output;
+        export void print(values...) { stdout(values...); }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::output;
+        i32 main() { output::print("answer: ", 42); return 0; }
+    )");
+
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, GivesAnonymousFunctionsUniqueNamesAcrossSourceUnits) {
+    Write("first_piece.fl", R"(module shared;
+        func Reader() => (i32);
+        export i32 first() {
+            Reader read = []() => (i32) { return 20; };
+            return read();
+        }
+    )");
+    Write("second_piece.fl", R"(module shared;
+        export i32 second() {
+            Reader read = []() => (i32) { return 22; };
+            return read();
+        }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::shared;
+        i32 main() { return shared::first() + shared::second(); }
+    )");
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, SharesModuleConstantsAcrossFilesAndImportsExports) {
+    Write("constant_values.fl", R"(module constants;
+        const i32 BASE = 40;
+        export const i32 PUBLIC = BASE + 2;
+    )");
+    Write("constant_api.fl", R"(module constants;
+        export i32 answer() { return BASE + 2; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::constants;
+        i32 main() { return constants::answer() + constants::PUBLIC - 42; }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main; @imports :: root::constants;
+        i32 main() { return constants::BASE; }
+    )");
+    EXPECT_NE(Check().find("unknown name 'constants::BASE'"),
+              std::string::npos);
+}
+TEST_F(ModuleTests, ModuleConstantVisibilityCannotLeakPrivateTypes) {
+    Write("constants.fl", R"(module constants;
+        enum State { Ready }
+        export const State DEFAULT_STATE = State.Ready;
+    )");
+    Write("main.fl", R"(module main; @imports :: root::constants;
+        void main() {}
+    )");
+    EXPECT_NE(Check().find("exported APIs cannot expose non-exported types"),
+              std::string::npos);
+}
 TEST_F(ModuleTests, KeepsImportsLocalToTheirSourceUnit) {
-    Write("dependency.fl", "module dependency; export i32 value() { return 42; }");
+    Write("dependency.fl",
+          "module dependency; export i32 value() { return 42; }");
     Write("one.fl", R"(module shared; @imports :: root::dependency;
         export i32 one() { return dependency::value(); }
     )");
@@ -161,6 +337,153 @@ TEST_F(ModuleTests, LibrariesUseTheirOwnRootAndDiamondImportsShareIdentity) {
         "main() { b := one::make(); return two::read(&b); }");
     EXPECT_EQ(Check(), "");
 }
+TEST_F(ModuleTests, PackageGraphResolvesRecursivePackageLocalAliasesAndRoots) {
+    Write("app/main.fl", R"(module main;
+        @imports :: lib::middle::api :: lib::std::marker;
+        i32 main() { return api::answer() + marker::offset(); }
+    )");
+    Write("middle/api.fl", R"(module api;
+        @imports :: root::helper :: lib::leaf::value;
+        export i32 answer() { return helper::base() + value::rest(); }
+    )");
+    Write("middle/helper.fl",
+          "module helper; export i32 base() { return 19; }");
+    Write("leaf/value.fl", "module value; export i32 rest() { return 22; }");
+    Write("std/marker.fl", "module marker; export i32 offset() { return 1; }");
+    EXPECT_EQ(CheckGraph(R"({
+        "schema": 1,
+        "root": "workspace",
+        "packages": [
+            {"id":"workspace", "identity":"local/app", "source":"../app",
+             "dependencies":{"middle":"middle@1", "std":"toolchain-std"}},
+            {"id":"middle@1", "identity":"example/middle", "version":"1.0.0",
+             "source":"../middle", "checksum":"sha256:middle",
+             "dependencies":{"leaf":"leaf@2"}},
+            {"id":"leaf@2", "identity":"example/leaf", "version":"2.0.0",
+             "source":"../leaf", "dependencies":{}},
+            {"id":"toolchain-std", "identity":"flecha/std", "source":"../std",
+             "flecha":">=0.3.0, <0.4.0", "dependencies":{}}
+        ]
+    })"),
+              "");
+}
+TEST_F(ModuleTests,
+       PackageGraphIsolatesRepeatedAliasesModulesAndGenericSpecializations) {
+    Write("app/main.fl", R"(module main;
+        @imports :: lib::first::use as first :: lib::second::use as second;
+        i32 main() { return first::answer() + second::answer(); }
+    )");
+    Write("first/use.fl", R"(module use; @imports :: lib::common::model;
+        export i32 answer() {
+            value := model::make<i32>(20);
+            return model::read<i32>(&value);
+        }
+    )");
+    Write("second/use.fl", R"(module use; @imports :: lib::common::model;
+        export i32 answer() {
+            value := model::make<i32>(22);
+            return model::read<i32>(&value);
+        }
+    )");
+    Write("left/model.fl", R"(module model;
+        export structure Box<T> { T value; };
+        export Box<T> make<T>(T value) {
+            result := Box<T>::init(); result.value = value; return result;
+        }
+        export T read<T>(&const Box<T> value) { return value->value; }
+    )");
+    Write("right/model.fl", R"(module model;
+        export structure Box<T> { T value; };
+        export Box<T> make<T>(T value) {
+            result := Box<T>::init(); result.value = value; return result;
+        }
+        export T read<T>(&const Box<T> value) { return value->value; }
+    )");
+    EXPECT_EQ(CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"first":"first", "second":"second"}},
+            {"id":"first", "identity":"owner/first", "source":"../first",
+             "dependencies":{"common":"left"}},
+            {"id":"second", "identity":"owner/second", "source":"../second",
+             "dependencies":{"common":"right"}},
+            {"id":"left", "identity":"one/common", "source":"../left",
+             "dependencies":{}},
+            {"id":"right", "identity":"two/common", "source":"../right",
+             "dependencies":{}}
+        ]
+    })"),
+              "");
+}
+TEST_F(ModuleTests, PackageGraphDiagnosesAliasesRelativeToImportingPackage) {
+    Write("app/main.fl", R"(module main; @imports :: lib::middle::api;
+        i32 main() { return api::answer(); }
+    )");
+    Write("middle/api.fl", R"(module api; @imports :: lib::missing::value;
+        export i32 answer() { return value::answer(); }
+    )");
+    const std::string errors = CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"middle":"middle"}},
+            {"id":"middle", "identity":"owner/middle", "source":"../middle",
+             "dependencies":{}}
+        ]
+    })");
+    EXPECT_NE(
+        errors.find("package 'owner/middle' has no dependency alias 'missing'"),
+        std::string::npos)
+        << errors;
+}
+TEST_F(ModuleTests, PackageGraphDiagnosesCyclesAndMalformedGraphs) {
+    const std::string cycle = CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"dependency":"dependency"}},
+            {"id":"dependency", "identity":"owner/dependency",
+             "source":"../dependency", "dependencies":{"app":"app"}}
+        ]
+    })");
+    EXPECT_NE(cycle.find("package graph cycle: app -> dependency -> app"),
+              std::string::npos)
+        << cycle;
+
+    const std::string missing = CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"missing":"absent"}}
+        ]
+    })");
+    EXPECT_NE(missing.find("references missing node 'absent'"),
+              std::string::npos)
+        << missing;
+
+    const std::string invalidAlias = CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"if":"app"}}
+        ]
+    })");
+    EXPECT_NE(invalidAlias.find("invalid dependency alias 'if'"),
+              std::string::npos)
+        << invalidAlias;
+
+    const std::string unsupported = CheckGraph(R"({
+        "schema":2, "root":"app", "packages":[]
+    })");
+    EXPECT_NE(unsupported.find("unsupported package graph schema 2"),
+              std::string::npos)
+        << unsupported;
+
+    const std::string malformed = CheckGraph("{\"schema\":1,", "app/main.fl");
+    EXPECT_NE(malformed.find("package graph error: line 1"), std::string::npos)
+        << malformed;
+}
 TEST_F(ModuleTests, ExportedStructuresBundleMethodsButRespectPrivacy) {
     Write("box.fl",
           "module box; export structure Box { private i32 n; }; i32 "
@@ -201,6 +524,28 @@ TEST_F(ModuleTests, ExportedGenericCallableSignaturesCrossModuleBoundaries) {
           "}; return callbacks::apply<i32>(increment, 41); }");
     EXPECT_EQ(Check(), "");
 }
+TEST_F(ModuleTests,
+       ContextuallyInfersConstNominalParametersInsideGenericFunctions) {
+    Write("adapter.fl", R"(module adapter;
+        structure Marker {};
+        export func Action<T>(&const T) => ();
+        func PairAction<K, V>(&const K, &const V) => ();
+
+        void consume<K, V>(PairAction<K, V> action) {}
+
+        export void adapt<T>(Action<T> action) {
+            consume<T, Marker>([&action](key, marker) => {
+                action(key);
+            });
+        }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::adapter;
+        void main() {
+            adapter::adapt<i32>((value) => {});
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+}
 TEST_F(ModuleTests, GenericCallableExportsRespectTypeVisibility) {
     Write("callbacks.fl",
           "module callbacks; structure Hidden { i32 value; }; export func "
@@ -209,6 +554,77 @@ TEST_F(ModuleTests, GenericCallableExportsRespectTypeVisibility) {
           "module main; @imports :: root::callbacks; void main() {}");
     EXPECT_NE(Check().find("cannot expose non-exported types"),
               std::string::npos);
+}
+TEST_F(ModuleTests, TypeSetsFollowModuleAndQuiverVisibility) {
+    Write("sets.fl", R"(module sets;
+        export structure UserId { i32 value; };
+        export typeset identifiers { integer, UserId, };
+        export T identity<T: identifiers>(T value) { return value; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::sets;
+        T local_identity<T: sets::identifiers>(T value) { return value; }
+        i32 main() {
+            local_identity<i32>(1);
+            return sets::identity<i32>(42);
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("sets.fl", R"(module sets;
+        typeset hidden { integer, };
+        export T identity<T: hidden>(T value) { return value; }
+    )");
+    EXPECT_NE(
+        Check().find("exported generics cannot use non-exported type sets"),
+        std::string::npos);
+
+    Write("sets.fl", R"(module sets;
+        structure Hidden { i32 value; };
+        export typeset leaked { Hidden, };
+    )");
+    EXPECT_NE(
+        Check().find("visible type sets cannot include less-visible types"),
+        std::string::npos);
+
+    Write("sets.fl", R"(module sets;
+        quiver typeset nearby { integer, };
+    )");
+    Write("main.fl", R"(module main; @imports :: root::sets;
+        T identity<T: sets::nearby>(T value) { return value; }
+        i32 main() { return identity<i32>(42); }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("nested/main.fl", R"(module main; @imports :: root::sets;
+        T identity<T: sets::nearby>(T value) { return value; }
+        i32 main() { return identity<i32>(42); }
+    )");
+    EXPECT_NE(
+        CheckAt("nested/main.fl").find("'sets::nearby' is quiver-visible"),
+        std::string::npos);
+}
+TEST_F(ModuleTests, ModuleNamesDoNotShadowBuiltinTypeSets) {
+    Write("integer.fl", R"(module integer;
+        export structure Marker { i32 value; };
+        export i32 answer() { return 42; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::integer;
+        typeset values { integer, integer::Marker, };
+
+        T constrained<T: integer>(T value) { return value; }
+        T accepted<T: values>(T value) { return value; }
+        bool is_integer<T>() { return T.isof<integer>; }
+
+        i32 main() {
+            integer::Marker marker = integer::Marker::init();
+            accepted<integer::Marker>(marker);
+            if !is_integer<i32>() { return 1; }
+            if !3.isof<integer> { return 2; }
+            return integer::answer() + constrained<i32>(0);
+        }
+    )");
+
+    EXPECT_EQ(Check(), "");
 }
 TEST_F(ModuleTests, PrivateDeclarationsAndTransitiveImportsDoNotLeak) {
     Write("hidden.fl",
@@ -393,8 +809,7 @@ TEST_F(ModuleTests, AggregatesTestsFromMultipleArbitrarilyNamedSources) {
             if math::secret() < 0 { t->fail(); }
         }
     )");
-    EXPECT_EQ(CheckAt("boundary_cases.fl",
-                      flecha::core::ModuleLoadMode::Test),
+    EXPECT_EQ(CheckAt("boundary_cases.fl", flecha::core::ModuleLoadMode::Test),
               "");
 }
 TEST_F(ModuleTests, RejectsDuplicateDeclarationsAndMixedModulePrivacy) {
@@ -861,7 +1276,7 @@ TEST_F(ModuleTests, QuiverGenericDeclarationsRespectInstantiationBoundary) {
         i32 main() {
             box := generic::Box<i32>::init();
             generic::Mapper<i32> mapper = (value) => { return value; };
-            return generic::identity<i32>(mapper(box.value));
+            return generic::identity(mapper(box.value));
         }
     )");
     EXPECT_EQ(Check(), "");
@@ -880,6 +1295,44 @@ TEST_F(ModuleTests, QuiverGenericDeclarationsRespectInstantiationBoundary) {
     )");
     EXPECT_NE(Check().find("exported APIs cannot expose non-exported types"),
               std::string::npos);
+}
+
+TEST_F(ModuleTests, GenericMethodInferencePreservesVisibilityBoundaries) {
+    Write("api.fl", R"(module api;
+        export structure PublicBox {};
+        U PublicBox::identity<U>(&const self, U value) { return value; }
+        U PublicBox::parse<U>(&const self) { return none; }
+        private U PublicBox::hidden<U>(&const self, U value) { return value; }
+        U PublicBox::through_hidden<U>(&const self, U value) {
+            return self->hidden(value);
+        }
+
+        quiver structure SharedBox {};
+        U SharedBox::identity<U>(&const self, U value) { return value; }
+    )");
+    Write("main.fl", R"(module main; @imports :: root::api;
+        i32 main() {
+            publicBox := api::PublicBox::init();
+            sharedBox := api::SharedBox::init();
+            i16 small = 7;
+            i16 argument = publicBox.identity(small);
+            i32 expected = publicBox.parse();
+            i32 privateResult = publicBox.through_hidden(42);
+            i32 shared = sharedBox.identity(42);
+            return argument.cast<i32> + expected + privateResult + shared;
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+
+    Write("nested/main.fl", R"(module main; @imports :: root::api;
+        i32 main() {
+            box := api::SharedBox::init();
+            return box.identity(42);
+        }
+    )");
+    const std::string errors = CheckAt("nested/main.fl");
+    EXPECT_NE(errors.find("unknown method 'init'"), std::string::npos)
+        << errors;
 }
 
 TEST_F(ModuleTests, RejectsVisibilityModifiersOnMemberFunctions) {

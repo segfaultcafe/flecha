@@ -1,0 +1,104 @@
+module assertion_allocation_failure;
+
+@imports
+    :: lib::std::tests::asserts
+    :: lib::std::tests::testing;
+
+quiver extern unsafe void assertion_allocation_fail_next();
+
+export i32 numeric_assertion_allocation_failure_test() {
+    result := testing::UnitTest::init("numeric allocation failure", false);
+    i32 actual = 4;
+    i32 expected = 5;
+
+    unsafe { assertion_allocation_fail_next(); }
+    asserts::numeric_equal<i32>(
+        &result,
+        &actual,
+        &expected,
+        "numeric fallback"
+    );
+
+    if result.assertionCount() != 1 or result.failureCount() != 1 {
+        return 1;
+    }
+    result.printOutput();
+    return 42;
+}
+
+export i32 string_assertion_allocation_failure_test() {
+    result := testing::UnitTest::init("string allocation failure", false);
+
+    unsafe { assertion_allocation_fail_next(); }
+    asserts::string_equal(
+        &result,
+        "actual",
+        "expected",
+        "string fallback"
+    );
+
+    if result.assertionCount() != 1 or result.failureCount() != 1 {
+        return 1;
+    }
+    result.printOutput();
+    return 42;
+}
+
+export i32 byte_length_assertion_allocation_failure_test() {
+    result := testing::UnitTest::init("byte length allocation failure", false);
+    [1]u8 actual = [1];
+    [2]u8 expected = [1, 2];
+
+    unsafe { assertion_allocation_fail_next(); }
+    asserts::bytes_equal(
+        &result,
+        actual[:],
+        expected[:],
+        "byte length fallback"
+    );
+
+    if result.assertionCount() != 1 or result.failureCount() != 1 {
+        return 1;
+    }
+    result.printOutput();
+    return 42;
+}
+
+export i32 byte_content_assertion_allocation_failure_test() {
+    result := testing::UnitTest::init("byte content allocation failure", false);
+    [2]u8 actual = [1, 2];
+    [2]u8 expected = [1, 9];
+
+    unsafe { assertion_allocation_fail_next(); }
+    asserts::bytes_equal(
+        &result,
+        actual[:],
+        expected[:],
+        "byte content fallback"
+    );
+
+    if result.assertionCount() != 1 or result.failureCount() != 1 {
+        return 1;
+    }
+    result.printOutput();
+    return 42;
+}
+
+export i32 byte_inequality_assertion_allocation_failure_test() {
+    result := testing::UnitTest::init("byte inequality allocation failure", false);
+    [2]u8 actual = [1, 2];
+
+    unsafe { assertion_allocation_fail_next(); }
+    asserts::bytes_not_equal(
+        &result,
+        actual[:],
+        actual[:],
+        "byte inequality fallback"
+    );
+
+    if result.assertionCount() != 1 or result.failureCount() != 1 {
+        return 1;
+    }
+    result.printOutput();
+    return 42;
+}

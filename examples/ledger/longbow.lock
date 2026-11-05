@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "root": "root",
+  "packages": [
+    {
+      "id": "root",
+      "identity": "local/ledger",
+      "source": {
+        "kind": "workspace",
+        "path": "."
+      },
+      "version": "0.1.0",
+      "dependencies": {
+        "std": "toolchain-std"
+      }
+    },
+    {
+      "id": "toolchain-std",
+      "identity": "flecha/std",
+      "source": {
+        "kind": "path",
+        "path": "../../std"
+      },
+      "checksum": "sha256:bc629a8f2428d45de2f97bc076e1dd64a794acade7b1ab84b2679d1d8a0401a9",
+      "dependencies": {}
+    }
+  ]
+}

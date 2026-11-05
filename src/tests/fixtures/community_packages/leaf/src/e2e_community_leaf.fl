@@ -1,0 +1,5 @@
+module e2e_community_leaf;
+
+export i32 base() {
+    return 40;
+}

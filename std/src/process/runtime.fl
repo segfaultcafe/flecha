@@ -1,0 +1,58 @@
+module runtime;
+
+// Spawns directly without invoking a command shell.
+//
+// argument_offsets contains argument_count + 1 entries. Its final entry equals
+// argument_bytes_length. On success, stdin_output is the parent-side writer,
+// while stdout_output and stderr_output are parent-side readers.
+quiver extern unsafe i32 flecha_runtime_v1_process_spawn(
+    **void process_output,
+    **void stdin_output,
+    **void stdout_output,
+    **void stderr_output,
+    *const char executable,
+    usize executable_length,
+    *const u8 argument_bytes,
+    usize argument_bytes_length,
+    *const usize argument_offsets,
+    usize argument_count,
+    u8 stdin_mode,
+    u8 stdout_mode,
+    u8 stderr_mode
+);
+
+// Blocks until the child terminates.
+//
+// termination_kind:
+//   0 = exited
+//   1 = terminated by a signal
+//   2 = abnormal platform termination
+quiver extern unsafe i32 flecha_runtime_v1_process_wait(
+    *void handle,
+    *u8 termination_kind,
+    *u32 termination_detail
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_process_close(
+    *void handle
+);
+
+// Reads at most capacity bytes. A successful zero count means EOF.
+quiver extern unsafe i32 flecha_runtime_v1_process_pipe_read(
+    *void handle,
+    *u8 destination,
+    usize capacity,
+    *usize bytes_read
+);
+
+// Writes at most length bytes and preserves partial progress on error.
+quiver extern unsafe i32 flecha_runtime_v1_process_pipe_write(
+    *void handle,
+    *const u8 source,
+    usize length,
+    *usize bytes_written
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_process_pipe_close(
+    *void handle
+);

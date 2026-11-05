@@ -30,6 +30,8 @@ const KeywordMap KEYWORDS = {
     {"module", TokenType::Module},
     {"test", TokenType::Test},
     {"enum", TokenType::Enum},
+    {"typeset", TokenType::TypeSet},
+    {"decoration", TokenType::Decoration},
     {"structure", TokenType::Structure},
     {"private", TokenType::Private},
     {"override", TokenType::Override},
@@ -82,6 +84,12 @@ bool IsIdentifierContinue(char character) {
     return std::isalnum(value) != 0 || character == '_';
 }
 
+bool IsHexadecimalDigit(char character) {
+    const unsigned char value = static_cast<unsigned char>(character);
+    return std::isdigit(value) != 0 || (character >= 'a' && character <= 'f') ||
+           (character >= 'A' && character <= 'F');
+}
+
 }  // namespace
 
 source::SourceLocation Tokenizer::Location() const {
@@ -122,6 +130,132 @@ bool Tokenizer::Match(char expected) {
 }
 
 bool Tokenizer::IsAtEnd() const { return _index >= _source.size(); }
+
+Token Tokenizer::ScanForeignBlock(source::SourceLocation start,
+                                  size_t startIndex) {
+    while (std::isspace(static_cast<unsigned char>(Peek())) != 0) Advance();
+    const size_t languageStart = _index;
+    if (!IsIdentifierStart(Peek())) {
+        _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                            RangeFrom(start),
+                            "expected a language after 'foreign'");
+        return Token(TokenType::Invalid,
+                     _source.substr(startIndex, _index - startIndex),
+                     RangeFrom(start));
+    }
+    Advance();
+    while (IsIdentifierContinue(Peek())) Advance();
+    const std::string language =
+        _source.substr(languageStart, _index - languageStart);
+
+    while (std::isspace(static_cast<unsigned char>(Peek())) != 0) Advance();
+    if (!Match('{')) {
+        _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                            RangeFrom(start),
+                            "expected '{' after foreign language");
+        return Token(TokenType::Invalid,
+                     _source.substr(startIndex, _index - startIndex),
+                     RangeFrom(start));
+    }
+
+    const source::SourceLocation bodyStart = Location();
+    const size_t bodyStartIndex = _index;
+    size_t depth = 1;
+    enum class Mode {
+        Source,
+        SingleQuote,
+        DoubleQuote,
+        LineComment,
+        BlockComment
+    };
+    Mode mode = Mode::Source;
+    while (!IsAtEnd()) {
+        const char current = Peek();
+        const char next = Peek(1);
+        if (mode == Mode::LineComment) {
+            Advance();
+            if (current == '\n') mode = Mode::Source;
+            continue;
+        }
+        if (mode == Mode::BlockComment) {
+            Advance();
+            if (current == '*' && next == '/') {
+                Advance();
+                mode = Mode::Source;
+            }
+            continue;
+        }
+        if (mode == Mode::SingleQuote || mode == Mode::DoubleQuote) {
+            Advance();
+            if (current == '\\' && !IsAtEnd()) {
+                Advance();
+                continue;
+            }
+            if ((mode == Mode::SingleQuote && current == '\'') ||
+                (mode == Mode::DoubleQuote && current == '"'))
+                mode = Mode::Source;
+            continue;
+        }
+
+        if (current == '/' && next == '/') {
+            Advance();
+            Advance();
+            mode = Mode::LineComment;
+            continue;
+        }
+        if (current == '/' && next == '*') {
+            Advance();
+            Advance();
+            mode = Mode::BlockComment;
+            continue;
+        }
+        if (language == "asm" && current == '#') {
+            Advance();
+            mode = Mode::LineComment;
+            continue;
+        }
+        if (current == '\'') {
+            Advance();
+            mode = Mode::SingleQuote;
+            continue;
+        }
+        if (current == '"') {
+            Advance();
+            mode = Mode::DoubleQuote;
+            continue;
+        }
+        if (current == '{') {
+            ++depth;
+            Advance();
+            continue;
+        }
+        if (current == '}') {
+            --depth;
+            if (depth == 0) {
+                const size_t bodyEndIndex = _index;
+                Advance();
+                std::string value = language;
+                value.push_back('\0');
+                value += std::to_string(bodyStart.line);
+                value.push_back('\0');
+                value += _source.substr(bodyStartIndex,
+                                        bodyEndIndex - bodyStartIndex);
+                return Token(TokenType::ForeignBlock, std::move(value),
+                             RangeFrom(start));
+            }
+            Advance();
+            continue;
+        }
+        Advance();
+    }
+
+    _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                        RangeFrom(start),
+                        "expected '}' to close foreign source block");
+    return Token(TokenType::Invalid,
+                 _source.substr(startIndex, _index - startIndex),
+                 RangeFrom(start));
+}
 
 void Tokenizer::SkipTrivia() {
     while (!IsAtEnd()) {
@@ -182,6 +316,11 @@ Token Tokenizer::NextToken() {
         case ',':
             return makeToken(TokenType::Comma);
         case '.':
+            if (Peek() == '.' && Peek(1) == '.') {
+                Advance();
+                Advance();
+                return makeToken(TokenType::Ellipsis);
+            }
             return makeToken(TokenType::Dot);
         case '(':
             return makeToken(TokenType::LParen);
@@ -196,18 +335,27 @@ Token Tokenizer::NextToken() {
         case '}':
             return makeToken(TokenType::RCurly);
         case '+':
-            return makeToken(Match('+') ? TokenType::Increment
+            if (Match('+')) return makeToken(TokenType::Increment);
+            return makeToken(Match('=') ? TokenType::AddAssign
                                         : TokenType::Add);
         case '-':
-            return makeToken(Match('>') ? TokenType::Arrow : TokenType::Sub);
+            if (Match('>')) return makeToken(TokenType::Arrow);
+            if (Match('-')) return makeToken(TokenType::Decrement);
+            return makeToken(Match('=') ? TokenType::SubAssign
+                                        : TokenType::Sub);
         case '*':
-            return makeToken(TokenType::Mul);
+            return makeToken(Match('=') ? TokenType::MulAssign
+                                        : TokenType::Mul);
         case '/':
-            return makeToken(TokenType::Div);
+            return makeToken(Match('=') ? TokenType::DivAssign
+                                        : TokenType::Div);
         case '%':
             return makeToken(TokenType::Mod);
         case '^':
-            return makeToken(TokenType::Xor);
+            return makeToken(Match('=') ? TokenType::XorAssign
+                                        : TokenType::Xor);
+        case '~':
+            return makeToken(TokenType::BitNot);
         case '@':
             return makeToken(TokenType::At);
         case '#':
@@ -231,9 +379,11 @@ Token Tokenizer::NextToken() {
             return makeToken(TokenType::Bang);
         case '<':
             if (Match('-')) return makeToken(TokenType::LeftArrow);
+            if (Match('<')) return makeToken(TokenType::ShiftLeft);
             return makeToken(Match('=') ? TokenType::LessEqual
                                         : TokenType::Less);
         case '>':
+            if (Match('>')) return makeToken(TokenType::ShiftRight);
             return makeToken(Match('=') ? TokenType::GreaterEqual
                                         : TokenType::Greater);
         case '&':
@@ -241,7 +391,7 @@ Token Tokenizer::NextToken() {
             return makeToken(TokenType::Ampersand);
         case '|':
             if (Match('|')) return makeToken(TokenType::Or);
-            break;
+            return makeToken(TokenType::BitOr);
         case '"': {
             string value;
             bool valid = true;
@@ -371,6 +521,13 @@ Token Tokenizer::NextToken() {
     const unsigned char unsignedCharacter =
         static_cast<unsigned char>(character);
     if (std::isdigit(unsignedCharacter) != 0) {
+        if (character == '0' && (Peek() == 'x' || Peek() == 'X') &&
+            IsHexadecimalDigit(Peek(1))) {
+            Advance();
+            while (IsHexadecimalDigit(Peek())) Advance();
+            return makeToken(TokenType::NumberLiteral);
+        }
+
         while (std::isdigit(static_cast<unsigned char>(Peek())) != 0) {
             Advance();
         }
@@ -392,6 +549,7 @@ Token Tokenizer::NextToken() {
             Advance();
         }
         const string word = _source.substr(startIndex, _index - startIndex);
+        if (word == "foreign") return ScanForeignBlock(start, startIndex);
         const KeywordMap::const_iterator keyword = KEYWORDS.find(word);
         return Token(
             keyword == KEYWORDS.end() ? TokenType::Identifier : keyword->second,

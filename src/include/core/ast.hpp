@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,6 +22,9 @@ enum class AstNodeKind {
     CallableTypeDeclaration,
     ErrorDeclaration,
     EnumDeclaration,
+    TypeSetDeclaration,
+    DecorationDeclaration,
+    ModuleConstantDeclaration,
     StructureDeclaration,
     StructureField,
     BuildExpression,
@@ -60,6 +64,7 @@ enum class AstNodeKind {
     IndexExpression,
     SliceExpression,
     CastExpression,
+    IsOfExpression,
 };
 
 class AstNode {
@@ -77,6 +82,23 @@ class AstNode {
 
    private:
     source::SourceRange _range;
+};
+
+enum class DecorationArgumentKind { Identifier, String };
+
+struct DecorationArgument final {
+    DecorationArgumentKind kind;
+    std::string value;
+    source::SourceRange range;
+};
+
+struct DecorationApplication final {
+    std::vector<std::string> path;
+    std::vector<source::SourceRange> pathRanges;
+    std::vector<DecorationArgument> arguments;
+    source::SourceRange range;
+
+    [[nodiscard]] const std::string& Name() const { return path.back(); }
 };
 
 class Declaration : public AstNode {
@@ -97,12 +119,15 @@ class Declaration : public AstNode {
     // desugaring.
     std::vector<std::string> genericParameters;
     std::vector<std::string> ownerParameters;
+    // Constraints are type-set names keyed by the generic parameter name.
+    std::map<std::string, std::string> genericConstraints;
     std::vector<Token> templateTokens;
     std::vector<std::pair<std::size_t, std::size_t>> parameterTokenRanges;
     std::size_t nameTokenIndex = 0;
     std::size_t ownerTokenIndex = 0;
     std::vector<source::SourceRange> instantiationOrigins;
     std::string specializationName;
+    std::vector<DecorationApplication> decorations;
 };
 
 class Statement : public AstNode {
@@ -281,6 +306,37 @@ class TypeNode final : public AstNode {
     source::SourceRange _qualifierRange;
 };
 
+class ModuleConstantDeclaration final : public Declaration {
+   public:
+    ModuleConstantDeclaration(source::SourceRange range,
+                              std::unique_ptr<TypeNode> type, std::string name,
+                              source::SourceRange nameRange,
+                              std::unique_ptr<Expression> initializer)
+        : Declaration(range),
+          _type(std::move(type)),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _initializer(std::move(initializer)) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::ModuleConstantDeclaration;
+    }
+    [[nodiscard]] const TypeNode& Type() const { return *_type; }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] const source::SourceRange& NameRange() const {
+        return _nameRange;
+    }
+    [[nodiscard]] const Expression& Initializer() const {
+        return *_initializer;
+    }
+
+   private:
+    std::unique_ptr<TypeNode> _type;
+    std::string _name;
+    source::SourceRange _nameRange;
+    std::unique_ptr<Expression> _initializer;
+};
+
 struct EnumVariant final {
     std::string name;
     source::SourceRange range;
@@ -320,22 +376,70 @@ class EnumDeclaration final : public Declaration {
     std::vector<EnumVariant> _variants;
 };
 
+class TypeSetDeclaration final : public Declaration {
+   public:
+    TypeSetDeclaration(source::SourceRange range, std::string name,
+                       source::SourceRange nameRange,
+                       std::vector<std::unique_ptr<TypeNode>> members)
+        : Declaration(range),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _members(std::move(members)) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::TypeSetDeclaration;
+    }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] source::SourceRange NameRange() const { return _nameRange; }
+    [[nodiscard]] const std::vector<std::unique_ptr<TypeNode>>& Members()
+        const {
+        return _members;
+    }
+
+   private:
+    std::string _name;
+    source::SourceRange _nameRange;
+    std::vector<std::unique_ptr<TypeNode>> _members;
+};
+
+class DecorationDeclaration final : public Declaration {
+   public:
+    DecorationDeclaration(source::SourceRange range, std::string name,
+                          source::SourceRange nameRange)
+        : Declaration(range), _name(std::move(name)), _nameRange(nameRange) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::DecorationDeclaration;
+    }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] source::SourceRange NameRange() const { return _nameRange; }
+
+   private:
+    std::string _name;
+    source::SourceRange _nameRange;
+};
+
 class StructureField final : public AstNode {
    public:
     StructureField(source::SourceRange range, std::unique_ptr<TypeNode> type,
                    std::string name, source::SourceRange nameRange,
-                   std::unique_ptr<Expression> initializer, bool isPrivate)
+                   std::unique_ptr<Expression> initializer, bool isPrivate,
+                   std::vector<DecorationApplication> decorations = {})
         : AstNode(range),
           _type(std::move(type)),
           _name(std::move(name)),
           _nameRange(nameRange),
           _initializer(std::move(initializer)),
+          _decorations(std::move(decorations)),
           _isPrivate(isPrivate) {}
     AstNodeKind Kind() const override { return AstNodeKind::StructureField; }
     const TypeNode& Type() const { return *_type; }
     const std::string& Name() const { return _name; }
     source::SourceRange NameRange() const { return _nameRange; }
     const Expression* Initializer() const { return _initializer.get(); }
+    const std::vector<DecorationApplication>& Decorations() const {
+        return _decorations;
+    }
     bool IsPrivate() const { return _isPrivate; }
 
    private:
@@ -343,6 +447,7 @@ class StructureField final : public AstNode {
     std::string _name;
     source::SourceRange _nameRange;
     std::unique_ptr<Expression> _initializer;
+    std::vector<DecorationApplication> _decorations;
     bool _isPrivate;
 };
 
@@ -371,11 +476,13 @@ class StructureDeclaration final : public Declaration {
 class Parameter final : public AstNode {
    public:
     Parameter(source::SourceRange range, std::unique_ptr<TypeNode> type,
-              std::string name, source::SourceRange nameRange = {})
+              std::string name, source::SourceRange nameRange = {},
+              std::unique_ptr<Expression> defaultValue = nullptr)
         : AstNode(range),
           _type(std::move(type)),
           _name(std::move(name)),
-          _nameRange(nameRange.Empty() ? range : nameRange) {}
+          _nameRange(nameRange.Empty() ? range : nameRange),
+          _defaultValue(std::move(defaultValue)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::Parameter;
@@ -386,11 +493,15 @@ class Parameter final : public AstNode {
     [[nodiscard]] const source::SourceRange& NameRange() const {
         return _nameRange;
     }
+    [[nodiscard]] const Expression* DefaultValue() const {
+        return _defaultValue.get();
+    }
 
    private:
     std::unique_ptr<TypeNode> _type;
     std::string _name;
     source::SourceRange _nameRange;
+    std::unique_ptr<Expression> _defaultValue;
 };
 
 enum class FunctionModifier : std::uint8_t {
@@ -443,14 +554,17 @@ class BuildExpression final : public Expression {
 
 class FunctionDeclaration final : public Declaration {
    public:
-    FunctionDeclaration(source::SourceRange range,
-                        std::vector<FunctionModifier> modifiers,
-                        std::unique_ptr<TypeNode> returnType, std::string name,
-                        std::vector<std::unique_ptr<Parameter>> parameters,
-                        std::unique_ptr<BlockStatement> body,
-                        source::SourceRange nameRange = {},
-                        std::string owner = {}, std::string borrowSource = {},
-                        source::SourceRange borrowSourceRange = {})
+    FunctionDeclaration(
+        source::SourceRange range, std::vector<FunctionModifier> modifiers,
+        std::unique_ptr<TypeNode> returnType, std::string name,
+        std::vector<std::unique_ptr<Parameter>> parameters,
+        std::unique_ptr<BlockStatement> body,
+        source::SourceRange nameRange = {}, std::string owner = {},
+        std::vector<std::string> borrowSources = {},
+        std::vector<source::SourceRange> borrowSourceRanges = {},
+        std::string variadicPackName = {},
+        source::SourceRange variadicPackRange = {},
+        bool borrowsVariadicPack = false, bool isCrashable = false)
         : Declaration(range),
           _owner(std::move(owner)),
           _modifiers(std::move(modifiers)),
@@ -459,8 +573,12 @@ class FunctionDeclaration final : public Declaration {
           _parameters(std::move(parameters)),
           _body(std::move(body)),
           _nameRange(nameRange.Empty() ? range : nameRange),
-          _borrowSource(std::move(borrowSource)),
-          _borrowSourceRange(borrowSourceRange) {}
+          _borrowSources(std::move(borrowSources)),
+          _borrowSourceRanges(std::move(borrowSourceRanges)),
+          _variadicPackName(std::move(variadicPackName)),
+          _variadicPackRange(variadicPackRange),
+          _borrowsVariadicPack(borrowsVariadicPack),
+          _isCrashable(isCrashable) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::FunctionDeclaration;
@@ -474,6 +592,7 @@ class FunctionDeclaration final : public Declaration {
         }
         return false;
     }
+    [[nodiscard]] bool IsCrashable() const { return _isCrashable; }
     [[nodiscard]] bool IsExtern() const {
         return HasModifier(FunctionModifier::Extern);
     }
@@ -503,18 +622,32 @@ class FunctionDeclaration final : public Declaration {
         return _parameters;
     }
     [[nodiscard]] const BlockStatement& Body() const { return *_body; }
-    [[nodiscard]] bool HasBorrowSource() const {
-        return !_borrowSource.empty();
+    [[nodiscard]] bool HasBorrowSources() const {
+        return !_borrowSources.empty() || _borrowsVariadicPack;
     }
-    [[nodiscard]] const std::string& BorrowSource() const {
-        return _borrowSource;
+    [[nodiscard]] const std::vector<std::string>& BorrowSources() const {
+        return _borrowSources;
     }
-    [[nodiscard]] const source::SourceRange& BorrowSourceRange() const {
-        return _borrowSourceRange;
+    [[nodiscard]] const std::vector<source::SourceRange>& BorrowSourceRanges()
+        const {
+        return _borrowSourceRanges;
     }
-    void SetBorrowSource(std::string source, source::SourceRange range) {
-        _borrowSource = std::move(source);
-        _borrowSourceRange = range;
+    void SetBorrowSources(std::vector<std::string> sources,
+                          std::vector<source::SourceRange> ranges) {
+        _borrowSources = std::move(sources);
+        _borrowSourceRanges = std::move(ranges);
+    }
+    [[nodiscard]] bool HasVariadicPack() const {
+        return !_variadicPackName.empty();
+    }
+    [[nodiscard]] const std::string& VariadicPackName() const {
+        return _variadicPackName;
+    }
+    [[nodiscard]] const source::SourceRange& VariadicPackRange() const {
+        return _variadicPackRange;
+    }
+    [[nodiscard]] bool BorrowsVariadicPack() const {
+        return _borrowsVariadicPack;
     }
 
    private:
@@ -525,8 +658,12 @@ class FunctionDeclaration final : public Declaration {
     std::vector<std::unique_ptr<Parameter>> _parameters;
     std::unique_ptr<BlockStatement> _body;
     source::SourceRange _nameRange;
-    std::string _borrowSource;
-    source::SourceRange _borrowSourceRange;
+    std::vector<std::string> _borrowSources;
+    std::vector<source::SourceRange> _borrowSourceRanges;
+    std::string _variadicPackName;
+    source::SourceRange _variadicPackRange;
+    bool _borrowsVariadicPack;
+    bool _isCrashable;
     bool _isTest = false;
     bool _isTestHarness = false;
 };
@@ -597,13 +734,14 @@ class AnonymousFunctionExpression final : public Expression {
 
 class CallableTypeDeclaration final : public Declaration {
    public:
-    CallableTypeDeclaration(source::SourceRange range, std::string name,
-                            source::SourceRange nameRange,
-                            std::vector<std::unique_ptr<Parameter>> parameters,
-                            std::vector<std::unique_ptr<TypeNode>> results,
-                            bool isUnsafe, bool isOnce,
-                            std::string borrowSource = {},
-                            source::SourceRange borrowSourceRange = {})
+    CallableTypeDeclaration(
+        source::SourceRange range, std::string name,
+        source::SourceRange nameRange,
+        std::vector<std::unique_ptr<Parameter>> parameters,
+        std::vector<std::unique_ptr<TypeNode>> results, bool isUnsafe,
+        bool isOnce, bool isCrashable = false,
+        std::vector<std::string> borrowSources = {},
+        std::vector<source::SourceRange> borrowSourceRanges = {})
         : Declaration(range),
           _name(std::move(name)),
           _nameRange(nameRange),
@@ -611,8 +749,9 @@ class CallableTypeDeclaration final : public Declaration {
           _results(std::move(results)),
           _isUnsafe(isUnsafe),
           _isOnce(isOnce),
-          _borrowSource(std::move(borrowSource)),
-          _borrowSourceRange(borrowSourceRange) {}
+          _isCrashable(isCrashable),
+          _borrowSources(std::move(borrowSources)),
+          _borrowSourceRanges(std::move(borrowSourceRanges)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::CallableTypeDeclaration;
@@ -631,14 +770,16 @@ class CallableTypeDeclaration final : public Declaration {
     }
     [[nodiscard]] bool IsUnsafe() const { return _isUnsafe; }
     [[nodiscard]] bool IsOnce() const { return _isOnce; }
-    [[nodiscard]] bool HasBorrowSource() const {
-        return !_borrowSource.empty();
+    [[nodiscard]] bool IsCrashable() const { return _isCrashable; }
+    [[nodiscard]] bool HasBorrowSources() const {
+        return !_borrowSources.empty();
     }
-    [[nodiscard]] const std::string& BorrowSource() const {
-        return _borrowSource;
+    [[nodiscard]] const std::vector<std::string>& BorrowSources() const {
+        return _borrowSources;
     }
-    [[nodiscard]] const source::SourceRange& BorrowSourceRange() const {
-        return _borrowSourceRange;
+    [[nodiscard]] const std::vector<source::SourceRange>& BorrowSourceRanges()
+        const {
+        return _borrowSourceRanges;
     }
 
    private:
@@ -648,8 +789,9 @@ class CallableTypeDeclaration final : public Declaration {
     std::vector<std::unique_ptr<TypeNode>> _results;
     bool _isUnsafe;
     bool _isOnce;
-    std::string _borrowSource;
-    source::SourceRange _borrowSourceRange;
+    bool _isCrashable;
+    std::vector<std::string> _borrowSources;
+    std::vector<source::SourceRange> _borrowSourceRanges;
 };
 
 struct Import final {
@@ -674,6 +816,15 @@ struct Module final {
     std::vector<Import> imports;
 };
 
+enum class ForeignLanguage { C, Assembly };
+
+struct ForeignSource final {
+    ForeignLanguage language;
+    std::string source;
+    source::SourceRange range;
+    std::uint32_t bodyLine = 1;
+};
+
 class CompilationUnit final : public AstNode {
    public:
     CompilationUnit(source::SourceRange range,
@@ -681,6 +832,7 @@ class CompilationUnit final : public AstNode {
         : AstNode(range), _declarations(std::move(declarations)) {}
 
     std::vector<std::unique_ptr<Declaration>> genericTemplates;
+    std::vector<std::unique_ptr<Declaration>> typeSets;
     std::map<std::string, const Declaration*> genericAliases;
     bool genericsExpanded = false;
     void AddDeclaration(std::unique_ptr<Declaration> declaration) {
@@ -690,9 +842,13 @@ class CompilationUnit final : public AstNode {
     bool privateModule = false;
     std::vector<Import> imports;
     std::vector<Module> modules;
+    std::vector<ForeignSource> foreignSources;
     std::string testingModule;
     std::vector<std::unique_ptr<Declaration>> TakeDeclarations() {
         return std::move(_declarations);
+    }
+    std::vector<ForeignSource> TakeForeignSources() {
+        return std::move(foreignSources);
     }
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::CompilationUnit;
@@ -884,18 +1040,23 @@ class VariableDeclarationStatement final : public Statement {
                                  std::string name,
                                  std::unique_ptr<Expression> initializer,
                                  source::SourceRange nameRange = {},
-                                 bool isRangeSource = false)
+                                 bool isRangeSource = false,
+                                 bool isImplicitlyDefaulted = false)
         : Statement(range),
           _type(std::move(type)),
           _name(std::move(name)),
           _initializer(std::move(initializer)),
           _nameRange(nameRange.Empty() ? range : nameRange),
-          _isRangeSource(isRangeSource) {}
+          _isRangeSource(isRangeSource),
+          _isImplicitlyDefaulted(isImplicitlyDefaulted) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::VariableDeclarationStatement;
     }
     [[nodiscard]] bool IsRangeSource() const { return _isRangeSource; }
+    [[nodiscard]] bool IsImplicitlyDefaulted() const {
+        return _isImplicitlyDefaulted;
+    }
     [[nodiscard]] const TypeNode* ExplicitType() const { return _type.get(); }
     [[nodiscard]] bool HasExplicitType() const { return _type != nullptr; }
     [[nodiscard]] const std::string& Name() const { return _name; }
@@ -912,6 +1073,7 @@ class VariableDeclarationStatement final : public Statement {
     std::unique_ptr<Expression> _initializer;
     source::SourceRange _nameRange;
     bool _isRangeSource;
+    bool _isImplicitlyDefaulted;
 };
 
 class TupleExpression final : public Expression {
@@ -1175,6 +1337,45 @@ class CastExpression final : public Expression {
     std::unique_ptr<TypeNode> _targetType;
 };
 
+class IsOfExpression final : public Expression {
+   public:
+    IsOfExpression(source::SourceRange range,
+                   std::unique_ptr<Expression> expression,
+                   std::unique_ptr<TypeNode> target)
+        : Expression(range),
+          _expression(std::move(expression)),
+          _target(std::move(target)) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::IsOfExpression;
+    }
+    [[nodiscard]] const Expression& Value() const { return *_expression; }
+    [[nodiscard]] const TypeNode& Target() const { return *_target; }
+    [[nodiscard]] TypeNode& Target() { return *_target; }
+    [[nodiscard]] const std::vector<std::unique_ptr<TypeNode>>& Candidates()
+        const {
+        return _candidates;
+    }
+    void SetCandidates(std::vector<std::unique_ptr<TypeNode>> candidates,
+                       bool typeSetQuery) {
+        _candidates = std::move(candidates);
+        _typeSetQuery = typeSetQuery;
+    }
+    [[nodiscard]] bool IsTypeSetQuery() const { return _typeSetQuery; }
+    void SetResult(bool result) { _result = result; }
+    [[nodiscard]] bool Result() const {
+        assert(_result.has_value());
+        return *_result;
+    }
+
+   private:
+    std::unique_ptr<Expression> _expression;
+    std::unique_ptr<TypeNode> _target;
+    std::vector<std::unique_ptr<TypeNode>> _candidates;
+    bool _typeSetQuery = false;
+    std::optional<bool> _result;
+};
+
 class UnaryExpression final : public Expression {
    public:
     UnaryExpression(source::SourceRange range, TokenType operatorType,
@@ -1225,20 +1426,24 @@ class AssignmentExpression final : public Expression {
    public:
     AssignmentExpression(source::SourceRange range,
                          std::unique_ptr<Expression> target,
-                         std::unique_ptr<Expression> value)
+                         std::unique_ptr<Expression> value,
+                         TokenType operatorType = TokenType::Assign)
         : Expression(range),
           _target(std::move(target)),
-          _value(std::move(value)) {}
+          _value(std::move(value)),
+          _operatorType(operatorType) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::AssignmentExpression;
     }
     [[nodiscard]] const Expression& Target() const { return *_target; }
     [[nodiscard]] const Expression& Value() const { return *_value; }
+    [[nodiscard]] TokenType OperatorType() const { return _operatorType; }
 
    private:
     std::unique_ptr<Expression> _target;
     std::unique_ptr<Expression> _value;
+    TokenType _operatorType;
 };
 
 class CallExpression final : public Expression {
@@ -1246,11 +1451,15 @@ class CallExpression final : public Expression {
     CallExpression(source::SourceRange range,
                    std::unique_ptr<Expression> callee,
                    std::vector<std::unique_ptr<Expression>> arguments,
-                   std::unique_ptr<TypeNode> typeArgument = nullptr)
+                   std::unique_ptr<TypeNode> typeArgument = nullptr,
+                   std::vector<bool> expandedArguments = {},
+                   bool isCrashable = false)
         : Expression(range),
           _callee(std::move(callee)),
           _arguments(std::move(arguments)),
-          _typeArgument(std::move(typeArgument)) {}
+          _typeArgument(std::move(typeArgument)),
+          _expandedArguments(std::move(expandedArguments)),
+          _isCrashable(isCrashable) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::CallExpression;
@@ -1263,11 +1472,17 @@ class CallExpression final : public Expression {
         const {
         return _arguments;
     }
+    [[nodiscard]] bool ArgumentIsExpanded(std::size_t index) const {
+        return index < _expandedArguments.size() && _expandedArguments[index];
+    }
+    [[nodiscard]] bool IsCrashable() const { return _isCrashable; }
 
    private:
     std::unique_ptr<Expression> _callee;
     std::vector<std::unique_ptr<Expression>> _arguments;
     std::unique_ptr<TypeNode> _typeArgument;
+    std::vector<bool> _expandedArguments;
+    bool _isCrashable;
 };
 
 class MemberCallExpression final : public Expression {
@@ -1278,13 +1493,17 @@ class MemberCallExpression final : public Expression {
                          std::unique_ptr<Expression> receiver,
                          std::string member, source::SourceRange memberRange,
                          std::vector<std::unique_ptr<Expression>> arguments,
-                         TokenType access = TokenType::Dot)
+                         TokenType access = TokenType::Dot,
+                         std::vector<bool> expandedArguments = {},
+                         bool isCrashable = false)
         : Expression(range),
           _access(access),
           _receiver(std::move(receiver)),
           _member(std::move(member)),
           _memberRange(memberRange),
-          _arguments(std::move(arguments)) {}
+          _arguments(std::move(arguments)),
+          _expandedArguments(std::move(expandedArguments)),
+          _isCrashable(isCrashable) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::MemberCallExpression;
@@ -1298,6 +1517,10 @@ class MemberCallExpression final : public Expression {
         const {
         return _arguments;
     }
+    [[nodiscard]] bool ArgumentIsExpanded(std::size_t index) const {
+        return index < _expandedArguments.size() && _expandedArguments[index];
+    }
+    [[nodiscard]] bool IsCrashable() const { return _isCrashable; }
 
     void Rename(std::string name) { _member = std::move(name); }
     TokenType Access() const { return _access; }
@@ -1308,6 +1531,8 @@ class MemberCallExpression final : public Expression {
     std::string _member;
     source::SourceRange _memberRange;
     std::vector<std::unique_ptr<Expression>> _arguments;
+    std::vector<bool> _expandedArguments;
+    bool _isCrashable;
 };
 
 class SliceExpression final : public Expression {

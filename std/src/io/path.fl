@@ -1,0 +1,512 @@
+module path;
+
+@imports
+    :: root::io::runtime
+    :: root::text::ascii
+    :: root::text::strings;
+
+structure PathPrefix {
+    u32 boundary;
+    u32 scanStart;
+    u32 serverStart;
+    u32 serverLength;
+    u32 shareStart;
+    u32 shareLength;
+    bool absolute;
+    bool drive;
+    bool unc;
+};
+
+structure PathSegment {
+    u32 start;
+    u32 length;
+    bool parent;
+};
+
+// Joins base and child with the host separator. An absolute child or a child
+// with its own Windows volume replaces base. Allocation failure returns an
+// empty string with AllocationError.OutOfMemory.
+export (string, error) join(stringv base, stringv child) {
+    return join_with_style(base, child, host_uses_windows_paths());
+}
+
+// Lexically normalizes path using host rules without accessing the filesystem.
+// It removes repeated separators and dot components, resolves parent
+// components without crossing an absolute root, and preserves leading parent
+// components in relative paths. Allocation failure returns an empty string.
+export (string, error) normalize(stringv value) {
+    return normalize_with_style(value, host_uses_windows_paths());
+}
+
+// Borrows the final non-separator component, or an empty view when absent.
+export stringv file_name(stringv value) <-value {
+    return file_name_with_style(value, host_uses_windows_paths());
+}
+
+// Borrows the lexical parent, or an empty view when a relative path has none.
+// A root is its own parent.
+export stringv parent(stringv value) <-value {
+    return parent_with_style(value, host_uses_windows_paths());
+}
+
+// Borrows the final filename suffix beginning with its last dot. Leading dots
+// and trailing dots do not form extensions.
+export stringv extension(stringv value) <-value {
+    return extension_with_style(value, host_uses_windows_paths());
+}
+
+bool host_uses_windows_paths() {
+    unsafe {
+        return runtime::flecha_runtime_v1_path_style() != 0;
+    }
+}
+
+bool is_separator(char value, bool windows) {
+    return value == '/' or (windows and value == '\\');
+}
+
+char style_separator(bool windows) {
+    if windows {
+        return '\\';
+    }
+
+    return '/';
+}
+
+bool has_drive_prefix(stringv value) {
+    return value.len() >= 2 and
+        ascii::is_ascii_alphabetic(value[0].cast<char>) and
+        value[1].cast<char> == ':';
+}
+
+bool has_windows_volume(stringv value) {
+    if has_drive_prefix(value) {
+        return true;
+    }
+
+    return value.len() >= 2 and
+        is_separator(value[0].cast<char>, true) and
+        is_separator(value[1].cast<char>, true);
+}
+
+bool is_absolute_with_style(stringv value, bool windows) {
+    if value.len() == 0 {
+        return false;
+    }
+
+    if !windows {
+        return value[0].cast<char> == '/';
+    }
+
+    if is_separator(value[0].cast<char>, true) {
+        return true;
+    }
+
+    return has_drive_prefix(value) and value.len() >= 3 and
+        is_separator(value[2].cast<char>, true);
+}
+
+(string, error) copy_path(stringv value) {
+    if value.len() == 0 {
+        return (none, none);
+    }
+
+    builder, allocationError :=
+        strings::StringBuilder::withCapacity(value.len().cast<usize>);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    appendError := builder.append(value);
+    if appendError != none {
+        return (none, appendError);
+    }
+
+    return builder.toString();
+}
+
+bool join_requires_separator(stringv base, bool windows) {
+    if is_separator(base[base.len() - 1].cast<char>, windows) {
+        return false;
+    }
+
+    // A bare Windows drive is relative to that drive's current directory.
+    // Inserting a separator would silently change C:child into C:\child
+    return !windows or base.len() != 2 or !has_drive_prefix(base);
+}
+
+(string, error) join_with_style(stringv base, stringv child, bool windows) {
+    if base.len() == 0 {
+        return copy_path(child);
+    }
+    if child.len() == 0 {
+        return copy_path(base);
+    }
+    if is_absolute_with_style(child, windows) or
+        (windows and has_windows_volume(child)) {
+        return copy_path(child);
+    }
+
+    const usize BASE_LENGTH = base.len().cast<usize>;
+    const usize CHILD_LENGTH = child.len().cast<usize>;
+    usize capacity = BASE_LENGTH + CHILD_LENGTH;
+    if capacity < BASE_LENGTH {
+        return (none, AllocationError.OutOfMemory);
+    }
+    const bool NEEDS_SEPARATOR = join_requires_separator(base, windows);
+    if NEEDS_SEPARATOR {
+        capacity++;
+        if capacity == 0 {
+            return (none, AllocationError.OutOfMemory);
+        }
+    }
+
+    builder, allocationError :=
+        strings::StringBuilder::withCapacity(capacity);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    appendError := builder.append(base);
+    if appendError != none {
+        return (none, appendError);
+    }
+
+    if NEEDS_SEPARATOR {
+        const char SEPARATOR = style_separator(windows);
+        appendError = builder.appendChar(SEPARATOR);
+        if appendError != none {
+            return (none, appendError);
+        }
+    }
+
+    appendError = builder.append(child);
+    if appendError != none {
+        return (none, appendError);
+    }
+
+    return builder.toString();
+}
+
+PathPrefix read_prefix(stringv value, bool windows) {
+    prefix := PathPrefix::init();
+    if value.len() == 0 {
+        return prefix;
+    }
+
+    if !windows {
+        if value[0].cast<char> != '/' {
+            return prefix;
+        }
+
+        prefix.absolute = true;
+        prefix.boundary = 1;
+        prefix.scanStart = 1;
+        while prefix.scanStart < value.len() and
+            value[prefix.scanStart].cast<char> == '/' {
+            prefix.scanStart++;
+        }
+        return prefix;
+    }
+
+    if has_drive_prefix(value) {
+        prefix.drive = true;
+        prefix.boundary = 2;
+        prefix.scanStart = 2;
+        if value.len() >= 3 and
+            is_separator(value[2].cast<char>, true) {
+            prefix.absolute = true;
+            prefix.boundary = 3;
+            prefix.scanStart = 3;
+            while prefix.scanStart < value.len() and
+                is_separator(value[prefix.scanStart].cast<char>, true) {
+                prefix.scanStart++;
+            }
+        }
+        return prefix;
+    }
+
+    if !is_separator(value[0].cast<char>, true) {
+        return prefix;
+    }
+
+    u32 afterLeading = 1;
+    while afterLeading < value.len() and
+        is_separator(value[afterLeading].cast<char>, true) {
+        afterLeading++;
+    }
+
+    if afterLeading >= 2 and afterLeading < value.len() {
+        const u32 SERVER_START = afterLeading;
+        u32 serverEnd = SERVER_START;
+        while serverEnd < value.len() and
+            !is_separator(value[serverEnd].cast<char>, true) {
+            serverEnd++;
+        }
+
+        u32 shareStart = serverEnd;
+        while shareStart < value.len() and
+            is_separator(value[shareStart].cast<char>, true) {
+            shareStart++;
+        }
+        u32 shareEnd = shareStart;
+        while shareEnd < value.len() and
+            !is_separator(value[shareEnd].cast<char>, true) {
+            shareEnd++;
+        }
+
+        if serverEnd > SERVER_START and shareEnd > shareStart {
+            prefix.absolute = true;
+            prefix.unc = true;
+            prefix.serverStart = SERVER_START;
+            prefix.serverLength = serverEnd - SERVER_START;
+            prefix.shareStart = shareStart;
+            prefix.shareLength = shareEnd - shareStart;
+            prefix.boundary = shareEnd;
+            prefix.scanStart = shareEnd;
+            while prefix.scanStart < value.len() and
+                is_separator(value[prefix.scanStart].cast<char>, true) {
+                prefix.scanStart++;
+            }
+            return prefix;
+        }
+    }
+
+    prefix.absolute = true;
+    prefix.boundary = 1;
+    prefix.scanStart = afterLeading;
+    return prefix;
+}
+
+bool is_dot(stringv value, u32 start, u32 length) {
+    return length == 1 and value[start].cast<char> == '.';
+}
+
+bool is_parent(stringv value, u32 start, u32 length) {
+    return length == 2 and value[start].cast<char> == '.' and
+        value[start + 1].cast<char> == '.';
+}
+
+error append_prefix(
+    &strings::StringBuilder builder,
+    stringv value,
+    PathPrefix prefix,
+    bool windows
+) {
+    if prefix.unc {
+        err := builder->append("\\\\");
+        if err != none {
+            return err;
+        }
+        err = builder->append(
+            value.substr(prefix.serverStart, prefix.serverLength)
+        );
+        if err != none {
+            return err;
+        }
+        err = builder->appendChar('\\');
+        if err != none {
+            return err;
+        }
+        return builder->append(
+            value.substr(prefix.shareStart, prefix.shareLength)
+        );
+    }
+
+    if prefix.drive {
+        err := builder->append(value.substr(0, 2));
+        if err != none {
+            return err;
+        }
+        if prefix.absolute {
+            return builder->appendChar('\\');
+        }
+        return none;
+    }
+
+    if prefix.absolute {
+        const char SEPARATOR = style_separator(windows);
+        return builder->appendChar(SEPARATOR);
+    }
+
+    return none;
+}
+
+(string, error) normalize_with_style(stringv value, bool windows) {
+    prefix := read_prefix(value, windows);
+
+    // A path can contain at most one component for every two bytes, rounded
+    // up. Keep one slot for the empty input so construction still follows the
+    // same explicit allocation path
+    usize segmentCapacity = value.len().cast<usize> / 2;
+    segmentCapacity++;
+
+    segments, allocationError :=
+        new<own []PathSegment>(segmentCapacity);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    usize segmentCount = 0;
+    u32 index = prefix.scanStart;
+    while index < value.len() {
+        while index < value.len() and
+            is_separator(value[index].cast<char>, windows) {
+            index++;
+        }
+        if index == value.len() {
+            break;
+        }
+
+        const u32 START = index;
+        while index < value.len() and
+            !is_separator(value[index].cast<char>, windows) {
+            index++;
+        }
+        const u32 LENGTH = index - START;
+
+        if is_dot(value, START, LENGTH) {
+            proceed;
+        }
+
+        const bool PARENT = is_parent(value, START, LENGTH);
+        if PARENT and segmentCount > 0 and
+            !segments[segmentCount - 1].parent {
+            segmentCount--;
+            proceed;
+        }
+        if PARENT and prefix.absolute {
+            proceed;
+        }
+
+        segments[segmentCount] = build PathSegment {
+            self.start = START;
+            self.length = LENGTH;
+            self.parent = PARENT;
+        };
+        segmentCount++;
+    }
+
+    usize outputCapacity = value.len().cast<usize>;
+    if outputCapacity == usize.max_value {
+        return (none, AllocationError.OutOfMemory);
+    }
+    outputCapacity++;
+
+    builder, builderError :=
+        strings::StringBuilder::withCapacity(outputCapacity);
+    if builderError != none {
+        return (none, builderError);
+    }
+
+    prefixError := append_prefix(&builder, value, prefix, windows);
+    if prefixError != none {
+        return (none, prefixError);
+    }
+
+    const char SEPARATOR = style_separator(windows);
+    loop usize segmentIndex = 0;
+        segmentIndex < segmentCount;
+        segmentIndex++ {
+        bool needsSeparator = segmentIndex > 0 or prefix.unc;
+        if needsSeparator {
+            separatorError := builder.appendChar(SEPARATOR);
+            if separatorError != none {
+                return (none, separatorError);
+            }
+        }
+
+        segment := segments[segmentIndex];
+        segmentError := builder.append(
+            value.substr(segment.start, segment.length)
+        );
+        if segmentError != none {
+            return (none, segmentError);
+        }
+    }
+
+    if builder.empty() {
+        dotError := builder.append(".");
+        if dotError != none {
+            return (none, dotError);
+        }
+    }
+
+    return builder.toString();
+}
+
+stringv file_name_with_style(stringv value, bool windows) <-value {
+    prefix := read_prefix(value, windows);
+    u32 end = value.len();
+    while end > prefix.boundary and
+        is_separator(value[end - 1].cast<char>, windows) {
+        end--;
+    }
+    if end <= prefix.boundary {
+        return value.substr(end, 0);
+    }
+
+    u32 start = end;
+    while start > prefix.boundary and
+        !is_separator(value[start - 1].cast<char>, windows) {
+        start--;
+    }
+
+    return value.substr(start, end - start);
+}
+
+stringv parent_with_style(stringv value, bool windows) <-value {
+    prefix := read_prefix(value, windows);
+    u32 end = value.len();
+    while end > prefix.boundary and
+        is_separator(value[end - 1].cast<char>, windows) {
+        end--;
+    }
+
+    if end <= prefix.boundary {
+        return value.substr(0, prefix.boundary);
+    }
+
+    u32 componentStart = end;
+    while componentStart > prefix.boundary and
+        !is_separator(value[componentStart - 1].cast<char>, windows) {
+        componentStart--;
+    }
+    if componentStart == prefix.boundary {
+        if prefix.boundary == 0 {
+            return value.substr(0, 0);
+        }
+        return value.substr(0, prefix.boundary);
+    }
+
+    u32 parentEnd = componentStart - 1;
+    while parentEnd > prefix.boundary and
+        is_separator(value[parentEnd - 1].cast<char>, windows) {
+        parentEnd--;
+    }
+    if parentEnd < prefix.boundary {
+        parentEnd = prefix.boundary;
+    }
+
+    return value.substr(0, parentEnd);
+}
+
+stringv extension_with_style(stringv value, bool windows) <-value {
+    name := file_name_with_style(value, windows);
+    if name.len() < 2 {
+        return name.substr(name.len(), 0);
+    }
+
+    u32 index = name.len();
+    while index > 1 {
+        index--;
+        if name[index].cast<char> == '.' {
+            if index == name.len() - 1 {
+                return name.substr(name.len(), 0);
+            }
+            return name.substr(index, name.len() - index);
+        }
+    }
+
+    return name.substr(name.len(), 0);
+}

@@ -80,10 +80,16 @@ enum class DiagnosticCode {
     InvalidBorrowContract,
     MovedValue,
     InvalidFormat,
+    InvalidDefaultArgument,
+    InvalidVariadic,
+    InvalidCrashable,
+    InvalidDecoration,
     NativeTargetUnavailable,
     ObjectEmissionFailed,
     RuntimeUnavailable,
     LinkerFailed,
+    ForeignCompilationFailed,
+    TooManyDiagnostics,
 };
 
 [[nodiscard]] std::string_view DiagnosticCodeName(DiagnosticCode code);

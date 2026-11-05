@@ -88,9 +88,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check patch whitespace
+      - name: Check patch for conflict markers
         if: github.event_name == 'pull_request'
+        run: >-
+          git -c core.whitespace=-trailing-space,-space-before-tab
+          diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+      - name: Report patch whitespace
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
         run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+      - name: Validate deterministic performance policy
+        run: python3 tools/performance.py self-test
 
       - name: Install dependencies
         run: |
@@ -121,6 +131,17 @@ jobs:
       - name: Build
         run: cmake --build build-tests --parallel
 
+      - name: Run fast deterministic stateful soak
+        # The setup action may install CTest outside /usr/bin; resolve it from PATH.
+        run: >-
+          cmake
+          -DFLECHA_TEST_BINARY=$PWD/build-tests/src/tests/test_flecha
+          -DFLECHA_CTEST=ctest
+          -DFLECHA_BUILD_DIR=$PWD/build-tests
+          -DFLECHA_OUTPUT=$PWD/build-tests/src/tests/hardening-soak-fast
+          -DFLECHA_PROFILE=fast
+          -P src/tests/run_hardening_soak.cmake
+
       - name: Run compiler and runtime tests
         run: ctest --test-dir build-tests --output-on-failure
 
@@ -133,6 +154,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify standard-library public API reference
+        run: python3 tools/generate_std_api_reference.py --check
 
       - name: Install dependencies
         run: |
@@ -162,6 +186,7 @@ jobs:
     name: AddressSanitizer and UBSan
     needs: contribution-policy
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -200,6 +225,27 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: build-sanitizers/src/tests/test_flecha
 
+      - name: Run sanitized deterministic compiler stress
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          build-sanitizers/src/tests/compiler_stress
+          build-sanitizers/flecha
+          std/src
+          build-sanitizers/src/tests/compiler-stress-sanitizer
+          sanitizer
+
+      - name: Run sanitized deterministic property campaign
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          build-sanitizers/src/tests/hardening_campaign
+          src/tests/fixtures/community_packages/package
+          build-sanitizers/src/tests/hardening-campaign-sanitizer
+          sanitizer
+
       - name: Run sanitized native smoke tests
         env:
           ASAN_OPTIONS: detect_leaks=1
@@ -207,6 +253,98 @@ jobs:
         run: >-
           ctest --test-dir build-sanitizers --output-on-failure
           -R '^NativeSemanticTests\.(ControlFlowDefiniteAssignment|ConstDeclarations|UnsafePointers|CheckedReferences|FixedArrays|Iteration|CheckedSlices|Defer|Tuples|ErrorValues|Structures|RawAllocation|Modules|CallableIntegration|CallableAllocationFailure)$'
+
+      - name: Run sanitized cryptography conformance fixtures
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          ctest --test-dir build-sanitizers --output-on-failure
+          -R '^StandardLibraryTests\.(Sha(256|512)|Hmac)Fixture$'
+
+      - name: Run sanitized collection algorithm tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          ctest --test-dir build-sanitizers --output-on-failure
+          -R '^StandardLibraryTests\.SafeArray\.algorithms(_move_only)?$'
+
+      - name: Run sanitized hash map tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          ctest --test-dir build-sanitizers --output-on-failure
+          -R '^StandardLibraryTests\.SafeHashMap\..*$'
+
+      - name: Run sanitized hash set tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          ctest --test-dir build-sanitizers --output-on-failure
+          -R '^StandardLibraryTests\.SafeHashSet\..*$'
+
+      - name: Run sanitized buffered I/O tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          ctest --test-dir build-sanitizers --output-on-failure
+          -R '^(StandardLibraryTests\.BufferedIo\..*|CompilerDiagnostics\.BufferedIo)$'
+
+      - name: Build and relocate the sanitizer-enabled package
+        run: |
+          set -euo pipefail
+          cmake --build build-sanitizers --target package
+          shopt -s nullglob
+          archives=(build-sanitizers/flecha-*.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "Expected one sanitizer archive, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          mkdir sanitized-unpacked sanitized-relocated
+          (
+            cd sanitized-unpacked
+            cmake -E tar xf "../${archives[0]}"
+          )
+          bundles=(sanitized-unpacked/flecha-*/)
+          if [[ ${#bundles[@]} -ne 1 ]]; then
+            echo "Expected one sanitizer bundle, found ${#bundles[@]}" >&2
+            exit 1
+          fi
+          mv "${bundles[0]}" sanitized-relocated/flecha
+
+      - name: Exercise the relocated sanitizer-enabled package
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          set -o pipefail
+          cmake \
+            "-DINSTALL_ROOT=$PWD/sanitized-relocated/flecha" \
+            -P cmake/verify_bundle.cmake
+          cmake \
+            "-DFLECHA_COMPILER=$PWD/sanitized-relocated/flecha/bin/flecha" \
+            "-DLONGBOW=$PWD/sanitized-relocated/flecha/bin/longbow" \
+            "-DOUTPUT_ROOT=$PWD/sanitized-package-smoke" \
+            "-DCOMMUNITY_PACKAGE_ROOT=$PWD/src/tests/fixtures/community_packages/consumer" \
+            "-DWORKSPACE_GUARD_ROOT=$PWD/examples/workspace_guard" \
+            "-DLEDGER_ROOT=$PWD/examples/ledger" \
+            "-DSTANDARD_LIBRARY_EXAMPLE_ROOT=$PWD/examples/standard_library" \
+            -P cmake/release_smoke.cmake \
+            2>&1 | tee sanitized-package-qualification.log
+
+      - name: Retain sanitizer package qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-package-qualification
+          path: |
+            sanitized-package-qualification.log
+            sanitized-package-smoke/qualification-report.txt
+          if-no-files-found: warn
 
   platform-build:
     name: Create package (${{ matrix.name }})
@@ -248,6 +386,7 @@ jobs:
             xcode_version: "16.4"
             sdk_major: 15
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -388,6 +527,30 @@ jobs:
             cmake/verify_toolchain.cmake
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: community-package-consumer
+          path: src/tests/fixtures/community_packages/consumer
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace-guard-example
+          path: examples/workspace_guard
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ledger-example
+          path: examples/ledger
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: standard-library-example
+          path: examples/standard_library
+          if-no-files-found: error
+
   clean-install:
     # Keep the protected check names on the downstream archive consumers so a
     # package cannot satisfy branch protection before its clean-install test.
@@ -432,6 +595,7 @@ jobs:
             xcode_version: "16.4"
             sdk_major: 15
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - name: Install host linker (Linux)
         if: runner.os == 'Linux'
@@ -475,6 +639,26 @@ jobs:
         with:
           name: clean-install-support
           path: test-support
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: community-package-consumer
+          path: community-package-consumer
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-guard-example
+          path: workspace-guard-example
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ledger-example
+          path: ledger-example
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: standard-library-example
+          path: standard-library-example
 
       - name: Report and verify the clean-install toolchain
         shell: bash
@@ -524,10 +708,26 @@ jobs:
 
       - name: Exercise the relocated installation
         shell: bash
-        run: >-
-          cmake
-          "-DFLECHA_COMPILER=$FLECHA_BUNDLE/bin/flecha${{ matrix.suffix }}"
-          "-DLONGBOW=$FLECHA_BUNDLE/bin/longbow${{ matrix.suffix }}"
-          "-DOUTPUT_ROOT=$PWD/clean-install-smoke"
-          "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
-          -P test-support/release_smoke.cmake
+        run: |
+          set -o pipefail
+          cmake \
+            "-DFLECHA_COMPILER=$FLECHA_BUNDLE/bin/flecha${{ matrix.suffix }}" \
+            "-DLONGBOW=$FLECHA_BUNDLE/bin/longbow${{ matrix.suffix }}" \
+            "-DOUTPUT_ROOT=$PWD/clean-install-smoke" \
+            "-DCOMMUNITY_PACKAGE_ROOT=$PWD/community-package-consumer" \
+            "-DWORKSPACE_GUARD_ROOT=$PWD/workspace-guard-example" \
+            "-DLEDGER_ROOT=$PWD/ledger-example" \
+            "-DSTANDARD_LIBRARY_EXAMPLE_ROOT=$PWD/standard-library-example" \
+            "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}" \
+            -P test-support/release_smoke.cmake \
+            2>&1 | tee package-qualification.log
+
+      - name: Retain installed-package qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-qualification-${{ matrix.name }}
+          path: |
+            package-qualification.log
+            clean-install-smoke/qualification-report.txt
+          if-no-files-found: warn

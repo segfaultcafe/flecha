@@ -1,0 +1,78 @@
+module strings;
+
+// Reports whether value begins with prefix.
+export bool starts_with(stringv value, stringv prefix) {
+    if prefix.len() > value.len() {
+        return false;
+    }
+
+    loop u32 index = 0; index < prefix.len(); index++ {
+        if value[index] != prefix[index] {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Reports whether value ends with suffix.
+export bool ends_with(stringv value, stringv suffix) {
+    if suffix.len() > value.len() {
+        return false;
+    }
+
+    const u32 OFFSET = value.len() - suffix.len();
+    loop u32 index = 0; index < suffix.len(); index++ {
+        if value[OFFSET + index] != suffix[index] {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Reports whether needle occurs in value. An empty needle always occurs.
+export bool contains(stringv value, stringv needle) {
+    _, found := find(value, needle);
+    return found;
+}
+
+// Returns the first byte offset of needle and true, or zero and false.
+// An empty needle is found at offset zero.
+export (usize, bool) find(stringv value, stringv needle) {
+    if needle.len() == 0 {
+        return (0, true);
+    }
+
+    if needle.len() > value.len() {
+        return (none, false);
+    }
+
+    const u32 START_COUNT = value.len() - needle.len() + 1;
+    loop u32 start = 0; start < START_COUNT; start++ {
+        bool matches = true;
+        loop u32 offset = 0; offset < needle.len(); offset++ {
+            if value[start + offset] != needle[offset] {
+                matches = false;
+                break;
+            }
+        }
+
+        if matches {
+            return (start.cast<usize>, true);
+        }
+    }
+
+    return (none, false);
+}
+
+// Returns the first byte offset of needle and true, or zero and false.
+export (usize, bool) find_char(stringv value, char needle) {
+    loop u32 index = 0; index < value.len(); index++ {
+        if value[index] == needle {
+            return (index.cast<usize>, true);
+        }
+    }
+
+    return (none, false);
+}

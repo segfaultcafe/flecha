@@ -1,0 +1,59 @@
+module float_test;
+
+@imports
+    :: root::math::float
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test nan_detection_uses_ieee_unordered_comparison(&testing::UnitTest t) {
+    asserts::is_true(t, float::is_nan<f32>(f32.nan), "is_nan recognizes f32 NaN");
+    asserts::is_true(t, float::is_nan<f64>(f64.nan), "is_nan recognizes f64 NaN");
+    asserts::is_false(t, float::is_nan<f32>(f32.infinity), "positive infinity is not NaN");
+    asserts::is_false(t, float::is_nan<f64>(f64.negative_infinity), "negative infinity is not NaN");
+    asserts::is_false(t, float::is_nan<f64>(0.0), "zero is not NaN");
+}
+
+test infinity_detection_accepts_both_signs(&testing::UnitTest t) {
+    asserts::is_true(t, float::is_infinite<f32>(f32.infinity), "is_infinite recognizes positive f32 infinity");
+    asserts::is_true(t, float::is_infinite<f32>(f32.negative_infinity), "is_infinite recognizes negative f32 infinity");
+    asserts::is_true(t, float::is_infinite<f64>(f64.infinity), "is_infinite recognizes positive f64 infinity");
+    asserts::is_true(t, float::is_infinite<f64>(f64.negative_infinity), "is_infinite recognizes negative f64 infinity");
+    asserts::is_false(t, float::is_infinite<f64>(f64.nan), "NaN is not infinity");
+    asserts::is_false(t, float::is_infinite<f64>(f64.max_value), "the largest finite value is not infinity");
+}
+
+test finite_detection_excludes_nan_and_infinities(&testing::UnitTest t) {
+    asserts::is_true(t, float::is_finite<f32>(0.0 as f32), "positive zero is finite");
+    asserts::is_true(t, float::is_finite<f32>(-0.0 as f32), "negative zero is finite");
+    asserts::is_true(t, float::is_finite<f32>(f32.max_value), "the largest f32 is finite");
+    asserts::is_true(t, float::is_finite<f64>(f64.min_value), "the lowest f64 is finite");
+    asserts::is_false(t, float::is_finite<f32>(f32.nan), "NaN is not finite");
+    asserts::is_false(t, float::is_finite<f64>(f64.infinity), "positive infinity is not finite");
+    asserts::is_false(t, float::is_finite<f64>(f64.negative_infinity), "negative infinity is not finite");
+}
+
+test normal_detection_uses_the_smallest_normal_magnitude(&testing::UnitTest t) {
+    asserts::is_true(t, float::is_normal<f32>(f32.min_positive), "the smallest positive normal f32 is normal");
+    asserts::is_true(t, float::is_normal<f32>(-f32.min_positive), "the smallest negative normal f32 is normal");
+    asserts::is_true(t, float::is_normal<f64>(1.0), "an ordinary f64 is normal");
+    asserts::is_true(t, float::is_normal<f64>(f64.max_value), "the largest finite f64 is normal");
+    asserts::is_false(t, float::is_normal<f64>(0.0), "positive zero is not normal");
+    asserts::is_false(t, float::is_normal<f64>(-0.0), "negative zero is not normal");
+    asserts::is_false(t, float::is_normal<f64>(f64.nan), "NaN is not normal");
+    asserts::is_false(t, float::is_normal<f64>(f64.infinity), "infinity is not normal");
+}
+
+test subnormal_detection_excludes_zero_and_normal_values(&testing::UnitTest t) {
+    f32 subnormal32 = f32.min_positive / (2.0 as f32);
+    f64 subnormal64 = f64.min_positive / 2.0;
+
+    asserts::is_true(t, float::is_subnormal<f32>(subnormal32), "a positive f32 below min_positive is subnormal");
+    asserts::is_true(t, float::is_subnormal<f32>(-subnormal32), "a negative f32 below min_positive is subnormal");
+    asserts::is_true(t, float::is_subnormal<f64>(subnormal64), "a positive f64 below min_positive is subnormal");
+    asserts::is_true(t, float::is_subnormal<f64>(-subnormal64), "a negative f64 below min_positive is subnormal");
+    asserts::is_false(t, float::is_subnormal<f64>(0.0), "positive zero is not subnormal");
+    asserts::is_false(t, float::is_subnormal<f64>(-0.0), "negative zero is not subnormal");
+    asserts::is_false(t, float::is_subnormal<f32>(f32.min_positive), "the smallest normal value is not subnormal");
+    asserts::is_false(t, float::is_subnormal<f64>(f64.nan), "NaN is not subnormal");
+    asserts::is_false(t, float::is_subnormal<f64>(f64.infinity), "infinity is not subnormal");
+}

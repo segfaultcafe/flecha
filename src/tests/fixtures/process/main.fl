@@ -1,0 +1,117 @@
+module process;
+
+@imports
+    :: lib::std::io::buffered
+    :: lib::std::os::arguments
+    :: lib::std::process::command
+    :: lib::std::process::errors;
+
+i32 main() {
+    values, captureError := arguments::capture();
+    if captureError != none or values.len() != 2 {
+        return 1;
+    }
+
+    processCommand := command::Command::init(values[1]);
+    if processCommand.arg("copy") != none {
+        return 2;
+    }
+    processCommand.setStdin(command::Stdio.Piped);
+    processCommand.setStdout(command::Stdio.Piped);
+    processCommand.setStderr(command::Stdio.Null);
+
+    child, spawnError := processCommand.spawn();
+    if spawnError != none or !child.isOpen() or !child.hasStdin() or
+        !child.hasStdout() or child.hasStderr() {
+        return 3;
+    }
+
+    moved := child;
+    input := moved.takeStdin();
+    output := moved.takeStdout();
+    if !input.isOpen() or !output.isOpen() or moved.hasStdin() or
+        moved.hasStdout() {
+        return 4;
+    }
+
+    [8192]u8 payload = none;
+    loop usize index = 0; index < payload.len(); index++ {
+        payload[index] = (index % 251).cast<u8>;
+    }
+
+    {
+        writerAdapter := input.writer();
+        writer, writerError :=
+            buffered::BufferedWriter::withCapacity(writerAdapter, 17);
+        if writerError != none or writer.writeAll(payload[:]) != none or
+            writer.flush() != none {
+            return 5;
+        }
+    }
+    if input.close() != none {
+        return 6;
+    }
+
+    [8192]u8 response = none;
+    {
+        readerAdapter := output.reader();
+        reader, readerError :=
+            buffered::BufferedReader::withCapacity(readerAdapter, 31);
+        if readerError != none or reader.readExact(response[:]) != none {
+            return 7;
+        }
+        [1]u8 extra = none;
+        count, eofError := reader.read(extra[:]);
+        if count != 0 or eofError != none {
+            return 8;
+        }
+    }
+
+    loop usize index = 0; index < response.len(); index++ {
+        if response[index] != payload[index] {
+            return 9;
+        }
+    }
+    if output.close() != none {
+        return 10;
+    }
+
+    exitStatus, waitError := moved.wait();
+    if waitError != none or !exitStatus.success() or !exitStatus.exited() or
+        exitStatus.detail() != 0 or moved.isOpen() {
+        return 11;
+    }
+    if moved.close() != errors::ProcessError.Closed {
+        return 12;
+    }
+
+    secondValues, secondCaptureError := arguments::capture();
+    if secondCaptureError != none or secondValues.len() != 2 {
+        return 13;
+    }
+    nonzeroCommand := command::Command::init(secondValues[1]);
+    if nonzeroCommand.arg("exit") != none or
+        nonzeroCommand.arg("37") != none {
+        return 14;
+    }
+    nonzero, nonzeroSpawnError := nonzeroCommand.spawn();
+    if nonzeroSpawnError != none or !nonzero.isOpen() {
+        return 15;
+    }
+    nonzeroStatus, nonzeroWaitError := nonzero.wait();
+    if nonzeroWaitError != none or nonzeroStatus.success() or
+        !nonzeroStatus.exited() or nonzeroStatus.detail() != 37 {
+        return 16;
+    }
+
+    missingCommand := command::Command::init(
+        "flecha-definitely-missing-executable"
+    );
+    missing, missingError := missingCommand.spawn();
+    if missingError != errors::ProcessError.ExecutableNotFound or
+        missing.isOpen() or missing.hasStdin() or missing.hasStdout() or
+        missing.hasStderr() {
+        return 17;
+    }
+    return 42;
+}

@@ -1,0 +1,85 @@
+module collections;
+
+structure HashSetMarker {};
+
+// Visits one borrowed set element for its side effects.
+export func HashSetAction<T>(&const T value) => ();
+
+// Owns unique values through the shared HashMap probing and storage engine.
+export structure HashSet<T> {
+    private HashMap<T, HashSetMarker> inner;
+};
+
+HashSet<T> HashSet<T>::zero() override {
+    return build HashSet<T> {};
+}
+
+HashSet<T> HashSet<T>::init() override {
+    return build HashSet<T> {
+        self.inner = HashMap<T, HashSetMarker>::init();
+    };
+}
+
+// Replaces the hash policy while consuming and returning an empty set.
+HashSet<T> HashSet<T>::withHash(self, Hash<T> hash) <-...args {
+    unsafe {
+        self.inner.replaceHashPolicy(hash);
+    }
+    return self;
+}
+
+// Replaces the equality policy while consuming and returning an empty set.
+HashSet<T> HashSet<T>::withEqual(self, Equal<T> equal) <-...args {
+    unsafe {
+        self.inner.replaceEqualPolicy(equal);
+    }
+    return self;
+}
+
+// Returns the number of stored values.
+usize HashSet<T>::len(&const self) {
+    return self->inner.len();
+}
+
+// Returns the underlying bucket capacity.
+usize HashSet<T>::capacity(&const self) {
+    return self->inner.capacity();
+}
+
+// Reports whether the set contains no values.
+bool HashSet<T>::empty(&const self) {
+    return self->inner.empty();
+}
+
+// Calls action once for every value. Bucket order is unspecified.
+void HashSet<T>::forEach(&const self, HashSetAction<T> action) {
+    self->inner.forEach([&action](key, marker) => {
+        action(key);
+    });
+}
+
+// Ensures at least capacity buckets while preserving every value.
+error HashSet<T>::reserve(&self, usize capacity) {
+    return self->inner.reserve(capacity);
+}
+
+// Inserts value, consuming duplicates without increasing the length.
+error HashSet<T>::insert(&self, T value) {
+    return self->inner.set(value, HashSetMarker::zero());
+}
+
+// Reports whether an equal value is present without copying it.
+bool HashSet<T>::contains(&const self, &const T value) {
+    return self->inner.containsKey(value);
+}
+
+// Removes and destroys an equal value, or reports HashMapError.KeyNotFound.
+error HashSet<T>::erase(&self, &const T value) {
+    _, err := self->inner.remove(value);
+    return err;
+}
+
+// Destroys all values while retaining bucket allocations and policies.
+void HashSet<T>::clear(&self) {
+    self->inner.clear();
+}

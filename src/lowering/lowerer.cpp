@@ -22,15 +22,27 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
         if (declaration->Kind() != core::AstNodeKind::FunctionDeclaration) {
             continue;
         }
-        functions.push_back(LowerFunction(
-            static_cast<const core::FunctionDeclaration&>(*declaration)));
+        const auto& function =
+            static_cast<const core::FunctionDeclaration&>(*declaration);
+        if (!function.HasVariadicPack())
+            functions.push_back(LowerFunction(function));
     }
     for (const auto& function : semanticModel.GeneratedFunctions())
         functions.push_back(LowerFunction(*function));
     for (const auto* function : semanticModel.AnonymousFunctions())
         functions.push_back(LowerFunction(*function));
+    std::vector<BoundForeignSource> foreignSources;
+    foreignSources.reserve(unit.foreignSources.size());
+    for (const auto& source : unit.foreignSources) {
+        foreignSources.push_back({source.language == core::ForeignLanguage::C
+                                      ? BoundForeignLanguage::C
+                                      : BoundForeignLanguage::Assembly,
+                                  source.source, source.range,
+                                  source.bodyLine});
+    }
     _semanticModel = nullptr;
-    return std::make_unique<BoundProgram>(std::move(functions));
+    return std::make_unique<BoundProgram>(std::move(functions),
+                                          std::move(foreignSources));
 }
 
 std::unique_ptr<BoundFunction> Lowerer::LowerFunction(
@@ -339,6 +351,8 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 if (!_zeroFunction && field.syntax->Initializer())
                     defaults.push_back(LowerExpression(
                         *field.syntax->Initializer(), field.type));
+                else if (!_zeroFunction && field.type.ContainsReference())
+                    defaults.push_back(nullptr);
                 else
                     defaults.push_back(std::make_unique<BoundDefaultExpression>(
                         field.syntax->Range(), field.type, _zeroFunction));
@@ -407,6 +421,27 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const auto& member =
                 static_cast<const core::MemberAccessExpression&>(expression);
             if (_semanticModel->FieldFor(member)) return LowerPlace(expression);
+            if (type.IsInteger() && (member.Member() == "min_value" ||
+                                     member.Member() == "max_value"))
+                return std::make_unique<BoundIntegerLimitExpression>(
+                    expression.Range(), type, member.Member() == "max_value");
+            if (type.IsFloating()) {
+                FloatingConstant constant = FloatingConstant::NaN;
+                if (member.Member() == "infinity")
+                    constant = FloatingConstant::Infinity;
+                else if (member.Member() == "negative_infinity")
+                    constant = FloatingConstant::NegativeInfinity;
+                else if (member.Member() == "min_value")
+                    constant = FloatingConstant::Minimum;
+                else if (member.Member() == "max_value")
+                    constant = FloatingConstant::Maximum;
+                else if (member.Member() == "min_positive")
+                    constant = FloatingConstant::MinimumPositive;
+                else if (member.Member() == "epsilon")
+                    constant = FloatingConstant::Epsilon;
+                return std::make_unique<BoundFloatingConstantExpression>(
+                    expression.Range(), type, constant);
+            }
             if (type.Kind() == semantic::SemanticTypeKind::Enum) {
                 for (const auto& variant : type.Enum()->variants)
                     if (variant.name == member.Member())
@@ -446,8 +481,9 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             if ((literal.LiteralType() == TokenType::None ||
                  (literal.LiteralType() == TokenType::Null &&
                   (expected.Kind() == semantic::SemanticTypeKind::Pointer ||
+                   expected.Kind() == semantic::SemanticTypeKind::OwnedBuffer ||
                    expected.Kind() ==
-                       semantic::SemanticTypeKind::OwnedBuffer))) &&
+                       semantic::SemanticTypeKind::OwnedSlice))) &&
                 !expected.IsError() &&
                 expected.Kind() != semantic::SemanticTypeKind::None) {
                 return std::make_unique<BoundLiteralExpression>(
@@ -461,6 +497,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const core::NameExpression& name =
                 static_cast<const core::NameExpression&>(expression);
             const semantic::Symbol* symbol = _semanticModel->SymbolFor(name);
+            if (symbol->Kind() == semantic::SymbolKind::ModuleConstant) {
+                const core::ModuleConstantDeclaration* constant =
+                    _semanticModel->ModuleConstantFor(*symbol);
+                return LowerExpression(constant->Initializer(),
+                                       symbol->Type().WithoutConst());
+            }
             if (symbol->Kind() == semantic::SymbolKind::Function) {
                 return std::make_unique<BoundFunctionExpression>(
                     expression.Range(),
@@ -481,12 +523,20 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             return std::make_unique<BoundCastExpression>(
                 expression.Range(), type, LowerExpression(cast.Value()));
         }
+        case core::AstNodeKind::IsOfExpression: {
+            const auto& isOf =
+                static_cast<const core::IsOfExpression&>(expression);
+            return std::make_unique<BoundLiteralExpression>(
+                expression.Range(), type, isOf.Result() ? "true" : "false");
+        }
         case core::AstNodeKind::UnaryExpression: {
             const core::UnaryExpression& unary =
                 static_cast<const core::UnaryExpression&>(expression);
-            if (unary.OperatorType() == TokenType::Increment)
+            if (unary.OperatorType() == TokenType::Increment ||
+                unary.OperatorType() == TokenType::Decrement)
                 return std::make_unique<BoundIncrementExpression>(
-                    expression.Range(), LowerPlace(unary.Operand()));
+                    expression.Range(), LowerPlace(unary.Operand()),
+                    unary.OperatorType());
             if (unary.OperatorType() == TokenType::Mul)
                 return LowerPlace(expression);
             if (unary.OperatorType() == TokenType::RawAddress ||
@@ -520,6 +570,7 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                       kind == semantic::SemanticTypeKind::Char)) ||
                     kind == semantic::SemanticTypeKind::Pointer ||
                     kind == semantic::SemanticTypeKind::OwnedBuffer ||
+                    kind == semantic::SemanticTypeKind::OwnedSlice ||
                     kind == semantic::SemanticTypeKind::Null)
                     return other;
                 return semantic::SemanticType::Error();
@@ -538,7 +589,9 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
             const semantic::SemanticType targetType = target->Type();
             return std::make_unique<BoundAssignmentExpression>(
                 expression.Range(), std::move(target),
-                LowerExpression(assignment.Value(), targetType));
+                LowerExpression(assignment.Value(), targetType),
+                assignment.OperatorType(),
+                _semanticModel->IsBuildInitializer(assignment));
         }
         case core::AstNodeKind::CallExpression: {
             const core::CallExpression& call =
@@ -552,26 +605,39 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     function =
                         static_cast<const semantic::FunctionSymbol*>(symbol);
             }
+            if (const auto* forwarded = _semanticModel->ForwardedFunction(call))
+                function = forwarded;
             const auto& signature =
-                _semanticModel->TypeOf(call.Callee()).Signature();
+                function != nullptr
+                    ? function->Signature()
+                    : _semanticModel->TypeOf(call.Callee()).Signature();
             if (function &&
-                function->BuiltIn() == semantic::BuiltInFunction::New)
+                (function->BuiltIn() == semantic::BuiltInFunction::New ||
+                 function->BuiltIn() ==
+                     semantic::BuiltInFunction::StorageNew)) {
+                const semantic::SemanticType owner =
+                    call.IsCrashable() ? type : type.Elements()[0];
                 return std::make_unique<BoundAllocationExpression>(
-                    expression.Range(), type, *type.Elements()[0].Target(),
+                    expression.Range(), type, *owner.Target(),
                     _semanticModel->GlobalScope()
                         .Lookup("AllocationError")
                         ->Type(),
                     LowerExpression(*call.Arguments()[0],
                                     function->ParameterTypes()[0]),
-                    call.TypeArgument()->TypeForm() == core::TypeKind::Slice);
+                    call.TypeArgument()->TypeForm() == core::TypeKind::Slice,
+                    function->BuiltIn() ==
+                        semantic::BuiltInFunction::StorageNew,
+                    call.IsCrashable());
+            }
             std::vector<std::unique_ptr<BoundExpression>> arguments;
-            arguments.reserve(call.Arguments().size());
-            for (const std::unique_ptr<core::Expression>& argument :
-                 call.Arguments()) {
+            const auto sourceArguments = _semanticModel->ArgumentsFor(call);
+            arguments.reserve(sourceArguments.size());
+            for (const core::Expression* argument : sourceArguments) {
                 const semantic::SemanticType parameterType =
                     (!function ||
                      function->BuiltIn() == semantic::BuiltInFunction::None ||
-                     function->BuiltIn() == semantic::BuiltInFunction::Free)
+                     function->BuiltIn() == semantic::BuiltInFunction::Free ||
+                     function->BuiltIn() == semantic::BuiltInFunction::Hash)
                         ? signature.parameters[arguments.size()]
                         : semantic::SemanticType::Error();
                 arguments.push_back(LowerExpression(*argument, parameterType));
@@ -586,13 +652,28 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
         case core::AstNodeKind::MemberCallExpression: {
             const core::MemberCallExpression& member =
                 static_cast<const core::MemberCallExpression&>(expression);
+            if (member.Member() == "$range_index") {
+                std::unique_ptr<BoundExpression> cursor =
+                    LowerExpression(*member.Arguments()[0]);
+                if (type.Kind() == semantic::SemanticTypeKind::U32)
+                    return std::make_unique<BoundCastExpression>(
+                        expression.Range(), type, std::move(cursor));
+                return cursor;
+            }
             if (const auto* method = _semanticModel->MethodFor(member)) {
                 std::vector<std::unique_ptr<BoundExpression>> arguments;
                 if (method->HasReceiver()) {
-                    if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
+                    const semantic::SemanticType parameter =
+                        method->ParameterTypes()[0];
+                    if (parameter.Kind() ==
                             semantic::SemanticTypeKind::Structure ||
-                        _semanticModel->TypeOf(member.Receiver()).Kind() ==
-                            semantic::SemanticTypeKind::Enum)
+                        parameter.Kind() == semantic::SemanticTypeKind::Enum)
+                        arguments.push_back(
+                            LowerExpression(member.Receiver(), parameter));
+                    else if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
+                                 semantic::SemanticTypeKind::Structure ||
+                             _semanticModel->TypeOf(member.Receiver()).Kind() ==
+                                 semantic::SemanticTypeKind::Enum)
                         arguments.push_back(
                             std::make_unique<BoundAddressExpression>(
                                 member.Receiver().Range(),
@@ -601,11 +682,30 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     else
                         arguments.push_back(LowerExpression(member.Receiver()));
                 }
-                for (const auto& argument : member.Arguments())
+                const auto sourceArguments =
+                    _semanticModel->ArgumentsFor(member);
+                for (const core::Expression* argument : sourceArguments)
                     arguments.push_back(LowerExpression(
                         *argument, method->ParameterTypes()[arguments.size()]));
                 return std::make_unique<BoundCallExpression>(
                     expression.Range(), *method, std::move(arguments));
+            }
+            if (_semanticModel->TypeOf(member.Receiver()).IsInteger() &&
+                (member.Member() == "overflow_add" ||
+                 member.Member() == "overflow_sub" ||
+                 member.Member() == "overflow_mul")) {
+                OverflowingArithmeticOperation operation =
+                    OverflowingArithmeticOperation::Add;
+                if (member.Member() == "overflow_sub")
+                    operation = OverflowingArithmeticOperation::Subtract;
+                else if (member.Member() == "overflow_mul")
+                    operation = OverflowingArithmeticOperation::Multiply;
+                const semantic::SemanticType valueType =
+                    _semanticModel->TypeOf(member.Receiver()).WithoutConst();
+                return std::make_unique<BoundOverflowingArithmeticExpression>(
+                    expression.Range(), type, operation,
+                    LowerExpression(member.Receiver(), valueType),
+                    LowerExpression(*member.Arguments()[0], valueType));
             }
             if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
                     semantic::SemanticTypeKind::Slice &&

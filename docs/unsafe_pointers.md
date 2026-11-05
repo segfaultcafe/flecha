@@ -51,8 +51,8 @@ reference-to-pointer conversion.
 
 Copying, rebinding, passing, returning, and comparing initialized raw pointer
 values do not access their targets and can occur in safe code. Both `null` and
-`none` initialize a null pointer. A pointer declared without an initializer must
-be assigned before its value is read; const pointer bindings require initializers.
+`none` initialize a null pointer. Raw pointers are trivially zeroable, so a
+pointer declared without an initializer is immediately initialized to null.
 
 `*pointer` reads a target and `*pointer = value` writes it. Both require unsafe
 permission. Assignment evaluates the target address once, then evaluates the

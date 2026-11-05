@@ -1,0 +1,222 @@
+module duration_test;
+
+@imports
+    :: root::time::duration
+    :: root::time::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test duration_constructs_normalized_parts(&testing::UnitTest t) {
+    value, err := duration::Duration::fromParts(7, 123456789);
+    asserts::is_true(t, err == none, "normalized parts are accepted");
+    asserts::is_true(
+        t,
+        value.wholeSeconds() == 7 and
+            value.subsecondNanoseconds() == 123456789,
+        "parts are preserved"
+    );
+
+    invalid, invalidError :=
+        duration::Duration::fromParts(7, 1000000000);
+    asserts::is_true(
+        t,
+        invalidError == errors::TimeError.InvalidNanoseconds and
+            invalid.isZero(),
+        "an unnormalized nanosecond component is rejected with zero output"
+    );
+}
+
+test duration_unit_constructors_split_without_overflow(
+    &testing::UnitTest t
+) {
+    milliseconds := duration::Duration::fromMilliseconds(1234);
+    asserts::is_true(
+        t,
+        milliseconds.wholeSeconds() == 1 and
+            milliseconds.subsecondNanoseconds() == 234000000,
+        "milliseconds split into normalized parts"
+    );
+
+    microseconds := duration::Duration::fromMicroseconds(1234567);
+    asserts::is_true(
+        t,
+        microseconds.wholeSeconds() == 1 and
+            microseconds.subsecondNanoseconds() == 234567000,
+        "microseconds split into normalized parts"
+    );
+
+    nanoseconds := duration::Duration::fromNanoseconds(1234567890);
+    asserts::is_true(
+        t,
+        nanoseconds.wholeSeconds() == 1 and
+            nanoseconds.subsecondNanoseconds() == 234567890,
+        "nanoseconds split into normalized parts"
+    );
+
+    maximum := duration::Duration::fromNanoseconds(u64.max_value);
+    maximumTotal, maximumError := maximum.totalNanoseconds();
+    asserts::is_true(
+        t,
+        maximumError == none and maximumTotal == u64.max_value,
+        "the maximum input round trips through nanoseconds"
+    );
+}
+
+test duration_total_conversions_truncate_and_check_overflow(
+    &testing::UnitTest t
+) {
+    value, valueError :=
+        duration::Duration::fromParts(2, 345678901);
+    asserts::is_true(t, valueError == none, "the conversion fixture is valid");
+
+    milliseconds, millisecondsError := value.totalMilliseconds();
+    microseconds, microsecondsError := value.totalMicroseconds();
+    nanoseconds, nanosecondsError := value.totalNanoseconds();
+    asserts::is_true(
+        t,
+        millisecondsError == none and milliseconds == 2345,
+        "milliseconds truncate the smaller remainder"
+    );
+    asserts::is_true(
+        t,
+        microsecondsError == none and microseconds == 2345678,
+        "microseconds truncate the smaller remainder"
+    );
+    asserts::is_true(
+        t,
+        nanosecondsError == none and nanoseconds == 2345678901,
+        "nanoseconds preserve the complete value"
+    );
+
+    tooLarge := duration::Duration::fromSeconds(u64.max_value);
+    total, totalError := tooLarge.totalMilliseconds();
+    asserts::is_true(
+        t,
+        totalError == errors::TimeError.Overflow and total == 0,
+        "an overflowing total conversion returns zero and an error"
+    );
+}
+
+test duration_checked_add_carries_and_reports_overflow(
+    &testing::UnitTest t
+) {
+    left, leftError := duration::Duration::fromParts(2, 800000000);
+    right, rightError := duration::Duration::fromParts(3, 400000000);
+    asserts::is_true(
+        t,
+        leftError == none and rightError == none,
+        "addition fixtures are valid"
+    );
+
+    sum, sumError := left.checkedAdd(right);
+    asserts::is_true(
+        t,
+        sumError == none and sum.wholeSeconds() == 6 and
+            sum.subsecondNanoseconds() == 200000000,
+        "addition carries one subsecond unit"
+    );
+
+    maximum, maximumError :=
+        duration::Duration::fromParts(u64.max_value, 999999999);
+    one := duration::Duration::fromNanoseconds(1);
+    overflow, overflowError := maximum.checkedAdd(one);
+    asserts::is_true(t, maximumError == none, "the maximum duration is valid");
+    asserts::is_true(
+        t,
+        overflowError == errors::TimeError.Overflow and overflow.isZero(),
+        "addition reports overflow without a wrapped result"
+    );
+}
+
+test duration_checked_sub_borrows_and_rejects_negative_results(
+    &testing::UnitTest t
+) {
+    left, leftError := duration::Duration::fromParts(5, 100000000);
+    right, rightError := duration::Duration::fromParts(2, 300000000);
+    asserts::is_true(
+        t,
+        leftError == none and rightError == none,
+        "subtraction fixtures are valid"
+    );
+
+    difference, differenceError := left.checkedSub(right);
+    asserts::is_true(
+        t,
+        differenceError == none and difference.wholeSeconds() == 2 and
+            difference.subsecondNanoseconds() == 800000000,
+        "subtraction borrows across the second boundary"
+    );
+
+    negative, negativeError := right.checkedSub(left);
+    asserts::is_true(
+        t,
+        negativeError == errors::TimeError.NegativeResult and
+            negative.isZero(),
+        "negative subtraction returns zero and an error"
+    );
+}
+
+test duration_checked_mul_normalizes_and_reports_overflow(
+    &testing::UnitTest t
+) {
+    value, valueError :=
+        duration::Duration::fromParts(1, 750000000);
+    asserts::is_true(t, valueError == none, "the multiplication fixture is valid");
+
+    product, productError := value.checkedMul(3);
+    asserts::is_true(
+        t,
+        productError == none and product.wholeSeconds() == 5 and
+            product.subsecondNanoseconds() == 250000000,
+        "multiplication normalizes the subsecond product"
+    );
+
+    zero, zeroError := value.checkedMul(0);
+    asserts::is_true(
+        t,
+        zeroError == none and zero.isZero(),
+        "multiplication by zero returns zero"
+    );
+
+    maximum := duration::Duration::fromSeconds(u64.max_value);
+    overflow, overflowError := maximum.checkedMul(2);
+    asserts::is_true(
+        t,
+        overflowError == errors::TimeError.Overflow and overflow.isZero(),
+        "multiplication reports a seconds overflow"
+    );
+
+    subsecond, subsecondError :=
+        duration::Duration::fromParts(0, 999999999);
+    carried, carriedError := subsecond.checkedMul(u64.max_value);
+    asserts::is_true(t, subsecondError == none, "the subsecond maximum is valid");
+    asserts::is_true(
+        t,
+        carriedError == none and !carried.isZero(),
+        "large subsecond multiplication avoids intermediate overflow"
+    );
+}
+
+test duration_comparisons_order_both_components(&testing::UnitTest t) {
+    short, shortError := duration::Duration::fromParts(4, 999999999);
+    middle := duration::Duration::fromSeconds(5);
+    long, longError := duration::Duration::fromParts(5, 1);
+    asserts::is_true(
+        t,
+        shortError == none and longError == none,
+        "comparison fixtures are valid"
+    );
+
+    asserts::is_true(t, short.lessThan(middle), "seconds determine ordering");
+    asserts::is_true(
+        t,
+        middle.lessThan(long),
+        "nanoseconds break equal-second ordering"
+    );
+    asserts::is_true(
+        t,
+        middle.lessOrEqual(middle) and middle.greaterOrEqual(middle),
+        "inclusive comparisons accept equality"
+    );
+    asserts::is_true(t, long.greaterThan(short), "greater-than reverses ordering");
+}

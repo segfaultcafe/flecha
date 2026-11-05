@@ -1,0 +1,83 @@
+module errors;
+
+export error NetworkError {
+    InvalidAddress,
+    InvalidPort,
+    InvalidName,
+    NameNotFound,
+    TemporaryFailure,
+    UnsupportedFamily,
+    ResolutionFailed,
+    Closed,
+    TimedOut,
+    ConnectionRefused,
+    ConnectionReset,
+    NetworkUnreachable,
+    AddressInUse,
+    AddressNotAvailable,
+    BrokenPipe,
+    ConnectFailed,
+    BindFailed,
+    AcceptFailed,
+    ReadFailed,
+    WriteFailed,
+    ReceiveFailed,
+    SendFailed,
+    MessageTooLarge,
+    ShutdownFailed,
+    CloseFailed,
+    AddressFailed,
+    TimeoutConfigurationFailed,
+}
+
+quiver error from_runtime(i32 status, NetworkError fallback) {
+    if status == 0 {
+        return none;
+    }
+    if status == 1 {
+        return AllocationError.OutOfMemory;
+    }
+    if status == 2 {
+        return NetworkError.InvalidName;
+    }
+    if status == 3 {
+        return NetworkError.NameNotFound;
+    }
+    if status == 4 {
+        return NetworkError.TemporaryFailure;
+    }
+    if status == 5 {
+        return NetworkError.UnsupportedFamily;
+    }
+    if status == 6 {
+        return NetworkError.ResolutionFailed;
+    }
+    if status == 7 {
+        return NetworkError.Closed;
+    }
+    if status == 8 {
+        return NetworkError.TimedOut;
+    }
+    if status == 9 {
+        return NetworkError.ConnectionRefused;
+    }
+    if status == 10 {
+        return NetworkError.ConnectionReset;
+    }
+    if status == 11 {
+        return NetworkError.NetworkUnreachable;
+    }
+    if status == 12 {
+        return NetworkError.AddressInUse;
+    }
+    if status == 13 {
+        return NetworkError.AddressNotAvailable;
+    }
+    if status == 14 {
+        return NetworkError.BrokenPipe;
+    }
+    if status == 16 {
+        return NetworkError.MessageTooLarge;
+    }
+    return fallback;
+}

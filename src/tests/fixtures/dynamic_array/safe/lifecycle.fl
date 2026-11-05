@@ -1,9 +1,9 @@
 module lifecycle;
 
-@imports :: lib::std::containers::array;
+@imports :: lib::std::containers::collections;
 
 i32 early_return() {
-    values := array::Array<i32>::init();
+    values := collections::Array<i32>::init();
     if values.push(42) != none {
         return 1;
     }
@@ -12,7 +12,7 @@ i32 early_return() {
 }
 
 i32 main() {
-    empty := array::Array<i32>::init();
+    empty := collections::Array<i32>::init();
     if empty.len() != 0 || empty.capacity() != 0 {
         return 1;
     }
@@ -20,7 +20,7 @@ i32 main() {
     usize i = 0;
     while i < 10 {
         {
-            values := array::Array<i32>::init();
+            values := collections::Array<i32>::init();
             if values.push(42) != none {
                 return 2;
             }

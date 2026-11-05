@@ -1,5 +1,6 @@
 module testing;
 
+// Collects assertion counts, failures, and deferred test output.
 export structure UnitTest {
     private {
         string testName;
@@ -10,6 +11,7 @@ export structure UnitTest {
     }
 };
 
+// Creates an empty result record for the named test.
 UnitTest UnitTest::init(stringv name, bool verbose) override {
     return build UnitTest {
         self.testName = name.string();
@@ -20,31 +22,38 @@ UnitTest UnitTest::init(stringv name, bool verbose) override {
     };
 }
 
+// Borrows the test name.
 stringv UnitTest::name(&const self) <-self {
     return self->testName.view();
 }
 
+// Returns the number of recorded assertions.
 usize UnitTest::assertionCount(&const self) {
     return self->assertionsRecorded;
 }
 
+// Returns the number of recorded failures.
 usize UnitTest::failureCount(&const self) {
     return self->failuresRecorded;
 }
 
+// Reports whether at least one failure has been recorded.
 bool UnitTest::failed(&const self) {
     return self->failuresRecorded != 0;
 }
 
+// Records one failure without recording an assertion.
 void UnitTest::fail(&self) {
     self->failuresRecorded++;
 }
 
+// Records a failure and appends an error message to deferred output.
 void UnitTest::reportError(&self, stringv message) {
     self->fail();
     self->outputBuffer = self->outputBuffer + "    error: " + message + "\n";
 }
 
+// Records one assertion and appends its details when it failed.
 void UnitTest::recordAssertion(&self, bool passed, stringv assertion, stringv message) {
     self->assertionsRecorded++;
 
@@ -57,10 +66,12 @@ void UnitTest::recordAssertion(&self, bool passed, stringv assertion, stringv me
     }
 }
 
+// Writes all accumulated test output to standard output.
 void UnitTest::printOutput(&const self) {
     stdout(self->outputBuffer);
 }
 
+// Appends an informational message to deferred output.
 void UnitTest::log(&self, stringv message) {
     self->outputBuffer = self->outputBuffer + "    log: " + message + "\n";
 }

@@ -31,6 +31,7 @@ enum class SemanticTypeKind {
     StringView,
     Pointer,
     OwnedBuffer,
+    OwnedSlice,
     Reference,
     Array,
     Slice,
@@ -47,6 +48,7 @@ enum class SemanticTypeKind {
 
 struct ErrorFamily final {
     std::string name;
+    std::string displayName;
     std::vector<std::string> variants;
 };
 
@@ -103,6 +105,9 @@ class SemanticType final {
     }
     bool ContainsStructure() const;
     bool ContainsOwnedBuffer() const;
+    bool ContainsOwnedSlice() const;
+    bool ContainsReference() const;
+    bool ContainsInvalidDefaultConstruction() const;
     bool IsZeroable() const;
     bool IsTriviallyZeroable() const;
     bool IsCopyable() const;
@@ -128,12 +133,14 @@ class SemanticType final {
     [[nodiscard]] bool IsSequence() const {
         return _kind == SemanticTypeKind::Array ||
                _kind == SemanticTypeKind::Slice ||
-               _kind == SemanticTypeKind::OwnedBuffer;
+               _kind == SemanticTypeKind::OwnedBuffer ||
+               _kind == SemanticTypeKind::OwnedSlice;
     }
     [[nodiscard]] bool IsConst() const { return _isConst; }
     [[nodiscard]] bool IsCompound() const {
         return _kind == SemanticTypeKind::Pointer ||
                _kind == SemanticTypeKind::OwnedBuffer ||
+               _kind == SemanticTypeKind::OwnedSlice ||
                _kind == SemanticTypeKind::Reference ||
                _kind == SemanticTypeKind::Array ||
                _kind == SemanticTypeKind::Slice ||
@@ -169,9 +176,10 @@ struct CallableSignature final {
     std::vector<SemanticType> parameters;
     std::vector<core::OwnershipContract> parameterContracts;
     std::vector<core::OwnershipContract> resultContracts;
-    std::optional<std::size_t> borrowSourceIndex;
+    std::vector<std::size_t> borrowSourceIndices;
     bool isUnsafe = false;
     bool isOnce = false;
+    bool isCrashable = false;
 
     bool operator==(const CallableSignature& other) const;
 };

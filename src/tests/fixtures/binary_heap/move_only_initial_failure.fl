@@ -1,0 +1,74 @@
+module move_only_initial_failure;
+
+@imports :: lib::std::containers::collections;
+
+structure Owner {
+    *i32 cleanupCount;
+    *i32 cleanupLog;
+    i32 id;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.cleanupLog = null;
+        self.id = 0;
+    };
+}
+
+Owner Owner::init(*i32 cleanupCount, *i32 cleanupLog, i32 id) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.cleanupLog = cleanupLog;
+        self.id = id;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount += 1;
+            *self->cleanupLog = *self->cleanupLog * 10 + self->id;
+        }
+    }
+}
+
+bool ownerLess(&const Owner left, &const Owner right) {
+    return left->id < right->id;
+}
+
+i32 main() {
+    i32 cleanupCount = 0;
+    i32 cleanupLog = 0;
+
+    {
+        values := collections::BinaryHeap<Owner>::init(ownerLess);
+        Owner rejected = none;
+
+        unsafe {
+            rejected = Owner::init(
+                &raw cleanupCount,
+                &raw cleanupLog,
+                7
+            );
+        }
+
+        if values.push(rejected) != AllocationError.OutOfMemory {
+            return 1;
+        }
+
+        if !values.empty() or values.len() != 0 or values.capacity() != 0 {
+            return 2;
+        }
+
+        if cleanupCount != 1 or cleanupLog != 7 {
+            return 3;
+        }
+    }
+
+    if cleanupCount != 1 or cleanupLog != 7 {
+        return 4;
+    }
+
+    return 42;
+}

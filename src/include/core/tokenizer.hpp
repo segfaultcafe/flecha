@@ -27,6 +27,7 @@ namespace core {
         bool Match(char expected);
         bool IsAtEnd() const;
         void SkipTrivia();
+        Token ScanForeignBlock(source::SourceLocation start, size_t startIndex);
         Token NextToken();
 
     public:

@@ -1,7 +1,12 @@
+if(NOT DEFINED FLECHA_COMPILE_TIMEOUT)
+    set(FLECHA_COMPILE_TIMEOUT 30)
+endif()
+
 execute_process(
     COMMAND "${FLECHA_COMPILER}" --emit-object "${FLECHA_SOURCE}"
         --lib "std=${FLECHA_STD}" -o "${FLECHA_OUTPUT}.o"
-    RESULT_VARIABLE compileResult ERROR_VARIABLE compileError TIMEOUT 30)
+    RESULT_VARIABLE compileResult ERROR_VARIABLE compileError
+    TIMEOUT ${FLECHA_COMPILE_TIMEOUT})
 if(NOT compileResult EQUAL 0)
     message(FATAL_ERROR "dynamic array compilation failed: ${compileError}")
 endif()

@@ -1,0 +1,122 @@
+module nested_ownership;
+
+@imports :: lib::std::containers::collections;
+
+usize integerHash(&const i32 key) {
+    return (*key).cast<usize>;
+}
+
+bool integerEqual(&const i32 left, &const i32 right) {
+    return *left == *right;
+}
+
+i32 checkTwoLevels() {
+    outer := collections::HashMap<
+        i32,
+        collections::HashMap<i32, i32>
+    >::init().withHash(integerHash).withEqual(integerEqual);
+
+    loop i32 row = 0; row < 7; row++ {
+        inner := collections::HashMap<i32, i32>::init()
+            .withHash(integerHash)
+            .withEqual(integerEqual);
+        loop i32 column = 0; column <= row; column++ {
+            if inner.set(column, row * 10 + column) != none {
+                return 1;
+            }
+        }
+        if outer.set(row, inner) != none {
+            return 2;
+        }
+    }
+
+    if outer.len() != 7 or outer.capacity() != 16 {
+        return 3;
+    }
+
+    i32 outerKey = 6;
+    inner, outerRemoveError := outer.remove(&outerKey);
+    if outerRemoveError != none or inner.len() != 7 or
+        inner.capacity() != 16 {
+        return 4;
+    }
+
+    i32 innerKey = 6;
+    value, innerGetError := inner.get(&innerKey);
+    if innerGetError != none or value != 66 {
+        return 5;
+    }
+
+    outer.clear();
+    if !outer.empty() or outer.capacity() != 16 {
+        return 6;
+    }
+
+    return 42;
+}
+
+i32 checkThreeLevels() {
+    outer := collections::HashMap<
+        i32,
+        collections::HashMap<i32, collections::HashMap<i32, i32>>
+    >::init().withHash(integerHash).withEqual(integerEqual);
+
+    loop i32 group = 0; group < 3; group++ {
+        middle := collections::HashMap<
+            i32,
+            collections::HashMap<i32, i32>
+        >::init().withHash(integerHash).withEqual(integerEqual);
+
+        loop i32 row = 0; row <= group; row++ {
+            inner := collections::HashMap<i32, i32>::init()
+                .withHash(integerHash)
+                .withEqual(integerEqual);
+            loop i32 column = 0; column <= row; column++ {
+                if inner.set(column, group * 100 + row * 10 + column) != none {
+                    return 7;
+                }
+            }
+            if middle.set(row, inner) != none {
+                return 8;
+            }
+        }
+
+        if outer.set(group, middle) != none {
+            return 9;
+        }
+    }
+
+    i32 groupKey = 2;
+    middle, outerRemoveError := outer.remove(&groupKey);
+    if outerRemoveError != none or middle.len() != 3 {
+        return 10;
+    }
+
+    i32 rowKey = 2;
+    inner, middleRemoveError := middle.remove(&rowKey);
+    if middleRemoveError != none or inner.len() != 3 {
+        return 11;
+    }
+
+    i32 columnKey = 2;
+    value, innerGetError := inner.get(&columnKey);
+    if innerGetError != none or value != 222 {
+        return 12;
+    }
+
+    outer.clear();
+    if !outer.empty() or outer.capacity() != 8 {
+        return 13;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    result := checkTwoLevels();
+    if result != 42 {
+        return result;
+    }
+
+    return checkThreeLevels();
+}

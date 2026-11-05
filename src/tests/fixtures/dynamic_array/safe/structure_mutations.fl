@@ -1,6 +1,6 @@
 module structure_mutations;
 
-@imports :: lib::std::containers::array;
+@imports :: lib::std::containers::collections;
 
 structure Token {
     i32 kind;
@@ -25,7 +25,7 @@ i32 check_remove() {
     third.kind = 3;
     third.value = 'c';
 
-    tokens := array::Array<Token>::init();
+    tokens := collections::Array<Token>::init();
     if tokens.push(first) != none || tokens.push(second) != none ||
         tokens.push(third) != none {
         return 1;
@@ -59,7 +59,7 @@ i32 check_swap_remove() {
     third.kind = 3;
     third.value = 'c';
 
-    tokens := array::Array<Token>::init();
+    tokens := collections::Array<Token>::init();
     if tokens.push(first) != none || tokens.push(second) != none ||
         tokens.push(third) != none {
         return 5;

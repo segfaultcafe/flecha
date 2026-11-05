@@ -34,8 +34,12 @@ The declaration ends with `;`. Fields and methods are public by default.
 `private T field;` and a `private { ... }` field group are equivalent. A private
 member is accessible only inside methods belonging to its structure, including
 access through another instance. A build block does not grant private access
-by itself. Fields and methods cannot share names; `init`, `zero`, and `tear` are
-reserved lifecycle names. Types may refer to later structure declarations.
+by itself. Fields and methods may share a name because field access and method
+calls are syntactically distinct: `value.position` accesses a field, while
+`value.position()` calls a method. The same distinction applies through a
+reference or pointer: `self->position` and `self->position()`. The names `init`,
+`zero`, and `tear` remain reserved for lifecycle methods and cannot be used as
+field names. Types may refer to later structure declarations.
 
 Structure values use `.`, while references and pointers use `->`, for both
 fields and methods:
@@ -53,10 +57,14 @@ unsafe {
 }
 ```
 
-The first receiver parameter can be `&self`, `&const self`, `*self`, or
-`*const self`. Its target is the method's structure. Explicitly writing
-`&Box self` is equivalent. A method without a receiver is static and uses
-`Box::method()`. There is no method overloading in this milestone.
+The first receiver parameter can be `self`, `&self`, `&const self`, `*self`, or
+`*const self`. Its target is the method's structure. A bare `self` consumes the
+value and permits chaining on temporaries; inside that method, fields use `.`
+and returning `self` transfers the complete value. Explicitly writing
+`Box self` or `&Box self` is equivalent to the corresponding shorthand. A
+method without a receiver is static and uses `Box::method()`. Static and
+instance methods may overload by parameter types under the ordinary
+[function-overloading rules](function_overloading.md).
 
 Reference receivers participate in checked borrowing. The implicit receiver
 borrow lasts throughout argument evaluation and the call. Field borrows
@@ -65,6 +73,15 @@ is not yet supported. A read-only receiver cannot call a mutable method or
 write fields. A raw pointer receiver requires unsafe permission. Unsafe methods
 obey the ordinary lexical unsafe-call rules. Checked references do not implicitly
 convert to raw pointer receivers.
+
+```flecha
+Box Box::withValue(self, i32 value) {
+    self.value = value;
+    return self;
+}
+
+box := Box::init().withValue(42);
+```
 
 ## Initialization
 
@@ -91,20 +108,32 @@ privacy, and unsafe checks apply. `Box::init()` is an error if the override
 requires arguments. Nested value fields need explicit declaration defaults in
 that case, for example `Box box = Box::init(2, 40);`. The same applies to arrays
 and tuples containing Box. Raw pointer fields need no constructor arguments;
-they default to null. Reference fields remain unsupported pending lifetime
-contracts. Additional named static factories may also accept parameters.
+they default to null. A structure containing a reference receives no generated
+no-argument `init`; its explicit constructor or factory must initialize the
+reference from a named `<- source>` borrow. Additional named static factories
+may also accept parameters.
 
 ## Default construction and `zero`
 
 `none` constructs the expected structure default in declarations,
-assignments, arguments, returns, and ordinary `==`/`!=` comparisons. A plain
+assignments, arguments, returns, and ordinary `==`/`!=` comparisons. A
 structure receives a generated `zero()` when every field can be defaulted:
 numbers become zero, booleans become false, characters become `\0`, raw
 pointers become null, fixed arrays default every element, and nested plain
 structures recursively default their fields. This is semantic initialization,
 not a bytewise memory clear.
 
-A structure with a custom `init` or `tear` must declare its default explicitly:
+Checked references have no zero value. A structure containing one, directly or
+through another field, is therefore nonzeroable: it receives no generated
+`zero()`, cannot use `none`, and cannot omit a variable initializer. A custom
+`zero()` cannot manufacture a valid source for its returned borrow and is
+rejected by the borrow-result contract.
+
+A custom `init` or `tear` does not affect zeroability. `init` supplies an
+ordinary construction path, while `tear` controls destruction and movement.
+Both must accept the generated fieldwise zero as a valid value when all fields
+are zeroable. A structure declares `zero()` explicitly only when its valid
+default differs from that generated value:
 
 ```flecha
 structure Position {
@@ -128,8 +157,10 @@ default construction, including indirect cycles, is rejected.
 `Position::zero()` may also be called explicitly. Exporting a structure exposes
 its default construction, while the override may initialize private fields.
 
-Custom defaults and plain defaults containing them are nontrivial. The compiler
-emits one warning per such structure, for example:
+Custom defaults and plain defaults containing them are nontrivial. When the
+structure belongs to the entry module, the compiler emits one warning per such
+structure. Imported definitions do not repeat their lifecycle warnings in each
+consumer. For example:
 
 ```text
 warning: structure 'Position' is not trivially zeroed; default construction uses 'Position::zero()'
@@ -163,12 +194,60 @@ Build bodies allow local declarations, conditionals and local loops. `return`,
 build; validate fallible preconditions before constructing. This milestone does
 not implement partial construction or unwinding an unfinished value.
 
-Structure variables require an initializer. Inline recursive layouts are
-rejected; recursive raw pointer
-fields such as `*Node next` are allowed. Fields support scalars, errors, raw
-pointers, owning strings, structures, fixed arrays of supported array elements,
-and tuples of supported fields. References, slices, and `stringv` fields need
-stored-borrow lifetime contracts and are currently rejected.
+Structure variables may omit their initializer when their canonical zero is
+trivial, including structures whose owning-string fields default to empty.
+Other structures require an explicit initializer. Inline recursive layouts are
+rejected; recursive raw pointer fields such as `*Node next` are allowed. Fields
+support scalars, errors, raw pointers, owning strings, structures, fixed arrays
+of supported array elements, tuples of supported fields, owning slices
+(`own []T`), and borrowed slices (`[]T` or `[]const T`). Owning slices are
+destroyed automatically with the containing structure. Checked references
+(`&T` or `&const T`) are also supported fields. A structure containing a
+mutable slice or mutable reference is noncopyable; one containing only shared
+`[]const T` views and `&const T` references may be copied when its other fields
+are copyable.
+
+A borrowed-slice field is tied to the same source tracked by the ordinary
+borrow-result contract. Constructors and factories returning such a structure
+must declare `<- parameter>`, and the compiler rejects local escapes or access
+that conflicts with a live mutable field borrow:
+
+```flecha
+structure Writer {
+    []u8 destination;
+    usize position;
+};
+
+Writer Writer::init([]u8 destination) <- destination override {
+    return build Writer {
+        self.destination = destination;
+        self.position = 0;
+    };
+}
+```
+
+Reference fields use the same returned-borrow contract:
+
+```flecha
+structure View {
+    &i32 value;
+    i32 tag;
+};
+
+View View::init(&i32 value, i32 tag) <- value override {
+    return build View {
+        self.value = value;
+        self.tag = tag;
+    };
+}
+```
+
+Every direct field whose type contains a reference must be assigned directly at
+the beginning of each `build` block, before other statements. This applies
+recursively when the field is another reference-bearing structure. The
+compiler constructs that first assignment directly in the field's storage;
+there is no temporary zero reference and no cleanup of uninitialized storage.
+`stringv` fields remain unsupported.
 
 ## Destruction, copying, and stable storage
 
@@ -216,6 +295,12 @@ accesses for borrow checking, so a value cannot move while a reference, slice,
 returned loan, or deferred borrow still protects it. Moving an individual
 field or indexed element out of an aggregate is not supported; move the whole
 named value or use a type-specific replacement API.
+
+A structure carrying checked references is movable unless another field or an
+unsafe `tear` makes it immovable. Moving it transfers every borrow origin and
+invalidates a noncopyable source. Shared-reference structures may instead be
+copied; mutable-reference structures may not, preventing duplicate exclusive
+aliases. References themselves are non-owning fields and receive no teardown.
 
 An **unsafe tear additionally makes the type immovable**. Creating a value of
 that type requires unsafe permission, including through an otherwise safe

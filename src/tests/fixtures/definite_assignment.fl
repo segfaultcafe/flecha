@@ -1,6 +1,6 @@
 i32 main() {
     i32 answer;
-    string message;
+    string message = none;
 
     if true {
         answer = 42;

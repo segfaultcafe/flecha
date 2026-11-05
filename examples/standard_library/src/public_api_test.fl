@@ -1,0 +1,36 @@
+module public_api_test;
+
+@imports
+    :: root::public_api
+    :: lib::std::cryptography::sha2
+    :: lib::std::encoding::hex
+    :: lib::std::tests::asserts
+    :: lib::std::tests::testing;
+
+test documented_digest_is_stable(&testing::UnitTest t) {
+    digest, digestError := sha2::sha256("Flecha");
+    asserts::is_true(
+        t,
+        digestError == none,
+        "SHA-256 accepts the documented input"
+    );
+    if digestError != none {
+        return;
+    }
+
+    encoded, encodingError := hex::encode_bytes(digest.bytes());
+    asserts::is_true(
+        t,
+        encodingError == none,
+        "hexadecimal encoding succeeds"
+    );
+    if encodingError != none {
+        return;
+    }
+    asserts::string_equal(
+        t,
+        encoded.view(),
+        public_api::expected_digest(),
+        "the documented digest is platform independent"
+    );
+}

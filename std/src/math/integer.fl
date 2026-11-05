@@ -1,0 +1,200 @@
+module integer;
+
+@imports :: root::math::errors;
+
+// Reports whether value is divisible by two.
+export bool is_even<T: integer>(T value) {
+    return value % 2 == 0;
+}
+
+// Reports whether value is not divisible by two.
+export bool is_odd<T: integer>(T value) {
+    return !is_even<T>(value);
+}
+
+// Reports whether divisor evenly divides value; a zero divisor returns false.
+export bool is_multiple_of<T: integer>(T value, T divisor) {
+    T zero = none;
+
+    if divisor == zero {
+        return false;
+    }
+
+    return value % divisor == zero;
+}
+
+// Raises base to a nonnegative exponent with wrapping multiplication.
+export T pow<T: integer>(T base, usize exponent) {
+    T result = 1;
+
+    while exponent > 0 {
+        if is_odd<usize>(exponent) {
+            result = result * base;
+        }
+
+        exponent = exponent / 2;
+
+        if exponent > 0 {
+            base = base * base;
+        }
+    }
+
+    return result;
+}
+
+// Returns the greatest common divisor, nonnegative when representable.
+export T gcd<T: integer>(T left, T right) {
+    T zero = none;
+    T one = 1;
+
+    while right != zero {
+        if T.isof<signed_integer> and right == (-1).cast<T> {
+            return one;
+        }
+
+        remainder := left % right;
+        left = right;
+        right = remainder;
+    }
+
+    if left < zero {
+        return -left;
+    }
+
+    return left;
+}
+
+// Returns the least common multiple, or zero when either input is zero.
+// Multiplication uses the primitive wrapping policy.
+export T lcm<T: integer>(T left, T right) {
+    T zero = none;
+
+    if left == zero or right == zero {
+        return zero;
+    }
+
+    result := (left / gcd<T>(left, right)) * right;
+
+    if result < zero {
+        return -result;
+    }
+
+    return result;
+}
+
+// Returns the exact sum or ArithmeticError.Overflow.
+export (T, errors::ArithmeticError) checked_add<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_add(right);
+    if overflowed {
+        return (none, errors::ArithmeticError.Overflow);
+    }
+
+    return (result, none);
+}
+
+// Returns the exact difference or ArithmeticError.Overflow.
+export (T, errors::ArithmeticError) checked_sub<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_sub(right);
+    if overflowed {
+        return (none, errors::ArithmeticError.Overflow);
+    }
+
+    return (result, none);
+}
+
+// Returns the exact product or ArithmeticError.Overflow.
+export (T, errors::ArithmeticError) checked_mul<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_mul(right);
+    if overflowed {
+        return (none, errors::ArithmeticError.Overflow);
+    }
+
+    return (result, none);
+}
+
+// Returns the quotient or reports division by zero or signed overflow.
+export (T, errors::ArithmeticError) checked_div<T: integer>(T left, T right) {
+    T zero = none;
+    T negativeOne = (-1).cast<T>;
+
+    if right == zero {
+        return (none, errors::ArithmeticError.DivisionByZero);
+    }
+
+    if T.isof<signed_integer> and left == T.min_value and right == negativeOne {
+        return (none, errors::ArithmeticError.Overflow);
+    }
+
+    return (left / right, none);
+}
+
+// Returns the sum clamped to the nearest bound of T on overflow.
+export T saturating_add<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_add(right);
+    if !overflowed {
+        return result;
+    }
+
+    T zero = none;
+    if T.isof<unsigned_integer> or left > zero {
+        return T.max_value;
+    }
+
+    return T.min_value;
+}
+
+// Returns the difference clamped to the nearest bound of T on overflow.
+export T saturating_sub<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_sub(right);
+    if !overflowed {
+        return result;
+    }
+
+    if T.isof<unsigned_integer> {
+        return T.min_value;
+    }
+
+    T zero = none;
+    if right < zero {
+        return T.max_value;
+    }
+
+    return T.min_value;
+}
+
+// Returns the product clamped to the nearest bound of T on overflow.
+export T saturating_mul<T: integer>(T left, T right) {
+    result, overflowed := left.overflow_mul(right);
+    if !overflowed {
+        return result;
+    }
+
+    if T.isof<unsigned_integer> {
+        return T.max_value;
+    }
+
+    T zero = none;
+    if (left < zero) != (right < zero) {
+        return T.min_value;
+    }
+
+    return T.max_value;
+}
+
+// Returns the low T-width bits of the mathematical sum.
+export T wrapping_add<T: integer>(T left, T right) {
+    result, _ := left.overflow_add(right);
+    return result;
+}
+
+// Returns the low T-width bits of the mathematical difference.
+export T wrapping_sub<T: integer>(T left, T right) {
+    result, _ := left.overflow_sub(right);
+    return result;
+}
+
+// Returns the low T-width bits of the mathematical product.
+export T wrapping_mul<T: integer>(T left, T right) {
+    result, _ := left.overflow_mul(right);
+    return result;
+}

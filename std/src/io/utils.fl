@@ -1,4 +1,4 @@
-private module utils;
+module utils;
 
 quiver u8 bool_byte(bool value) {
     if value {

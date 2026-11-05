@@ -1,10 +1,10 @@
 module from_slice;
 
-@imports :: lib::std::containers::array;
+@imports :: lib::std::containers::collections;
 
 i32 main() {
     [3]i32 source = [10, 20, 30];
-    values, err := array::Array<i32>::fromSlice(source[:]);
+    values, err := collections::Array<i32>::fromSlice(source[:]);
     if err != none {
         return 1;
     }
@@ -28,7 +28,7 @@ i32 main() {
     }
 
     [0]i32 emptySource = [];
-    empty, emptyError := array::Array<i32>::fromSlice(emptySource[:]);
+    empty, emptyError := collections::Array<i32>::fromSlice(emptySource[:]);
     if emptyError != none {
         return 6;
     }

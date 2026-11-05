@@ -1,12 +1,12 @@
 #include "semantic/allocation_checker.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <deque>
 #include <map>
 #include <set>
 #include <utility>
 
+#include "core/integer_literal.hpp"
 #include "semantic/control_flow_graph.hpp"
 
 namespace flecha::semantic {
@@ -19,6 +19,26 @@ using Identity = const core::AstNode*;
 bool IsHeapHandle(SemanticType type) {
     return type.Kind() == SemanticTypeKind::Pointer ||
            type.Kind() == SemanticTypeKind::OwnedBuffer;
+}
+
+bool ExposesHeapHandle(SemanticType type) {
+    if (IsHeapHandle(type)) return true;
+    if (type.Kind() == SemanticTypeKind::Tuple)
+        return std::any_of(type.Elements().begin(), type.Elements().end(),
+                           ExposesHeapHandle);
+    if (type.Kind() == SemanticTypeKind::Array ||
+        type.Kind() == SemanticTypeKind::Slice ||
+        type.Kind() == SemanticTypeKind::OwnedSlice ||
+        type.Kind() == SemanticTypeKind::Reference)
+        return ExposesHeapHandle(*type.Target());
+    return false;
+}
+
+bool IsManagedSliceAllocation(SemanticType type) {
+    return type.Kind() == SemanticTypeKind::OwnedSlice ||
+           (type.Kind() == SemanticTypeKind::Tuple &&
+            !type.Elements().empty() &&
+            type.Elements()[0].Kind() == SemanticTypeKind::OwnedSlice);
 }
 
 enum class ValueKind {
@@ -37,6 +57,7 @@ enum class ValueKind {
     Callable,
     LentCapture
 };
+
 struct Value final {
     ValueKind kind = ValueKind::Unknown;
     Identity identity = nullptr;
@@ -46,6 +67,7 @@ struct Value final {
     const core::BlockStatement* scope = nullptr;
     bool operator==(const Value&) const = default;
 };
+
 struct Resource final {
     bool live = true;
     bool owned = true;
@@ -53,6 +75,7 @@ struct Resource final {
     bool nullable = false;
     bool operator==(const Resource&) const = default;
 };
+
 struct Deferred final {
     const core::BlockStatement* scope = nullptr;
     const core::Expression* call = nullptr;
@@ -61,6 +84,7 @@ struct Deferred final {
     std::vector<Value> arguments;
     bool operator==(const Deferred&) const = default;
 };
+
 struct State final {
     std::map<const Symbol*, Value> bindings;
     std::map<const core::Expression*, Value> values;
@@ -72,6 +96,7 @@ struct State final {
     std::map<const core::StructureField*, Value> fieldValues;
     bool operator==(const State&) const = default;
 };
+
 struct Outcome final {
     State state;
     Value result;
@@ -96,7 +121,8 @@ bool IsOwnedClosureCapture(Identity identity) {
 
 // Keep paths separate: merging a successful new with its failure loses the
 // relationship between its pointer and error, and invents leaks at error exits.
-// The finite budget fails closed instead of silently widening away obligations.
+// Exact state deduplication preserves those correlations; cyclic deferred
+// ownership is diagnosed when its registration is revisited in the same scope.
 class AllocationChecker final {
    public:
     AllocationChecker(const core::CompilationUnit& unit,
@@ -149,10 +175,14 @@ class AllocationChecker final {
                                 const core::AnonymousFunctionExpression&>(
                                 *node.memoryExpression)
                                 .Function());
-                    if (node.allocation || heapIndex || heapSlice ||
+                    const bool trackedAllocation =
+                        node.allocation && !IsManagedSliceAllocation(
+                                               _model.TypeOf(*node.allocation));
+                    if (trackedAllocation || heapIndex || heapSlice ||
                         resourceClosure ||
                         (callee &&
-                         callee->BuiltIn() == BuiltInFunction::Free) ||
+                         (callee->BuiltIn() == BuiltInFunction::Free ||
+                          callee->BuiltIn() == BuiltInFunction::StorageFree)) ||
                         (found != _functions.end() &&
                          _resourceFunctions.contains(found->second)))
                         changed |= _resourceFunctions.insert(function).second;
@@ -206,18 +236,18 @@ class AllocationChecker final {
         }
         SeedFields(function, state);
         SeedCaptures(function, state);
-        const auto savedSteps = _steps;
-        _steps = 0;
-        for (auto& outcome : Run(function, std::move(state), arguments))
-            _nullShapes[{&function, mask}].push_back(std::move(outcome.result));
-        _steps = savedSteps;
+        auto& shapes = _nullShapes[{&function, mask}];
+        for (auto& outcome : Run(function, std::move(state), arguments)) {
+            if (std::find(shapes.begin(), shapes.end(), outcome.result) ==
+                shapes.end())
+                shapes.push_back(std::move(outcome.result));
+        }
     }
+
     void Verify(const core::FunctionDeclaration& function) {
         if (_verified.contains(&function) || _verifying.contains(&function))
             return;
         _verifying.insert(&function);
-        const auto savedSteps = _steps;
-        _steps = 0;
         State state;
         std::vector<Value> arguments;
         for (const auto& parameter : function.Parameters()) {
@@ -236,25 +266,32 @@ class AllocationChecker final {
         SeedCaptures(function, state);
 
         auto outcomes = Run(function, std::move(state), arguments);
-        for (auto& outcome : outcomes)
-            _returnShapes[&function].push_back(std::move(outcome.result));
-        _steps = savedSteps;
+        auto& shapes = _returnShapes[&function];
+        for (auto& outcome : outcomes) {
+            if (std::find(shapes.begin(), shapes.end(), outcome.result) ==
+                shapes.end())
+                shapes.push_back(std::move(outcome.result));
+        }
         _verifying.erase(&function);
         _verified.insert(&function);
     }
 
     bool HasContract(const core::TypeNode& type) const {
-        if (type.Contract() != OwnershipContract::None) return true;
+        if (type.TypeForm() == core::TypeKind::Pointer &&
+            type.Contract() != OwnershipContract::None)
+            return true;
         for (const auto& element : type.Elements())
             if (HasContract(*element)) return true;
         return false;
     }
+
     bool HasContracts(const core::FunctionDeclaration& function) const {
         if (HasContract(function.ReturnType())) return true;
         for (const auto& parameter : function.Parameters())
             if (HasContract(parameter->Type())) return true;
         return false;
     }
+
     bool HasResourceCaptures(const core::FunctionDeclaration& function) const {
         for (const ClosureCapture& capture : _model.Captures(function)) {
             const auto mode = capture.syntax->Mode();
@@ -265,24 +302,29 @@ class AllocationChecker final {
         }
         return false;
     }
+
     const FunctionSymbol* Function(
         const core::FunctionDeclaration& function) const {
         return static_cast<const FunctionSymbol*>(
             _model.DeclaredSymbol(function));
     }
+
     bool HasOwningFields(const core::FunctionDeclaration& function) const {
         const auto* symbol = Function(function);
         if (!symbol || !symbol->Owner()) return false;
         for (const auto& field : symbol->Owner()->fields)
-            if (field.syntax->Type().Contract() == OwnershipContract::Own)
+            if (field.syntax->Type().TypeForm() == core::TypeKind::Pointer &&
+                field.syntax->Type().Contract() == OwnershipContract::Own)
                 return true;
         return false;
     }
+
     void SeedFields(const core::FunctionDeclaration& function, State& state) {
         if (!HasOwningFields(function) || !Function(function)->HasReceiver())
             return;
         for (const auto& field : Function(function)->Owner()->fields) {
-            if (field.syntax->Type().Contract() != OwnershipContract::Own)
+            if (field.syntax->Type().TypeForm() != core::TypeKind::Pointer ||
+                field.syntax->Type().Contract() != OwnershipContract::Own)
                 continue;
             const bool tear = function.Name() == "tear";
             state.resources[field.syntax] = {true, tear, !tear, true};
@@ -290,6 +332,7 @@ class AllocationChecker final {
                                                field.syntax};
         }
     }
+
     void SeedCaptures(const core::FunctionDeclaration& function, State& state) {
         const bool once = Function(function) && Function(function)->IsOnce();
         for (const ClosureCapture& capture : _model.Captures(function)) {
@@ -307,6 +350,7 @@ class AllocationChecker final {
                                                 capture.syntax};
         }
     }
+
     bool HasLentCapture(const Value& value, Identity identity = nullptr) const {
         if (value.kind == ValueKind::LentCapture &&
             (identity == nullptr || value.identity == identity))
@@ -316,6 +360,7 @@ class AllocationChecker final {
                                return HasLentCapture(child, identity);
                            });
     }
+
     bool ActiveLend(const State& state, Identity identity) const {
         for (const auto& [symbol, value] : state.bindings)
             if (HasLentCapture(value, identity)) return true;
@@ -326,6 +371,7 @@ class AllocationChecker final {
                 if (HasLentCapture(value, identity)) return true;
         return false;
     }
+
     bool Lent(const State& state, const Value& value) const {
         if (value.kind == ValueKind::LentCapture) return true;
         const auto found = state.resources.find(value.identity);
@@ -336,10 +382,12 @@ class AllocationChecker final {
             if (Lent(state, child)) return true;
         return false;
     }
+
     void Invalidate(Value& value, Identity identity) {
         if (value.identity == identity) value.kind = ValueKind::Transferred;
         for (auto& child : value.elements) Invalidate(child, identity);
     }
+
     bool Transfer(State& state, const Value& value, const core::AstNode& at) {
         if (value.kind == ValueKind::Null) return true;
         CheckUse(state, value, at);
@@ -356,6 +404,7 @@ class AllocationChecker final {
                    value.identity);
             return false;
         }
+
         for (const auto& deferred : state.deferred)
             if (RefersTo(deferred.callee, value.identity)) {
                 Report(DiagnosticCode::UnverifiedOwnership, at,
@@ -382,7 +431,7 @@ class AllocationChecker final {
     }
 
     void Register(const core::FunctionDeclaration& function) {
-        if (function.IsExtern()) return;
+        if (function.IsExtern() || function.HasVariadicPack()) return;
         const auto* symbol =
             static_cast<const FunctionSymbol*>(_model.DeclaredSymbol(function));
         if (!symbol) return;
@@ -418,16 +467,19 @@ class AllocationChecker final {
         const auto found = state.values.find(&expression);
         return found == state.values.end() ? Value{} : found->second;
     }
+
     Value Binding(const State& state, const Symbol* symbol) const {
         const auto found = state.bindings.find(symbol);
         return found == state.bindings.end() ? Value{} : found->second;
     }
+
     void Put(State& state, const core::Expression& expression, Value value) {
         if (value.kind == ValueKind::Unknown)
             state.values.erase(&expression);
         else
             state.values[&expression] = std::move(value);
     }
+
     void Bind(State& state, const Symbol* symbol, Value value) {
         if (!symbol) return;
         if (value.kind == ValueKind::Unknown)
@@ -435,6 +487,7 @@ class AllocationChecker final {
         else
             state.bindings[symbol] = std::move(value);
     }
+
     bool Contains(const Value& value, Identity identity) const {
         // An interior address can observe storage but cannot discharge its
         // allocation obligation. Only the original pointer can be returned as
@@ -445,17 +498,20 @@ class AllocationChecker final {
             value.elements.begin(), value.elements.end(),
             [&](const Value& child) { return Contains(child, identity); });
     }
+
     bool RefersTo(const Value& value, Identity identity) const {
         if (value.identity == identity) return true;
         for (const auto& child : value.elements)
             if (RefersTo(child, identity)) return true;
         return false;
     }
+
     bool Tracks(const Value& value) const {
         if (value.identity) return true;
         return std::any_of(value.elements.begin(), value.elements.end(),
                            [&](const Value& child) { return Tracks(child); });
     }
+
     void CheckUse(const State& state, const Value& value,
                   const core::AstNode& at, bool dereference = false) {
         const auto found = state.resources.find(value.identity);
@@ -476,6 +532,7 @@ class AllocationChecker final {
                    "error or pointer first");
         for (const Value& child : value.elements) CheckUse(state, child, at);
     }
+
     void Free(State& state, const Value& value, const core::AstNode& at) {
         if (value.kind == ValueKind::Null) return;
         if (Lent(state, value)) {
@@ -518,7 +575,18 @@ class AllocationChecker final {
         if (value.identity == identity) value.kind = ValueKind::Dangling;
         for (Value& child : value.elements) Retire(child, identity);
     }
+
     bool Allocate(State& state, const core::CallExpression& call) {
+        const SemanticType resultType = _model.TypeOf(call);
+        if (IsManagedSliceAllocation(resultType)) {
+            Value value;
+            if (resultType.Kind() == SemanticTypeKind::Tuple) {
+                value.kind = ValueKind::Aggregate;
+                value.elements = {{}, {ValueKind::Null}};
+            }
+            Put(state, call, std::move(value));
+            return true;
+        }
         const auto previous = state.resources.find(&call);
         if (previous != state.resources.end() && previous->second.live) {
             Report(DiagnosticCode::UnverifiedOwnership, call,
@@ -534,8 +602,13 @@ class AllocationChecker final {
         for (Deferred& deferred : state.deferred)
             for (Value& argument : deferred.arguments) Retire(argument, &call);
         state.resources[&call] = {};
-        Value result{ValueKind::Aggregate};
-        result.elements = {{ValueKind::Pointer, &call}, {ValueKind::Null}};
+        Value result;
+        if (call.IsCrashable()) {
+            result = {ValueKind::Pointer, &call};
+        } else {
+            result.kind = ValueKind::Aggregate;
+            result.elements = {{ValueKind::Pointer, &call}, {ValueKind::Null}};
+        }
         Put(state, call, std::move(result));
         return true;
     }
@@ -577,6 +650,7 @@ class AllocationChecker final {
                          static_cast<const core::NameExpression&>(target))
                    : nullptr;
     }
+
     Value Address(const State& state,
                   const core::Expression& expression) const {
         const core::Expression& target = Unwrap(expression);
@@ -612,6 +686,7 @@ class AllocationChecker final {
         }
         return {};
     }
+
     void Assign(State& state, const core::Expression& target, Value value) {
         if (const Symbol* symbol = DirectTarget(target)) {
             Bind(state, symbol, std::move(value));
@@ -632,6 +707,7 @@ class AllocationChecker final {
                 static_cast<const core::MemberAccessExpression&>(unwrapped);
             const auto* field = _model.FieldFor(member);
             if (field &&
+                field->syntax->Type().TypeForm() == core::TypeKind::Pointer &&
                 field->syntax->Type().Contract() == OwnershipContract::Own) {
                 const Symbol* receiver = DirectTarget(member.Receiver());
                 const bool building =
@@ -692,6 +768,9 @@ class AllocationChecker final {
         if (expression.Kind() == AstNodeKind::CallExpression) {
             const auto& call =
                 static_cast<const core::CallExpression&>(expression);
+            if (const FunctionSymbol* forwarded =
+                    _model.ForwardedFunction(call))
+                return forwarded;
             const Symbol* symbol = DirectTarget(call.Callee());
             return symbol && symbol->Kind() == SymbolKind::Function
                        ? static_cast<const FunctionSymbol*>(symbol)
@@ -702,13 +781,14 @@ class AllocationChecker final {
                 static_cast<const core::MemberCallExpression&>(expression));
         return nullptr;
     }
+
     std::vector<Value> Arguments(const State& state,
                                  const core::Expression& expression) const {
         std::vector<Value> result;
         if (expression.Kind() == AstNodeKind::CallExpression) {
-            for (const auto& argument :
-                 static_cast<const core::CallExpression&>(expression)
-                     .Arguments())
+            const auto& call =
+                static_cast<const core::CallExpression&>(expression);
+            for (const core::Expression* argument : _model.ArgumentsFor(call))
                 result.push_back(Get(state, *argument));
         } else if (expression.Kind() == AstNodeKind::MemberCallExpression) {
             const auto& call =
@@ -716,7 +796,7 @@ class AllocationChecker final {
             const FunctionSymbol* method = _model.MethodFor(call);
             if (method && method->HasReceiver())
                 result.push_back(Get(state, call.Receiver()));
-            for (const auto& argument : call.Arguments())
+            for (const core::Expression* argument : _model.ArgumentsFor(call))
                 result.push_back(Get(state, *argument));
         }
         return result;
@@ -727,7 +807,9 @@ class AllocationChecker final {
         for (const Value& argument : arguments)
             if (Tracks(argument) || argument.address) return true;
         if (!function) return false;
-        if (function->BuiltIn() == BuiltInFunction::Free) return true;
+        if (function->BuiltIn() == BuiltInFunction::Free ||
+            function->BuiltIn() == BuiltInFunction::StorageFree)
+            return true;
         for (const SemanticType& type : function->ParameterTypes())
             if (IsHeapHandle(type)) return true;
         const auto found = _functions.find(function);
@@ -735,6 +817,17 @@ class AllocationChecker final {
         // Calls that allocate are interpreted even without pointer arguments,
         // including factories that return an allocation in a tuple.
         return _resourceFunctions.contains(found->second);
+    }
+
+    bool CanSummarizeRecursiveCall(const core::FunctionDeclaration& syntax,
+                                   const FunctionSymbol& function,
+                                   const std::vector<Value>& arguments) const {
+        if (HasResourceCaptures(syntax)) return false;
+        if (ExposesHeapHandle(function.ReturnType())) return false;
+        for (const SemanticType& type : function.ParameterTypes())
+            if (ExposesHeapHandle(type)) return false;
+        return std::none_of(arguments.begin(), arguments.end(),
+                            [&](const Value& value) { return Tracks(value); });
     }
 
     void InvalidateMutableFields(State& state, const FunctionSymbol* function,
@@ -781,6 +874,7 @@ class AllocationChecker final {
             }
         }
     }
+
     std::vector<Outcome> Invoke(const core::Expression& expression,
                                 const FunctionSymbol* function,
                                 const std::vector<Value>& arguments,
@@ -818,7 +912,8 @@ class AllocationChecker final {
                                             resource.nullable};
             return {{std::move(state), {ValueKind::Pointer, &expression}}};
         }
-        if (function && function->BuiltIn() == BuiltInFunction::Free) {
+        if (function && (function->BuiltIn() == BuiltInFunction::Free ||
+                         function->BuiltIn() == BuiltInFunction::StorageFree)) {
             if (!arguments.empty()) Free(state, arguments[0], expression);
             return {{std::move(state), {}}};
         }
@@ -895,6 +990,8 @@ class AllocationChecker final {
                            "a contract cannot yet summarize mutation through "
                            "an address of a tracked pointer slot");
                 if (contract == OwnershipContract::Own &&
+                    syntax.Parameters()[i]->Type().TypeForm() ==
+                        core::TypeKind::Pointer &&
                     arguments[i].kind != ValueKind::Null) {
                     if (!consumed.insert(arguments[i].identity).second)
                         Report(DiagnosticCode::UnverifiedOwnership, expression,
@@ -950,10 +1047,21 @@ class AllocationChecker final {
         }
         if (std::find(_active.begin(), _active.end(), found->second) !=
             _active.end()) {
-            Report(DiagnosticCode::UnverifiedOwnership, expression,
-                   "recursive pointer ownership requires a contract and cannot "
-                   "yet be verified");
-            return {};
+            if (!function || !CanSummarizeRecursiveCall(*found->second,
+                                                        *function, arguments)) {
+                Report(DiagnosticCode::UnverifiedOwnership, expression,
+                       "recursive pointer ownership requires a contract and "
+                       "cannot yet be verified");
+                return {};
+            }
+            // Structures, strings, owning slices, and other safe movable values
+            // carry their cleanup in their types. Their bodies are verified
+            // independently, so a recursive edge only needs an opaque result
+            // with the correct tuple shape. Raw allocation handles remain
+            // ineligible and continue to require explicit own/lend contracts.
+            Value result =
+                ContractResult(state, expression, found->second->ReturnType());
+            return {{std::move(state), std::move(result)}};
         }
         return Run(*found->second, std::move(state), arguments);
     }
@@ -961,7 +1069,8 @@ class AllocationChecker final {
     Value ContractResult(State& state, const core::Expression& call,
                          const core::TypeNode& type,
                          const Value* shape = nullptr) {
-        if (type.Contract() == OwnershipContract::Own) {
+        if (type.Contract() == OwnershipContract::Own &&
+            type.TypeForm() == core::TypeKind::Pointer) {
             if (shape && shape->kind == ValueKind::Null)
                 return {ValueKind::Null};
             const auto key = std::make_pair(&call, &type);
@@ -1030,6 +1139,7 @@ class AllocationChecker final {
             result.elements.push_back(owned(i) ? makeOwned(i) : Value{});
         return result;
     }
+
     void CheckReturn(State& state, const Value& result,
                      const core::TypeNode& type, const core::AstNode& at,
                      bool explicitContract,
@@ -1047,7 +1157,8 @@ class AllocationChecker final {
                    "a lent pointer or its derived aliases cannot escape in a "
                    "return",
                    result.identity);
-        if (type.Contract() == OwnershipContract::Own) {
+        if (type.Contract() == OwnershipContract::Own &&
+            type.TypeForm() == core::TypeKind::Pointer) {
             if (result.kind == ValueKind::Pointer &&
                 !returnedOwners.insert(result.identity).second)
                 Report(DiagnosticCode::UnverifiedOwnership, at,
@@ -1103,16 +1214,18 @@ class AllocationChecker final {
                 const auto& call =
                     static_cast<const core::CallExpression&>(expression);
                 state.values.erase(&call.Callee());
-                for (const auto& argument : call.Arguments())
-                    state.values.erase(argument.get());
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
+                    state.values.erase(argument);
                 break;
             }
             case AstNodeKind::MemberCallExpression: {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(expression);
                 state.values.erase(&call.Receiver());
-                for (const auto& argument : call.Arguments())
-                    state.values.erase(argument.get());
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
+                    state.values.erase(argument);
                 break;
             }
             case AstNodeKind::TupleExpression:
@@ -1155,12 +1268,8 @@ class AllocationChecker final {
                         return {ValueKind::False};
                     case TokenType::NumberLiteral: {
                         Value result{ValueKind::Integer};
-                        const std::string& text = literal.Value();
-                        const auto parsed = std::from_chars(
-                            text.data(), text.data() + text.size(),
-                            result.integer);
-                        return parsed.ec == std::errc{} &&
-                                       parsed.ptr == text.data() + text.size()
+                        return core::ParseUnsignedIntegerLiteral(
+                                   literal.Value(), result.integer)
                                    ? result
                                    : Value{};
                     }
@@ -1258,6 +1367,14 @@ class AllocationChecker final {
             case AstNodeKind::AssignmentExpression: {
                 const auto& assignment =
                     static_cast<const core::AssignmentExpression&>(expression);
+                if (assignment.OperatorType() != TokenType::Assign) {
+                    Value current = Get(state, assignment.Target());
+                    CheckUse(state, current, expression);
+                    Value value = Get(state, assignment.Value());
+                    CheckUse(state, value, expression);
+                    Assign(state, assignment.Target(), {});
+                    return {};
+                }
                 Value value = Get(state, assignment.Value());
                 CheckUse(state, value, expression);
                 Assign(state, assignment.Target(), value);
@@ -1274,8 +1391,11 @@ class AllocationChecker final {
                         const auto* field = _model.FieldFor(
                             static_cast<const core::MemberAccessExpression&>(
                                 target));
-                        if (field && field->syntax->Type().Contract() ==
-                                         OwnershipContract::Own)
+                        if (field &&
+                            field->syntax->Type().TypeForm() ==
+                                core::TypeKind::Pointer &&
+                            field->syntax->Type().Contract() ==
+                                OwnershipContract::Own)
                             Report(DiagnosticCode::UnverifiedOwnership,
                                    expression,
                                    "taking an address of an owning field would "
@@ -1300,7 +1420,8 @@ class AllocationChecker final {
                         return Binding(state, operand.address);
                     return {};
                 }
-                if (unary.OperatorType() == TokenType::Increment)
+                if (unary.OperatorType() == TokenType::Increment ||
+                    unary.OperatorType() == TokenType::Decrement)
                     Assign(state, unary.Operand(), {});
                 if (unary.OperatorType() == TokenType::Bang) {
                     if (operand.kind == ValueKind::True)
@@ -1379,17 +1500,20 @@ class AllocationChecker final {
                     static_cast<const core::MemberAccessExpression&>(
                         expression);
                 if (!_model.FieldFor(member)) {
-                    // Only the built-in allocation error is used to refine an
-                    // allocation result; unrelated error families stay unknown.
-                    if (_model.TypeOf(expression).Name() == "AllocationError")
+                    // Named error variants are non-none values. Preserve that
+                    // fact so a checked `(value, error)` result refines away
+                    // the nullable value branch for every error family.
+                    if (_model.TypeOf(expression).IsErrorValue())
                         return {ValueKind::Error};
                     return {};
                 }
                 CheckUse(state, Get(state, member.Receiver()), expression,
                          member.Access() == TokenType::Arrow);
                 const auto* field = _model.FieldFor(member);
-                if (field->syntax->Type().Contract() ==
-                    OwnershipContract::Own) {
+                if (field->syntax->Type().TypeForm() ==
+                        core::TypeKind::Pointer &&
+                    field->syntax->Type().Contract() ==
+                        OwnershipContract::Own) {
                     const Symbol* receiver = DirectTarget(member.Receiver());
                     if (!receiver || receiver->Name() != "self") {
                         Report(DiagnosticCode::UnverifiedOwnership, expression,
@@ -1438,9 +1562,11 @@ class AllocationChecker final {
                                       const core::MemberAccessExpression&>(
                                       base))
                             : nullptr;
-                    const bool owningField =
-                        field && field->syntax->Type().Contract() ==
-                                     OwnershipContract::Own;
+                    const bool owningField = field &&
+                                             field->syntax->Type().TypeForm() ==
+                                                 core::TypeKind::Pointer &&
+                                             field->syntax->Type().Contract() ==
+                                                 OwnershipContract::Own;
                     if (receiver.kind != ValueKind::Pointer ||
                         resource == state.resources.end() ||
                         !resource->second.live ||
@@ -1521,7 +1647,8 @@ class AllocationChecker final {
                 const auto& call =
                     static_cast<const core::CallExpression&>(expression);
                 Drop(state, call.Callee());
-                for (const auto& argument : call.Arguments())
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
                     Drop(state, *argument);
                 break;
             }
@@ -1529,7 +1656,8 @@ class AllocationChecker final {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(expression);
                 Drop(state, call.Receiver());
-                for (const auto& argument : call.Arguments())
+                for (const core::Expression* argument :
+                     _model.ArgumentsFor(call))
                     Drop(state, *argument);
                 break;
             }
@@ -1670,12 +1798,6 @@ class AllocationChecker final {
             auto& seen = visited[id];
             if (std::find(seen.begin(), seen.end(), state) != seen.end())
                 continue;
-            if (++_steps > 100000 || seen.size() >= 128) {
-                Report(DiagnosticCode::UnverifiedOwnership, function,
-                       "ownership analysis exceeded its path budget; simplify "
-                       "control flow or split this function");
-                break;
-            }
             seen.push_back(state);
             const FlowNode& node = graph.nodes[id];
             std::vector<State> outputs;
@@ -1683,6 +1805,9 @@ class AllocationChecker final {
                 const core::Expression& expression = *node.memoryExpression;
                 const FunctionSymbol* callee = Callee(expression);
                 if (expression.Kind() == AstNodeKind::CallExpression &&
+                    callee &&
+                    (callee->BuiltIn() == BuiltInFunction::New ||
+                     callee->BuiltIn() == BuiltInFunction::StorageNew) &&
                     static_cast<const core::CallExpression&>(expression)
                         .TypeArgument()) {
                     // Allocation happens before its conditional initializer.
@@ -1807,15 +1932,17 @@ class AllocationChecker final {
                     // need execution at cleanup rather than at registration.
                     if (Tracks(retainedCallee) || owningResult ||
                         Relevant(Callee(call), arguments)) {
-                        if (state.deferred.size() >= 128) {
+                        Deferred registration{
+                            node.scopes.back(), &call, Callee(call),
+                            std::move(retainedCallee), std::move(arguments)};
+                        if (std::find(state.deferred.begin(),
+                                      state.deferred.end(),
+                                      registration) != state.deferred.end()) {
                             Report(DiagnosticCode::UnverifiedOwnership, call,
-                                   "cannot verify an unbounded number of "
-                                   "deferred pointer operations");
-                            continue;
-                        }
-                        state.deferred.push_back(
-                            {node.scopes.back(), &call, Callee(call),
-                             std::move(retainedCallee), std::move(arguments)});
+                                   "a deferred pointer operation is revisited "
+                                   "before leaving its scope");
+                        } else
+                            state.deferred.push_back(std::move(registration));
                     }
                     Drop(state, call);
                     CheckLost(state, *node.memoryDefer);
@@ -1867,7 +1994,9 @@ class AllocationChecker final {
                                         ? finished.fieldValues.at(field.syntax)
                                               .identity
                                         : field.syntax);
-                                if (field.syntax->Type().Contract() ==
+                                if (field.syntax->Type().TypeForm() ==
+                                        core::TypeKind::Pointer &&
+                                    field.syntax->Type().Contract() ==
                                         OwnershipContract::Own &&
                                     resource != finished.resources.end() &&
                                     resource->second.live)
@@ -2050,7 +2179,6 @@ class AllocationChecker final {
     std::set<const core::FunctionDeclaration*> _resourceFunctions;
     std::vector<const core::FunctionDeclaration*> _active;
     std::set<std::pair<DiagnosticCode, source::SourceLocation>> _reported;
-    std::size_t _steps = 0;
 };
 }  // namespace
 

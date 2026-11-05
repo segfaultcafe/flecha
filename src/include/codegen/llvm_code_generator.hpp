@@ -68,6 +68,10 @@ class LlvmCodeGenerator final {
     void EmitArrayElements(llvm::Value* storage, semantic::SemanticType type,
                            bool reverse,
                            const std::function<void(llvm::Value*)>& action);
+    void EmitRuntimeArrayElements(
+        llvm::Value* storage, llvm::Value* count,
+        semantic::SemanticType elementType, bool reverse,
+        const std::function<void(llvm::Value*)>& action);
     llvm::Value* LifetimeFlag(llvm::Value* storage);
     [[nodiscard]] llvm::Type* MapType(semantic::SemanticType type);
     [[nodiscard]] llvm::StructType* StringViewType();
@@ -117,6 +121,12 @@ class LlvmCodeGenerator final {
     llvm::Value* EmitAllocation(
         const lowering::BoundAllocationExpression& expression);
     llvm::Value* EmitFree(llvm::Value* owner, semantic::SemanticType ownerType);
+    llvm::Value* EmitStorageCall(
+        const lowering::BoundCallExpression& expression,
+        const std::vector<llvm::Value*>& arguments);
+    llvm::Value* EmitStorageAddress(llvm::Value* owner,
+                                    semantic::SemanticType ownerType,
+                                    llvm::Value* index);
     llvm::Value* EmitIndirectCall(
         const lowering::BoundIndirectCallExpression& expression,
         llvm::Value* destination = nullptr);
@@ -129,9 +139,21 @@ class LlvmCodeGenerator final {
         const lowering::BoundCastExpression& expression);
     [[nodiscard]] llvm::Value* EmitBinary(
         const lowering::BoundBinaryExpression& expression);
+    [[nodiscard]] llvm::Value* EmitIntegerLimit(
+        const lowering::BoundIntegerLimitExpression& expression);
+    [[nodiscard]] llvm::Value* EmitFloatingConstant(
+        const lowering::BoundFloatingConstantExpression& expression);
+    [[nodiscard]] llvm::Value* EmitOverflowingArithmetic(
+        const lowering::BoundOverflowingArithmeticExpression& expression);
     [[nodiscard]] llvm::Value* EmitValueEquality(llvm::Value* left,
                                                  llvm::Value* right,
                                                  semantic::SemanticType type);
+    [[nodiscard]] llvm::Value* EmitValueHash(llvm::Value* value,
+                                             semantic::SemanticType type);
+    [[nodiscard]] llvm::Value* EmitStringHash(llvm::Value* value,
+                                              semantic::SemanticType type);
+    [[nodiscard]] llvm::Value* EmitHashMix(llvm::Value* hash,
+                                           llvm::Value* value);
     [[nodiscard]] llvm::Value* EmitBooleanLogical(
         const lowering::BoundBinaryExpression& expression);
     [[nodiscard]] llvm::Value* EmitStringViewEquality(llvm::Value* left,
@@ -142,9 +164,18 @@ class LlvmCodeGenerator final {
         semantic::SemanticType rightType);
     [[nodiscard]] llvm::Value* EmitRuntimeOutput(llvm::Value* value,
                                                  semantic::SemanticType type,
-                                                 bool newline);
-    [[nodiscard]] llvm::Value* EmitRuntimeNewline();
+                                                 bool newline,
+                                                 bool standardError = false);
+    [[nodiscard]] llvm::Value* EmitRuntimeNewline(bool standardError = false);
     [[nodiscard]] llvm::Value* EmitBuiltInOutput(
+        const lowering::BoundCallExpression& expression,
+        const std::vector<llvm::Value*>& arguments);
+    [[nodiscard]] llvm::Value* EmitBuiltInStringFormat(
+        const lowering::BoundCallExpression& expression,
+        const std::vector<llvm::Value*>& arguments);
+    [[nodiscard]] llvm::Value* EmitCrash(
+        llvm::Value* message, source::SourceRange range);
+    [[nodiscard]] llvm::Value* EmitBuiltInInput(
         const lowering::BoundCallExpression& expression,
         const std::vector<llvm::Value*>& arguments);
     [[nodiscard]] llvm::Value* EmitStringViewOperation(
@@ -219,6 +250,7 @@ class LlvmCodeGenerator final {
     std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedValues;
     llvm::Value* _returnStorage = nullptr;
     llvm::Function* _currentFunction = nullptr;
+    const semantic::FunctionSymbol* _currentFunctionSymbol = nullptr;
     semantic::SemanticType _currentReturnType{semantic::SemanticTypeKind::Void};
     std::string _error;
 };

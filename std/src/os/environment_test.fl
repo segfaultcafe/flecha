@@ -1,0 +1,139 @@
+module environment_test;
+
+@imports
+    :: root::os::environment
+    :: root::os::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+error restore_environment(
+    stringv name,
+    bool wasPresent,
+    stringv previous
+) {
+    if wasPresent {
+        return environment::set(name, previous);
+    }
+    return environment::remove(name);
+}
+
+test environment_round_trips_missing_empty_and_present_values(
+    &testing::UnitTest t
+) {
+    stringv name = "FLECHA_STD_OS_ENVIRONMENT_ROUND_TRIP";
+    previous, wasPresent, snapshotError := environment::get(name);
+    asserts::is_true(t, snapshotError == none, "the original value is captured");
+    if snapshotError != none {
+        return;
+    }
+
+    removeError := environment::remove(name);
+    asserts::is_true(t, removeError == none, "removing the test value succeeds");
+
+    missing, missingFound, missingError := environment::get(name);
+    asserts::is_true(
+        t,
+        missingError == none and !missingFound and missing.len() == 0,
+        "an absent variable returns an empty value with found false"
+    );
+
+    setError := environment::set(name, "first");
+    asserts::is_true(t, setError == none, "setting a value succeeds");
+    first, firstFound, firstError := environment::get(name);
+    asserts::is_true(
+        t,
+        firstError == none and firstFound and first == "first",
+        "a present variable returns its value with found true"
+    );
+
+    setError = environment::set(name, "second");
+    asserts::is_true(t, setError == none, "overwriting a value succeeds");
+    second, secondFound, secondError := environment::get(name);
+    asserts::is_true(
+        t,
+        secondError == none and secondFound and second == "second",
+        "the overwritten value is visible"
+    );
+    asserts::is_true(
+        t,
+        first == "first",
+        "a captured value owns storage independent from later mutations"
+    );
+
+    setError = environment::set(name, "");
+    asserts::is_true(t, setError == none, "setting an empty value succeeds");
+    empty, emptyFound, emptyError := environment::get(name);
+    asserts::is_true(
+        t,
+        emptyError == none and emptyFound and empty.len() == 0,
+        "a present empty value remains distinct from an absent variable"
+    );
+
+    removeError = environment::remove(name);
+    asserts::is_true(t, removeError == none, "removing a present value succeeds");
+    removeError = environment::remove(name);
+    asserts::is_true(t, removeError == none, "removing an absent value succeeds");
+
+    restoreError := restore_environment(name, wasPresent, previous.view());
+    asserts::is_true(t, restoreError == none, "the original value is restored");
+}
+
+test environment_rejects_invalid_names_and_values_transactionally(
+    &testing::UnitTest t
+) {
+    value, found, getError := environment::get("");
+    asserts::is_true(
+        t,
+        getError == errors::EnvironmentError.InvalidName and
+            !found and value.len() == 0,
+        "get rejects an empty name and clears its outputs"
+    );
+    asserts::is_true(
+        t,
+        environment::set("INVALID=NAME", "value") ==
+            errors::EnvironmentError.InvalidName,
+        "set rejects a name containing equals"
+    );
+    asserts::is_true(
+        t,
+        environment::remove("INVALID=NAME") ==
+            errors::EnvironmentError.InvalidName,
+        "remove rejects a name containing equals"
+    );
+
+    string nullName = "INVALID" + '\0'.string() + "NAME";
+    value, found, getError = environment::get(nullName.view());
+    asserts::is_true(
+        t,
+        getError == errors::EnvironmentError.InvalidName and
+            !found and value.len() == 0,
+        "get rejects a name containing a null byte"
+    );
+
+    stringv name = "FLECHA_STD_OS_ENVIRONMENT_VALIDATION";
+    previous, wasPresent, snapshotError := environment::get(name);
+    asserts::is_true(t, snapshotError == none, "the original value is captured");
+    if snapshotError != none {
+        return;
+    }
+
+    setError := environment::set(name, "preserved");
+    asserts::is_true(t, setError == none, "the baseline value is installed");
+    string nullValue = "bad" + '\0'.string() + "value";
+    setError = environment::set(name, nullValue.view());
+    asserts::is_true(
+        t,
+        setError == errors::EnvironmentError.InvalidValue,
+        "set rejects a value containing a null byte"
+    );
+
+    current, currentFound, currentError := environment::get(name);
+    asserts::is_true(
+        t,
+        currentError == none and currentFound and current == "preserved",
+        "a rejected value leaves the previous environment unchanged"
+    );
+
+    restoreError := restore_environment(name, wasPresent, previous.view());
+    asserts::is_true(t, restoreError == none, "the original value is restored");
+}

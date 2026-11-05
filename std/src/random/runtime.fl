@@ -1,0 +1,6 @@
+module runtime;
+
+quiver extern unsafe i32 flecha_runtime_v1_secure_random_fill(
+    *u8 destination,
+    usize length
+);

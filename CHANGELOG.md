@@ -2,6 +2,76 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-05
+
+Flecha 0.3.0 makes the toolchain application-capable with a substantially
+larger standard library, deterministic source-package management, portable
+installed-package qualification, and hard release gates for correctness,
+stability, and performance. See the
+[0.3.0 release and upgrade notes](docs/release_0_3_0.md) for the supported
+platforms, migration guidance, and known limitations.
+
+### Added
+
+- Added allocation-free constant-time equality for byte slices and `stringv`
+  values plus guaranteed zeroing of mutable byte slices, backed by versioned
+  native boundaries that preserve both security-sensitive operations through
+  optimization.
+- Added allocation-free `std::cryptography::sha2` and
+  `std::cryptography::hmac` modules with portable SHA-256, SHA-512,
+  HMAC-SHA-256, and HMAC-SHA-512, including one-shot and incremental APIs,
+  fixed-size owning outputs, and published conformance vectors.
+- Added portable IPv4/IPv6 socket-address values and blocking hostname
+  resolution with ordered owning results, explicit ports, stable network
+  errors, and a versioned native resolver boundary.
+- Added owning blocking UDP sockets with portable IPv4/IPv6 binding,
+  connected and destination-addressed datagram operations, sender and peer
+  address recovery, explicit truncation and payload-boundary errors,
+  independent timeouts, and deterministic teardown.
+- Added `std::tests::benchmark` with validated warmup and sample configuration,
+  monotonic in-process timing, setup/teardown hooks, integer summary statistics,
+  and deterministic versioned JSON output for CI baselines.
+- Flecha tests can now own self-cleaning temporary directory fixtures, compare
+  text or binary golden files through an explicit update workflow, and generate
+  deterministic random test data with reproducible seed reporting.
+- Standard testing assertions now include value-rich numeric equality and
+  ordering checks, escaped and bounded string diagnostics, byte mismatch
+  context, and explicit error-family and error-variant checks.
+- Direct generic method calls can infer omitted type arguments from supplied
+  arguments and expected results, including known tuple-destructuring
+  destinations, with the same rules across exported, quiver, internal, and
+  private declarations.
+- Added `std::random::secure` for allocation-free operating-system secure bytes
+  and `std::random::generator::Generator` for reproducible integers, unbiased
+  ranges, unit floats, booleans, byte streams, and shuffling.
+- Added `std::time::duration` and `std::time::clock` with checked normalized
+  durations, opaque monotonic instants, Unix wall-clock timestamps, and
+  interruption-safe blocking sleep over a versioned native time ABI.
+- Added `std::io::path` with allocating lexical join and normalization plus
+  borrowed filename, parent, and extension views for host POSIX or Windows
+  path rules.
+- Free functions can declare an allocation-free forwarding pack with
+  `values...` and expand it in their single forwarding call with `values...`.
+  Forwarding aliases emit no runtime function or variadic ABI, and borrow
+  contracts distinguish pack-only `<- ...values` from explicit mixed sources
+  such as `<- (fallback, ...values)`.
+- Flecha now accepts a versioned package graph whose dependency aliases are
+  resolved relative to each importing package, preserving source and nominal
+  identity across recursive graphs while keeping compatibility with `--lib`.
+- Longbow now resolves recursive path, exact-revision Git, and owner-scoped
+  registry dependencies; writes deterministic locks; verifies a shared
+  content-addressed cache; and supports locked offline builds.
+- Longbow now provides `add`, `remove`, `fetch`, `update`, `publish --dry-run`,
+  `publish`, and `yank`, with deterministic source-only archives and the
+  versioned public registry client protocol.
+
+### Security
+
+- Package archives reject traversal, symbolic links, case collisions,
+  unsupported payloads, and checksum mismatches. Git dependencies are exported
+  as blobs without running checkout hooks, filters, submodules, or package code,
+  and floating revisions and remote-helper transports are rejected.
+
 ## 0.2.5 - 2026-10-27
 
 Flecha 0.2.5 allows Longbow to create and operate on projects whose names are

@@ -1,18 +1,26 @@
-# Flecha 0.3.0 standard-library milestone
+# Flecha 0.3.0 application and library ecosystem milestone
 
-Flecha 0.3.0 is the application-capable standard-library milestone. Its goal
-is to make substantial systems programs practical without turning the release
-into another broad language-feature wave. The milestone expands the standard
-library from its initial arrays, algorithms, files, and testing support into a
-coherent foundation for command-line programs, structured data, persistent
-services, networking, and deterministic ledger applications.
+Flecha 0.3.0 is the application-capable standard-library and package-ecosystem
+milestone. Its goal is to make substantial systems programs and independently
+distributed libraries practical without turning the release into another
+broad language-feature wave. The milestone expands the standard library from
+its initial arrays, algorithms, files, and testing support into a coherent
+foundation for command-line programs, structured data, persistent services,
+networking, and deterministic ledger applications.
+
+This is one concrete step in Flecha's broader
+[direction toward 1.0 and beyond](vision.md). That direction is intentionally
+adaptable: it explains what the project is trying to make possible without
+freezing every future feature or assigning it to a release in advance. The
+requirements in this document apply specifically to the 0.3.0 milestone.
 
 The north-star programs for this release are:
 
 - a nontrivial command-line application;
 - a persistent, deterministic blockchain or append-only ledger prototype;
-- a structured-data reader and writer;
-- a blocking TCP client and server; and
+- a blocking TCP client and server;
+- a package-development fixture created, published, resolved, and consumed
+  through the public Flecha package registry; and
 - a concurrent worker application if the required memory-model rules can be
   specified without delaying the rest of the milestone.
 
@@ -36,40 +44,60 @@ The milestone follows these rules:
   aggregate layout;
 - allocation, copying, blocking, and platform-dependent behavior stay visible;
 - deterministic APIs behave identically on every supported target;
+- Longbow owns dependency acquisition and the compiler remains network-free;
 - cryptographic implementations use published test vectors and established
   implementations rather than novel algorithms; and
 - higher-level protocols enter the standard library only after their lower
   layers have stable contracts.
 
-## Planned module map
+Decoration declarations in the 0.3.x language are identities for
+compiler-known behavior. Every usable decoration, regardless of where its
+declaration appears, must have a corresponding compiler implementation;
+libraries cannot define new decoration semantics in this release. The
+temporary JSON contract and the planned post-v0.3 migration are specified in
+[`decorations.md`](decorations.md#v03-declaration-rule).
 
-The initial public module layout is:
+## Public module map
+
+The exact shipped module layout, every exported declaration, operational
+contracts, and a focused example or test for each module live in the generated
+and CI-checked [v0.3 standard-library reference](standard_library.md). The
+category map is:
 
 ```text
+std::fmt                 typed console and owning-string formatting
 std::math::*              numeric, integer, bits, floating_point, constants
-std::mem::*               slices
-std::bytes::*             endian, reader, writer
-std::containers::*        algorithms, array, deque, stack, queue, heap,
+std::memory::*            slices
+std::bytes::*             buffer, sequence
+std::containers::collections
+                          algorithms, array, deque, stack, queue, heap,
                           hash_map, hash_set
-std::text::*              ascii, utf8, builder, parse, format
-std::encoding::*          hex, base64, binary, json
-std::io::*                errors, file, buffered, stdio, filesystem, path,
-                          directory, temp
-std::process::*           args, environment, command
+std::containers::raw_array
+                          low-level compatibility array
+std::containers::errors   collection errors
+std::text::*              ascii, utf8, strings, errors
+std::encoding::*          binary, hex, base64
+std::io::*                errors, file, buffered, stdio, filesystem, path
+std::os::*                arguments, environment
+std::process::*           command
 std::time::*              duration, clock
 std::random::*            generator, secure
 std::net::*               errors, address, dns, tcp, udp
-std::hash::*              checksums, sha2, hmac
-std::crypto::*            constant_time, secure_memory
+std::hashing::*           structural, non-cryptographic hashes
+std::cryptography::sha2   sha256, sha512
+std::cryptography::hmac   hmac-sha256, hmac-sha512
 std::tests::*             testing, asserts, fixtures, golden, benchmark
 ```
 
 This map defines public ownership and naming rather than requiring every
 operation to live in a separate source file. Closely related operations belong
 in one cohesive module; submodules are reserved for independently useful API
-families. Existing public paths such as `std::io::filesystem` and
-`std::containers::array` remain valid. Moving an existing public declaration
-requires compatibility review.
+families. Safe containers and their algorithms share the cohesive
+`std::containers::collections` module; low-level raw storage remains separate.
+Moving an existing public declaration requires compatibility review.
+The installed [`standard_library` API tour](../examples/standard_library/README.md)
+imports this complete layout and is built, tested, and run from each relocated
+release bundle.
 
 ## Implementation sequence
 
@@ -85,7 +113,8 @@ Add foundational modules for:
 - checked, wrapping, and saturating integer arithmetic;
 - bit rotation, population count, leading and trailing zero counts, and byte
   swapping;
-- safe slice comparison, copying, filling, and swapping;
+- safe slice copying, overlap-aware copying, filling, and swapping;
+- deterministic byte-sequence equality and lexicographic comparison;
 - explicit little-endian and big-endian integer encoding; and
 - bounded byte readers and dynamically growing byte writers.
 
@@ -93,6 +122,28 @@ Every arithmetic operation must document overflow behavior. Byte encoders must
 produce canonical output independent of host endianness and structure layout.
 Readers must report malformed or truncated input without reading outside their
 source slice.
+
+#### Stage 1 contract and test gate
+
+Implementation begins only after the slice contracts in
+[`memory.md`](memory.md) and the arithmetic contracts in
+[`math.md`](math.md) are reflected by this test matrix:
+
+| Area | Required cases |
+| --- | --- |
+| Empty slices | `copy_elements` with either side empty returns zero; `copy_within(values, 0, 0, 0)` succeeds and an empty range at `len` succeeds; `fill` is a no-op; and `swap` returns `IndexOutOfBounds` without mutation. |
+| Truncated copying | Source shorter than destination, destination shorter than source, equal lengths, returned count, copied prefix, and untouched destination suffix. |
+| Overlap | Leftward overlap, rightward overlap, identical source and destination ranges, and nonoverlapping ranges, with results matching a preserved original source. |
+| Ranges | `sourceStart > sourceEnd`, each source endpoint beyond `len`, destination start beyond `len`, destination end beyond `len`, valid empty ranges, and proof that failed validation performs no mutation. |
+| Swap | First/last exchange, equal valid indices as a no-op, either index invalid, both indices invalid, and no mutation on every error path. |
+| Element lifecycle | Scalars, copyable structures, and copyable structures with nontrivial owned-field copies and cleanup; verify independent copies and exactly-once cleanup of replaced values. |
+| Unsupported elements | Compile-time rejection of representative move-only and immovable element types in every copy-based slice operation, using `FLECHA-S0046` for prohibited copies and `FLECHA-S0059` for move reuse. |
+| Wrapping arithmetic | `wrapping_add`, `wrapping_sub`, and `wrapping_mul` for `i8`, `i16`, `i32`, `i64`, `isize`, `u8`, `u16`, `u32`, `u64`, and `usize`; cover exact results, zero/one identities, both overflow directions where applicable, signed minimum/maximum transitions, unsigned zero/maximum transitions, multiplication overflow, and target-width behavior. |
+
+Existing byte-sequence, endian, reader, and buffer tests remain regression
+requirements. Slice tests must distinguish typed semantic copies from raw byte
+operations, and negative tests must compile as independent fixtures so an
+expected type error cannot mask the positive runtime cases.
 
 ### 2. General-purpose collections
 
@@ -112,9 +163,60 @@ For example, hash maps accept hash and equality callables, and heaps accept a
 comparison callable. The standard library must not add a language feature only
 to make these initial APIs resemble another language's collection APIs.
 
+Closed compile-time type sets are available for identity restrictions such as
+`T: integer`. They deliberately do not replace callable policies or introduce
+behavioral traits; see [type sets](type_sets.md).
+
 Growth failure must leave a collection valid and preserve its previous
 contents. Moving, removing, replacing, and destroying elements must execute
 each element's cleanup exactly once.
+
+#### Stage 2 array-ownership contract and test gate
+
+The first Stage 2 deliverable is the ownership-capable array foundation defined
+in [`collections.md`](collections.md). Later containers must reuse its storage,
+relocation, failure, cleanup, and borrowing rules rather than introduce parallel
+ownership machinery.
+
+Implementation begins with an internal initialized-prefix storage facility and
+the following acceptance matrix:
+
+| Area | Required cases |
+| --- | --- |
+| Copy versus move | Copyable and move-only arguments for `push` and `set`; ownership-transferring `pop`, `remove`, and `swapRemove`; compile-time rejection of copy-only APIs for move-only elements. |
+| Initialized storage | Only `[0, len)` is live and exposed; spare capacity is never read or destroyed; relocation makes each source slot non-live. |
+| Strong failure guarantee | Initial and later allocation failure plus capacity overflow preserve length, capacity, order, and all preexisting elements. |
+| Cleanup | Replacement, ordered and unordered removal, clear, growth, array destruction, and failed operations execute every applicable cleanup exactly once. |
+| Nested ownership | `Array<Array<T>>`, owning slices, outer and inner growth, extraction, three-level nesting, and recursive destruction without cloning inner allocations. |
+| Borrowed views | Shared and exclusive view conflicts with mutation, structural changes, reallocation, movement, replacement, and destruction; access resumes after the view's last use. |
+| Unsupported elements | Compile-time rejection of unsafe-tear immovable types, borrowed element storage, partial indexed moves, and use after a moved argument or extracted owner. |
+
+The complete Stage 2 array definition of done and test cases live in
+[`collections.md`](collections.md). Later containers reuse this ownership,
+storage, failure, and lifecycle foundation instead of adding parallel unsafe
+machinery.
+
+The array gate now passes: direct owning strings and slices, outer/inner and
+three-level nested growth, recursive destruction, failure injection, partial
+move diagnostics, and the complete shared/exclusive view matrix are covered by
+native, compile-fail, full-suite, and sanitizer tests. The `Deque<T>` gate also
+passes with circular move-only storage, bidirectional growth-failure coverage,
+nested ownership, compile-fail diagnostics, and sanitizer fixtures. The
+`Stack<T>` and `Queue<T>` adapter gates now pass the same allocation-failure,
+move-only lifecycle, nested ownership, diagnostics, and sanitizer requirements.
+The `BinaryHeap<T>` gate also passes with caller-supplied comparison policies,
+move-only sifting, strong growth-failure preservation, nested ownership,
+compile-fail diagnostics, and sanitizer fixtures. The `HashMap<K, V>` gate
+passes as well, including move-only keys and values, borrowed iteration,
+allocation-failure preservation, nested ownership, diagnostics, and dedicated
+sanitizer fixtures. The `HashSet<T>` gate now passes through the same probing
+engine with an empty marker type, including deduplication, zero-sized marker
+allocation failure, move-only lifecycle, nested ownership, diagnostics, and
+dedicated sanitizer fixtures. The collection-algorithm gate now passes as well:
+ordered binary search, unstable partitioning, and adjacent deduplication join
+the existing linear search and heap sort surface. Slice transformations remain
+explicitly copy-based, while Array transformations relocate move-only values
+and destroy removed duplicates exactly once.
 
 ### 3. Text, parsing, and encoding
 
@@ -125,22 +227,78 @@ Add:
 - ASCII classification and case conversion;
 - UTF-8 validation, decoding, and code-point iteration;
 - hexadecimal and Base64 codecs;
-- a canonical binary encoding layer; and
-- JSON tokenization, parsing, and writing.
+- a canonical binary encoding layer.
+
+The mutable builder, integer and floating-point parsing and formatting, ASCII,
+UTF-8, hexadecimal, Base64, and canonical binary foundations are implemented
+with focused standard-library and native-runtime tests. Base64 uses the
+standard padded RFC 4648 alphabet, allocates results for callers, and strictly
+rejects malformed or non-canonical input. JSON is an independently versioned
+package planned for the 0.4 library wave rather than a bundled standard-library
+module.
 
 The existing `string` and `stringv` types remain byte-oriented. Unicode APIs
 must not silently change their indexing or length semantics. CSV, TOML, YAML,
 compression formats, schema frameworks, and general reflection remain
 companion-library candidates rather than requirements for this milestone.
 
-### 4. I/O and operating-system services
+### 4. Package graph and community library distribution
+
+Deliver the package model defined in
+[`package_ecosystem.md`](package_ecosystem.md):
+
+- package-scoped dependency aliases in the compiler rather than one global
+  `--lib` namespace;
+- recursive local, Git, and public-registry dependency resolution in Longbow;
+- a deterministic `longbow.lock` containing exact sources, versions, and
+  checksums;
+- a shared local source cache with verified offline reuse;
+- scoped registry identities such as `flecha/json` and
+  `alexbsec/blockchain`, while source imports continue to use local aliases
+  such as `lib::json` and `lib::blockchain`;
+- immutable source archives, ownership, publishing, and yanking through the
+  public Flecha registry; and
+- `longbow add`, `fetch`, `update`, `publish --dry-run`, `publish`, and `yank`
+  workflows.
+
+The bundled standard library remains a toolchain component available as
+`lib::std`; it does not participate in ordinary registry resolution. Public
+registry packages are source-only in 0.3.0. Precompiled Flecha objects, native
+artifacts, build scripts, and registry-supplied `std` replacements are outside
+the initial package contract.
+
+#### Stage 4 package-distribution contract and test gate
+
+Stage 4 is complete only when:
+
+| Area | Required cases |
+| --- | --- |
+| Package graph | Each package resolves `lib::<alias>` through its own dependency map; repeated aliases in different packages can identify different dependencies without creating one global alias namespace. |
+| Resolution | Recursive path, pinned Git, and registry dependencies resolve deterministically; 0.3 selects one version per canonical owner/package identity, and diagnoses dependency cycles, incompatible version requirements, missing packages, and incompatible Flecha versions before compilation. |
+| Locking | A clean resolution writes exact package identities, versions, sources, revisions, and SHA-256 checksums; subsequent builds honor the lock and reject changed content. |
+| Cache | A first online build populates the cache; a second offline build succeeds from verified cached sources; corrupt or incomplete cache entries are rejected and reacquired when online. |
+| Registry identity | Official and community packages share one registry under distinct owner namespaces; dependency aliases control imports and canonical owner/package identities never leak into Flecha module paths. |
+| Publishing | `publish --dry-run` shows the normalized source archive and checksum without uploading; published versions are immutable; yanking prevents new selection without breaking an existing lock. |
+| Standard library | Bundled `lib::std` is selected from the installed toolchain, remains path-overridable for toolchain development, and cannot be replaced by a public-registry package. |
+| Portability and safety | Archives reject traversal, absolute paths, symlinks, case-colliding paths, unsupported native inputs, and platform-specific generated output. The same locked graph builds on every supported host. |
+
+The public lifecycle gate is covered by the immutable transitive fixtures
+documented in
+[`package_ecosystem.md`](package_ecosystem.md#v03-public-registry-qualification-fixture).
+Their versions were published once and yanked after the portable lock was
+created. Recurring CI remains read-only: each relocated Linux, Windows, and
+macOS bundle downloads the locked graph into an empty cache, rebuilds it with
+the registry forced offline, and verifies caller-selected and package-local
+aliases without depending on the source checkout.
+
+### 5. I/O and operating-system services
 
 Expand the current file and filesystem modules with:
 
 - buffered readers and writers;
 - standard input, standard output, and standard error handles;
 - path joining, normalization, filename, parent, and extension operations;
-- directory iteration and recursive creation and copying;
+- directory iteration, recursive directory creation, and recursive copying;
 - temporary files and directories;
 - command-line argument access;
 - environment-variable access;
@@ -153,7 +311,116 @@ existing `File` model. Blocking operations must be identified in their API
 documentation. Platform errors map to stable Flecha error families without
 discarding partial byte counts or child-process status.
 
-### 5. Blocking networking
+The time portion follows the contracts in [`time.md`](time.md). Duration
+construction, conversion, and checked arithmetic are implemented entirely in
+Flecha. Opaque monotonic instants are process-local and are distinct from
+serializable Unix wall-clock timestamps. The runtime exposes only normalized
+seconds and nanoseconds, never host ticks or clock identifiers. Blocking sleep
+retries host interruptions, rejects durations outside the native wait range,
+and never reports a shortened wait as success.
+
+The randomness portion follows the contracts in [`random.md`](random.md).
+`std::random::secure::fill` obtains complete caller-owned byte ranges directly
+from the host cryptographically secure source without allocation or a userspace
+fallback. `std::random::generator::Generator` provides reproducible xoshiro256**
+streams with stable seeded vectors, unbiased integer ranges, unit-interval
+floating-point values, booleans, deterministic byte filling, and Fisher-Yates
+shuffling. Secure-source errors and invalid ranges remain distinct, and a
+generator seeded securely is still explicitly non-cryptographic. Native,
+Flecha, deterministic failure-injection, full-suite, and cross-platform tests
+form the randomness gate.
+
+The buffered-I/O portion of Stage 5 is implemented in Flecha over the existing
+stream adapters. Buffered readers preserve read-ahead bytes and defer a partial
+read error until its final buffered byte. Buffered writers require explicit
+flush, preserve unwritten suffixes for retry, and never perform fallible work
+during destruction. Both owners move their stream adapter, own exactly one byte
+allocation, propagate file borrows, and release every moved value exactly once
+on success or allocation failure. Focused tests cover empty operations, direct
+and buffered paths, boundary crossings, short operations, EOF, zero progress,
+error retry, allocation failure, movement, borrow conflicts, file round trips,
+and byte ordering without native buffering support.
+
+Directory iteration is implemented through the owning `std::io::file::Directory`
+and `DirectoryEntry` values. Entries own their names, symbolic-link
+classification does not follow links, host `.` and `..` records are filtered,
+EOF is stable, and deterministic teardown closes each iterator exactly once.
+Allocation failure preserves the pending entry for retry. Native and Flecha
+tests cover empty and populated directories, file and directory types, symbolic
+links, invalid and missing paths, regular-file rejection, movement, explicit
+close, repeated EOF, and allocation failure. Recursive creation lexically
+normalizes paths, accepts existing directories, and reports blocking file
+components. File and directory copying use a single Flecha-owned byte buffer
+and the existing stream adapters; destinations must be new, partial-operation
+errors remain visible, and unsupported entries are rejected. A narrow
+resolved-path runtime query prevents copying a directory into itself through
+either lexical descendants or symbolic-link aliases, while traversal, byte
+copying, flushing, allocation, and cleanup remain in Flecha.
+
+Temporary files live in the existing `std::io::file` module rather than a
+separate `temp` module. `TemporaryFile::create` performs one atomic exclusive
+creation in the host temporary directory and owns both the ordinary readable
+and writable `File` and its generated absolute path. Borrowing `file()` reuses
+the complete file-stream API without transferring ownership. Explicit `remove`
+reports close and removal failures and is retry-safe for a failed removal;
+deterministic destruction closes and removes best-effort. Native failure paths
+remove partially created files, including stream-handle and path-allocation
+failure, while Flecha movement transfers cleanup responsibility exactly once.
+`TemporaryDirectory::create` follows the same module and ownership model with
+an atomically created private host directory and an owned absolute path.
+Explicit removal recursively deletes its tree and reports failures, while
+failed removal retains ownership for retry and deterministic destruction
+removes best-effort. Native allocation-failure paths remove partially created
+directories, and path borrowing prevents removal or movement while a view is
+live.
+
+The standard-stream portion is also implemented. The `stderr` and `stderrln`
+built-ins mirror the existing printable `stdout` operations, while
+`std::io::stdio` exposes process-owned streams as non-owning fallible byte
+sources and destinations. `StandardInput` supplies a captureless
+`io::stream::Reader`; standard output and error supply captureless
+`io::stream::Writer` adapters. These views never close process resources and
+compose directly with buffered I/O.
+The root `std::fmt` facade provides `print`, `println`, `printf`, and matching
+standard-error operations through compile-time forwarding packs. Literal `{}`
+formats are checked by the compiler, and `sprintf` returns an owning string
+with explicit allocation failure. No runtime variadic ABI is introduced.
+The `stdin` and `stdinln` built-ins provide typed line input into an
+already-declared mutable destination. The compiler selects complete-line
+conversion from the referenced type, preserves the destination on failure, and
+reports EOF, read, parse, range, prompt-flush, and allocation failures
+explicitly. Formatted input is intentionally absent; formatted prompts compose
+through `std::fmt` followed by `stdin`.
+
+The operating-system context portion is implemented through
+`std::os::arguments` and `std::os::environment`. Argument `capture()` returns an
+owning runtime-sized array of independent owning strings, including the
+host-supplied invocation name at index zero. Repeated captures are independent.
+Array allocation and individual argument capture failures return
+`AllocationError.OutOfMemory`; partial construction releases every completed
+string and the array exactly once.
+Compiler-generated entry wrappers retain parameterless Flecha `main`
+signatures while recording the host argument table before invoking the source
+entry point. Environment `get` returns an independent owning value and a
+presence flag that distinguishes absence from a present empty value. `set`
+prepares complete native copies before mutation, while `remove` is idempotent.
+Invalid names and values, permission failures, allocation failures, and generic
+read or write failures remain distinct. POSIX preserves bytes and Windows uses
+UTF-8 conversion through its wide-character environment API. Process-wide
+mutation requires external synchronization. Secure randomness and deterministic
+generation are implemented. Child-process control remains the final separate
+Stage 5 operating-system task.
+
+The lexical-path portion is implemented in `std::io::path`. Joining and
+normalization allocate owned results and expose allocation failure; filename,
+parent, and extension queries return checked borrowed views into their source.
+POSIX and Windows grammars are exercised on every host, including drive and
+UNC roots, mixed Windows separators, dot components, relative leading parents,
+and attempts to traverse above an absolute root. The runtime contributes only
+the host path-style query; all parsing and transformation remain in Flecha and
+perform no filesystem access.
+
+### 6. Blocking networking
 
 Add an initial `net` layer containing:
 
@@ -170,7 +437,25 @@ The first networking APIs are blocking. Async I/O, HTTP, WebSockets, TLS, and
 service frameworks are not release gates for 0.3.0. They should begin as
 companion libraries after the socket and buffered-I/O contracts are proven.
 
-### 6. Hashing and security primitives
+The address and DNS foundation is implemented. IPv4 and IPv6 values have
+canonical parsing and formatting, family-specific and portable socket-address
+values retain explicit ports, and blocking resolution returns an owning
+ordered result set without exposing native address structures. Invalid names,
+missing names, temporary failures, unsupported families, allocation failures,
+and generic host failures remain distinct. Runtime, Flecha, deterministic
+failure-mapping, cleanup, and localhost integration tests form the foundation
+gate for the later TCP and UDP owners.
+
+The blocking socket gate is implemented. TCP streams and listeners provide
+connect and accept, partial reads and writes, independent deadlines, portable
+endpoint inspection, shutdown, close, and stream adapters. UDP sockets provide
+portable IPv4/IPv6 binding, datagram send and receive with sender recovery,
+explicit truncation reporting, independent receive/send deadlines, and
+deterministic close. Both owners use opaque versioned runtime handles, preserve
+partial counts and stable errors, and have native plus Flecha loopback,
+failure, movement, teardown, and cross-platform coverage.
+
+### 7. Hashing and security primitives
 
 Provide the primitives required for deterministic integrity checks and the
 ledger north-star program:
@@ -188,7 +473,7 @@ incubate as companion libraries before any later standard-library proposal.
 Noncryptographic checksums and hashes should be clearly separated from the
 security modules so callers cannot mistake them for cryptographic primitives.
 
-### 7. Testing and performance support
+### 8. Testing and performance support
 
 Extend the testing library with:
 
@@ -205,6 +490,128 @@ and cleanup tests. Algorithms and codecs need portable reference vectors.
 Containers and resource-owning types need allocation-failure and sanitizer
 coverage.
 
+The Stage 8 support surface is implemented: assertion diagnostics, fixtures,
+golden files, reproducible random data, and the deterministic benchmark runner
+compose through `std::tests` with installed-package and failure-path coverage.
+
+### 9. Hardening, stress, performance, and stability
+
+After the feature stages and their required Stage 8 support are complete,
+freeze the public 0.3 surface and harden the complete toolchain as one shipped
+system. This stage adds no planned feature area. Any API or language change
+discovered here requires an explicit defect or release-blocker justification
+and must restart the affected compatibility and stress gates.
+
+Hardening includes:
+
+- large deterministic compiler stress corpora covering parsing, semantic
+  analysis, ownership, borrowing, generics, module graphs, lowering, and native
+  code generation;
+- adversarial, randomized, and property-based tests for parsers, codecs,
+  collections, I/O state machines, package metadata, and runtime ABI
+  boundaries;
+- repeated allocation-failure, partial-operation, cleanup, and operating-system
+  failure injection across every owning or stateful API;
+- sanitizer, fuzz, and malformed-input campaigns that preserve every reduced
+  reproducer as a permanent regression test;
+- long-running stability and soak tests for repeated compilation, execution,
+  package resolution, cache reuse, clean rebuilds, and resource teardown;
+- performance benchmarks for compiler latency and peak memory, generated-code
+  execution, core collections, text and encoding, buffered I/O, hashing, and
+  package resolution;
+- reviewed performance baselines with explicit regression tolerances rather
+  than untracked benchmark numbers; and
+- repeated clean-install and relocated-package tests on every supported release
+  target, including deterministic output and offline dependency reuse.
+
+#### Stage 9 hardening gate
+
+| Area | Required evidence |
+| --- | --- |
+| Compiler stress | Large valid programs compile deterministically; deeply nested and invalid programs produce bounded diagnostics without crashes, hangs, stale state, or nondeterministic output. |
+| Runtime stress | Long-running and high-volume ownership, allocation, I/O, networking, and process workloads complete without leaks, double cleanup, corruption, deadlock, or descriptor exhaustion. |
+| Adversarial input | Tokenizers, parsers, manifest readers, decoders, protocol readers, and runtime boundaries reject malformed, truncated, oversized, and randomized input safely. |
+| Failure injection | Every allocation and fallible operating-system boundary is exercised at each meaningful failure point, preserving documented state and exactly-once cleanup. |
+| Sanitizers and fuzzing | Supported sanitizer suites pass; fuzz campaigns meet their recorded duration or execution budget; every discovered crash receives a minimized permanent regression. |
+| Performance | Versioned benchmark workloads record compile time, peak memory, execution time, throughput, and allocation behavior where relevant; regressions beyond the reviewed tolerance block release unless explicitly accepted. |
+| Stability | Repeated and reordered test runs, clean builds, incremental builds, offline builds, relocated packages, and soak runs remain deterministic and do not accumulate process or filesystem state. |
+| Defect closure | There are no known reproducible crashes, hangs, memory-safety violations, ownership violations, silent data corruption, or release-blocking correctness defects. Every fixed high-impact defect has a focused regression test. |
+
+The intent is a bulletproof regression boundary for the supported 0.3 surface:
+ordinary correctness tests prove individual contracts, while this stage attacks
+their composition, scale, repetition, failure behavior, and performance.
+
+The compiler-stress portion is implemented by the deterministic fast,
+sanitizer, and release-qualification profiles documented in
+[`compiler_stress.md`](compiler_stress.md). Deterministic adversarial/property
+inputs plus reordered failure-injection and stateful soak profiles are
+documented in [`hardening.md`](hardening.md). Performance baselines and final
+installed-package qualification are documented in
+[`performance.md`](performance.md) and
+[`package_qualification.md`](package_qualification.md), respectively. The
+versioned v0.3 workload contract, competitive tier policy, commands, sampling
+budgets, and baseline lifecycle are documented in the performance guide.
+
+## Milestone discoveries
+
+Implementation work may reveal useful behavior that follows from existing
+language rules even when no individual feature was designed for that exact
+use. Flecha 0.3.0 treats the discoveries recorded here as supported behavior,
+not accidental compiler permissiveness.
+
+### Owning captured checked references
+
+A mutable checked reference is itself a move-only value. An `own` closure
+capture may therefore move the reference handle into the closure environment
+without moving or taking ownership of its referent:
+
+```flecha
+stream::Writer File::writer(&self) <-self {
+    return stream::Writer::init(
+        [own self](source) => {
+            return self->write(source);
+        }
+    );
+}
+```
+
+Here `self` has type `&File`. The closure owns that reference value, while the
+caller continues to own the `File` and its native handle. Moving the resulting
+writer moves the captured reference. Destroying it releases the borrow but
+does not flush, close, move, or destroy the file.
+
+The checked-reference origin must propagate through the `own` capture, the
+callable value, enclosing structures, moves, and the `<-self` returned-borrow
+contract. Safe code cannot access, move, close, or create an overlapping
+mutable adapter for the file while the captured reference may still be used.
+The file becomes available again after the adapter's final possible use.
+
+This behavior requires regression coverage for successful adapter moves and
+post-borrow access, plus compile-time rejection of conflicting file access,
+adapters escaping a local file, invalid returned origins, overlapping mutable
+adapters, and relocation of an owner while an adapter remains live. `own` in a
+capture describes transfer of the captured value; when that value is a
+reference, it never implies ownership of the referent.
+
+### Checked-reference structure fields
+
+Structures may now store checked references directly or through nested
+structure fields. Constructors and factories expose the lifetime with the
+existing `<- source>` result contract and initialize every reference-bearing
+field directly at the beginning of `build`. The compiler carries borrow origins
+through field access, returns, whole-value moves, nested aggregates, and shared
+copies without adding runtime ownership or cleanup.
+
+Zeroability, copying, and movement remain independent. Any contained reference
+makes the complete structure nonzeroable. Mutable `&T` fields additionally make
+it noncopyable but do not prevent whole-value movement. Shared `&const T` fields
+remain copyable when the rest of the structure is copyable. Existing lifecycle
+rules still apply afterward: a safe custom `tear` prevents copying but permits
+movement, while an unsafe `tear` makes the structure immovable. Native and
+semantic regressions cover nested initialization without fake zero storage,
+exactly-once movement, shared copies, local escape rejection, borrow conflicts,
+missing result contracts, and rejected default construction.
+
 ## Minimal compiler and runtime enablement
 
 The milestone should otherwise avoid new surface syntax. The anticipated
@@ -213,34 +620,79 @@ itself:
 
 1. Specify unsigned overflow behavior or provide explicit checked, wrapping,
    and saturating intrinsics.
-2. Support runtime-array storage for movable, destructible, and nested owning
-   element types.
+2. Runtime-array storage supports sized, safely movable, semantically zeroable
+   elements, including destructible and nested owning values, with per-element
+   reverse destruction.
 3. Provide safe construction of owning strings from validated byte buffers.
 4. Expose arguments, environment, time, randomness, processes, directories,
    and sockets through additive versioned runtime operations.
-5. Define the minimum concurrency and memory-model rules only if concurrency
-   remains in the 0.3.0 release gate.
+5. Preserve the implemented
+   [memory safety invariants](memory_safety_invariants.md). If concurrency
+   remains in the 0.3.0 release gate, replace the pending concurrency section
+   with an accepted concurrent memory model before exposing any general thread,
+   atomic, or synchronization primitive as safe.
 6. Improve allocation-failure injection and lifecycle diagnostics needed to
    verify the new containers.
+7. Accept a package graph whose dependency aliases are scoped to the importing
+   source identity, while keeping all network and registry operations in
+   Longbow.
+8. Provide allocation-free compile-time forwarding packs for the small Flecha
+   wrappers over typed standard-output and standard-error operations, without
+   exposing a native variadic ABI or a runtime pack value.
+9. Keep the supported Windows path on MSYS2 UCRT64 with Clang and the MinGW
+   ABI. Native `cl.exe` builds, the LLVM `windows-msvc` ABI, embedded C through
+   the MSVC driver, and `link.exe` or `lld-link` are deferred to the focused
+   [0.3.1 toolchain patch](https://github.com/segfaultcafe/flecha/issues/188).
 
 This work should be delivered as focused compiler or runtime changes in support
 of a concrete standard-library API. It must not become an unrelated language
 feature wave. Any new syntax or source-incompatible behavior requires an
 explicit scope decision and the normal versioning review.
 
+## North-star command-line application
+
+The application-facing command-line gate is
+[`examples/workspace_guard`](../examples/workspace_guard). It recursively
+scans portable directory trees, streams every regular file through SHA-256,
+writes a canonical sorted manifest, verifies trees with deterministic
+diagnostics, compares manifests, and executes a child process only after a
+successful verification. The manifest excludes absolute paths, timestamps,
+permissions, and native filesystem identifiers, so identical relocated trees
+produce identical bytes on every supported target.
+
+This example integrates process arguments, environment defaults, text parsing
+and formatting, logical modules, owning collections, directory and path APIs,
+buffered I/O, hashing, stable errors, cleanup, and child-process status. Its
+focused lifecycle test covers success, malformed input, missing and changed
+resources, preserved destinations, deterministic relocation, and child
+success/failure. Every clean installed release package builds and runs the
+same source on Linux, Windows, and macOS without an application-specific
+native shim.
+
 ## North-star ledger
 
-The ledger example validates several stages together. It must:
+The persistence-facing gate is [`examples/ledger`](../examples/ledger). It
+validates several stages together by:
 
-- define a canonical block-header encoding without hashing structure memory;
-- link blocks through fixed-size SHA-256 digests;
-- append and validate blocks;
-- persist and reload the chain through standard I/O APIs;
-- reject malformed, truncated, and tampered storage;
-- reproduce identical hashes and serialized bytes on every supported target;
+- defining a canonical block-header encoding without hashing structure memory;
+- linking blocks through fixed-size SHA-256 digests;
+- appending and validating blocks;
+- persisting and reloading the chain through standard I/O APIs;
+- rejecting malformed, truncated, and tampered storage;
+- reproducing identical hashes and serialized bytes on every supported target;
   and
-- use no native application-specific shim once the required standard-library
+- using no native application-specific shim once the required standard-library
   stages are complete.
+
+The versioned file format uses fixed-width big-endian indices and payload
+lengths, 32-byte previous and current digests, and exact payload bytes. Hashes
+are domain-separated and cover the canonical header plus payload. Flecha-native
+tests publish golden record, block-hash, and complete-file vectors and reject
+malformed, truncated, reordered, payload-tampered, and digest-tampered input.
+The focused lifecycle test exercises create, append, reload, list, validation,
+preserved existing files, and byte-identical relocated chains. Every clean
+installed release package builds and runs the same example and golden tests on
+Linux, Windows, and macOS without an application-specific native shim.
 
 Peer-to-peer consensus, economic incentives, a smart-contract virtual machine,
 and production key management are outside this example's scope.
@@ -249,34 +701,64 @@ and production key management are outside this example's scope.
 
 Flecha 0.3.0 is ready when:
 
-1. Stages 1 through 6 are implemented, documented, and tested. Stage 7's test
-   helpers required by those modules are also complete.
-2. The CLI, structured-data, ledger, and blocking-network north-star programs
+1. Stages 1 through 8 are implemented, documented, and tested, and the complete
+   Stage 9 hardening gate passes.
+2. The CLI, ledger, and blocking-network north-star programs
    build and run from clean, relocated release packages.
 3. The complete suite passes on Linux x86-64, Windows x86-64, macOS x86-64,
    and macOS arm64 where those release runners remain supported.
-4. Compiler, runtime, and native examples pass AddressSanitizer and
+4. The Windows 0.3.0 matrix builds and consumes clean, relocated packages
+   through the supported MSYS2 UCRT64/MinGW path. Native MSVC qualification is
+   explicitly deferred to 0.3.1 and is not advertised as 0.3.0 support.
+5. Compiler, runtime, and native examples pass AddressSanitizer and
    UndefinedBehaviorSanitizer checks on supported sanitizer hosts.
-5. Resource-owning APIs pass injected allocation and operating-system failure
+6. Resource-owning APIs pass injected allocation and operating-system failure
    tests without leaks, double cleanup, or stale-handle use.
-6. Serialization, hashing, text, and numeric operations pass portable golden
+7. Serialization, hashing, text, and numeric operations pass portable golden
    vectors and produce deterministic cross-platform results.
-7. Every exported module has reference documentation and at least one focused
+8. Every exported module has reference documentation and at least one focused
    example or north-star use.
-8. Packaged Longbow discovers the bundled standard library and all required
+9. Packaged Longbow discovers the bundled standard library and all required
    runtime symbols without referring to the source checkout.
+10. A community-package fixture can be published, resolved into a locked graph,
+   built from a clean cache, rebuilt offline, yanked without invalidating the
+   existing lock, and consumed under a caller-selected `lib` alias.
 
 Concurrency is a stretch gate until its memory-model design is accepted. Its
 absence must not block the remaining application-capable standard library.
+
+## Temporary JSON compiler contract
+
+Flecha 0.3.x intentionally treats the resolved `json` decoration as a
+compiler-known contract while `flecha/json` owns parsing, writing, buffering,
+escaping, and validation. The compiler owns target validation, field
+selection and renaming, supported-type checks, and the generated `writeJson`,
+`json`, `readJson`, and `fromJson` defaults. Consequently, the public Reader
+and Writer protocol used by generated code is tightly coupled to the compiler
+throughout the 0.3.x line and must change only with a coordinated compiler
+update.
+
+The intended 0.4.0 migration replaces this JSON-specific path with a
+restricted decoration behavior and meta-expansion engine. The stable
+`export decoration json;`, `@json(structure)`, `@json("name")`, and generated
+method APIs should survive that migration unchanged. The provisional design,
+safety boundary, and derived-default rules are documented in
+[decorations.md](decorations.md#post-v03-meta-behavior-direction).
 
 ## Explicit non-goals
 
 Flecha 0.3.0 does not require:
 
-- a trait, interface, or protocol system;
-- generic-argument inference or variadic generics;
+- a trait, interface, or protocol system (the later direction for
+  decoration-derived defaults and virtual requirements is documented in
+  [decorations.md](decorations.md#later-interfaces-and-virtual-requirements));
+- general member reflection or user-defined decoration behavior blocks;
+- variadic generics or partial explicit/inferred type-argument lists;
 - exceptions, garbage collection, reflection, or async language syntax;
-- a package registry or remote dependency resolver;
+- private registries, private packages, registry federation, or registry
+  mirrors;
+- precompiled Flecha packages, native package artifacts, or package build
+  scripts;
 - HTTP, TLS, WebSockets, or an async executor in the standard library;
 - novel cryptographic algorithms;
 - a production public-blockchain consensus system; or

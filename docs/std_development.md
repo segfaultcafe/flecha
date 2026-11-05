@@ -3,6 +3,37 @@
 These guidelines apply to Flecha source in `std/`. Follow the naming conventions
 in [library API style](library_api_style.md) as well.
 
+## Document public contracts at their declarations
+
+Place `//` contract comments immediately above every exported function, type,
+callable alias, error family, and type set, as well as every public method on an
+exported type. Document public fields and error or enum variants when their
+meaning is not completely captured by the declaration.
+
+Comments should state observable behavior: ownership or borrowing, mutation,
+partial-result rules, ordering, error conditions, and whether failure preserves
+the receiver or destination. Do not merely expand the declaration's name, and
+do not promise implementation details that callers cannot rely on. Private
+helpers need comments only when their invariants or purpose are otherwise
+unclear.
+
+## Update the public API reference
+
+Every file that adds, removes, or changes an `export` declaration or a public
+method on an exported type also updates the matching entry in
+[`standard_library_modules.json`](standard_library_modules.json). Regenerate
+the checked-in declaration index with:
+
+```sh
+python3 tools/generate_std_api_reference.py
+python3 tools/generate_std_api_reference.py --check
+```
+
+The generator requires an exact match between public modules discovered under
+`std/src` and the metadata manifest. Pull-request CI runs the check, while the
+installed `examples/standard_library` fixture verifies the documented import
+layout against every release bundle.
+
 ## Expand nonempty brace-delimited bodies
 
 Never put a nonempty body on one line, even when it contains only one statement.
@@ -29,16 +60,15 @@ structure Counter {
 };
 ```
 
-## Separate declarations
+## Separate top-level declarations
 
-Leave at least one blank line and at most two blank lines between declarations.
-This includes structure fields. Do not place multiple declarations or statements
-on the same line.
+Leave at least one blank line and at most two blank lines between top-level
+declarations. Keep consecutive structure fields together without blank lines.
+Do not place multiple declarations or statements on the same line.
 
 ```flecha
 structure Position {
     i32 x;
-
     i32 y;
 };
 

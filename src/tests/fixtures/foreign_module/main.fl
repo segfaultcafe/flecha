@@ -1,0 +1,7 @@
+module foreign_module;
+
+extern i32 module_foreign_answer();
+
+i32 main() {
+    return module_foreign_answer();
+}

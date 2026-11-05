@@ -1,0 +1,222 @@
+module binary_test;
+
+@imports
+    :: root::encoding::binary
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test reader_reports_its_initial_state(&testing::UnitTest t) {
+    [4]u8 source = [1, 2, 3, 4];
+    reader := binary::Reader::init(source[:]);
+
+    asserts::is_true(t, reader.position() == 0, "reader starts at position zero");
+    asserts::is_true(t, reader.len() == 4, "reader reports the source length");
+    asserts::is_true(t, reader.remaining() == 4, "all bytes initially remain");
+    asserts::is_true(t, !reader.empty(), "a nonempty source is not empty");
+}
+
+test read_byte_advances_and_preserves_eof_position(&testing::UnitTest t) {
+    [2]u8 source = [17, 42];
+    reader := binary::Reader::init(source[:]);
+
+    first, firstError := reader.readByte();
+    second, secondError := reader.readByte();
+    pastEnd, endError := reader.readByte();
+
+    asserts::is_true(
+        t,
+        first == 17 and firstError == none,
+        "readByte returns the first byte"
+    );
+    asserts::is_true(
+        t,
+        second == 42 and secondError == none,
+        "readByte returns the second byte"
+    );
+    asserts::is_true(
+        t,
+        pastEnd == 0 and endError == binary::BinaryError.UnexpectedEnd,
+        "readByte reports end of input"
+    );
+    asserts::is_true(t, reader.position() == 2, "failed readByte does not advance");
+    asserts::is_true(t, reader.remaining() == 0, "no bytes remain at the end");
+    asserts::is_true(t, reader.empty(), "reader is empty at the end");
+}
+
+test read_returns_views_and_failed_reads_are_transactional(
+    &testing::UnitTest t
+) {
+    [4]u8 source = [10, 20, 30, 40];
+    reader := binary::Reader::init(source[:]);
+
+    {
+        prefix, err := reader.read(3);
+        asserts::is_true(t, err == none, "read accepts an available byte count");
+        asserts::is_true(
+            t,
+            prefix.len() == 3 and prefix[0] == 10 and prefix[2] == 30,
+            "read returns the requested source view"
+        );
+    }
+
+    asserts::is_true(t, reader.position() == 3, "read advances by its byte count");
+
+    {
+        empty, err := reader.read(0);
+        asserts::is_true(
+            t,
+            empty.len() == 0 and err == none,
+            "a zero-length read succeeds"
+        );
+    }
+
+    {
+        missing, err := reader.read(2);
+        asserts::is_true(
+            t,
+            missing.len() == 0 and err == binary::BinaryError.UnexpectedEnd,
+            "an oversized read returns an empty view and an error"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        reader.position() == 3 and reader.remaining() == 1,
+        "an oversized read does not advance"
+    );
+}
+
+test typed_reads_follow_endian_order_and_fail_transactionally(
+    &testing::UnitTest t
+) {
+    [7]u8 source = [52, 18, 18, 52, 86, 120, 255];
+    reader := binary::Reader::init(source[:]);
+
+    little, littleError := reader.readLittle<u16>();
+    big, bigError := reader.readBig<u32>();
+
+    asserts::is_true(
+        t,
+        little == 4660 and littleError == none,
+        "readLittle decodes and advances"
+    );
+    asserts::is_true(
+        t,
+        big == 305419896 and bigError == none,
+        "readBig decodes and advances"
+    );
+    asserts::is_true(t, reader.position() == 6, "typed reads consume their widths");
+
+    missing, missingError := reader.readLittle<u16>();
+    asserts::is_true(
+        t,
+        missing == 0 and missingError == binary::BinaryError.UnexpectedEnd,
+        "a short typed read reports unexpected end"
+    );
+    asserts::is_true(
+        t,
+        reader.position() == 6 and reader.remaining() == 1,
+        "a short typed read does not advance"
+    );
+}
+
+test peek_byte_observes_without_advancing(&testing::UnitTest t) {
+    [1]u8 source = [42];
+    reader := binary::Reader::init(source[:]);
+
+    value, peekError := reader.peekByte();
+    asserts::is_true(
+        t,
+        value == 42 and peekError == none,
+        "peekByte returns the current byte"
+    );
+    asserts::is_true(t, reader.position() == 0, "peekByte does not advance");
+
+    read, readError := reader.readByte();
+    missing, endError := reader.peekByte();
+    asserts::is_true(
+        t,
+        read == 42 and readError == none,
+        "the peeked byte remains available to read"
+    );
+    asserts::is_true(
+        t,
+        missing == 0 and endError == binary::BinaryError.UnexpectedEnd,
+        "peekByte reports end of input"
+    );
+    asserts::is_true(
+        t,
+        reader.position() == 1,
+        "a failed peekByte does not advance"
+    );
+}
+
+test skip_advances_and_fails_transactionally(&testing::UnitTest t) {
+    [4]u8 source = [1, 2, 3, 4];
+    reader := binary::Reader::init(source[:]);
+
+    emptyError := reader.skip(0);
+    skipError := reader.skip(3);
+    oversizedError := reader.skip(2);
+
+    asserts::is_true(t, emptyError == none, "a zero-length skip succeeds");
+    asserts::is_true(t, skipError == none, "skip accepts an available count");
+    asserts::is_true(
+        t,
+        oversizedError == binary::BinaryError.UnexpectedEnd,
+        "an oversized skip reports end of input"
+    );
+    asserts::is_true(
+        t,
+        reader.position() == 3 and reader.remaining() == 1,
+        "an oversized skip does not advance"
+    );
+}
+
+test remaining_views_follow_the_reader_position(&testing::UnitTest t) {
+    [4]u8 source = [10, 20, 30, 40];
+    reader := binary::Reader::init(source[:]);
+    skipError := reader.skip(2);
+    asserts::is_true(t, skipError == none, "reader advances for the setup");
+
+    {
+        remaining := reader.remainingBytes();
+        asserts::is_true(
+            t,
+            remaining.len() == 2 and remaining[0] == 30 and remaining[1] == 40,
+            "remainingBytes exposes the unread source"
+        );
+    }
+
+    {
+        remaining, readError := reader.readRemaining();
+        asserts::is_true(t, readError == none, "readRemaining succeeds");
+        asserts::is_true(
+            t,
+            remaining.len() == 2 and remaining[0] == 30 and remaining[1] == 40,
+            "readRemaining returns every unread byte"
+        );
+    }
+
+    asserts::is_true(t, reader.empty(), "readRemaining consumes the reader");
+    asserts::is_true(
+        t,
+        reader.remainingBytes().len() == 0,
+        "remainingBytes is empty after consumption"
+    );
+}
+
+test reset_returns_reader_to_the_start(&testing::UnitTest t) {
+    [2]u8 source = [7, 9];
+    reader := binary::Reader::init(source[:]);
+    skipError := reader.skip(2);
+    asserts::is_true(t, skipError == none and reader.empty(), "setup consumes input");
+
+    reader.reset();
+    value, readError := reader.readByte();
+    asserts::is_true(
+        t,
+        reader.position() == 1 and value == 7 and readError == none,
+        "reset makes the source readable from the beginning"
+    );
+}

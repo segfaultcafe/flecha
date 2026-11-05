@@ -1,0 +1,105 @@
+module algorithms_move_only;
+
+@imports :: lib::std::containers::collections;
+
+structure Owner {
+    *i32 cleanupCount;
+    i32 value;
+};
+
+Owner Owner::zero() override {
+    return build Owner {
+        self.cleanupCount = null;
+        self.value = 0;
+    };
+}
+
+Owner Owner::init(*i32 cleanupCount, i32 value) override {
+    return build Owner {
+        self.cleanupCount = cleanupCount;
+        self.value = value;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            (*self->cleanupCount)++;
+        }
+    }
+}
+
+i32 Owner::get(&const self) {
+    return self->value;
+}
+
+Owner probe(i32 value) {
+    unsafe {
+        return Owner::init(null, value);
+    }
+}
+
+bool less(&const Owner left, &const Owner right) {
+    return left->get() < right->get();
+}
+
+bool equal(&const Owner left, &const Owner right) {
+    return left->get() == right->get();
+}
+
+bool even(&const Owner value) {
+    return value->get() % 2 == 0;
+}
+
+i32 main() {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::Array<Owner>::init();
+        [5]i32 source = [3, 1, 2, 2, 4];
+        unsafe {
+            loop usize index = 0; index < source.len(); index++ {
+                if values.push(
+                    Owner::init(&raw cleanupCount, source[index])
+                ) != none {
+                    return 1;
+                }
+            }
+        }
+
+        values.reverse();
+        reversed := values.view();
+        if reversed[0].get() != 4 or reversed[4].get() != 3 or
+            cleanupCount != 0 {
+            return 2;
+        }
+
+        values.sortBy(less);
+        needle := probe(2);
+        index, found := values.binarySearchBy(&needle, less);
+        sorted := values.view();
+        if !found or index != 1 or sorted[0].get() != 1 or
+            sorted[4].get() != 4 or cleanupCount != 0 {
+            return 3;
+        }
+
+        if values.dedupBy(equal) != 4 or values.len() != 4 or
+            cleanupCount != 1 {
+            return 4;
+        }
+
+        boundary := values.partitionBy(even);
+        partitioned := values.view();
+        if boundary != 2 or partitioned[0].get() % 2 != 0 or
+            partitioned[1].get() % 2 != 0 or
+            partitioned[2].get() % 2 == 0 or
+            partitioned[3].get() % 2 == 0 or cleanupCount != 1 {
+            return 5;
+        }
+    }
+
+    if cleanupCount != 5 {
+        return 6;
+    }
+    return 42;
+}

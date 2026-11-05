@@ -1,0 +1,287 @@
+module sha2;
+
+@imports :: root::math::bits;
+
+Sha256 Sha256::init() override {
+    return Sha256::zero();
+}
+
+Sha256 Sha256::zero() override {
+    return build Sha256 {
+        self.state = [
+            SHA256_CONST_1,
+            SHA256_CONST_2,
+            SHA256_CONST_3,
+            SHA256_CONST_4,
+            SHA256_CONST_5,
+            SHA256_CONST_6,
+            SHA256_CONST_7,
+            SHA256_CONST_8
+        ];
+        self.pending = none;
+        self.pendingLength = 0;
+        self.totalLength = 0;
+        self.finalized = false;
+    };
+}
+
+bool Sha256::isFinalized(&const self) {
+    return self->finalized;
+}
+
+Sha2Error Sha256::update(&self, []const u8 input) {
+    if self->finalized {
+        return Sha2Error.AlreadyFinalized;
+    }
+
+    const u64 MAX_MESSAGE_BYTES = 2305843009213693951;
+    const u64 INPUT_LEN = input.len().cast<u64>;
+
+    if INPUT_LEN > MAX_MESSAGE_BYTES - self->totalLength {
+        return Sha2Error.MessageTooLong;
+    }
+
+    self->totalLength += INPUT_LEN;
+    usize sourceOffset = 0;
+    if self->pendingLength > 0 {
+        usize available = 64 - self->pendingLength;
+        usize count = input.len();
+        if count > available {
+            count = available;
+        }
+
+        loop usize index = 0; index < count; index++ {
+            self->pending[self->pendingLength + index] = input[index];
+        }
+
+        self->pendingLength += count;
+        sourceOffset = count;
+    } also self->pendingLength == 64 {
+        // Copying avoids passing a field alias into a mutable receiver
+        [64]u8 completedBlock = self->pending;
+        self->compress(completedBlock[:]);
+        self->pendingLength = 0;
+    }
+
+    while input.len() - sourceOffset >= 64 {
+        self->compress(input[sourceOffset:sourceOffset + 64]);
+        sourceOffset += 64;
+    }
+
+    while sourceOffset < input.len() {
+        self->pending[self->pendingLength] = input[sourceOffset];
+        self->pendingLength++;
+        sourceOffset++;
+    }
+
+    return none;
+}
+
+(Sha256Digest, Sha2Error) Sha256::finalize(&self) {
+    if self->finalized {
+        return (none, Sha2Error.AlreadyFinalized);
+    }
+
+    [128]u8 tail;
+    loop usize index = 0; index < self->pendingLength; index++ {
+        tail[index] = self->pending[index];
+    }
+
+    tail[self->pendingLength] = 128;
+    usize blockCount = 1;
+    if self->pendingLength >= 56 {
+        blockCount++;
+    }
+
+    const u64 BIT_LEN = self->totalLength << 3;
+    const usize LEN_OFFSET = blockCount * 64 - 8;
+
+    tail[LEN_OFFSET] = (BIT_LEN >> 56).cast<u8>;
+    tail[LEN_OFFSET + 1] = (BIT_LEN >> 48).cast<u8>;
+    tail[LEN_OFFSET + 2] = (BIT_LEN >> 40).cast<u8>;
+    tail[LEN_OFFSET + 3] = (BIT_LEN >> 32).cast<u8>;
+    tail[LEN_OFFSET + 4] = (BIT_LEN >> 24).cast<u8>;
+    tail[LEN_OFFSET + 5] = (BIT_LEN >> 16).cast<u8>;
+    tail[LEN_OFFSET + 6] = (BIT_LEN >> 8).cast<u8>;
+    tail[LEN_OFFSET + 7] = BIT_LEN.cast<u8>;
+
+    self->compress(tail[:64]);
+    if blockCount == 2 {
+        self->compress(tail[64:128]);
+    }
+
+    [32]u8 digest;
+    loop usize index = 0; index < 8; index++ {
+        const usize OFFSET = index * 4;
+        const u32 WORD = self->state[index];
+
+        digest[OFFSET] = (WORD >> 24).cast<u8>;
+        digest[OFFSET + 1] = (WORD >> 16).cast<u8>;
+        digest[OFFSET + 2] = (WORD >> 8).cast<u8>;
+        digest[OFFSET + 3] = WORD.cast<u8>;
+    }
+
+    self->finalized = true;
+    return (Sha256Digest::init(digest), none);
+}
+
+private void Sha256::compress(&self, []const u8 block) {
+    [64]u32 words;
+
+    loop usize index = 0; index < 16; index++ {
+        const usize OFFSET = index * 4;
+        words[index] =
+            (block[OFFSET].cast<u32> << 24) |
+            (block[OFFSET + 1].cast<u32> << 16) |
+            (block[OFFSET + 2].cast<u32> << 8) |
+            block[OFFSET + 3].cast<u32>;
+    }
+
+    loop usize index = 16; index < 64; index++ {
+        words[index] =
+            small_sigma_one(words[index - 2]) +
+            words[index - 7] +
+            small_sigma_zero(words[index - 15]) +
+            words[index - 16];
+    }
+
+    const [64]u32 ROUND_CONSTANTS = [
+        SHA256_ROUND_CONST_1,
+        SHA256_ROUND_CONST_2,
+        SHA256_ROUND_CONST_3,
+        SHA256_ROUND_CONST_4,
+        SHA256_ROUND_CONST_5,
+        SHA256_ROUND_CONST_6,
+        SHA256_ROUND_CONST_7,
+        SHA256_ROUND_CONST_8,
+        SHA256_ROUND_CONST_9,
+        SHA256_ROUND_CONST_10,
+        SHA256_ROUND_CONST_11,
+        SHA256_ROUND_CONST_12,
+        SHA256_ROUND_CONST_13,
+        SHA256_ROUND_CONST_14,
+        SHA256_ROUND_CONST_15,
+        SHA256_ROUND_CONST_16,
+        SHA256_ROUND_CONST_17,
+        SHA256_ROUND_CONST_18,
+        SHA256_ROUND_CONST_19,
+        SHA256_ROUND_CONST_20,
+        SHA256_ROUND_CONST_21,
+        SHA256_ROUND_CONST_22,
+        SHA256_ROUND_CONST_23,
+        SHA256_ROUND_CONST_24,
+        SHA256_ROUND_CONST_25,
+        SHA256_ROUND_CONST_26,
+        SHA256_ROUND_CONST_27,
+        SHA256_ROUND_CONST_28,
+        SHA256_ROUND_CONST_29,
+        SHA256_ROUND_CONST_30,
+        SHA256_ROUND_CONST_31,
+        SHA256_ROUND_CONST_32,
+        SHA256_ROUND_CONST_33,
+        SHA256_ROUND_CONST_34,
+        SHA256_ROUND_CONST_35,
+        SHA256_ROUND_CONST_36,
+        SHA256_ROUND_CONST_37,
+        SHA256_ROUND_CONST_38,
+        SHA256_ROUND_CONST_39,
+        SHA256_ROUND_CONST_40,
+        SHA256_ROUND_CONST_41,
+        SHA256_ROUND_CONST_42,
+        SHA256_ROUND_CONST_43,
+        SHA256_ROUND_CONST_44,
+        SHA256_ROUND_CONST_45,
+        SHA256_ROUND_CONST_46,
+        SHA256_ROUND_CONST_47,
+        SHA256_ROUND_CONST_48,
+        SHA256_ROUND_CONST_49,
+        SHA256_ROUND_CONST_50,
+        SHA256_ROUND_CONST_51,
+        SHA256_ROUND_CONST_52,
+        SHA256_ROUND_CONST_53,
+        SHA256_ROUND_CONST_54,
+        SHA256_ROUND_CONST_55,
+        SHA256_ROUND_CONST_56,
+        SHA256_ROUND_CONST_57,
+        SHA256_ROUND_CONST_58,
+        SHA256_ROUND_CONST_59,
+        SHA256_ROUND_CONST_60,
+        SHA256_ROUND_CONST_61,
+        SHA256_ROUND_CONST_62,
+        SHA256_ROUND_CONST_63,
+        SHA256_ROUND_CONST_64
+    ];
+
+    u32 a = self->state[0];
+    u32 b = self->state[1];
+    u32 c = self->state[2];
+    u32 d = self->state[3];
+    u32 e = self->state[4];
+    u32 f = self->state[5];
+    u32 g = self->state[6];
+    u32 h = self->state[7];
+
+    loop usize index = 0; index < 64; index++ {
+        const u32 TEMP_1 =
+            h +
+            big_sigma_one(e) +
+            choose(e, f, g) +
+            ROUND_CONSTANTS[index] +
+            words[index];
+        const u32 TEMP_2 = big_sigma_zero(a) + majority(a, b, c);
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + TEMP_1;
+        d = c;
+        c = b;
+        b = a;
+        a = TEMP_1 + TEMP_2;
+    }
+
+    self->state[0] += a;
+    self->state[1] += b;
+    self->state[2] += c;
+    self->state[3] += d;
+    self->state[4] += e;
+    self->state[5] += f;
+    self->state[6] += g;
+    self->state[7] += h;
+}
+
+u32 choose(u32 x, u32 y, u32 z) {
+    return (x & y) ^ ((~x) & z);
+}
+
+u32 majority(u32 x, u32 y, u32 z) {
+    return (x & y) ^ (x & z) ^ (y & z);
+}
+
+u32 big_sigma_zero(u32 value) {
+    return
+        bits::rotate_right(value, 2) ^
+        bits::rotate_right(value, 13) ^
+        bits::rotate_right(value, 22);
+}
+
+u32 big_sigma_one(u32 value) {
+    return
+        bits::rotate_right(value, 6) ^
+        bits::rotate_right(value, 11) ^
+        bits::rotate_right(value, 25);
+}
+
+u32 small_sigma_zero(u32 value) {
+    return
+        bits::rotate_right(value, 7) ^
+        bits::rotate_right(value, 18) ^
+        (value >> 3);
+}
+
+u32 small_sigma_one(u32 value) {
+    return
+        bits::rotate_right(value, 17) ^
+        bits::rotate_right(value, 19) ^
+        (value >> 10);
+}

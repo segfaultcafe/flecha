@@ -1,0 +1,90 @@
+module sha2;
+
+export error Sha2Error {
+    AlreadyFinalized,
+    MessageTooLong
+}
+
+export structure Sha256Digest {
+    private [32]u8 value;
+};
+
+Sha256Digest Sha256Digest::init([32]u8 value) override {
+    return build Sha256Digest {
+        self.value = value;
+    };
+}
+
+[]const u8 Sha256Digest::bytes(&const self) <-self {
+    return self->value[:];
+}
+
+export structure Sha256 {
+    private {
+        [8]u32 state;
+        [64]u8 pending;
+        usize pendingLength;
+        u64 totalLength;
+        bool finalized;
+    }
+};
+
+export structure Sha512Digest {
+    private [64]u8 value;
+};
+
+Sha512Digest Sha512Digest::init([64]u8 value) override {
+    return build Sha512Digest {
+        self.value = value;
+    };
+}
+
+[]const u8 Sha512Digest::bytes(&const self) <-self {
+    return self->value[:];
+}
+
+export structure Sha512 {
+    private {
+        [8]u64 state;
+        [128]u8 pending;
+        usize pendingLength;
+
+        // Byte length represented as one 128-bit unsigned integer.
+        u64 totalLengthHigh;
+        u64 totalLengthLow;
+
+        bool finalized;
+    }
+};
+
+// One-shot SHA-256
+export (Sha256Digest, Sha2Error) sha256([]const u8 input) {
+    hasher := Sha256::init();
+    updateErr := hasher.update(input);
+    if updateErr != none {
+        return (none, updateErr);
+    }
+
+    return hasher.finalize();
+}
+
+// One-shot stringv overload for SHA-256.
+export (Sha256Digest, Sha2Error) sha256(stringv input) {
+    return sha256(input.cast<[]const u8>);
+}
+
+// One-shot SHA-512.
+export (Sha512Digest, Sha2Error) sha512([]const u8 input) {
+    hasher := Sha512::init();
+    updateError := hasher.update(input);
+    if updateError != none {
+        return (none, updateError);
+    }
+
+    return hasher.finalize();
+}
+
+// One-shot stringv overload for SHA-512.
+export (Sha512Digest, Sha2Error) sha512(stringv input) {
+    return sha512(input.cast<[]const u8>);
+}

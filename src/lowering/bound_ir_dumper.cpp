@@ -12,16 +12,34 @@ std::string OperatorText(TokenType type) {
             return "=";
         case TokenType::Add:
             return "+";
+        case TokenType::AddAssign:
+            return "+=";
         case TokenType::Sub:
             return "-";
+        case TokenType::SubAssign:
+            return "-=";
         case TokenType::Mul:
             return "*";
+        case TokenType::MulAssign:
+            return "*=";
         case TokenType::Div:
             return "/";
+        case TokenType::DivAssign:
+            return "/=";
         case TokenType::Mod:
             return "%";
         case TokenType::Xor:
             return "^";
+        case TokenType::XorAssign:
+            return "^=";
+        case TokenType::BitOr:
+            return "|";
+        case TokenType::BitNot:
+            return "~";
+        case TokenType::ShiftLeft:
+            return "<<";
+        case TokenType::ShiftRight:
+            return ">>";
         case TokenType::Bang:
             return "!";
         case TokenType::Equal:
@@ -32,6 +50,8 @@ std::string OperatorText(TokenType type) {
             return "===";
         case TokenType::StrictNotEqual:
             return "!==";
+        case TokenType::Ampersand:
+            return "&";
         case TokenType::And:
             return "and";
         case TokenType::Or:
@@ -47,6 +67,26 @@ std::string OperatorText(TokenType type) {
         default:
             return "?";
     }
+}
+
+std::string FloatingConstantText(FloatingConstant constant) {
+    switch (constant) {
+        case FloatingConstant::NaN:
+            return "nan";
+        case FloatingConstant::Infinity:
+            return "infinity";
+        case FloatingConstant::NegativeInfinity:
+            return "negative_infinity";
+        case FloatingConstant::Minimum:
+            return "min_value";
+        case FloatingConstant::Maximum:
+            return "max_value";
+        case FloatingConstant::MinimumPositive:
+            return "min_positive";
+        case FloatingConstant::Epsilon:
+            return "epsilon";
+    }
+    return "?";
 }
 
 class Dumper final {
@@ -390,13 +430,16 @@ class Dumper final {
                     _stream << "]";
                 }
             } break;
-            case BoundNodeKind::IncrementExpression:
-                _stream << "(post-increment ";
-                WriteExpression(
-                    static_cast<const BoundIncrementExpression&>(expression)
-                        .Target());
+            case BoundNodeKind::IncrementExpression: {
+                const auto& update =
+                    static_cast<const BoundIncrementExpression&>(expression);
+                _stream << (update.OperatorType() == TokenType::Increment
+                                ? "(post-increment "
+                                : "(post-decrement ");
+                WriteExpression(update.Target());
                 _stream << ")";
                 break;
+            }
             case BoundNodeKind::UnaryExpression: {
                 const BoundUnaryExpression& unary =
                     static_cast<const BoundUnaryExpression&>(expression);
@@ -423,10 +466,53 @@ class Dumper final {
                 _stream << ")";
                 break;
             }
+            case BoundNodeKind::IntegerLimitExpression: {
+                const auto& limit =
+                    static_cast<const BoundIntegerLimitExpression&>(expression);
+                _stream << "(" << limit.Type().Name() << "."
+                        << (limit.IsMaximum() ? "max_value" : "min_value")
+                        << ")";
+                break;
+            }
+            case BoundNodeKind::FloatingConstantExpression: {
+                const auto& constant =
+                    static_cast<const BoundFloatingConstantExpression&>(
+                        expression);
+                _stream << "(" << constant.Type().Name() << "."
+                        << FloatingConstantText(constant.Constant()) << ")";
+                break;
+            }
+            case BoundNodeKind::OverflowingArithmeticExpression: {
+                const auto& arithmetic =
+                    static_cast<const BoundOverflowingArithmeticExpression&>(
+                        expression);
+                _stream << "(overflowing_";
+                switch (arithmetic.Operation()) {
+                    case OverflowingArithmeticOperation::Add:
+                        _stream << "add";
+                        break;
+                    case OverflowingArithmeticOperation::Subtract:
+                        _stream << "sub";
+                        break;
+                    case OverflowingArithmeticOperation::Multiply:
+                        _stream << "mul";
+                        break;
+                }
+                _stream << " ";
+                WriteExpression(arithmetic.Left());
+                _stream << " ";
+                WriteExpression(arithmetic.Right());
+                _stream << ")";
+                break;
+            }
             case BoundNodeKind::AssignmentExpression: {
                 const BoundAssignmentExpression& assignment =
                     static_cast<const BoundAssignmentExpression&>(expression);
-                _stream << "(store ";
+                if (assignment.OperatorType() == TokenType::Assign)
+                    _stream << "(store ";
+                else
+                    _stream << "(" << OperatorText(assignment.OperatorType())
+                            << "-store ";
                 if (assignment.Target().Kind() ==
                     BoundNodeKind::VariableExpression) {
                     _stream << static_cast<const BoundVariableExpression&>(
@@ -444,7 +530,9 @@ class Dumper final {
             case BoundNodeKind::AllocationExpression: {
                 const auto& allocation =
                     static_cast<const BoundAllocationExpression&>(expression);
-                _stream << "(new " << allocation.ElementType().Name() << " ";
+                _stream << "(new";
+                if (allocation.CrashesOnFailure()) _stream << "!";
+                _stream << " " << allocation.ElementType().Name() << " ";
                 WriteExpression(allocation.Initializer());
                 _stream << ")";
                 break;

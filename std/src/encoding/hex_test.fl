@@ -1,0 +1,178 @@
+module hex_test;
+
+@imports
+    :: root::encoding::hex
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+void assert_encoded(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    encoded, err := hex::encode(source);
+    asserts::is_true(
+        t,
+        err == none and encoded.view() == expected,
+        message
+    );
+}
+
+void assert_decoded(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    decoded, err := hex::decode(source);
+    asserts::is_true(
+        t,
+        err == none and decoded.view() == expected,
+        message
+    );
+}
+
+void assert_invalid(
+    &testing::UnitTest t,
+    stringv source,
+    stringv message
+) {
+    _, err := hex::decode_to_bytes(source);
+    asserts::is_true(
+        t,
+        err == hex::HexError.InvalidEncoding,
+        message
+    );
+}
+
+test length_helpers_validate_input_and_overflow(&testing::UnitTest t) {
+    emptyEncoded, emptyEncodedError := hex::encoded_length(0);
+    encoded, encodedError := hex::encoded_length(3);
+    _, overflowError := hex::encoded_length(usize.max_value);
+
+    [6]u8 valid = [48, 48, 97, 66, 70, 102];
+    [3]u8 odd = [48, 48, 97];
+    [2]u8 invalid = [48, 103];
+    decoded, decodedError := hex::decoded_length(valid[:]);
+    _, oddError := hex::decoded_length(odd[:]);
+    _, invalidError := hex::decoded_length(invalid[:]);
+
+    asserts::is_true(
+        t,
+        emptyEncoded == 0 and emptyEncodedError == none and
+            encoded == 6 and encodedError == none,
+        "each byte requires two hexadecimal characters"
+    );
+    asserts::is_true(
+        t,
+        overflowError == hex::HexError.Overflow,
+        "encoded_length reports multiplication overflow"
+    );
+    asserts::is_true(
+        t,
+        decoded == 3 and decodedError == none,
+        "each valid character pair decodes to one byte"
+    );
+    asserts::is_true(
+        t,
+        oddError == hex::HexError.InvalidEncoding and
+            invalidError == hex::HexError.InvalidEncoding,
+        "decoded_length validates pairing and hexadecimal digits"
+    );
+}
+
+test encode_produces_lowercase_and_uppercase_ascii(&testing::UnitTest t) {
+    [4]u8 source = [0, 10, 171, 255];
+
+    lower, lowerError := hex::encode_bytes(source[:]);
+    upper, upperError := hex::encode_upper_bytes(source[:]);
+
+    asserts::is_true(
+        t,
+        lowerError == none and lower.view() == "000aabff",
+        "encode_bytes emits zero-padded lowercase hexadecimal"
+    );
+    asserts::is_true(
+        t,
+        upperError == none and upper.view() == "000AABFF",
+        "encode_upper_bytes emits zero-padded uppercase hexadecimal"
+    );
+}
+
+test string_encode_and_decode_round_trip(&testing::UnitTest t) {
+    assert_encoded(t, "", "", "an empty string encodes");
+    assert_encoded(t, "f", "66", "one byte encodes");
+    assert_encoded(t, "foobar", "666f6f626172", "multiple bytes encode");
+
+    assert_decoded(t, "", "", "an empty encoding decodes");
+    assert_decoded(t, "66", "f", "one byte decodes");
+    assert_decoded(
+        t,
+        "666F6f626172",
+        "foobar",
+        "mixed-case hexadecimal decodes"
+    );
+}
+
+test byte_adapters_preserve_binary_data(&testing::UnitTest t) {
+    [4]u8 source = [0, 10, 171, 255];
+    encoded, encodeError := hex::encode_byte_to_byte(source[:]);
+    upper, upperError := hex::encode_upper_byte_to_byte(source[:]);
+
+    asserts::is_true(
+        t,
+        encodeError == none and encoded.len() == 8 and
+            encoded[0] == 48 and encoded[3] == 97 and
+            encoded[4] == 97 and encoded[7] == 102,
+        "encode_byte_to_byte returns owned lowercase hexadecimal bytes"
+    );
+    asserts::is_true(
+        t,
+        upperError == none and upper.len() == 8 and
+            upper[3] == 65 and upper[4] == 65 and upper[7] == 70,
+        "encode_upper_byte_to_byte returns owned uppercase hexadecimal bytes"
+    );
+
+    decoded, decodeError := hex::decode_byte_to_byte(encoded[:]);
+    asserts::is_true(
+        t,
+        decodeError == none and decoded.len() == 4 and
+            decoded[0] == 0 and decoded[1] == 10 and
+            decoded[2] == 171 and decoded[3] == 255,
+        "decode_byte_to_byte restores arbitrary binary bytes"
+    );
+
+    decodedString, stringError := hex::decode_from_bytes(encoded[:]);
+    view := decodedString.view();
+    const u8 FIRST = view[0];
+    const u8 LAST = view[3];
+    asserts::is_true(
+        t,
+        stringError == none and decodedString.len() == 4 and
+            FIRST == 0 and LAST == 255,
+        "decode_from_bytes preserves binary data in a string"
+    );
+}
+
+test strict_decode_rejects_malformed_input(&testing::UnitTest t) {
+    assert_invalid(t, "0", "an odd-length source is rejected");
+    assert_invalid(t, "0g", "a non-hexadecimal byte is rejected");
+    assert_invalid(t, "-1", "punctuation is rejected");
+}
+
+test empty_byte_results_are_owned_and_successful(&testing::UnitTest t) {
+    encoded, encodeError := hex::encode_to_bytes("");
+    decoded, decodeError := hex::decode_to_bytes("");
+
+    asserts::is_true(
+        t,
+        encodeError == none and encoded.len() == 0,
+        "encoding empty input returns an owned empty byte slice"
+    );
+    asserts::is_true(
+        t,
+        decodeError == none and decoded.len() == 0,
+        "decoding empty input returns an owned empty byte slice"
+    );
+}

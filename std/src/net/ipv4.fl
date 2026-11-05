@@ -1,0 +1,131 @@
+module address;
+
+@imports
+    :: root::fmt
+    :: root::net::errors;
+
+// Represents an IPv4 address.
+export structure Ipv4Address {
+    private u32 value;
+};
+
+// Returns the loopback IPv4 address used for local communication.
+Ipv4Address Ipv4Address::loopback() {
+    return Ipv4Address::fromOctets(127, 0, 0, 1);
+}
+
+// Returns the unspecified IPv4 address used for wildcard binding.
+Ipv4Address Ipv4Address::wildcard() {
+    return Ipv4Address::fromOctets(0, 0, 0, 0);
+}
+
+// Builds an IPv4 address from the given octets.
+Ipv4Address Ipv4Address::fromOctets(u8 octet1, u8 octet2, u8 octet3, u8 octet4) {
+    Ipv4Address addr = Ipv4Address::init();
+    addr.value =
+        (octet1.cast<u32> << 24) |
+        (octet2.cast<u32> << 16) |
+        (octet3.cast<u32> << 8) |
+        octet4.cast<u32>;
+    return addr;
+}
+
+// Parses an IPv4 address from a string representation (e.g., "192.168.0.1").
+(Ipv4Address, error) Ipv4Address::parse(stringv text) {
+    if text.len() == 0 {
+        return (none, errors::NetworkError.InvalidAddress);
+    }
+
+    u32 packed = 0;
+    u32 component = 0;
+    u32 digits = 0;
+    u32 completedComponents = 0;
+
+    for (u32 _, char c) = range text {
+        if c >= '0' and c <= '9' {
+            if digits == 3 {
+                return (none, errors::NetworkError.InvalidAddress);
+            }
+
+            if digits > 0 and component == 0 {
+                return (none, errors::NetworkError.InvalidAddress);
+            }
+
+            u8 byte = c.cast<u8>;
+            u32 digit = (byte - 48).cast<u32>;
+            component = component * 10 + digit;
+            digits++;
+        } also component > 255 {
+            return (none, errors::NetworkError.InvalidAddress);
+        } else if c == '.' {
+            if digits == 0 {
+                return (none, errors::NetworkError.InvalidAddress);
+            }
+
+            if completedComponents == 3 {
+                return (none, errors::NetworkError.InvalidAddress);
+            }
+
+            packed = (packed << 8) or component;
+            completedComponents++;
+            component = 0;
+            digits = 0;
+        } else {
+            return (none, errors::NetworkError.InvalidAddress);
+        }
+    }
+
+    if digits == 0 {
+        return (none, errors::NetworkError.InvalidAddress);
+    }
+
+    if completedComponents != 3 {
+        return (none, errors::NetworkError.InvalidAddress);
+    }
+
+    packed = (packed << 8) or component;
+    return (build Ipv4Address {
+        self.value = packed;
+    }, none);
+}
+
+// Converts the IPv4 address to its string representation (e.g., "192.168.0.1").
+(string, error) Ipv4Address::toString(&const self) {
+    [4]u8 octets = self->octets();
+    return fmt::sprintf(
+        "{}.{}.{}.{}",
+        octets[0],
+        octets[1],
+        octets[2],
+        octets[3]
+    );
+}
+
+string Ipv4Address::toString!(&const self) {
+    text, formattingError := self->toString();
+    if formattingError != none {
+        crash("failed to format IPv4 address");
+    }
+
+    return text;
+}
+
+// Returns the individual octets of the IPv4 address as an array of 4 bytes.
+[4]u8 Ipv4Address::octets(&const self) {
+    return [
+        (self->value >> 24).cast<u8>,
+        (self->value >> 16).cast<u8>,
+        (self->value >> 8).cast<u8>,
+        self->value.cast<u8>,
+    ];
+}
+
+// Checks if the IPv4 address is a wildcard address.
+bool Ipv4Address::isWildcard(&const self) {
+    return self->value == 0;
+}
+
+// Checks if the IPv4 address is a loopback address.
+bool Ipv4Address::isLoopback(&const self) {
+    return (self->value >> 24).cast<u8> == 127;
+}

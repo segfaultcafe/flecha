@@ -1,0 +1,64 @@
+module file_test;
+
+@imports
+    :: root::io::errors
+    :: root::io::file
+    :: lib::std::tests::asserts
+    :: lib::std::tests::testing;
+
+test directory_entry_defaults_to_an_empty_other_entry(&testing::UnitTest t) {
+    file::DirectoryEntry entry;
+
+    moved := entry;
+
+    asserts::is_true(t, moved.name() == "", "the default entry name is empty");
+    asserts::is_true(
+        t,
+        moved.kind() == file::EntryType.Other,
+        "the default entry type is Other"
+    );
+}
+
+test closed_directories_reject_iteration_and_close(&testing::UnitTest t) {
+    file::Directory directory;
+    asserts::is_false(t, directory.isOpen(), "the default directory is closed");
+
+    entry, hasEntry, nextError := directory.next();
+    asserts::is_true(
+        t,
+        nextError == errors::IoError.Closed,
+        "next rejects a closed directory"
+    );
+    asserts::is_false(t, hasEntry, "a closed directory returns no entry");
+    asserts::is_true(t, entry.name() == "", "a failed next returns an empty entry");
+    asserts::is_true(
+        t,
+        directory.close() == errors::IoError.Closed,
+        "close rejects an already-closed directory"
+    );
+}
+
+test directory_open_rejects_invalid_paths(&testing::UnitTest t) {
+    empty, emptyError := file::Directory::open("");
+    asserts::is_true(
+        t,
+        emptyError == errors::IoError.InvalidPath,
+        "an empty directory path is invalid"
+    );
+    asserts::is_false(t, empty.isOpen(), "an invalid open returns a closed directory");
+
+    string embeddedNullPath = "bad" + '\0'.string() + "path";
+    embeddedNull, embeddedNullError := file::Directory::open(
+        embeddedNullPath.view()
+    );
+    asserts::is_true(
+        t,
+        embeddedNullError == errors::IoError.InvalidPath,
+        "an embedded null is invalid"
+    );
+    asserts::is_false(
+        t,
+        embeddedNull.isOpen(),
+        "a failed open does not retain a directory handle"
+    );
+}

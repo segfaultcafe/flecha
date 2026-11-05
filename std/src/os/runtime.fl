@@ -1,0 +1,27 @@
+module runtime;
+
+quiver extern unsafe usize flecha_runtime_v1_process_argument_count();
+
+quiver extern unsafe i32 flecha_runtime_v1_process_argument_capture(
+    *string output,
+    usize index
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_environment_get(
+    *string output,
+    *u8 present,
+    *const char name,
+    usize name_length
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_environment_set(
+    *const char name,
+    usize name_length,
+    *const char value,
+    usize value_length
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_environment_remove(
+    *const char name,
+    usize name_length
+);

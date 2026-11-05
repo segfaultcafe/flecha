@@ -1,0 +1,97 @@
+name: Compiler stress qualification
+
+on:
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compiler-stress-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  campaign:
+    name: Large deterministic campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-14 g++-14 llvm-18-dev ninja-build
+
+      - name: Configure release-qualification build
+        run: >-
+          cmake -S . -B build-stress -G Ninja
+          -DBUILD_TESTING=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=/usr/bin/gcc-14
+          -DCMAKE_CXX_COMPILER=/usr/bin/g++-14
+          "-DLLVM_DIR=$(/usr/bin/llvm-config-18 --cmakedir)"
+
+      - name: Build compiler stress targets
+        run: >-
+          cmake --build build-stress --target flecha compiler_stress --parallel
+
+      - name: Run large deterministic campaign
+        run: >-
+          build-stress/src/tests/compiler_stress
+          build-stress/flecha
+          std/src
+          build-stress/src/tests/compiler-stress-campaign
+          campaign
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compiler-stress-campaign-report
+          path: build-stress/src/tests/compiler-stress-campaign/compiler-stress-report.json
+          if-no-files-found: error
+
+  sanitizers:
+    name: Sanitized deterministic campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 llvm-18-dev ninja-build
+
+      - name: Configure sanitizer build
+        run: >-
+          cmake -S . -B build-stress-sanitizers -G Ninja
+          -DBUILD_TESTING=ON
+          -DFLECHA_ENABLE_SANITIZERS=ON
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=/usr/bin/clang-18
+          -DCMAKE_CXX_COMPILER=/usr/bin/clang++-18
+          "-DLLVM_DIR=$(/usr/bin/llvm-config-18 --cmakedir)"
+
+      - name: Build compiler stress targets
+        run: >-
+          cmake --build build-stress-sanitizers
+          --target flecha compiler_stress --parallel
+
+      - name: Run sanitizer-enabled compiler stress
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          build-stress-sanitizers/src/tests/compiler_stress
+          build-stress-sanitizers/flecha
+          std/src
+          build-stress-sanitizers/src/tests/compiler-stress-sanitizer
+          sanitizer
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compiler-stress-sanitizer-report
+          path: build-stress-sanitizers/src/tests/compiler-stress-sanitizer/compiler-stress-report.json
+          if-no-files-found: error

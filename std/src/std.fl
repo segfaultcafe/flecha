@@ -2,11 +2,49 @@ module std;
 
 @imports
     :: root::containers::raw_array
-    :: root::containers::array
+    :: root::containers::collections
     :: root::containers::errors as containers_errors
-    :: root::containers::algorithms
+    :: root::cryptography::sha2
+    :: root::cryptography::hmac
+    :: root::bytes::buffer
+    :: root::bytes::sequence
+    :: root::encoding::binary
+    :: root::encoding::hex
+    :: root::encoding::base64
+    :: root::hashing::hashing
+    :: root::io::stream
+    :: root::io::buffered
+    :: root::io::stdio
+    :: root::fmt
     :: root::io::filesystem
     :: root::io::file
+    :: root::io::path
     :: root::io::errors as io_errors
+    :: root::math::math
+    :: root::math::integer
+    :: root::math::float
+    :: root::math::bits
+    :: root::math::errors as math_errors
+    :: root::memory::slices
+    :: root::memory::errors as memory_errors
+    :: root::net::address
+    :: root::net::dns
+    :: root::net::tcp
+    :: root::net::udp
+    :: root::net::errors as network_errors
+    :: root::os::arguments
+    :: root::os::environment
+    :: root::os::errors as os_errors
+    :: root::random::generator
+    :: root::random::secure
+    :: root::random::errors as random_errors
+    :: root::time::duration
+    :: root::time::clock
+    :: root::time::errors as time_errors
+    :: root::text::ascii
+    :: root::text::utf8
+    :: root::text::strings
+    :: root::text::errors as text_errors
     :: root::tests::testing
-    :: root::tests::asserts;
+    :: root::tests::asserts
+    :: root::tests::benchmark;

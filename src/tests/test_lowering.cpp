@@ -77,6 +77,24 @@ TEST(LoweringTests, ResolvesDeclarationsNamesAssignmentsAndCalls) {
     EXPECT_EQ(assignment.Value().Type().Kind(), SemanticTypeKind::I32);
 }
 
+TEST(LoweringTests, ErasesVariadicForwardersAndCallsTheirTargetDirectly) {
+    LoweredSource result = Lower(R"(
+        void print(values...) { stdout(values...); }
+        i32 main() { print("answer: ", 42, true); return 0; }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    ASSERT_EQ(result.program->Functions().size(), 1);
+    const BoundFunction& mainFunction = *result.program->Functions().front();
+    const auto& statement = static_cast<const BoundExpressionStatement&>(
+        *mainFunction.Body().Statements().front());
+    const auto& call =
+        static_cast<const BoundCallExpression&>(statement.Expression());
+    EXPECT_EQ(call.Function().BuiltIn(), BuiltInFunction::Stdout);
+    EXPECT_EQ(call.Arguments().size(), 3);
+}
+
 TEST(LoweringTests, NormalizesElseIfAndAlsoToNestedConditionals) {
     LoweredSource result = Lower(
         "i32 main() { value := 0; if true { value = 1; } "
@@ -378,7 +396,7 @@ TEST(LoweringTests, MovesGeneralizedOwnCapturesIntoEnvironments) {
               "inner");
 }
 
-TEST(LoweringTests, PreservesDelayedDeclarationsAcrossTerminatingBranches) {
+TEST(LoweringTests, MaterializesNoneForTypedDeclarations) {
     LoweredSource result = Lower(
         "i32 main(bool c) { i32 value; string text; "
         "if c { return 0; } else { value = 42; text = \"ready\"; } "
@@ -390,7 +408,12 @@ TEST(LoweringTests, PreservesDelayedDeclarationsAcrossTerminatingBranches) {
         const auto& declaration =
             static_cast<const BoundVariableDeclarationStatement&>(
                 *function.Body().Statements()[index]);
-        EXPECT_EQ(declaration.Initializer(), nullptr);
+        ASSERT_NE(declaration.Initializer(), nullptr);
+        EXPECT_EQ(declaration.Initializer()->Kind(),
+                  BoundNodeKind::LiteralExpression);
+        EXPECT_TRUE(static_cast<const BoundLiteralExpression&>(
+                        *declaration.Initializer())
+                        .IsZeroValue());
     }
     const auto& branch =
         static_cast<const BoundIfStatement&>(*function.Body().Statements()[2]);
@@ -546,6 +569,32 @@ TEST(LoweringTests, PreservesLoopUpdateAndSnapshotsRangeSources) {
               std::string::npos);
 }
 
+TEST(LoweringTests, UsesU32IndicesAndCharactersForStringRanges) {
+    LoweredSource result = Lower(
+        "void f(stringv value) { for (index, character) := range value { "
+        "u32 i = index; char c = character; } }");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const std::string dump = DumpBoundProgram(*result.program);
+    EXPECT_NE(dump.find("(cast u32 load $cursor0)"), std::string::npos);
+    EXPECT_NE(dump.find("(string.at load $range0 (cast u32 load $cursor0))"),
+              std::string::npos);
+}
+
+TEST(LoweringTests, PreservesPostfixDecrementAndCompoundAssignments) {
+    LoweredSource result = Lower(
+        "void f() { i := 8; i--; i += 2; i -= 1; i *= 3; i /= 2; i ^= 4; }");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const std::string dump = DumpBoundProgram(*result.program);
+    EXPECT_NE(dump.find("(post-decrement load i)"), std::string::npos);
+    EXPECT_NE(dump.find("(+=-store i"), std::string::npos);
+    EXPECT_NE(dump.find("(-=-store i"), std::string::npos);
+    EXPECT_NE(dump.find("(*=-store i"), std::string::npos);
+    EXPECT_NE(dump.find("(/=-store i"), std::string::npos);
+    EXPECT_NE(dump.find("(^=-store i"), std::string::npos);
+}
+
 TEST(LoweringTests, RepresentsSlicesBoundsAndEndpointPlaces) {
     LoweredSource result = Lower(
         "unsafe void f() { a := [1, 2, 3]; s := a[1:]; s.front() = 4; "
@@ -633,4 +682,24 @@ TEST(LoweringTests, PreservesTupleEvaluationAndDestructuringTargets) {
     EXPECT_NE(DumpBoundProgram(*result.program)
                   .find("destructure (local second: i32, err: i32)"),
               std::string::npos);
+}
+
+TEST(LoweringTests, MaterializesDefaultsForFunctionsAndMethods) {
+    LoweredSource result = Lower(R"(
+        i32 add(i32 value, i32 amount = 2) { return value + amount; }
+        structure Counter { i32 value; };
+        i32 Counter::add(&const self, i32 amount = 2) {
+            return self->value + amount;
+        }
+        i32 main() {
+            counter := Counter::init();
+            return add(38) + counter.add();
+        }
+    )");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const std::string dump = DumpBoundProgram(*result.program);
+    EXPECT_NE(dump.find("(call add 38:i32 2:i32)"), std::string::npos);
+    EXPECT_NE(dump.find("(call Counter::add"), std::string::npos);
 }

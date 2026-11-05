@@ -1,0 +1,153 @@
+module file_test;
+
+@imports
+    :: root::io::errors
+    :: root::io::file
+    :: root::io::filesystem
+    :: root::io::path
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test empty_temporary_directories_are_inert(&testing::UnitTest t) {
+    file::TemporaryDirectory temporary;
+    asserts::is_true(t, temporary.path().len() == 0, "the zero path is empty");
+    asserts::is_true(
+        t,
+        temporary.remove() == none,
+        "removing the zero value is an idempotent no-op"
+    );
+}
+
+test temporary_directories_remove_populated_trees_explicitly(
+    &testing::UnitTest t
+) {
+    temporary, creationError := file::TemporaryDirectory::create();
+    asserts::is_true(t, creationError == none, "temporary creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    string ownedPath = temporary.path().string();
+    childPath, childPathError := path::join(ownedPath.view(), "child");
+    filePath, filePathError := path::join(childPath.view(), "contents.txt");
+    asserts::is_true(
+        t,
+        childPathError == none and filePathError == none,
+        "fixture paths allocate"
+    );
+    if childPathError != none or filePathError != none {
+        return;
+    }
+
+    asserts::is_true(
+        t,
+        filesystem::create_directory(childPath.view()) == none,
+        "a child directory is created"
+    );
+    asserts::is_true(
+        t,
+        filesystem::write_file(filePath.view(), "temporary contents") == none,
+        "a nested file is created"
+    );
+    asserts::is_true(t, temporary.remove() == none, "the tree is removed");
+    asserts::is_true(t, temporary.path().len() == 0, "cleanup is disarmed");
+
+    present, existsError := filesystem::exists(ownedPath.view());
+    asserts::is_true(
+        t,
+        existsError == none and !present,
+        "recursive removal removes the complete tree"
+    );
+    asserts::is_true(
+        t,
+        temporary.remove() == none,
+        "explicit removal remains idempotent"
+    );
+}
+
+test moved_temporary_directories_clean_up_exactly_once(&testing::UnitTest t) {
+    string ownedPath = none;
+    {
+        temporary, creationError := file::TemporaryDirectory::create();
+        asserts::is_true(t, creationError == none, "temporary creation succeeds");
+        if creationError != none {
+            return;
+        }
+
+        ownedPath = temporary.path().string();
+        moved := temporary;
+        present, existsError := filesystem::exists(moved.path());
+        asserts::is_true(
+            t,
+            existsError == none and present,
+            "the moved owner retains the directory"
+        );
+    }
+
+    present, existsError := filesystem::exists(ownedPath.view());
+    asserts::is_true(
+        t,
+        existsError == none and !present,
+        "the moved owner removes the directory during teardown"
+    );
+}
+
+test failed_temporary_directory_removal_preserves_ownership(
+    &testing::UnitTest t
+) {
+    temporary, creationError := file::TemporaryDirectory::create();
+    asserts::is_true(t, creationError == none, "temporary creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    string ownedPath = temporary.path().string();
+    asserts::is_true(
+        t,
+        filesystem::remove_directory(ownedPath.view(), false) == none,
+        "the original directory can be removed externally"
+    );
+    asserts::is_true(
+        t,
+        filesystem::write_file(ownedPath.view(), "blocking file") == none,
+        "a regular file can occupy the generated path"
+    );
+
+    removalError := temporary.remove();
+    asserts::is_true(t, removalError != none, "a regular file is rejected");
+    asserts::is_true(
+        t,
+        temporary.path() == ownedPath.view(),
+        "failed removal preserves ownership for retry"
+    );
+
+    asserts::is_true(
+        t,
+        filesystem::remove_file(ownedPath.view()) == none,
+        "the blocking file is removed"
+    );
+    asserts::is_true(
+        t,
+        temporary.remove() == none and temporary.path().len() == 0,
+        "retry accepts the missing directory and disarms teardown"
+    );
+}
+
+test temporary_directory_names_are_independent(&testing::UnitTest t) {
+    first, firstError := file::TemporaryDirectory::create();
+    second, secondError := file::TemporaryDirectory::create();
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none,
+        "independent temporary directories are created"
+    );
+    if firstError != none or secondError != none {
+        return;
+    }
+
+    asserts::is_true(
+        t,
+        first.path() != second.path(),
+        "simultaneous temporary directories have distinct paths"
+    );
+}

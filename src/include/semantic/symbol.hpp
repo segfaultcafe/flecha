@@ -16,6 +16,7 @@ enum class SymbolKind {
     Function,
     Parameter,
     LocalVariable,
+    ModuleConstant,
     ErrorType,
     EnumType,
     StructureType,
@@ -27,9 +28,24 @@ enum class BuiltInFunction {
     Stdout,
     StdoutLine,
     StdoutFormat,
+    Stderr,
+    StderrLine,
+    StderrFormat,
+    StringFormat,
+    StringFormatCrash,
+    Crash,
+    Stdin,
+    StdinLine,
     New,
     Free,
-    Take
+    Take,
+    Hash,
+    StorageNew,
+    StorageInitialize,
+    StorageRelocate,
+    StorageExtract,
+    StorageDestroy,
+    StorageFree
 };
 
 class Symbol {
@@ -81,19 +97,24 @@ class FunctionSymbol final : public Symbol {
                    bool isPrivate = false, bool hasReceiver = false,
                    bool isExtern = false, std::string linkName = {},
                    const EnumType* enumOwner = nullptr,
-                   std::optional<std::size_t> borrowSourceIndex = std::nullopt,
-                   std::vector<core::OwnershipContract> parameterContracts = {})
+                   std::vector<std::size_t> borrowSourceIndices = {},
+                   std::vector<core::OwnershipContract> parameterContracts = {},
+                   const core::FunctionDeclaration* declaration = nullptr,
+                   bool borrowsVariadicPack = false,
+                   bool isCrashable = false)
         : FunctionSymbol(std::move(name),
                          std::make_shared<const CallableSignature>(
                              CallableSignature{returnType,
                                                std::move(parameterTypes),
                                                std::move(parameterContracts),
                                                {},
-                                               borrowSourceIndex,
-                                               isUnsafe}),
+                                               std::move(borrowSourceIndices),
+                                               isUnsafe,
+                                               false,
+                                               isCrashable}),
                          declarationRange, builtIn, owner, isPrivate,
-                         hasReceiver, isExtern, std::move(linkName),
-                         enumOwner) {}
+                         hasReceiver, isExtern, std::move(linkName), enumOwner,
+                         declaration, borrowsVariadicPack) {}
 
     FunctionSymbol(std::string name,
                    std::shared_ptr<const CallableSignature> signature,
@@ -102,7 +123,9 @@ class FunctionSymbol final : public Symbol {
                    const StructureType* owner = nullptr, bool isPrivate = false,
                    bool hasReceiver = false, bool isExtern = false,
                    std::string linkName = {},
-                   const EnumType* enumOwner = nullptr)
+                   const EnumType* enumOwner = nullptr,
+                   const core::FunctionDeclaration* declaration = nullptr,
+                   bool borrowsVariadicPack = false)
         : Symbol(SymbolKind::Function, std::move(name), SemanticType(signature),
                  declarationRange, false),
           _signature(std::move(signature)),
@@ -112,6 +135,8 @@ class FunctionSymbol final : public Symbol {
           _isPrivate(isPrivate),
           _hasReceiver(hasReceiver),
           _isExtern(isExtern),
+          _declaration(declaration),
+          _borrowsVariadicPack(borrowsVariadicPack),
           _linkName(linkName.empty() ? Name() : std::move(linkName)) {}
 
     [[nodiscard]] SemanticType ReturnType() const { return _signature->result; }
@@ -123,6 +148,9 @@ class FunctionSymbol final : public Symbol {
     }
     [[nodiscard]] bool IsUnsafe() const { return _signature->isUnsafe; }
     [[nodiscard]] bool IsOnce() const { return _signature->isOnce; }
+    [[nodiscard]] bool IsCrashable() const {
+        return _signature->isCrashable;
+    }
     const StructureType* Owner() const { return _owner; }
     const EnumType* EnumOwner() const { return _enumOwner; }
     bool HasOwner() const { return _owner != nullptr || _enumOwner != nullptr; }
@@ -130,8 +158,11 @@ class FunctionSymbol final : public Symbol {
     bool HasReceiver() const { return _hasReceiver; }
     bool IsExtern() const { return _isExtern; }
     const std::string& LinkName() const { return _linkName; }
-    [[nodiscard]] std::optional<std::size_t> BorrowSourceIndex() const {
-        return _signature->borrowSourceIndex;
+    void SetLinkName(std::string linkName) {
+        _linkName = std::move(linkName);
+    }
+    [[nodiscard]] const std::vector<std::size_t>& BorrowSourceIndices() const {
+        return _signature->borrowSourceIndices;
     }
     [[nodiscard]] core::OwnershipContract ParameterContract(
         std::size_t index) const {
@@ -140,6 +171,12 @@ class FunctionSymbol final : public Symbol {
                    : core::OwnershipContract::None;
     }
     [[nodiscard]] BuiltInFunction BuiltIn() const { return _builtIn; }
+    [[nodiscard]] const core::FunctionDeclaration* Declaration() const {
+        return _declaration;
+    }
+    [[nodiscard]] bool BorrowsVariadicPack() const {
+        return _borrowsVariadicPack;
+    }
 
    private:
     std::shared_ptr<const CallableSignature> _signature;
@@ -149,6 +186,8 @@ class FunctionSymbol final : public Symbol {
     bool _isPrivate;
     bool _hasReceiver;
     bool _isExtern;
+    const core::FunctionDeclaration* _declaration;
+    bool _borrowsVariadicPack;
     std::string _linkName;
 };
 
@@ -160,11 +199,13 @@ struct EnumVariant final {
 
 struct EnumType final {
     std::string name;
+    std::string displayName;
     const core::EnumDeclaration* syntax = nullptr;
     SemanticType backing = SemanticType(SemanticTypeKind::U32);
     std::vector<EnumVariant> variants;
     std::optional<std::uint64_t> defaultValue;
-    std::unordered_map<std::string, const FunctionSymbol*> methods;
+    std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
+        methods;
 };
 
 struct StructureField final {
@@ -178,7 +219,8 @@ struct StructureType final {
     std::string displayName;
     const core::StructureDeclaration* syntax = nullptr;
     std::vector<StructureField> fields;
-    std::unordered_map<std::string, const FunctionSymbol*> methods;
+    std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
+        methods;
     const FunctionSymbol* init = nullptr;
     const FunctionSymbol* zero = nullptr;
     const FunctionSymbol* tear = nullptr;
@@ -186,6 +228,10 @@ struct StructureType final {
     bool zeroIsGenerated = false;
     bool zeroIsTrivial = false;
     bool validLayout = false;
+    // Set after the analyzer has diagnosed that the generated/default build
+    // cannot initialize this structure. Later type checks use this only for
+    // error recovery so dependent expressions do not repeat the root error.
+    bool invalidDefaultConstruction = false;
 };
 
 }  // namespace flecha::semantic

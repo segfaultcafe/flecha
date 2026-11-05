@@ -48,7 +48,7 @@ extern "C" void flecha_runtime_v1_free(void* data) {
 extern "C" void* flecha_runtime_v1_alloc_array(size_t count,
                                                size_t element_size,
                                                size_t alignment) {
-    if (element_size == 0 ||
+    if (element_size != 0 &&
         count > std::numeric_limits<size_t>::max() / element_size)
         return nullptr;
     void* data = flecha_runtime_v1_alloc(count * element_size, alignment);

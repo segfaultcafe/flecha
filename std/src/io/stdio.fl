@@ -1,0 +1,249 @@
+module stdio;
+
+@imports
+    :: root::io::errors
+    :: root::io::runtime
+    :: root::io::stream;
+
+// Provides non-owning access to the process standard-output stream.
+export structure StandardOutput {};
+
+// Provides non-owning access to the process standard-error stream.
+export structure StandardError {};
+
+// Provides non-owning access to the process standard-input stream.
+export structure StandardInput {};
+
+// Returns a lightweight view of the process standard-output stream.
+export StandardOutput standard_output() {
+    return build StandardOutput {};
+}
+
+// Returns a lightweight view of the process standard-error stream.
+export StandardError standard_error() {
+    return build StandardError {};
+}
+
+// Returns a lightweight view of the process standard-input stream.
+export StandardInput standard_input() {
+    return build StandardInput {};
+}
+
+// Reads up to destination.len() bytes from standard input.
+(usize, error) StandardInput::read(
+    &const self,
+    []u8 destination
+) {
+    return read_standard_input(destination);
+}
+
+// Returns a reusable reader for standard input.
+stream::Reader StandardInput::reader(&const self) {
+    return stream::Reader::init(read_standard_input);
+}
+
+// Writes string bytes to standard output without adding a newline.
+(usize, error) StandardOutput::write(
+    &const self,
+    stringv source
+) {
+    usize bytesWritten = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_standard_output_write(
+            source.data(),
+            source.len().cast<usize>,
+            &raw bytesWritten
+        );
+        err := errors::from_runtime(status, errors::IoError.WriteFailed);
+        if err != none {
+            return (bytesWritten, err);
+        }
+    }
+    return (bytesWritten, none);
+}
+
+// Writes every string byte to standard output without adding a newline.
+error StandardOutput::writeAll(
+    &const self,
+    stringv source
+) {
+    return write_all_standard_output_string(source);
+}
+
+// Writes bytes to standard output, preserving partial progress on failure.
+(usize, error) StandardOutput::writeBytes(
+    &const self,
+    []const u8 source
+) {
+    return write_standard_output(source);
+}
+
+// Writes every source byte to standard output or returns the first failure.
+error StandardOutput::writeAllBytes(
+    &const self,
+    []const u8 source
+) {
+    writer := self->writer();
+    return writer.writeAll(source);
+}
+
+// Flushes output previously emitted through the process standard stream.
+error StandardOutput::flush(&const self) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_standard_output_flush();
+        return errors::from_runtime(status, errors::IoError.FlushFailed);
+    }
+}
+
+// Returns a reusable writer for standard output.
+stream::Writer StandardOutput::writer(&const self) {
+    return stream::Writer::init(write_standard_output);
+}
+
+// Writes string bytes to standard error without adding a newline.
+(usize, error) StandardError::write(
+    &const self,
+    stringv source
+) {
+    usize bytesWritten = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_standard_error_write(
+            source.data(),
+            source.len().cast<usize>,
+            &raw bytesWritten
+        );
+        err := errors::from_runtime(status, errors::IoError.WriteFailed);
+        if err != none {
+            return (bytesWritten, err);
+        }
+    }
+    return (bytesWritten, none);
+}
+
+// Writes every string byte to standard error without adding a newline.
+error StandardError::writeAll(
+    &const self,
+    stringv source
+) {
+    return write_all_standard_error_string(source);
+}
+
+// Writes bytes to standard error, preserving partial progress on failure.
+(usize, error) StandardError::writeBytes(
+    &const self,
+    []const u8 source
+) {
+    return write_standard_error(source);
+}
+
+// Writes every source byte to standard error or returns the first failure.
+error StandardError::writeAllBytes(
+    &const self,
+    []const u8 source
+) {
+    writer := self->writer();
+    return writer.writeAll(source);
+}
+
+// Flushes output previously emitted through the process standard stream.
+error StandardError::flush(&const self) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_standard_error_flush();
+        return errors::from_runtime(status, errors::IoError.FlushFailed);
+    }
+}
+
+// Returns a reusable writer for standard error.
+stream::Writer StandardError::writer(&const self) {
+    return stream::Writer::init(write_standard_error);
+}
+
+quiver (usize, error) write_standard_output([]const u8 source) {
+    usize bytesWritten = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_standard_output_write(
+            source.data(),
+            source.len(),
+            &raw bytesWritten
+        );
+        err := errors::from_runtime(status, errors::IoError.WriteFailed);
+        if err != none {
+            return (bytesWritten, err);
+        }
+    }
+    return (bytesWritten, none);
+}
+
+quiver (usize, error) read_standard_input([]u8 destination) {
+    usize bytesRead = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_standard_input_read(
+            destination.data(),
+            destination.len(),
+            &raw bytesRead
+        );
+        err := errors::from_runtime(status, errors::IoError.ReadFailed);
+        if err != none {
+            return (bytesRead, err);
+        }
+    }
+    return (bytesRead, none);
+}
+
+quiver (usize, error) write_standard_error([]const u8 source) {
+    usize bytesWritten = 0;
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_standard_error_write(
+            source.data(),
+            source.len(),
+            &raw bytesWritten
+        );
+        err := errors::from_runtime(status, errors::IoError.WriteFailed);
+        if err != none {
+            return (bytesWritten, err);
+        }
+    }
+    return (bytesWritten, none);
+}
+
+quiver error write_all_standard_output_string(stringv source) {
+    u32 offset = 0;
+    while offset < source.len() {
+        output := standard_output();
+        count, writeError := output.write(
+            source.substr(offset, source.len() - offset)
+        );
+        if count > (source.len() - offset).cast<usize> {
+            return errors::IoError.WriteFailed;
+        }
+        offset = offset + count.cast<u32>;
+        if writeError != none {
+            return writeError;
+        }
+        if count == 0 {
+            return errors::IoError.WriteFailed;
+        }
+    }
+    return none;
+}
+
+quiver error write_all_standard_error_string(stringv source) {
+    u32 offset = 0;
+    while offset < source.len() {
+        output := standard_error();
+        count, writeError := output.write(
+            source.substr(offset, source.len() - offset)
+        );
+        if count > (source.len() - offset).cast<usize> {
+            return errors::IoError.WriteFailed;
+        }
+        offset = offset + count.cast<u32>;
+        if writeError != none {
+            return writeError;
+        }
+        if count == 0 {
+            return errors::IoError.WriteFailed;
+        }
+    }
+    return none;
+}

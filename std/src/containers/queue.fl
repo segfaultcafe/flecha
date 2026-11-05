@@ -1,0 +1,48 @@
+module collections;
+
+@imports
+    :: root::containers::errors;
+
+export structure Queue<T> {
+    private Deque<T> inner;
+};
+
+error Queue<T>::enqueue(&self, T value) {
+    return self->inner.pushBack(value);
+}
+
+(T, error) Queue<T>::dequeue(&self) {
+    if self->empty() {
+        return (none, errors::QueueError.Empty);
+    }
+
+    return self->inner.popFront();
+}
+
+(T, error) Queue<T>::front(&const self) {
+    if self->empty() {
+        return (none, errors::QueueError.Empty);
+    }
+
+    return self->inner.front();
+}
+
+void Queue<T>::clear(&self) {
+    self->inner.clear();
+}
+
+usize Queue<T>::len(&const self) {
+    return self->inner.len();
+}
+
+usize Queue<T>::capacity(&const self) {
+    return self->inner.capacity();
+}
+
+bool Queue<T>::empty(&const self) {
+    return self->inner.empty();
+}
+
+error Queue<T>::reserve(&self, usize capacity) {
+    return self->inner.reserve(capacity);
+}

@@ -1,16 +1,60 @@
 # Runtime arrays and the first standard-library container
 
-Runtime-sized storage uses `new<[]T>(count)` in an unsafe context. `count` has type
-`usize` and is evaluated exactly once, before attempting allocation. The result is
-`(*[]T, error)`: `*[]T` is a move-only owning buffer containing the allocation
-base and its `usize` element count. Numeric, boolean,
-character, and defaultable enum elements are supported. Runtime arrays also
-accept copyable, default-constructible structures whose recursively stored
-fields are numbers, booleans, characters, enums, raw pointers, fixed arrays, or
-other supported structures. Every slot is default-constructed after allocation
-succeeds; custom `zero()` overrides therefore run once per slot. Strings, pointer
-elements, destructible/noncopyable structures, and partially initialized
-storage are not supported by this runtime-array form.
+The safe owning form is `own []T`. Allocate it with
+`new<own []T>(count)`, which returns `(own []T, error)`. The owner carries its
+data pointer and `usize` length, is move-only, and releases the allocation
+automatically when its live value leaves scope. It can be stored directly in a
+structure and does not require `unsafe`, `defer`, or `free`:
+
+```flecha
+structure Buffer {
+    own []u8 bytes;
+};
+
+Buffer Buffer::init(own []u8 bytes) override {
+    return build Buffer { self.bytes = bytes; };
+}
+
+void example() {
+    bytes, err := new<own []u8>(100);
+    if err != none { return; }
+    bytes[42] = 42;
+    view := bytes[:];
+}
+```
+
+Indexing, slicing, `front`, `back`, and `len` are checked safe operations on an
+owning slice. `data()` remains unsafe because it exposes a raw pointer. Adding
+`const` to the element type is a one-way permission weakening:
+`own []T` can move into `own []const T`, but not the reverse.
+
+`T` may be any sized, safely movable, semantically zeroable value type. This
+includes owning strings, raw pointers, defaultable enums, safe-tear structures,
+fixed arrays, tuples, and nested owning slices when their complete types meet
+the same rule. After allocation succeeds, every element starts at its semantic
+zero. Trivially zeroable elements use the allocator's zeroed storage directly;
+other elements run their zero construction once per slot. Destruction visits
+elements in reverse index order exactly once before releasing the allocation.
+An unsafe-tear immovable type, a borrowed value, or a type without a semantic
+zero is rejected.
+
+An empty owning slice is trivially zeroable. Structures containing owning
+slices therefore receive a generated trivial `zero()` when their other fields
+are also trivially zeroable. An equivalent explicit `zero()` override remains
+trivial, so `none` can directly construct those structures, including within
+tuple results. The structure remains move-only because zero construction does
+not duplicate a live owner.
+
+The original manual form remains available for raw-memory work and backwards
+compatibility:
+
+Runtime-sized storage uses `new<[]T>(count)` in an unsafe context. `count` has
+type `usize` and is evaluated exactly once, before attempting allocation. The
+result is `(*[]T, error)`: `*[]T` is a move-only owning buffer containing the
+allocation base and its `usize` element count. It accepts the same sized,
+safely movable, semantically zeroable element types as `own []T`. Every slot is
+initialized after allocation succeeds, and `free(buffer)` destroys every
+element in reverse order before releasing the storage.
 
 ```flecha
 unsafe {
@@ -52,11 +96,12 @@ This does not add pointer arithmetic or checked references into the heap. Ordina
 raw dereference `*pointer` retains its unsafe validity
 obligations, including requiring a live element for a zero-capacity allocation.
 
-`free(pointer)` releases the complete buffer. The supported element types need no
-individual destruction. Ordinary `new<T>(value)` still allocates one value and
-runs typed destruction, including `tear`; its initializer still runs only after
-allocation succeeds. Runtime-array counts, unlike initializers, must run even
-when allocation subsequently fails.
+`free(pointer)` releases the complete buffer. Elements with owning storage or
+custom teardown are destroyed individually in reverse order. Ordinary
+`new<T>(value)` still allocates one value and runs typed destruction, including
+`tear`; its initializer still runs only after allocation succeeds.
+Runtime-array counts, unlike initializers, must run even when allocation
+subsequently fails.
 
 ## Replacing an owning field
 
@@ -87,10 +132,12 @@ can declare a local `std` dependency in `longbow.toml`, then import:
 @imports :: lib::std::containers::raw_array;
 ```
 
-Construct `raw_array::RawArray<i32>::init()` in a safe context, substituting
-any supported scalar or structure type for `i32`. Structure elements must meet
-the runtime-array restrictions above. Pointer, string, reference, owning, and
-destructible elements are not supported.
+Construct `raw_array::RawArray<i32>::init()` in a safe context, substituting a
+supported sized, movable value type for `i32`. `RawArray` uses separate
+uninitialized-capacity intrinsics and constructs only its logical prefix, so
+its element rule does not require semantic zeroability. Direct strings,
+safe-tear structures, and nested owning slices are supported; borrowed and
+unsafe-tear immovable elements remain rejected.
 
 The name reflects its unsafe API and raw allocated storage. It is not a safe
 dynamic-array abstraction. It maintains a used length and an allocated capacity,
@@ -136,14 +183,14 @@ Both containers use the shared `errors::ArrayError` from
 
 ```flecha
 @imports
-    :: lib::std::containers::array
+    :: lib::std::containers::collections
     :: lib::std::containers::errors;
 ```
 
-Construct with `array::Array<i32>::init()`. `Array<T>` has the same element
-restrictions as `RawArray<T>` and returns elements by value, without exposing
-backing pointers or element references. Bounds errors check the used length.
-Growth failure preserves length, capacity, and existing contents.
+Construct with `collections::Array<i32>::init()`. The collection returns
+elements by value without exposing backing pointers or uninitialized capacity.
+Bounds errors check the used length. Growth failure preserves length, capacity,
+and existing contents.
 
 `RawArray` now has a safe initializer and a safe `tear` containing internal
 unsafe cleanup. The wrapper's generated lifecycle initializes and destroys its
@@ -155,12 +202,40 @@ live borrow from `view()` or `viewRef()` prevents moving, replacing, or
 destroying its container. The language's unsafe-tear immovability rule is
 unchanged.
 
-Element relocation is still limited to the documented copyable element set.
-`push`, `pop`, `get`, `set`, growth, and compaction do not yet support
-move-only elements, and indexing cannot partially move an element out of a
-container. Container-level moves do not relax those element restrictions.
+Stage 2's completed array foundation gives `push`, `set`, `pop`, `remove`,
+`swapRemove`, growth, `reserve`, `clear`, and array destruction
+initialized-prefix storage semantics. `push` and `set` copy a copyable
+argument or consume a move-only argument; growth and compaction relocate live
+elements; and every removal operation extracts its result without copying it.
+`fromSlice`, borrowed-slice `append`, `clone`, `get`, `first`, `last`, and
+`fill` deliberately remain copy-only. Move-only specializations are rejected:
+copying operations report `FLECHA-S0046`, while `fill` reports `FLECHA-S0059`
+when its consumed value could be reused by another iteration. Indexing still
+cannot partially move an element out of a container.
+
+Direct `string` and `own []T` elements use the same initialized-prefix storage.
+Generic specialization preserves ownership qualifiers, shared views retain
+deep constness, and raw collection storage distinguishes an owning-slice
+element from the legacy owning-buffer spelling. Nested arrays support growth at
+every level, extraction, three-level ownership, and recursive reverse-order
+destruction. Array reversal, heap sorting, partitioning, and adjacent
+deduplication exchange or compact elements through relocation rather than
+semantic copies, so they support the same move-only categories. Deduplication
+destroys removed values exactly once and retains the allocation.
 
 `StandardLibraryTests.SafeArray.*` runs growth/failure, scalar, structure, and
-scope-cleanup checks through safe callers with allocation tracking.
-`CompilerDiagnostics.SafeArray` checks privacy, use after a container move,
-conflicting borrows, and unsupported element operations.
+scope-cleanup checks through safe callers with allocation tracking. Dedicated
+move-only fixtures inject failure on both initial allocation and later growth,
+then verify the strong array guarantee, consumed-argument cleanup, reverse
+destruction, initialized-prefix-only clearing, capacity reuse, and early-return
+cleanup. The sanitizer target includes the raw and safe array fixture families.
+`CompilerDiagnostics.SafeArray` checks privacy, use after moves and extracted
+owners, partial indexed moves, borrowed and immovable element rejection, and
+the full shared/exclusive view conflict matrix. Positive fixtures prove that
+multiple shared views coexist and owner access resumes after the final view
+use, including for nested inner views.
+
+The complete Stage 2 contract and acceptance matrix are specified in
+[`collections.md`](collections.md). The `Array<T>`, `Deque<T>`, `Stack<T>`,
+`Queue<T>`, `BinaryHeap<T>`, `HashMap<K, V>`, and `HashSet<T>` gates are
+complete.

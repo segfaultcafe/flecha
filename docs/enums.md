@@ -53,9 +53,9 @@ if state === none {}            // always false: the static types differ
 ```
 
 Without a default variant, contextual `none` is rejected for that enum,
-including when it is nested in an array or tuple. A variable may still be
-declared without an initializer, but definite-assignment rules prevent it from
-being read before assignment.
+including when it is nested in an array or tuple. Initializer omission is
+available only when the enum has a default represented by zero. A nonzero
+default remains available through an explicit `= none` initializer.
 
 `==`, `!=`, `===`, and `!==` are supported only between values of the same enum
 type. Arithmetic, ordering, increment, implicit truth tests, and comparisons
@@ -81,10 +81,10 @@ State State::initial() {
 
 Value receivers use `.`, reference and pointer receivers use `->`, and static
 functions use `State::initial()`. The first parameter may be `&self`,
-`&const self`, `*self`, or `*const self`; checked-reference and unsafe-pointer
-rules are unchanged. Methods may be `private`, and exporting an enum exposes
-its non-private methods. Methods may declare explicit generic parameters. A
-method and variant cannot share a name.
+`&const self`, `*self`, `*const self`, or the consuming value receiver `self`;
+checked-reference and unsafe-pointer rules are unchanged. Methods may be
+`private`, and exporting an enum exposes its non-private methods. Methods may
+declare explicit generic parameters. A method and variant cannot share a name.
 
 Enum initialization and destruction are compiler-defined. `init`, `zero`, and
 `tear` are reserved and cannot be declared as enum methods.

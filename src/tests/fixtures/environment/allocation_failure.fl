@@ -1,0 +1,19 @@
+module allocation_failure;
+
+@imports :: lib::std::os::environment;
+
+i32 main() {
+    value, present, getError := environment::get("FLECHA_ENVIRONMENT_FAILURE");
+    if getError != AllocationError.OutOfMemory or present or value.len() != 0 {
+        return 1;
+    }
+    if environment::set("FLECHA_ENVIRONMENT_FAILURE", "value") !=
+        AllocationError.OutOfMemory {
+        return 2;
+    }
+    if environment::remove("FLECHA_ENVIRONMENT_FAILURE") !=
+        AllocationError.OutOfMemory {
+        return 3;
+    }
+    return 42;
+}

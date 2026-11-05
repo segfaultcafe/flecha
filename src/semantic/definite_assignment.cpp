@@ -102,10 +102,11 @@ void AnalyzeDefiniteAssignment(const core::FunctionDeclaration& function,
         if (!node.reachable ||
             (node.read == nullptr && node.captureRead == nullptr))
             continue;
-        const Symbol* symbol =
-            node.read != nullptr ? model.SymbolFor(*node.read)
-                                 : model.CaptureSource(*node.captureRead);
+        const Symbol* symbol = node.read != nullptr
+                                   ? model.SymbolFor(*node.read)
+                                   : model.CaptureSource(*node.captureRead);
         if (symbol != nullptr && symbol->Kind() != SymbolKind::Function &&
+            symbol->Kind() != SymbolKind::ModuleConstant &&
             !incomingStates[index].contains(symbol)) {
             if (node.read != nullptr) {
                 uninitialized.push_back(

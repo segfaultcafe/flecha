@@ -1,0 +1,101 @@
+module hmac;
+
+@imports :: root::cryptography::sha2;
+
+(HmacSha512, error) HmacSha512::create([]const u8 key) {
+    [128]u8 normalizedKey = [0x00; 128];
+
+    if key.len() > 128 {
+        digest, digestErr := sha2::sha512(key);
+        if digestErr != none {
+            return (none, digestErr);
+        }
+
+        digestBytes := digest.bytes();
+        loop usize index = 0; index < digestBytes.len(); index++ {
+            normalizedKey[index] = digestBytes[index];
+        }
+    } else {
+        loop usize index = 0; index < key.len(); index++ {
+            normalizedKey[index] = key[index];
+        }
+    }
+
+    [128]u8 innerPad, outerPad;
+    loop usize index = 0; index < 128; index++ {
+        innerPad[index] = normalizedKey[index] ^ 0x36;
+        outerPad[index] = normalizedKey[index] ^ 0x5c;
+    }
+
+    inner := sha2::Sha512::init();
+    innerErr := inner.update(innerPad[:]);
+    if innerErr != none {
+        return (none, innerErr);
+    }
+
+    return (build HmacSha512 {
+        self.inner = inner;
+        self.outerPad = outerPad;
+        self.initialized = true;
+    }, none);
+}
+
+error HmacSha512::update(&self, []const u8 input) {
+    if !self->initialized {
+        return HmacError.NotInitialized;
+    }
+
+    updateErr := self->inner.update(input);
+    if updateErr != none {
+        return updateErr;
+    }
+
+    return none;
+}
+
+(HmacSha512Tag, error) HmacSha512::finalize(&self) {
+    if !self->initialized {
+        return (none, HmacError.NotInitialized);
+    }
+
+    innerDigest, innerErr := self->inner.finalize();
+    if innerErr != none {
+        return (none, innerErr);
+    }
+
+    outer := sha2::Sha512::init();
+
+    outerPadErr := outer.update(self->outerPad[:]);
+    if outerPadErr != none {
+        return (none, outerPadErr);
+    }
+
+    digestErr := outer.update(innerDigest.bytes());
+    if digestErr != none {
+        return (none, digestErr);
+    }
+
+    outerDigest, finalizeErr := outer.finalize();
+    if finalizeErr != none {
+        return (none, finalizeErr);
+    }
+
+    [64]u8 tagBytes;
+    digestBytes := outerDigest.bytes();
+
+    loop usize index = 0; index < tagBytes.len(); index++ {
+        tagBytes[index] = digestBytes[index];
+    }
+
+    return (HmacSha512Tag::init(tagBytes), none);
+}
+
+HmacSha512Tag HmacSha512Tag::init([64]u8 value) override {
+    return build HmacSha512Tag {
+        self.value = value;
+    };
+}
+
+[]const u8 HmacSha512Tag::bytes(&const self) <-self {
+    return self->value[:];
+}

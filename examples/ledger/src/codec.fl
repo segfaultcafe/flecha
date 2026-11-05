@@ -1,0 +1,192 @@
+module codec;
+
+@imports
+    :: root::model
+    :: lib::std::bytes::buffer
+    :: lib::std::bytes::sequence
+    :: lib::std::containers::collections
+    :: lib::std::cryptography::sha2
+    :: lib::std::encoding::binary
+    :: lib::std::text::strings;
+
+export const stringv FILE_HEADER = "FLECHA-LEDGER\n1\n";
+const stringv HASH_DOMAIN = "FLECHA-LEDGER-BLOCK-V1\n";
+const usize RECORD_HEADER_SIZE = 48;
+const usize DIGEST_SIZE = 32;
+const usize RECORD_OVERHEAD = RECORD_HEADER_SIZE + DIGEST_SIZE;
+
+export (buffer::Buffer, [32]u8, error) encode_block(
+    u64 index,
+    []const u8 previousHash,
+    stringv payload
+) {
+    usize payloadLength = payload.len().cast<usize>;
+    usize capacity = RECORD_OVERHEAD + payloadLength;
+    if capacity < payloadLength or previousHash.len() != DIGEST_SIZE {
+        empty, allocationError := buffer::Buffer::withCapacity(0);
+        if allocationError != none {
+            return (empty, none, allocationError);
+        }
+        return (empty, none, model::LedgerError.PayloadTooLarge);
+    }
+
+    output, allocationError := buffer::Buffer::withCapacity(capacity);
+    if allocationError != none {
+        return (output, none, allocationError);
+    }
+
+    [48]u8 header = none;
+    headerWriter := binary::Writer::init(header[:]);
+    error writeError = headerWriter.writeBig<u64>(index);
+    if writeError == none {
+        writeError = headerWriter.writeBig<u64>(payloadLength.cast<u64>);
+    }
+    if writeError == none {
+        writeError = headerWriter.write(previousHash);
+    }
+    if writeError != none {
+        return (output, none, writeError);
+    }
+
+    digest, digestError := hash_block(header[:], payload);
+    if digestError != none {
+        return (output, none, digestError);
+    }
+    [32]u8 digestBytes = model::copy_digest(digest.bytes());
+
+    writeError = output.write(header[:]);
+    if writeError == none {
+        writeError = output.write(payload.cast<[]const u8>);
+    }
+    if writeError == none {
+        writeError = output.write(digestBytes[:]);
+    }
+    return (output, digestBytes, writeError);
+}
+
+(sha2::Sha256Digest, error) hash_block(
+    []const u8 header,
+    stringv payload
+) {
+    hasher := sha2::Sha256::init();
+    error digestError = hasher.update(HASH_DOMAIN.cast<[]const u8>);
+    if digestError == none {
+        digestError = hasher.update(header);
+    }
+    if digestError == none {
+        digestError = hasher.update(payload.cast<[]const u8>);
+    }
+    if digestError != none {
+        return (none, digestError);
+    }
+    return hasher.finalize();
+}
+
+export (collections::Array<model::Block>, error) parse(stringv contents) {
+    blocks := collections::Array<model::Block>::init();
+    if contents.len() < FILE_HEADER.len() or
+        contents.substr(0, FILE_HEADER.len()) != FILE_HEADER {
+        return (blocks, model::LedgerError.InvalidFormat);
+    }
+
+    source := contents.cast<[]const u8>;
+    reader := binary::Reader::init(source[FILE_HEADER.len().cast<usize>:]);
+    u64 expectedIndex = 0;
+    [32]u8 expectedPrevious = none;
+
+    while !reader.empty() {
+        if reader.remaining() < RECORD_OVERHEAD {
+            return (blocks, model::LedgerError.InvalidFormat);
+        }
+
+        index, indexError := reader.readBig<u64>();
+        payloadLength, lengthError := reader.readBig<u64>();
+        if indexError != none or lengthError != none {
+            return (blocks, model::LedgerError.InvalidFormat);
+        }
+        [32]u8 previousValue = none;
+        {
+            previous, previousError := reader.read(DIGEST_SIZE);
+            if previousError != none {
+                return (blocks, model::LedgerError.InvalidFormat);
+            }
+            previousValue = model::copy_digest(previous);
+        }
+        if payloadLength > (reader.remaining() - DIGEST_SIZE).cast<u64> {
+            return (blocks, model::LedgerError.InvalidFormat);
+        }
+
+        string payload = none;
+        {
+            payloadBytes, payloadError := reader.read(
+                payloadLength.cast<usize>
+            );
+            if payloadError != none {
+                return (blocks, model::LedgerError.InvalidFormat);
+            }
+            error allocationError;
+            payload, allocationError = strings::string_from_bytes(payloadBytes);
+            if allocationError != none {
+                return (blocks, allocationError);
+            }
+        }
+        [32]u8 digestValue = none;
+        {
+            storedDigest, storedError := reader.read(DIGEST_SIZE);
+            if storedError != none {
+                return (blocks, model::LedgerError.InvalidFormat);
+            }
+            digestValue = model::copy_digest(storedDigest);
+        }
+        if index != expectedIndex or
+            !sequence::constant_time_equal(
+                previousValue[:],
+                expectedPrevious[:]
+            ) {
+            return (blocks, model::LedgerError.IntegrityFailure);
+        }
+
+        [48]u8 canonicalHeader = none;
+        canonicalWriter := binary::Writer::init(canonicalHeader[:]);
+        error canonicalError = canonicalWriter.writeBig<u64>(index);
+        if canonicalError == none {
+            canonicalError = canonicalWriter.writeBig<u64>(payloadLength);
+        }
+        if canonicalError == none {
+            canonicalError = canonicalWriter.write(previousValue[:]);
+        }
+        if canonicalError != none {
+            return (blocks, canonicalError);
+        }
+
+        calculated, digestError := hash_block(
+            canonicalHeader[:],
+            payload.view()
+        );
+        if digestError != none {
+            return (blocks, digestError);
+        }
+        if !sequence::constant_time_equal(calculated.bytes(), digestValue[:]) {
+            return (blocks, model::LedgerError.IntegrityFailure);
+        }
+
+        pushError := blocks.push(model::Block::init(
+            index,
+            previousValue,
+            payload,
+            digestValue
+        ));
+        if pushError != none {
+            return (blocks, pushError);
+        }
+
+        expectedPrevious = digestValue;
+        expectedIndex++;
+        if expectedIndex == 0 and !reader.empty() {
+            return (blocks, model::LedgerError.InvalidFormat);
+        }
+    }
+
+    return (blocks, none);
+}
+

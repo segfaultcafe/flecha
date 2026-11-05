@@ -6,6 +6,10 @@ structure fields. They do not change the raw-pointer representation or ABI.
 References use their existing checked-access rules and never take either keyword:
 `own &T` and `lend &T` are invalid.
 
+The separate `own []T` spelling is a first-class, compiler-managed owning slice,
+not a raw-pointer ownership contract. It has automatic destruction and safe
+checked access; see [runtime arrays](dynamic_arrays.md).
+
 ```flecha
 unsafe void release(own *i32 pointer) { free(pointer); }
 unsafe i32 read(lend *const i32 pointer) {

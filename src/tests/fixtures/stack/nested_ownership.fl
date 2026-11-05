@@ -1,0 +1,99 @@
+module nested_ownership;
+
+@imports :: lib::std::containers::collections;
+
+i32 checkTwoLevels() {
+    outer := collections::Stack<collections::Stack<i32>>::init();
+
+    loop i32 row = 0; row < 5; row++ {
+        inner := collections::Stack<i32>::init();
+
+        loop i32 column = 0; column < 5; column++ {
+            if inner.push(row * 10 + column) != none {
+                return 1;
+            }
+        }
+
+        if inner.capacity() != 8 or outer.push(inner) != none {
+            return 2;
+        }
+    }
+
+    if outer.len() != 5 or outer.capacity() != 8 {
+        return 3;
+    }
+
+    inner, outerPopError := outer.pop();
+    if outerPopError != none or inner.len() != 5 or inner.capacity() != 8 {
+        return 4;
+    }
+
+    value, innerPopError := inner.pop();
+    if innerPopError != none or value != 44 {
+        return 5;
+    }
+
+    outer.clear();
+    if !outer.empty() or outer.capacity() != 8 {
+        return 6;
+    }
+
+    return 42;
+}
+
+i32 checkThreeLevels() {
+    outer := collections::Stack<collections::Stack<collections::Stack<i32>>>::init();
+
+    loop i32 group = 0; group < 5; group++ {
+        middle := collections::Stack<collections::Stack<i32>>::init();
+
+        loop i32 row = 0; row < 5; row++ {
+            inner := collections::Stack<i32>::init();
+
+            loop i32 column = 0; column < 5; column++ {
+                if inner.push(group * 100 + row * 10 + column) != none {
+                    return 7;
+                }
+            }
+
+            if middle.push(inner) != none {
+                return 8;
+            }
+        }
+
+        if middle.capacity() != 8 or outer.push(middle) != none {
+            return 9;
+        }
+    }
+
+    middle, outerPopError := outer.pop();
+    if outerPopError != none {
+        return 10;
+    }
+
+    inner, middlePopError := middle.pop();
+    if middlePopError != none {
+        return 11;
+    }
+
+    value, innerPopError := inner.pop();
+    if innerPopError != none or value != 444 {
+        return 12;
+    }
+
+    outer.clear();
+    if !outer.empty() or outer.capacity() != 8 {
+        return 13;
+    }
+
+    return 42;
+}
+
+i32 main() {
+    result := checkTwoLevels();
+    if result != 42 {
+        return result;
+    }
+
+    return checkThreeLevels();
+}

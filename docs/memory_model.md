@@ -3,6 +3,10 @@
 Status: implemented behavior is identified below; broader ownership sections
 remain design proposals.
 
+The cross-feature safety contract is defined by
+[memory safety invariants](memory_safety_invariants.md). This document explains
+the mechanisms and implementation status that preserve those invariants.
+
 The agreed `own` / `lend` contracts are now implemented as described in
 [ownership contracts](ownership_contracts.md). References never take either
 keyword. Whole-value move-by-default semantics are implemented for
@@ -18,10 +22,10 @@ preferred fixed-binding spellings are `constptr T` for `const *T` and
 `constref T` for `const &T`. Existing string copy semantics remain unchanged.
 
 Pointers, fixed arrays, checked references and slices, borrowed-result
-contracts, raw allocation, ownership contracts, aggregate moves, and deferred
-direct calls are implemented. Their focused feature guides are normative for
-the current compiler. Safe heap-owner primitives, custom allocators, partial
-moves, and moving elements within dynamic containers remain proposals. Current
+contracts, raw allocation, ownership contracts, `own []T` safe heap owners,
+aggregate moves, and deferred direct calls are implemented. Their focused
+feature guides are normative for the current compiler. Custom allocators,
+partial moves, and moving elements within dynamic containers remain proposals. Current
 behavior is recorded in [definite assignment](definite_assignment.md),
 [strings](string.md), [const declarations and types](const_types.md),
 [checked references](checked_references.md), [checked slices](checked_slices.md),
@@ -41,37 +45,36 @@ any of it.
 | Shared reference `&const T`, shared slice `[]const T`, or `stringv` | Borrow existing storage | Copy the view, preserving its lifetime restrictions |
 | Mutable reference `&T` or mutable slice `[]T` | Borrow storage for exclusive access | Transfer the borrow; do not duplicate exclusive access |
 | Standalone owning string | Release its allocation exactly once | Copy with independent storage; existing string semantics are unchanged |
+| Owning slice `own []T` | Release its runtime-sized buffer automatically | Move the owner; borrow it with slicing |
 | Noncopyable aggregate with safe tear | Run typed teardown exactly once | Move the complete value and transfer cleanup responsibility |
 | Aggregate with unsafe tear | Run address-sensitive teardown exactly once | Immovable after construction; borrow it instead |
 | Fixed-size array | Store elements inline; own their element values | Copy if every element is implicitly copyable; otherwise transfer the array |
 
-A slice is never an owning growable array. A raw pointer is never implicitly
-freed. Shared ownership, reference counting, and garbage collection are not
-part of the initial model.
+An ordinary `[]T` slice is only a borrow; `own []T` is its explicit owning
+counterpart. Neither form is inherently growable. A raw pointer is never
+implicitly freed. Shared ownership, reference counting, and garbage collection
+are not part of the initial model.
 
 ## 2. Initialization and validity
 
-A declaration without an initializer creates a variable that cannot be read
-until assigned on every reachable path. It does not request an observable
-zero value. `none` explicitly requests a type's defined zero value where that
-conversion is supported.
-
-These are distinct:
+A declaration may omit its initializer only when its type is trivially
+zeroable. Omission requests the same observable zero value as `= none`, so
+these are equivalent:
 
 ```flecha
-i32 count;          // must be assigned before a read
+i32 count;          // initialized to zero
 i32 zero = none;    // initialized to zero
 ```
 
-The same distinction will apply to raw pointer variables: an initialized null
-pointer is a valid pointer value, but it does not designate an accessible
-object. Initializing a pointer says nothing about the initialization of its
-pointee.
+Types whose default construction performs work must spell `= none`
+explicitly. This keeps nontrivial initialization visible at the declaration.
 
-Taking a raw address initially requires a live, initialized variable. Writing
-through a raw pointer does not, by itself, prove another local initialized to
-the definite-assignment checker. Explicit uninitialized buffers, out-parameters,
-and tracked indirect initialization are later features.
+For raw pointer variables, the trivial zero is null. It is a valid pointer
+value, but it does not designate an accessible object. Initializing a pointer
+says nothing about the initialization of its pointee.
+
+Taking a raw address requires a live variable. Explicit uninitialized buffers,
+out-parameters, and tracked indirect initialization are later features.
 
 Initially, arrays must be initialized as whole values before producing a safe
 slice. Partial element initialization and partial moves of aggregates are
@@ -287,8 +290,8 @@ const i32 limit = 42;
 // increment(&limit);   // error: cannot mutably borrow const storage
 ```
 
-Initially require a declaration initializer. Single delayed initialization of
-const variables may be added later with exactly-once assignment analysis.
+A const declaration may use the same trivial-zero initializer omission as a
+mutable declaration. Other const types require an explicit initializer.
 `const` does not mean compile-time evaluation; runtime expressions may initialize
 const bindings.
 
@@ -471,6 +474,12 @@ scalar buffers use `new<[]T>(count)` and return a move-only `*[]T` owner carryin
 `{data, length}`. Their count is evaluated before allocation and their elements
 start zeroed. See [dynamic arrays](dynamic_arrays.md). `free(null)` is a no-op.
 
+Safe code uses `new<own []T>(count)` for the same supported element set. Its
+`own []T` result is bounds checked, move-only, and automatically released at
+scope exit, including when nested in a structure. Slicing it produces a
+borrowed `[]T` whose lifetime prevents moving or destroying the owner while the
+view is live. The raw `new<[]T>` / `free` form remains available in unsafe code.
+
 Raw allocation and free require an unsafe function or block. Allocations are
 not implicitly freed at the end of an unsafe block: allocation lifetime is
 independent of unsafe permission. Explicit free, executed deferred free, or an
@@ -488,12 +497,13 @@ states across CFG edges and visible nonrecursive calls. Counting free statements
 is insufficient. Leaks, double frees, use-after-free, known invalid frees, null
 paths, and unsupported ownership escapes are compile-time errors. Bounded call
 interpretation handles local helpers and factories; explicit `own` / `lend`
-contracts cover annotated and recursive functions. Inferred recursive summaries
-and ownership contracts for external declarations remain future work. See
-[raw_allocation.md](raw_allocation.md)
-for exact limits. Arbitrary raw-pointer manipulation and the validity of external
-input pointers remain programmer obligations inside unsafe code; complete static
-memory safety is not promised.
+contracts cover annotated and recursive raw-pointer functions. Recursive calls
+that carry only safe values use declared-shape summaries while their bodies are
+checked independently. Inferred recursive raw-pointer effects and ownership
+contracts for external declarations remain future work. See
+[raw_allocation.md](raw_allocation.md) for exact limits. Arbitrary raw-pointer
+manipulation and the validity of external input pointers remain programmer
+obligations inside unsafe code; complete static memory safety is not promised.
 
 A null-aware operation such as the proposed
 `ptr->safe_set(value)` can allocate and initialize when ptr is null,
@@ -604,8 +614,8 @@ Agreed direction:
 
 Next proposals to settle:
 
-1. More expressive borrowed-result contracts for results that may originate
-   from multiple inputs; the single-origin `<- origin` form is implemented.
+1. More general inferred resource effects beyond explicit single-source,
+   grouped-source, and `<- ...args` result-origin contracts.
 2. Reference borrowing of strings/views and nested reference storage.
 3. Ownership contracts for external declarations and more general inferred
    recursive effects.
@@ -620,9 +630,9 @@ is documented in [const declarations and types](const_types.md). Unsafe pointer 
 Checked scalar and pointer-slot references are documented in
 [checked references](checked_references.md). Checked slices, system allocation,
 direct, indirect, and member deferred calls, explicit cross-function ownership
-contracts, general whole-value moves, and single-origin borrowed-result
-contracts are also implemented. More general inferred resource effects remain
-future work. Named and generic
+contracts, general whole-value moves, and single- and multi-origin
+borrowed-result contracts are also implemented. More general inferred resource
+effects remain future work. Named and generic
 [error values](error_values.md) are implemented.
 [Tuples and destructuring](tuples.md) are implemented.
 

@@ -45,19 +45,37 @@ class Parser {
     const Token& Advance();
     bool Match(TokenType type);
     const Token* Consume(TokenType type, std::string_view expectation);
+    const Token* ConsumeTypeArgumentClose(std::string_view expectation);
     [[nodiscard]] bool StartsType() const;
     [[nodiscard]] bool IsTypeToken(TokenType type) const;
     bool ScanType(std::size_t& offset) const;
+    bool ScanType(std::size_t& offset, bool& pendingGreater) const;
     bool ScanTypeArguments(std::size_t& offset) const;
+    bool ScanTypeArguments(std::size_t& offset, bool& pendingGreater) const;
+    [[nodiscard]] TokenType ScanToken(std::size_t offset,
+                                      bool pendingGreater) const;
+    bool ScanGreater(std::size_t& offset, bool& pendingGreater) const;
     std::vector<std::unique_ptr<TypeNode>> ParseTypeArguments();
-    std::vector<std::string> ParseGenericParameters();
+    std::vector<std::string> ParseGenericParameters(
+        std::map<std::string, std::string>* constraints = nullptr);
     std::unique_ptr<StructureDeclaration> ParseStructureDeclaration();
+    std::unique_ptr<TypeSetDeclaration> ParseTypeSetDeclaration();
+    std::unique_ptr<DecorationDeclaration> ParseDecorationDeclaration();
+    std::vector<DecorationApplication> ParseDecorations();
+    std::unique_ptr<ModuleConstantDeclaration> ParseModuleConstantDeclaration();
     std::unique_ptr<ErrorDeclaration> ParseErrorDeclaration();
     std::unique_ptr<EnumDeclaration> ParseEnumDeclaration();
     std::unique_ptr<Declaration> ParseDeclaration();
+    [[nodiscard]] bool IsModuleConstantDeclaration() const;
     std::unique_ptr<FunctionDeclaration> ParseTestDeclaration();
     std::unique_ptr<CallableTypeDeclaration> ParseCallableTypeDeclaration();
     std::unique_ptr<FunctionDeclaration> ParseFunctionDeclaration();
+    bool ParseBorrowSources(
+        const std::vector<std::unique_ptr<Parameter>>& parameters,
+        std::vector<std::string>& sources,
+        std::vector<source::SourceRange>& ranges,
+        const std::string* variadicPackName = nullptr,
+        bool* borrowsVariadicPack = nullptr);
     std::unique_ptr<TypeNode> ParseType(bool allowOwn = false,
                                         bool allowLend = false,
                                         bool allowTupleOwners = false);
@@ -72,8 +90,8 @@ class Parser {
     bool HasParenthesizedBindings() const;
     bool IsDestructureStatement() const;
     std::unique_ptr<Statement> ParseDestructureStatement();
-    std::unique_ptr<VariableDeclarationStatement>
-    ParseVariableDeclarationStatement();
+    std::vector<std::unique_ptr<VariableDeclarationStatement>>
+    ParseVariableDeclarationStatements();
     std::unique_ptr<ReturnStatement> ParseReturnStatement();
     std::unique_ptr<IfStatement> ParseIfStatement();
     std::unique_ptr<WhileStatement> ParseWhileStatement();
@@ -92,7 +110,7 @@ class Parser {
     std::unique_ptr<Expression> ParseUnaryExpression();
     std::unique_ptr<Expression> ParsePostfixExpression();
     std::vector<std::unique_ptr<Expression>> ParseArgumentList(
-        source::SourceLocation& end);
+        source::SourceLocation& end, std::vector<bool>* expandedArguments);
     std::unique_ptr<Expression> ParsePrimaryExpression();
     [[nodiscard]] bool IsAnonymousFunctionStart() const;
     [[nodiscard]] int BinaryPrecedence(TokenType type) const;
@@ -105,6 +123,7 @@ class Parser {
     std::string _anonymousFunctionPrefix;
     std::size_t _position = 0;
     std::size_t _rangeId = 0;
+    Token _splitGreater;
     diagnostics::DiagnosticBag& _diagnostics;
 };
 

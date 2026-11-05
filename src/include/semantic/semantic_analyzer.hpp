@@ -21,6 +21,7 @@ class SemanticAnalyzer final {
    private:
     void SetSource(const std::string& id);
     void BindImports(const core::CompilationUnit& unit);
+    void ValidateDecorations(const core::CompilationUnit& unit);
     void ValidateExports(const core::CompilationUnit& unit);
     bool ReportInaccessibleImport(const std::string& name,
                                   source::SourceRange range);
@@ -36,8 +37,7 @@ class SemanticAnalyzer final {
         _inaccessibleImports;
     std::unordered_map<
         std::string,
-        std::unordered_map<std::string,
-                           std::vector<const core::Declaration*>>>
+        std::unordered_map<std::string, std::vector<const core::Declaration*>>>
         _ambiguousImports;
     std::unordered_map<std::string, std::string> _quiverNames;
     std::unordered_set<std::string> _entryModules;
@@ -72,6 +72,11 @@ class SemanticAnalyzer final {
     void RegisterEnums(const core::CompilationUnit& unit);
     void DeclareCallableTypes(const core::CompilationUnit& unit);
     void ResolveCallableTypes(const core::CompilationUnit& unit);
+    void RegisterModuleConstants(const core::CompilationUnit& unit);
+    void AnalyzeModuleConstants(const core::CompilationUnit& unit);
+    bool ValidateModuleConstantExpression(
+        const core::Expression& expression,
+        std::vector<const Symbol*>& dependencies) const;
     SemanticType AnalyzeMemberAccess(
         const core::MemberAccessExpression& expression);
     void RegisterStructures(const core::CompilationUnit& unit);
@@ -79,9 +84,18 @@ class SemanticAnalyzer final {
     void RegisterFunction(const core::FunctionDeclaration& function,
                           bool generated = false);
     void GenerateInitializers();
+    void GenerateJsonMethods();
     SemanticType AnalyzeBuild(const core::BuildExpression& expression);
     SemanticType AnalyzeStructureCall(
         const core::MemberCallExpression& expression, SemanticType receiver);
+    std::vector<const FunctionSymbol*> LookupFunctions(
+        std::string_view name) const;
+    const FunctionSymbol* ResolveOverload(
+        std::string_view displayName,
+        const std::vector<const FunctionSymbol*>& candidates,
+        const std::vector<std::unique_ptr<core::Expression>>& arguments,
+        source::SourceRange range, bool isStatic = true,
+        SemanticType receiver = SemanticType::Error());
     void CheckTransfer(const core::Expression& expression, SemanticType type,
                        bool consumingOwnership = false);
     void WarnForNontrivialDefault(SemanticType type, source::SourceRange range);
@@ -97,6 +111,8 @@ class SemanticAnalyzer final {
     void RegisterBuiltIns();
     void RegisterFunctions(const core::CompilationUnit& unit);
     void AnalyzeFunction(const core::FunctionDeclaration& function);
+    void AnalyzeVariadicFunction(const core::FunctionDeclaration& function);
+    void AnalyzeDefaultArguments(const core::FunctionDeclaration& function);
     void AnalyzeBlock(const core::BlockStatement& block, bool createScope);
     void AnalyzeStatement(const core::Statement& statement);
     void AnalyzeBranch(const core::ConditionalBranch& branch);
@@ -117,13 +133,22 @@ class SemanticAnalyzer final {
         const core::AssignmentExpression& expression);
     SemanticType AnalyzeAllocationCall(const core::CallExpression& expression,
                                        BuiltInFunction intrinsic);
+    SemanticType AnalyzeHashCall(const core::CallExpression& expression);
+    SemanticType AnalyzeStorageCall(const core::CallExpression& expression,
+                                    BuiltInFunction intrinsic);
     SemanticType AnalyzeCall(const core::CallExpression& expression);
     SemanticType AnalyzeMemberCall(
         const core::MemberCallExpression& expression);
+    void ValidateCrashableCall(bool markedCrashable,
+                               const CallableSignature& signature,
+                               const FunctionSymbol* function,
+                               source::SourceRange range);
+    void WarnForCrashlessFunctions();
     SemanticType AnalyzeSlice(const core::SliceExpression& expression,
                               SemanticType expected);
     SemanticType AnalyzeIndex(const core::IndexExpression& expression);
     SemanticType AnalyzeCast(const core::CastExpression& expression);
+    SemanticType AnalyzeIsOf(const core::IsOfExpression& expression);
     [[nodiscard]] bool BorrowsLocalString(
         const core::Expression& expression) const;
     const Symbol* AddSymbol(std::unique_ptr<Symbol> symbol,
@@ -145,11 +170,19 @@ class SemanticAnalyzer final {
     std::unordered_map<const FunctionSymbol*,
                        std::unordered_set<const FunctionSymbol*>>
         _functionCalls;
+    std::unordered_map<const FunctionSymbol*,
+                       std::unordered_set<const FunctionSymbol*>>
+        _crashableCalls;
+    std::unordered_set<const FunctionSymbol*> _directCrashFunctions;
     std::unordered_set<const FunctionSymbol*> _forbiddenZeroEffects;
+    std::vector<
+        std::pair<const core::VariableDeclarationStatement*, SemanticType>>
+        _implicitDefaults;
     std::size_t _loopDepth = 0;
     bool _inUnsafe = false;
     bool _inZero = false;
     bool _zeroTrivialityKnown = false;
+    bool _allowStringReference = false;
     std::unordered_set<const core::Expression*> _directConstructions;
     std::unordered_map<const core::CallableTypeDeclaration*,
                        std::shared_ptr<CallableSignature>>
@@ -158,6 +191,7 @@ class SemanticAnalyzer final {
     bool _allowBuildSelf = false;
     std::size_t _buildDepth = 0;
     bool _analyzingCallCallee = false;
+    bool _callCalleeCrashable = false;
 };
 
 }  // namespace flecha::semantic

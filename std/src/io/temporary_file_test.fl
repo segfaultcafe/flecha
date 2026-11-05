@@ -1,0 +1,195 @@
+module file_test;
+
+@imports
+    :: root::io::file
+    :: root::io::filesystem
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test empty_temporary_files_are_inert(&testing::UnitTest t) {
+    file::TemporaryFile temporary = none;
+    asserts::is_false(t, temporary.isOpen(), "the zero value is closed");
+    asserts::is_true(t, temporary.path().len() == 0, "the zero path is empty");
+    asserts::is_true(
+        t,
+        temporary.remove() == none,
+        "removing the zero value is an idempotent no-op"
+    );
+}
+
+test temporary_files_round_trip_bytes_and_remove_explicitly(
+    &testing::UnitTest t
+) {
+    temporary, creationError := file::TemporaryFile::create();
+    asserts::is_true(t, creationError == none, "temporary creation succeeds");
+    asserts::is_true(t, temporary.isOpen(), "the temporary file starts open");
+    asserts::is_true(
+        t,
+        temporary.path().len() > 0,
+        "the temporary file owns an absolute path"
+    );
+    if creationError != none {
+        return;
+    }
+
+    string ownedPath = temporary.path().string();
+    present, existsError := filesystem::exists(ownedPath.view());
+    asserts::is_true(
+        t,
+        existsError == none and present,
+        "the temporary path exists while owned"
+    );
+
+    {
+        handle := temporary.file();
+        asserts::is_true(
+            t,
+            handle->writeAllString("temporary bytes") == none,
+            "the borrowed file accepts writes"
+        );
+        position, seekError := handle->seek(0, file::SeekFrom.Start);
+        asserts::is_true(
+            t,
+            seekError == none and position == 0,
+            "the borrowed file seeks to its beginning"
+        );
+        [15]u8 bytes = none;
+        asserts::is_true(
+            t,
+            handle->readExact(bytes[:]) == none and
+                bytes[0].cast<char> == 't' and
+                bytes[14].cast<char> == 's',
+            "the same temporary handle reads the written bytes"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        temporary.remove() == none,
+        "explicit removal reports success"
+    );
+    asserts::is_false(t, temporary.isOpen(), "removal closes the file");
+    asserts::is_true(
+        t,
+        temporary.path().len() == 0,
+        "removal disarms automatic cleanup"
+    );
+    present, existsError = filesystem::exists(ownedPath.view());
+    asserts::is_true(
+        t,
+        existsError == none and !present,
+        "explicit removal removes the path"
+    );
+    asserts::is_true(
+        t,
+        temporary.remove() == none,
+        "explicit removal is idempotent"
+    );
+}
+
+test moved_temporary_files_clean_up_exactly_once(&testing::UnitTest t) {
+    string ownedPath = none;
+    {
+        temporary, creationError := file::TemporaryFile::create();
+        asserts::is_true(t, creationError == none, "temporary creation succeeds");
+        if creationError != none {
+            return;
+        }
+
+        ownedPath = temporary.path().string();
+        moved := temporary;
+        {
+            handle := moved.file();
+            asserts::is_true(
+                t,
+                handle->writeAllString("owned") == none,
+                "a moved temporary file remains writable"
+            );
+            asserts::is_true(
+                t,
+                handle->close() == none,
+                "the borrowed file may be closed explicitly"
+            );
+        }
+
+        present, existsError := filesystem::exists(ownedPath.view());
+        asserts::is_true(
+            t,
+            existsError == none and present and !moved.isOpen(),
+            "closing the handle does not remove the owned path early"
+        );
+    }
+
+    present, existsError := filesystem::exists(ownedPath.view());
+    asserts::is_true(
+        t,
+        existsError == none and !present,
+        "the moved owner removes the path during teardown"
+    );
+}
+
+test failed_removal_preserves_the_path_for_retry(&testing::UnitTest t) {
+    temporary, creationError := file::TemporaryFile::create();
+    asserts::is_true(t, creationError == none, "temporary creation succeeds");
+    if creationError != none {
+        return;
+    }
+
+    string ownedPath = temporary.path().string();
+    {
+        handle := temporary.file();
+        asserts::is_true(
+            t,
+            handle->close() == none,
+            "the temporary handle closes before replacement"
+        );
+    }
+    asserts::is_true(
+        t,
+        filesystem::remove_file(ownedPath.view()) == none,
+        "the original file can be removed externally"
+    );
+    asserts::is_true(
+        t,
+        filesystem::create_directory(ownedPath.view()) == none,
+        "a directory can occupy the generated path for this failure test"
+    );
+
+    removalError := temporary.remove();
+    asserts::is_true(t, removalError != none, "directory removal is rejected");
+    asserts::is_true(
+        t,
+        temporary.path() == ownedPath.view(),
+        "failed removal preserves the owned path"
+    );
+
+    asserts::is_true(
+        t,
+        filesystem::remove_directory(ownedPath.view(), false) == none,
+        "the blocking directory is removed"
+    );
+    asserts::is_true(
+        t,
+        temporary.remove() == none and temporary.path().len() == 0,
+        "retry treats the now-missing path as removed and disarms teardown"
+    );
+}
+
+test temporary_file_names_are_independent(&testing::UnitTest t) {
+    first, firstError := file::TemporaryFile::create();
+    second, secondError := file::TemporaryFile::create();
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none,
+        "independent temporary files are created"
+    );
+    if firstError != none or secondError != none {
+        return;
+    }
+
+    asserts::is_true(
+        t,
+        first.path() != second.path(),
+        "simultaneous temporary files have distinct paths"
+    );
+}

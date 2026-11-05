@@ -48,6 +48,14 @@ TEST(TokenizerTests, RecognizesTestKeyword) {
     EXPECT_EQ(tokens[1].type, TokenType::Identifier);
 }
 
+TEST(TokenizerTests, RecognizesTypeSetKeyword) {
+    const std::vector<Token> tokens = Tokenize("typeset numbers");
+
+    ASSERT_EQ(tokens.size(), 3u);
+    EXPECT_EQ(tokens[0].type, TokenType::TypeSet);
+    EXPECT_EQ(tokens[1].type, TokenType::Identifier);
+}
+
 TEST(TokenizerTests, RecognizesFunctionModifiersAndReservedWords) {
     std::vector<Token> tokens = Tokenize(
         "export quiver extern inline comptime yield if else while proceed "
@@ -86,6 +94,19 @@ TEST(TokenizerTests, RecognizesMultiCharacterOperators) {
     EXPECT_EQ(tokens[10].type, TokenType::EOF_TOKEN);
 }
 
+TEST(TokenizerTests, RecognizesBitwiseAndShiftOperators) {
+    const std::vector<Token> tokens = Tokenize("& | ^ ~ << >>");
+    const std::vector<TokenType> expected = {
+        TokenType::Ampersand, TokenType::BitOr,     TokenType::Xor,
+        TokenType::BitNot,    TokenType::ShiftLeft, TokenType::ShiftRight,
+        TokenType::EOF_TOKEN,
+    };
+
+    ASSERT_EQ(tokens.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        EXPECT_EQ(tokens[index].type, expected[index]);
+}
+
 TEST(TokenizerTests, RecognizesBorrowResultArrow) {
     std::vector<Token> tokens = Tokenize("<- < -");
 
@@ -95,6 +116,18 @@ TEST(TokenizerTests, RecognizesBorrowResultArrow) {
     EXPECT_EQ(tokens[1].type, TokenType::Less);
     EXPECT_EQ(tokens[2].type, TokenType::Sub);
     EXPECT_EQ(tokens[3].type, TokenType::EOF_TOKEN);
+}
+
+TEST(TokenizerTests, RecognizesVariadicEllipsisWithoutChangingMemberDots) {
+    const std::vector<Token> tokens = Tokenize("values... object.member");
+
+    ASSERT_EQ(tokens.size(), 6);
+    EXPECT_EQ(tokens[0].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[1].type, TokenType::Ellipsis);
+    EXPECT_EQ(tokens[1].value, "...");
+    EXPECT_EQ(tokens[2].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[3].type, TokenType::Dot);
+    EXPECT_EQ(tokens[4].type, TokenType::Identifier);
 }
 
 TEST(TokenizerTests, RecognizesTextualLogicalOperators) {
@@ -146,9 +179,48 @@ TEST(TokenizerTests, RecognizesIdentifiers) {
     EXPECT_EQ(tokens[2].type, TokenType::EOF_TOKEN);
 }
 
+TEST(TokenizerTests, PreservesForeignSourceAsOneRawToken) {
+    DiagnosticBag diagnostics;
+    const std::vector<Token> tokens = Tokenize(R"(
+foreign c {
+    // A comment containing a misleading }
+    const char* text = "{still raw}";
+    int value(void) { return text[0] == '{' ? 42 : 0; }
+}
+i32 main() { return 0; }
+)",
+                                               &diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_GE(tokens.size(), 2u);
+    ASSERT_EQ(tokens[0].type, TokenType::ForeignBlock);
+    const std::size_t languageEnd = tokens[0].value.find('\0');
+    const std::size_t lineEnd = tokens[0].value.find('\0', languageEnd + 1);
+    ASSERT_NE(languageEnd, std::string::npos);
+    ASSERT_NE(lineEnd, std::string::npos);
+    EXPECT_EQ(tokens[0].value.substr(0, languageEnd), "c");
+    const std::string body = tokens[0].value.substr(lineEnd + 1);
+    EXPECT_NE(body.find("const char* text = \"{still raw}\";"),
+              std::string::npos);
+    EXPECT_NE(body.find("int value(void) { return"), std::string::npos);
+    EXPECT_EQ(tokens[1].type, TokenType::I32);
+}
+
+TEST(TokenizerTests, ReportsUnterminatedForeignSource) {
+    DiagnosticBag diagnostics;
+    const std::vector<Token> tokens =
+        Tokenize("foreign asm { mov rax, 41", &diagnostics);
+
+    ASSERT_TRUE(diagnostics.HasErrors());
+    ASSERT_EQ(tokens[0].type, TokenType::Invalid);
+    EXPECT_EQ(diagnostics.Diagnostics()[0].code, DiagnosticCode::ExpectedToken);
+    EXPECT_NE(diagnostics.Diagnostics()[0].message.find("foreign source"),
+              std::string::npos);
+}
+
 TEST(TokenizerTests, RecognizesNumbers) {
-    std::vector<Token> tokens = Tokenize("123 0 3.14");
-    ASSERT_EQ(tokens.size(), 4);  // 3 numbers + EOF
+    std::vector<Token> tokens = Tokenize("123 0 3.14 0x6a09e667 0XCAFE");
+    ASSERT_EQ(tokens.size(), 6);  // 5 numbers + EOF
 
     EXPECT_EQ(tokens[0].type, TokenType::NumberLiteral);
     EXPECT_EQ(tokens[0].value, "123");
@@ -161,7 +233,13 @@ TEST(TokenizerTests, RecognizesNumbers) {
         TokenType::FloatLiteral);  // If floating-point numbers are supported
     EXPECT_EQ(tokens[2].value, "3.14");
 
-    EXPECT_EQ(tokens[3].type, TokenType::EOF_TOKEN);
+    EXPECT_EQ(tokens[3].type, TokenType::NumberLiteral);
+    EXPECT_EQ(tokens[3].value, "0x6a09e667");
+
+    EXPECT_EQ(tokens[4].type, TokenType::NumberLiteral);
+    EXPECT_EQ(tokens[4].value, "0XCAFE");
+
+    EXPECT_EQ(tokens[5].type, TokenType::EOF_TOKEN);
 }
 
 TEST(TokenizerTests, RecognizesSpecialCharacters) {
@@ -248,6 +326,18 @@ TEST(TokenizerTests, RecognizesStringLiterals) {
     EXPECT_EQ(tokens[2].value, "Escape \"quote\"");
 
     EXPECT_EQ(tokens[3].type, TokenType::EOF_TOKEN);
+}
+
+TEST(TokenizerTests, RecognizesDecorationKeyword) {
+    DiagnosticBag diagnostics;
+    const auto tokens =
+        Tokenizer("decoration json;", diagnostics).Tokenize();
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_GE(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, TokenType::Decoration);
+    EXPECT_EQ(tokens[1].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[1].value, "json");
 }
 
 TEST(TokenizerTests, UnterminatedStringLiteral) {
@@ -406,6 +496,22 @@ TEST(TokenizerTests, RecognizesLoopKeywordsAndAdjacentIncrement) {
         EXPECT_EQ(tokens[index].type, expected[index]);
     EXPECT_EQ(tokens[4].value, "++");
     EXPECT_EQ(tokens[4].range.end.offset - tokens[4].range.start.offset, 2);
+}
+
+TEST(TokenizerTests, RecognizesPostfixAndCompoundUpdateOperators) {
+    const std::vector<Token> tokens =
+        Tokenize("x++ x-- x += 1 x -= 1 x *= 2 x /= 2 x ^= 3");
+    const std::vector<TokenType> expected{
+        TokenType::Identifier,    TokenType::Increment,  TokenType::Identifier,
+        TokenType::Decrement,     TokenType::Identifier, TokenType::AddAssign,
+        TokenType::NumberLiteral, TokenType::Identifier, TokenType::SubAssign,
+        TokenType::NumberLiteral, TokenType::Identifier, TokenType::MulAssign,
+        TokenType::NumberLiteral, TokenType::Identifier, TokenType::DivAssign,
+        TokenType::NumberLiteral, TokenType::Identifier, TokenType::XorAssign,
+        TokenType::NumberLiteral, TokenType::EOF_TOKEN};
+    ASSERT_EQ(tokens.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        EXPECT_EQ(tokens[index].type, expected[index]);
 }
 
 TEST(TokenizerTests, RecognizesOwnershipContractsAsKeywords) {

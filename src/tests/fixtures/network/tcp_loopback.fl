@@ -1,0 +1,239 @@
+module tcp_loopback;
+
+@imports
+    :: lib::std::io::buffered
+    :: lib::std::net::address
+    :: lib::std::net::errors
+    :: lib::std::net::tcp
+    :: lib::std::time::duration;
+
+extern unsafe u16 flecha_test_tcp_start_server();
+extern unsafe i32 flecha_test_tcp_join_server();
+extern unsafe i32 flecha_test_tcp_start_client(u16 port);
+extern unsafe i32 flecha_test_tcp_join_client();
+
+address::SocketAddress loopback(u16 port) {
+    return address::SocketAddress::fromIpv4(
+        address::Ipv4SocketAddress::fromParts(
+            address::Ipv4Address::loopback(),
+            port
+        )
+    );
+}
+
+void fill_payload(&[8192]u8 payload) {
+    loop usize index = 0; index < (*payload).len(); index++ {
+        (*payload)[index] = (index % 251).cast<u8>;
+    }
+}
+
+bool valid_payload(&const [8192]u8 payload) {
+    loop usize index = 0; index < (*payload).len(); index++ {
+        if (*payload)[index] != ((index % 251).cast<u8> ^ 90) {
+            return false;
+        }
+    }
+    return true;
+}
+
+error write_buffered(&tcp::Stream stream, []const u8 source) {
+    writer := stream->writer();
+    output, allocationError :=
+        buffered::BufferedWriter::withCapacity(writer, 257);
+    if allocationError != none {
+        return allocationError;
+    }
+
+    usize offset = 0;
+    while offset < source.len() {
+        usize end = offset + 100;
+        if end > source.len() {
+            end = source.len();
+        }
+        writeError := output.writeAll(source[offset:end]);
+        if writeError != none {
+            return writeError;
+        }
+        offset = end;
+    }
+    return output.flush();
+}
+
+error read_buffered(&tcp::Stream stream, []u8 destination) {
+    reader := stream->reader();
+    input, allocationError :=
+        buffered::BufferedReader::withCapacity(reader, 113);
+    if allocationError != none {
+        return allocationError;
+    }
+
+    usize offset = 0;
+    while offset < destination.len() {
+        usize end = offset + 89;
+        if end > destination.len() {
+            end = destination.len();
+        }
+        readError := input.readExact(destination[offset:end]);
+        if readError != none {
+            return readError;
+        }
+        offset = end;
+    }
+
+    [1]u8 extra = none;
+    count, eofError := input.read(extra[:]);
+    if count != 0 {
+        return errors::NetworkError.ReadFailed;
+    }
+    return eofError;
+}
+
+i32 exercise_flecha_client() {
+    u16 port = 0;
+    unsafe {
+        port = flecha_test_tcp_start_server();
+    }
+    if port == 0 {
+        return 1;
+    }
+
+    connection, connectError := tcp::Stream::connectWithTimeout(
+        loopback(port),
+        duration::Duration::fromSeconds(3)
+    );
+    if connectError != none or !connection.isOpen() {
+        return 2;
+    }
+
+    moved := connection;
+    if moved.setReadTimeout(duration::Duration::fromMilliseconds(50)) != none {
+        return 3;
+    }
+    [1]u8 premature = none;
+    count, timeoutError := moved.read(premature[:]);
+    if count != 0 or timeoutError != errors::NetworkError.TimedOut {
+        return 4;
+    }
+    if moved.setReadTimeout(duration::Duration::fromSeconds(3)) != none or
+        moved.setWriteTimeout(duration::Duration::fromSeconds(3)) != none {
+        return 5;
+    }
+
+    [8192]u8 payload = none;
+    fill_payload(&payload);
+    if write_buffered(&moved, payload[:]) != none {
+        return 6;
+    }
+
+    [8192]u8 response = none;
+    if read_buffered(&moved, response[:]) != none or !valid_payload(&response) {
+        return 7;
+    }
+    if moved.close() != none or moved.isOpen() {
+        return 8;
+    }
+
+    i32 peerStatus = 0;
+    unsafe {
+        peerStatus = flecha_test_tcp_join_server();
+    }
+    if peerStatus != 0 {
+        return 9;
+    }
+
+    refused, refusalError := tcp::Stream::connectWithTimeout(
+        loopback(port),
+        duration::Duration::fromMilliseconds(250)
+    );
+    if refusalError != errors::NetworkError.ConnectionRefused or
+        refused.isOpen() {
+        return 21;
+    }
+    return 0;
+}
+
+i32 exercise_flecha_server() {
+    listener, bindError := tcp::Listener::bind(loopback(0), 16);
+    if bindError != none or !listener.isOpen() {
+        return 10;
+    }
+    movedListener := listener;
+
+    local, addressError := movedListener.localAddress();
+    localIpv4, isIpv4 := local.ipv4();
+    if addressError != none or !isIpv4 or localIpv4.port() == 0 {
+        return 11;
+    }
+
+    i32 startStatus = 0;
+    unsafe {
+        startStatus = flecha_test_tcp_start_client(localIpv4.port());
+    }
+    if startStatus != 0 {
+        return 12;
+    }
+
+    accepted, peer, acceptError := movedListener.accept();
+    _, peerIsIpv4 := peer.ipv4();
+    if acceptError != none or !accepted.isOpen() or !peerIsIpv4 {
+        return 13;
+    }
+    movedStream := accepted;
+    if movedStream.setReadTimeout(duration::Duration::fromSeconds(3)) != none or
+        movedStream.setWriteTimeout(duration::Duration::fromSeconds(3)) != none {
+        return 14;
+    }
+
+    [8192]u8 request = none;
+    reader := movedStream.reader();
+    input, inputError := buffered::BufferedReader::withCapacity(reader, 127);
+    if inputError != none {
+        return 15;
+    }
+    usize offset = 0;
+    while offset < request.len() {
+        usize end = offset + 83;
+        if end > request.len() {
+            end = request.len();
+        }
+        if input.readExact(request[offset:end]) != none {
+            return 16;
+        }
+        offset = end;
+    }
+    loop usize index = 0; index < request.len(); index++ {
+        if request[index] != (index % 251).cast<u8> {
+            return 17;
+        }
+        request[index] = request[index] ^ 90;
+    }
+
+    if write_buffered(&movedStream, request[:]) != none or
+        movedStream.shutdown(tcp::Shutdown.Write) != none {
+        return 18;
+    }
+    if movedStream.close() != none or movedListener.close() != none {
+        return 19;
+    }
+
+    i32 peerStatus = 0;
+    unsafe {
+        peerStatus = flecha_test_tcp_join_client();
+    }
+    if peerStatus != 0 {
+        return 20;
+    }
+    return 0;
+}
+
+i32 main() {
+    clientStatus := exercise_flecha_client();
+    if clientStatus != 0 {
+        return clientStatus;
+    }
+    serverStatus := exercise_flecha_server();
+    if serverStatus != 0 {
+        return serverStatus;
+    }
+    return 42;
+}

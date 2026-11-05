@@ -1,7 +1,7 @@
 module structures;
 
 @imports
-    :: lib::std::containers::array
+    :: lib::std::containers::collections
     :: lib::std::containers::errors;
 
 structure Token {
@@ -17,7 +17,7 @@ Token Token::zero() override {
 }
 
 i32 check_endpoints() {
-    tokens := array::Array<Token>::init();
+    tokens := collections::Array<Token>::init();
     if !tokens.empty() {
         return 6;
     }
@@ -51,7 +51,7 @@ i32 check_endpoints() {
 
 i32 main() {
     {
-        tokens := array::Array<Token>::init();
+        tokens := collections::Array<Token>::init();
         missing, empty := tokens.pop();
         if empty != errors::ArrayError.Empty || missing != none {
             return 1;

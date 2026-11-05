@@ -1,0 +1,161 @@
+module generator_test;
+
+@imports
+    :: root::random::errors
+    :: root::random::generator
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test seeded_generator_matches_the_xoshiro256_sequence(
+    &testing::UnitTest t
+) {
+    rng := generator::Generator::fromSeed(42);
+
+    const u64 FIRST = rng.integer();
+    const u64 SECOND = rng.integer();
+    const u64 THIRD = rng.integer();
+    const u64 FOURTH = rng.integer();
+
+    asserts::is_true(
+        t,
+        FIRST == 1546998764402558742 and
+            SECOND == 6990951692964543102 and
+            THIRD == 12544586762248559009 and
+            FOURTH == 17057574109182124193,
+        "seeded output follows the stable xoshiro256** sequence"
+    );
+}
+
+test integer_generation_supports_full_and_bounded_domains(
+    &testing::UnitTest t
+) {
+    first := generator::Generator::fromSeed(7);
+    second := generator::Generator::fromSeed(7);
+
+    const i8 FULL = first.integer<i8>();
+    const i8 SAME = second.integer<i8>();
+    bounded, boundedError := first.integerIn(-10, 11);
+    signedWide, signedWideError :=
+        first.integerIn<i64>(i64.min_value, i64.max_value);
+    unsignedWide, unsignedWideError :=
+        first.integerIn<u64>(0, u64.max_value);
+    single, singleError := first.integerIn<i8>(-128, -127);
+    _, equalError := first.integerIn<u64>(4, 4);
+    _, reversedError := first.integerIn<i16>(5, -5);
+
+    asserts::is_true(
+        t,
+        FULL == SAME,
+        "full-domain integer generation is reproducible"
+    );
+    asserts::is_true(
+        t,
+        boundedError == none and bounded >= -10 and bounded < 11,
+        "bounded integers use the requested half-open interval"
+    );
+    asserts::is_true(
+        t,
+        signedWideError == none and signedWide < i64.max_value and
+            unsignedWideError == none and unsignedWide < u64.max_value and
+            singleError == none and single == -128,
+        "bounded integers handle wide and single-value intervals"
+    );
+    asserts::is_true(
+        t,
+        equalError == errors::RandomError.InvalidRange and
+            reversedError == errors::RandomError.InvalidRange,
+        "empty and reversed integer intervals are rejected"
+    );
+}
+
+test float_and_boolean_generation_are_reproducible_and_bounded(
+    &testing::UnitTest t
+) {
+    first := generator::Generator::fromSeed(19);
+    second := generator::Generator::fromSeed(19);
+
+    const f32 NARROW = first.float();
+    const f64 WIDE = first.float();
+    const bool BOOLEAN = first.boolean();
+
+    asserts::is_true(
+        t,
+        NARROW >= (0.0 as f32) and NARROW < (1.0 as f32) and
+            WIDE >= 0.0 and WIDE < 1.0,
+        "floating generation stays in the unit interval"
+    );
+    asserts::is_true(
+        t,
+        NARROW == second.float<f32>() and
+            WIDE == second.float<f64>() and
+            BOOLEAN == second.boolean(),
+        "floating and boolean sequences are reproducible"
+    );
+}
+
+test empty_and_single_element_operations_are_noops(&testing::UnitTest t) {
+    rng := generator::Generator::fromSeed(31);
+    expected := generator::Generator::fromSeed(31);
+    [0]u8 emptyBytes = none;
+    [0]i32 emptyValues = none;
+    [1]i32 singleValue = [42];
+
+    rng.fill(emptyBytes[:]);
+    rng.shuffle(emptyValues[:]);
+    rng.shuffle(singleValue[:]);
+
+    asserts::is_true(
+        t,
+        singleValue[0] == 42 and
+            rng.integer<u64>() == expected.integer<u64>(),
+        "empty fills and zero-or-one-element shuffles do not advance state"
+    );
+}
+
+test fill_is_portable_and_shuffle_preserves_elements(&testing::UnitTest t) {
+    first := generator::Generator::fromSeed(42);
+    second := generator::Generator::fromSeed(42);
+    [10]u8 firstBytes = none;
+    [10]u8 secondBytes = none;
+
+    first.fill(firstBytes[:]);
+    second.fill(secondBytes[:]);
+
+    [5]i32 values = [1, 2, 3, 4, 5];
+    shuffleGenerator := generator::Generator::fromSeed(42);
+    shuffleGenerator.shuffle(values[:]);
+
+    bool everyValuePresent = true;
+    loop i32 expected = 1; expected <= 5; expected++ {
+        bool found = false;
+        loop usize index = 0; index < values.len(); index++ {
+            if values[index] == expected {
+                found = true;
+            }
+        }
+        if !found {
+            everyValuePresent = false;
+        }
+    }
+
+    bool bytesMatch = true;
+    loop usize index = 0; index < firstBytes.len(); index++ {
+        if firstBytes[index] != secondBytes[index] {
+            bytesMatch = false;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        bytesMatch and firstBytes[0] == 22 and firstBytes[1] == 199 and
+            firstBytes[7] == 21 and firstBytes[8] == 126 and
+            firstBytes[9] == 58,
+        "fill has a stable little-endian seeded sequence"
+    );
+    asserts::is_true(
+        t,
+        everyValuePresent and values[0] == 1 and values[1] == 2 and
+            values[2] == 4 and values[3] == 5 and values[4] == 3,
+        "shuffle preserves elements and has a stable seeded sequence"
+    );
+}

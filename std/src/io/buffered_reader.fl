@@ -1,0 +1,143 @@
+module buffered;
+
+@imports
+    :: root::io::errors
+    :: root::io::stream;
+
+// Owns read-ahead storage and a moved stream reader.
+export structure BufferedReader {
+    private {
+        stream::Reader reader = none;
+        own []u8 buffer;
+        usize start;
+        usize end;
+        error pendingError;
+        bool reachedEnd;
+    }
+};
+
+// Constructs the inert representation used by failed tuple results.
+BufferedReader BufferedReader::zero() override {
+    return build BufferedReader {
+        self.reader = none;
+        self.buffer = none;
+        self.start = 0;
+        self.end = 0;
+        self.pendingError = none;
+        self.reachedEnd = true;
+    };
+}
+
+// Allocates nonempty read-ahead storage and consumes reader on every outcome.
+(BufferedReader, error) BufferedReader::withCapacity(
+    stream::Reader reader,
+    usize capacity,
+) <-reader {
+    if capacity == 0 {
+        return (none, errors::IoError.InvalidOptions);
+    }
+
+    storage, allocationError := new<own []u8>(capacity);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    return (build BufferedReader {
+        self.reader = reader;
+        self.buffer = storage;
+        self.start = 0;
+        self.end = 0;
+        self.pendingError = none;
+        self.reachedEnd = false;
+    }, none);
+}
+
+// Reads available bytes, using read-ahead only for destinations below capacity.
+(usize, error) BufferedReader::read(&self, []u8 destination) {
+    if destination.len() == 0 {
+        return (none, none);
+    }
+
+    if self->start < self->end {
+        return self->consumeBuffered(destination);
+    }
+
+    if self->reachedEnd {
+        return (none, none);
+    }
+
+    if destination.len() >= self->buffer.len() {
+        count, readError := self->reader.read(destination);
+        if count > destination.len() {
+            return (none, errors::IoError.ReadFailed);
+        }
+        if count == 0 and readError == none {
+            self->reachedEnd = true;
+        }
+
+        return (count, readError);
+    }
+
+    count, readError := self->reader.read(self->buffer[:]);
+    if count > self->buffer.len() {
+        return (none, errors::IoError.ReadFailed);
+    }
+    if count == 0 {
+        if readError == none {
+            self->reachedEnd = true;
+        }
+        return (none, readError);
+    }
+
+    self->start = 0;
+    self->end = count;
+    self->pendingError = readError;
+    return self->consumeBuffered(destination);
+}
+
+// Fills destination or returns the first error or IoError.UnexpectedEof.
+error BufferedReader::readExact(&self, []u8 destination) {
+    usize offset = 0;
+    while offset < destination.len() {
+        count, readError := self->read(destination[offset:]);
+        if count > destination.len() - offset {
+            return errors::IoError.ReadFailed;
+        }
+
+        offset = offset + count;
+        if readError != none {
+            return readError;
+        }
+        if count == 0 {
+            return errors::IoError.UnexpectedEof;
+        }
+    }
+
+    return none;
+}
+
+private (usize, error) BufferedReader::consumeBuffered(
+    &self,
+    []u8 destination,
+) {
+    const usize AVAILABLE = self->end - self->start;
+    usize count = destination.len();
+    if count > AVAILABLE {
+        count = AVAILABLE;
+    }
+
+    loop usize index = 0; index < count; index++ {
+        destination[index] = self->buffer[self->start + index];
+    }
+    self->start = self->start + count;
+
+    if self->start < self->end {
+        return (count, none);
+    }
+
+    self->start = 0;
+    self->end = 0;
+    error result = self->pendingError;
+    self->pendingError = none;
+    return (count, result);
+}

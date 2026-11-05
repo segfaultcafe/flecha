@@ -74,8 +74,8 @@ cmake --build build --target package
 The archives contain the Flecha compiler, Longbow, their required shared
 runtime dependencies, the Flecha runtime and standard library, reference
 documentation, and Visual Studio Code and Neovim support.
-See [`docs/release_0_1.md`](docs/release_0_1.md) for the Linux, Windows, and
-macOS release gates.
+See [`docs/release_0_3.md`](docs/release_0_3.md) for the current Linux,
+Windows, and macOS release gates.
 
 ### Docker sandbox
 
@@ -136,6 +136,7 @@ The complete command-line form is:
 ```text
 flecha <check|build|test|--emit-llvm|--emit-object> <input.fl> [-o output]
        [--root source-directory] [--lib name=source-directory ...]
+       [--package-graph graph.json]
        [--link object-or-library ...]
 ```
 
@@ -158,6 +159,16 @@ void main() {
 ```
 
 Functions place the return type before the function name. Local type inference uses `:=`; explicit declarations are also supported. See [`SPEC.md`](SPEC.md) for the current syntax and design goals.
+
+Functions may overload by parameter types; return types alone never
+distinguish declarations. The selection, safety, foreign-function, and
+`stringv` byte-view rules are documented in
+[`docs/function_overloading.md`](docs/function_overloading.md).
+
+The standard formatting facade, `{}` replacement syntax, and console-output
+behavior are documented in [`docs/formatting.md`](docs/formatting.md).
+Command-line argument capture is documented in
+[`docs/os.md`](docs/os.md).
 
 ## Projects and packages with Longbow
 
@@ -186,24 +197,47 @@ kind = "program"
 [dependencies]
 ```
 
-Dependencies are local library paths and are resolved from the package's `src` directory:
+Dependencies may be recursive local paths, exact Git commits, or owner-scoped
+public registry packages. Imports use the local alias on the left, never the
+canonical registry identity:
 
 ```toml
 [dependencies]
 math = { path = "../math" }
+codec = { git = "https://example.com/team/codec.git", rev = "0123456789abcdef0123456789abcdef01234567" }
+json = { package = "flecha/json", version = "^1.2" }
 ```
+
+Longbow resolves these sources into a package-local alias graph, writes
+`longbow.lock`, and verifies shared cache entries before reuse. The compiler
+receives the resolved graph and never performs network access.
 
 Longbow's available commands are:
 
 ```text
 longbow new NAME [--lib]
 longbow init [--lib]
-longbow check|build|run|clean
-longbow test [--verbose]
+longbow add OWNER/PACKAGE@REQUIREMENT [--as ALIAS]
+longbow remove ALIAS
+longbow fetch [PROJECT]
+longbow update [ALIAS]
+longbow login
+longbow logout
+longbow whoami
+longbow publish [PROJECT] [--dry-run]
+longbow yank VERSION
+longbow check|build|run|clean [PROJECT]
+longbow test [PROJECT] [--verbose]
 longbow run -- [program arguments]
 ```
 
-See [`docs/modules.md`](docs/modules.md) for module layout, imports, aliases, and library resolution.
+`longbow add OWNER/PACKAGE@latest` selects the newest active stable release;
+the manifest stores the equivalent `*` requirement and the lockfile records the
+exact resolved version.
+
+See [`docs/longbow.md`](docs/longbow.md) for the complete project workflow and
+[`docs/package_ecosystem.md`](docs/package_ecosystem.md) for identities, locks,
+cache behavior, archives, and the registry protocol.
 
 ## Testing
 
@@ -261,6 +295,8 @@ Makefile                Convenient build, test, and example targets
 
 ## Documentation guide
 
+- [`docs/vision.md`](docs/vision.md) — the direction toward a self-hosted,
+  performant Flecha 1.0 and the possibilities beyond it
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes and upgrade-relevant changes
 - [`SPEC.md`](SPEC.md) — language goals, syntax, types, and current specification draft
 - [`docs/compiler.md`](docs/compiler.md) — compiler commands, outputs, and installed layout
@@ -272,18 +308,38 @@ Makefile                Convenient build, test, and example targets
 - [`docs/release_0_2.md`](docs/release_0_2.md) — v0.2.0 language and tooling design targets
 - [`docs/release_0_2_1.md`](docs/release_0_2_1.md) — v0.2.1 module-correctness milestone
 - [`docs/release_0_3.md`](docs/release_0_3.md) — v0.3.0 application-capable standard-library milestone
+- [`docs/release_0_3_0.md`](docs/release_0_3_0.md) — v0.3.0 release notes and upgrade guide
+- [`docs/standard_library.md`](docs/standard_library.md) — complete v0.3 public module and declaration index
 - [`docs/toolchains.md`](docs/toolchains.md) — supported compiler, LLVM, linker, SDK, and CI versions
 - [`docs/semantic_analysis.md`](docs/semantic_analysis.md) — name binding, types, scopes, and analysis pipeline
 - [`docs/llvm_codegen.md`](docs/llvm_codegen.md) — current LLVM backend scope and limitations
 - [`docs/modules.md`](docs/modules.md) — current modules, imports, and package libraries
+- [`docs/decorations.md`](docs/decorations.md) — declarative decoration metadata and the JSON derivation proof of concept
 - [`docs/module_composition.md`](docs/module_composition.md) — corrected 0.2.1 logical-module model
+- [`docs/memory_safety_invariants.md`](docs/memory_safety_invariants.md) — normative safety properties and the concurrency gate
 - [`docs/memory_model.md`](docs/memory_model.md) — memory model proposal and implementation status
 - [`docs/ownership_contracts.md`](docs/ownership_contracts.md) — `own` and `lend` contracts
 - [`docs/checked_references.md`](docs/checked_references.md) — checked reference behavior
 - [`docs/ref_and_slice_returns.md`](docs/ref_and_slice_returns.md) — returned reference and slice contracts
 - [`docs/dynamic_arrays.md`](docs/dynamic_arrays.md) and [`docs/fixed_arrays.md`](docs/fixed_arrays.md) — array features
+- [`docs/collections.md`](docs/collections.md) — Stage 2 collection ownership,
+  relocation, borrowing, and acceptance contracts
+- [`docs/memory.md`](docs/memory.md) — typed slice copying, filling, swapping, and error contracts
 - [`docs/math.md`](docs/math.md) — standard-library ordered math operations
+- [`docs/bytes.md`](docs/bytes.md) — raw byte storage and sequence operations
+- [`docs/encoding.md`](docs/encoding.md) — binary and hexadecimal encoding
+- [`docs/hashing.md`](docs/hashing.md) — structural non-cryptographic hashing
+- [`docs/cryptography.md`](docs/cryptography.md) — SHA-256 and SHA-512 secure hashing
+- [`docs/generics.md`](docs/generics.md) — generic specialization and direct-call inference
+- [`docs/os.md`](docs/os.md) — command-line arguments and environment variables
+- [`docs/process.md`](docs/process.md) — child commands, pipes, and exit status
+- [`docs/path.md`](docs/path.md) — lexical POSIX and Windows path operations
+- [`docs/time.md`](docs/time.md) — durations, clocks, timestamps, and blocking sleep
+- [`docs/network.md`](docs/network.md) — IPv4/IPv6 addresses, socket addresses, and hostname resolution
+- [`docs/random.md`](docs/random.md) — secure host randomness and deterministic generation
+- [`docs/testing.md`](docs/testing.md) — test assertions, diagnostics, and failure behavior
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation
+- [`docs/crashable_functions.md`](docs/crashable_functions.md) — explicit unrecoverable effects and crash reports
 - [`docs/enums.md`](docs/enums.md) — nominal enums, defaults, discriminants, and member functions
 - [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting setup
 - [`editors/neovim/README.md`](editors/neovim/README.md) — Neovim installation and usage

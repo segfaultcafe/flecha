@@ -1,0 +1,756 @@
+module address_test;
+
+@imports
+    :: root::net::address
+    :: root::net::dns
+    :: root::net::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+void assert_parses(
+    &testing::UnitTest t,
+    stringv text,
+    u8 octet1,
+    u8 octet2,
+    u8 octet3,
+    u8 octet4,
+    stringv message
+) {
+    actual, err := address::Ipv4Address::parse(text);
+    expected := address::Ipv4Address::fromOctets(
+        octet1,
+        octet2,
+        octet3,
+        octet4
+    );
+    formatted, formatError := actual.toString();
+    asserts::is_true(
+        t,
+        err == none and actual == expected and
+            formatError == none and formatted.view() == text,
+        message
+    );
+}
+
+void assert_invalid(
+    &testing::UnitTest t,
+    stringv text,
+    stringv message
+) {
+    value, err := address::Ipv4Address::parse(text);
+    asserts::is_true(
+        t,
+        err == errors::NetworkError.InvalidAddress and value == none,
+        message
+    );
+}
+
+void assert_ipv6_parses(
+    &testing::UnitTest t,
+    stringv text,
+    u16 segment1,
+    u16 segment2,
+    u16 segment3,
+    u16 segment4,
+    u16 segment5,
+    u16 segment6,
+    u16 segment7,
+    u16 segment8,
+    stringv message
+) {
+    actual, err := address::Ipv6Address::parse(text);
+    expected := address::Ipv6Address::fromSegments(
+        segment1,
+        segment2,
+        segment3,
+        segment4,
+        segment5,
+        segment6,
+        segment7,
+        segment8
+    );
+    asserts::is_true(
+        t,
+        err == none and actual == expected,
+        message
+    );
+}
+
+void assert_ipv6_invalid(
+    &testing::UnitTest t,
+    stringv text,
+    stringv message
+) {
+    value, err := address::Ipv6Address::parse(text);
+    asserts::is_true(
+        t,
+        err == errors::NetworkError.InvalidAddress and value == none,
+        message
+    );
+}
+
+void assert_ipv6_formats(
+    &testing::UnitTest t,
+    stringv input,
+    stringv expected,
+    stringv message
+) {
+    value, parseError := address::Ipv6Address::parse(input);
+    formatted, formatError := value.toString();
+    asserts::is_true(
+        t,
+        parseError == none and formatError == none and
+            formatted.view() == expected,
+        message
+    );
+}
+
+void assert_ipv4_socket_parses(
+    &testing::UnitTest t,
+    stringv text,
+    address::Ipv4Address expectedAddress,
+    u16 expectedPort,
+    stringv message
+) {
+    actual, parseError := address::Ipv4SocketAddress::parse(text);
+    formatted, formatError := actual.toString();
+    asserts::is_true(
+        t,
+        parseError == none and actual.address() == expectedAddress and
+            actual.port() == expectedPort and formatError == none and
+            formatted.view() == text,
+        message
+    );
+}
+
+void assert_ipv6_socket_parses(
+    &testing::UnitTest t,
+    stringv text,
+    address::Ipv6Address expectedAddress,
+    u16 expectedPort,
+    stringv message
+) {
+    actual, parseError := address::Ipv6SocketAddress::parse(text);
+    formatted, formatError := actual.toString();
+    asserts::is_true(
+        t,
+        parseError == none and actual.address() == expectedAddress and
+            actual.port() == expectedPort and formatError == none and
+            formatted.view() == text,
+        message
+    );
+}
+
+void assert_ipv4_socket_invalid(
+    &testing::UnitTest t,
+    stringv text,
+    error expectedError,
+    stringv message
+) {
+    value, parseError := address::Ipv4SocketAddress::parse(text);
+    asserts::is_true(
+        t,
+        parseError == expectedError and value == none,
+        message
+    );
+}
+
+void assert_ipv6_socket_invalid(
+    &testing::UnitTest t,
+    stringv text,
+    error expectedError,
+    stringv message
+) {
+    value, parseError := address::Ipv6SocketAddress::parse(text);
+    asserts::is_true(
+        t,
+        parseError == expectedError and value == none,
+        message
+    );
+}
+
+test ipv4_parsing_accepts_canonical_boundaries(&testing::UnitTest t) {
+    assert_parses(t, "0.0.0.0", 0, 0, 0, 0, "the zero address parses");
+    assert_parses(t, "1.2.3.4", 1, 2, 3, 4, "all components are packed");
+    assert_parses(
+        t,
+        "127.0.0.1",
+        127,
+        0,
+        0,
+        1,
+        "the loopback address parses"
+    );
+    assert_parses(
+        t,
+        "255.255.255.255",
+        255,
+        255,
+        255,
+        255,
+        "maximum components parse"
+    );
+}
+
+test ipv4_constructors_classify_and_expose_octets(&testing::UnitTest t) {
+    wildcard := address::Ipv4Address::wildcard();
+    expectedWildcard := address::Ipv4Address::fromOctets(0, 0, 0, 0);
+    asserts::is_true(
+        t,
+        wildcard == expectedWildcard and wildcard.isWildcard() and
+            !wildcard.isLoopback(),
+        "wildcard constructs the unspecified address"
+    );
+
+    loopback := address::Ipv4Address::loopback();
+    expectedLoopback := address::Ipv4Address::fromOctets(127, 0, 0, 1);
+    alternateLoopback := address::Ipv4Address::fromOctets(127, 255, 1, 2);
+    ordinary := address::Ipv4Address::fromOctets(126, 255, 1, 2);
+    asserts::is_true(
+        t,
+        loopback == expectedLoopback and loopback.isLoopback() and
+            alternateLoopback.isLoopback() and !ordinary.isLoopback(),
+        "the complete 127/8 block is loopback"
+    );
+
+    value := address::Ipv4Address::fromOctets(1, 2, 128, 255);
+    octets := value.octets();
+    asserts::is_true(
+        t,
+        octets[0] == 1 and octets[1] == 2 and
+            octets[2] == 128 and octets[3] == 255,
+        "octets preserve network byte order"
+    );
+}
+
+test ipv4_parsing_rejects_invalid_component_counts(&testing::UnitTest t) {
+    assert_invalid(t, "", "an empty address is rejected");
+    assert_invalid(t, "1", "one component is rejected");
+    assert_invalid(t, "1.2.3", "three components are rejected");
+    assert_invalid(t, "1.2.3.4.5", "five components are rejected");
+    assert_invalid(t, ".1.2.3", "a missing first component is rejected");
+    assert_invalid(t, "1..2.3", "an empty middle component is rejected");
+    assert_invalid(t, "1.2.3.", "a missing final component is rejected");
+}
+
+test ipv4_parsing_rejects_invalid_components(&testing::UnitTest t) {
+    assert_invalid(t, "256.0.0.1", "components above 255 are rejected");
+    assert_invalid(t, "1.2.3.999", "oversized final components are rejected");
+    assert_invalid(t, "01.2.3.4", "leading zeroes are rejected");
+    assert_invalid(t, "1.02.3.4", "middle leading zeroes are rejected");
+    assert_invalid(t, "1.2.3.x", "letters are rejected");
+    assert_invalid(t, "1.2.3.-1", "signed components are rejected");
+    assert_invalid(t, " 1.2.3.4", "leading whitespace is rejected");
+    assert_invalid(t, "1.2.3.4 ", "trailing whitespace is rejected");
+}
+
+test ipv6_parsing_accepts_expanded_addresses(&testing::UnitTest t) {
+    assert_ipv6_parses(
+        t,
+        "2001:db8:0:1:2:3:4:5",
+        8193,
+        3512,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        "eight explicit segments parse"
+    );
+    assert_ipv6_parses(
+        t,
+        "2001:0DB8:0000:0001:0002:0003:0004:0005",
+        8193,
+        3512,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        "uppercase digits and leading zeroes parse"
+    );
+    assert_ipv6_parses(
+        t,
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        "maximum segments parse"
+    );
+}
+
+test ipv6_parsing_expands_compressed_addresses(&testing::UnitTest t) {
+    assert_ipv6_parses(
+        t,
+        "::",
+        0, 0, 0, 0, 0, 0, 0, 0,
+        "the wildcard address parses"
+    );
+    assert_ipv6_parses(
+        t,
+        "::1",
+        0, 0, 0, 0, 0, 0, 0, 1,
+        "the loopback address parses"
+    );
+    assert_ipv6_parses(
+        t,
+        "2001:db8::",
+        8193, 3512, 0, 0, 0, 0, 0, 0,
+        "suffix compression expands"
+    );
+    assert_ipv6_parses(
+        t,
+        "2001:db8::ff00:42:8329",
+        8193, 3512, 0, 0, 0, 65280, 66, 33577,
+        "middle compression expands"
+    );
+    assert_ipv6_parses(
+        t,
+        "1:2:3:4:5:6::8",
+        1, 2, 3, 4, 5, 6, 0, 8,
+        "compression may represent one segment"
+    );
+}
+
+test ipv6_constructors_classify_and_expose_segments(&testing::UnitTest t) {
+    wildcard := address::Ipv6Address::wildcard();
+    expectedWildcard :=
+        address::Ipv6Address::fromSegments(0, 0, 0, 0, 0, 0, 0, 0);
+    asserts::is_true(
+        t,
+        wildcard == expectedWildcard and wildcard.isWildcard() and
+            !wildcard.isLoopback(),
+        "wildcard constructs the unspecified address"
+    );
+
+    loopback := address::Ipv6Address::loopback();
+    expectedLoopback :=
+        address::Ipv6Address::fromSegments(0, 0, 0, 0, 0, 0, 0, 1);
+    ordinary :=
+        address::Ipv6Address::fromSegments(0, 0, 0, 0, 0, 0, 0, 2);
+    asserts::is_true(
+        t,
+        loopback == expectedLoopback and loopback.isLoopback() and
+            !loopback.isWildcard() and !ordinary.isLoopback(),
+        "loopback recognizes only the exact ::1 address"
+    );
+
+    value := address::Ipv6Address::fromSegments(
+        291,
+        17767,
+        35243,
+        52719,
+        65244,
+        47768,
+        30292,
+        12816
+    );
+    segments := value.segments();
+    asserts::is_true(
+        t,
+        segments[0] == 291 and segments[1] == 17767 and
+            segments[2] == 35243 and segments[3] == 52719 and
+            segments[4] == 65244 and segments[5] == 47768 and
+            segments[6] == 30292 and segments[7] == 12816,
+        "segments preserve network order"
+    );
+}
+
+test ipv6_parsing_rejects_invalid_structure(&testing::UnitTest t) {
+    assert_ipv6_invalid(t, "", "an empty address is rejected");
+    assert_ipv6_invalid(t, ":", "a single colon is rejected");
+    assert_ipv6_invalid(t, ":1", "a single leading colon is rejected");
+    assert_ipv6_invalid(t, "1:", "a single trailing colon is rejected");
+    assert_ipv6_invalid(t, "1:2:3:4:5:6:7", "seven segments are rejected");
+    assert_ipv6_invalid(
+        t,
+        "1:2:3:4:5:6:7:8:9",
+        "nine segments are rejected"
+    );
+    assert_ipv6_invalid(t, "1::2::3", "repeated compression is rejected");
+    assert_ipv6_invalid(t, "1:::2", "three consecutive colons are rejected");
+    assert_ipv6_invalid(
+        t,
+        "1:2:3:4:5:6:7:8::",
+        "compression must omit at least one segment"
+    );
+    assert_ipv6_invalid(
+        t,
+        "::1:2:3:4:5:6:7:8",
+        "leading compression must omit at least one segment"
+    );
+}
+
+test ipv6_parsing_rejects_invalid_segments(&testing::UnitTest t) {
+    assert_ipv6_invalid(t, "12345::", "five-digit segments are rejected");
+    assert_ipv6_invalid(t, "gggg::", "non-hexadecimal digits are rejected");
+    assert_ipv6_invalid(t, "-1::", "signed segments are rejected");
+    assert_ipv6_invalid(t, " 1::", "leading whitespace is rejected");
+    assert_ipv6_invalid(t, "1:: ", "trailing whitespace is rejected");
+    assert_ipv6_invalid(
+        t,
+        "::ffff:192.0.2.1",
+        "embedded IPv4 notation is not accepted yet"
+    );
+}
+
+test ipv6_formatting_uses_lowercase_without_leading_zeroes(
+    &testing::UnitTest t
+) {
+    value := address::Ipv6Address::fromSegments(
+        8193,
+        3512,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+    );
+    formatted, formatError := value.toString();
+    asserts::is_true(
+        t,
+        formatError == none and
+            formatted.view() == "2001:db8:1:2:3:4:5:6",
+        "formatting uses lowercase hexadecimal without leading zeroes"
+    );
+
+    maximum := address::Ipv6Address::fromSegments(
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535
+    );
+    maximumText, maximumError := maximum.toString();
+    asserts::is_true(
+        t,
+        maximumError == none and maximumText.len().cast<usize> ==
+            address::MAX_IPV6_STRING_LENGTH and maximumText.view() ==
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        "the public maximum length matches fully expanded output"
+    );
+}
+
+test ipv6_formatting_round_trips_address_values(&testing::UnitTest t) {
+    original, parseError :=
+        address::Ipv6Address::parse("2001:db8::ff00:42:8329");
+    formatted, formatError := original.toString();
+    reparsed, reparseError := address::Ipv6Address::parse(formatted.view());
+    asserts::is_true(
+        t,
+        parseError == none and formatError == none and reparseError == none and
+            reparsed == original,
+        "formatted addresses parse back to the same value"
+    );
+
+    wildcard := address::Ipv6Address::wildcard();
+    wildcardText, wildcardFormatError := wildcard.toString();
+    parsedWildcard, wildcardParseError :=
+        address::Ipv6Address::parse(wildcardText.view());
+    asserts::is_true(
+        t,
+        wildcardFormatError == none and wildcardParseError == none and
+            parsedWildcard == wildcard,
+        "the wildcard address round trips through text"
+    );
+}
+
+test ipv6_formatting_uses_canonical_zero_compression(&testing::UnitTest t) {
+    assert_ipv6_formats(
+        t,
+        "0:0:0:0:0:0:0:0",
+        "::",
+        "wildcard formatting compresses every zero segment"
+    );
+    assert_ipv6_formats(
+        t,
+        "0:0:0:0:0:0:0:1",
+        "::1",
+        "loopback formatting compresses its leading zeroes"
+    );
+    assert_ipv6_formats(
+        t,
+        "2001:db8:0:0:0:0:0:1",
+        "2001:db8::1",
+        "the longest middle run is compressed"
+    );
+    assert_ipv6_formats(
+        t,
+        "1:2:3:4:5:6:0:0",
+        "1:2:3:4:5:6::",
+        "a trailing zero run is compressed"
+    );
+    assert_ipv6_formats(
+        t,
+        "1:0:0:2:0:0:3:4",
+        "1::2:0:0:3:4",
+        "the leftmost run wins when lengths tie"
+    );
+    assert_ipv6_formats(
+        t,
+        "1:0:2:3:4:5:6:7",
+        "1:0:2:3:4:5:6:7",
+        "a single zero segment is not compressed"
+    );
+    assert_ipv6_formats(
+        t,
+        "1:0:0:2:0:0:0:3",
+        "1:0:0:2::3",
+        "a longer run wins over an earlier shorter run"
+    );
+}
+
+test ipv4_socket_addresses_construct_parse_and_format(
+    &testing::UnitTest t
+) {
+    expected := address::Ipv4Address::fromOctets(192, 0, 2, 1);
+    constructed := address::Ipv4SocketAddress::fromParts(expected, 8080);
+    asserts::is_true(
+        t,
+        constructed.address() == expected and constructed.port() == 8080,
+        "IPv4 socket parts remain observable"
+    );
+
+    assert_ipv4_socket_parses(
+        t,
+        "192.0.2.1:8080",
+        expected,
+        8080,
+        "an IPv4 address and ordinary port round trip"
+    );
+    assert_ipv4_socket_parses(
+        t,
+        "0.0.0.0:0",
+        address::Ipv4Address::wildcard(),
+        0,
+        "the wildcard address accepts port zero"
+    );
+    assert_ipv4_socket_parses(
+        t,
+        "255.255.255.255:65535",
+        address::Ipv4Address::fromOctets(255, 255, 255, 255),
+        65535,
+        "the maximum IPv4 address and port parse"
+    );
+}
+
+test ipv4_socket_parsing_distinguishes_address_and_port_errors(
+    &testing::UnitTest t
+) {
+    assert_ipv4_socket_invalid(
+        t, ":80", errors::NetworkError.InvalidAddress,
+        "a missing IPv4 address is an address error"
+    );
+    assert_ipv4_socket_invalid(
+        t, "256.0.0.1:80", errors::NetworkError.InvalidAddress,
+        "an invalid IPv4 component is an address error"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1", errors::NetworkError.InvalidPort,
+        "a missing IPv4 port is a port error"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:", errors::NetworkError.InvalidPort,
+        "an empty IPv4 port is rejected"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:080", errors::NetworkError.InvalidPort,
+        "IPv4 socket ports reject leading zeroes"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:+80", errors::NetworkError.InvalidPort,
+        "IPv4 socket ports reject signs"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:65536", errors::NetworkError.InvalidPort,
+        "IPv4 socket ports reject overflow"
+    );
+    assert_ipv4_socket_invalid(
+        t, "192.0.2.1:80:90", errors::NetworkError.InvalidPort,
+        "IPv4 socket ports reject extra separators"
+    );
+}
+
+test ipv6_socket_addresses_construct_parse_and_format(
+    &testing::UnitTest t
+) {
+    expected := address::Ipv6Address::fromSegments(
+        8193, 3512, 0, 0, 0, 0, 0, 1
+    );
+    constructed := address::Ipv6SocketAddress::fromParts(expected, 8080);
+    asserts::is_true(
+        t,
+        constructed.address() == expected and constructed.port() == 8080,
+        "IPv6 socket parts remain observable"
+    );
+
+    assert_ipv6_socket_parses(
+        t,
+        "[2001:db8::1]:8080",
+        expected,
+        8080,
+        "a bracketed IPv6 address and ordinary port round trip"
+    );
+    assert_ipv6_socket_parses(
+        t,
+        "[::]:0",
+        address::Ipv6Address::wildcard(),
+        0,
+        "the IPv6 wildcard address accepts port zero"
+    );
+    assert_ipv6_socket_parses(
+        t,
+        "[::1]:65535",
+        address::Ipv6Address::loopback(),
+        65535,
+        "IPv6 loopback accepts the maximum port"
+    );
+}
+
+test ipv6_socket_parsing_requires_brackets_and_valid_ports(
+    &testing::UnitTest t
+) {
+    assert_ipv6_socket_invalid(
+        t, "::1:80", errors::NetworkError.InvalidAddress,
+        "an unbracketed IPv6 socket address is rejected"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1:80", errors::NetworkError.InvalidAddress,
+        "a missing closing bracket is an address error"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[]:80", errors::NetworkError.InvalidAddress,
+        "an empty bracketed address is rejected"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[gggg::1]:80", errors::NetworkError.InvalidAddress,
+        "an invalid bracketed IPv6 value is an address error"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]", errors::NetworkError.InvalidPort,
+        "a missing IPv6 port is a port error"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]:", errors::NetworkError.InvalidPort,
+        "an empty IPv6 port is rejected"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]:01", errors::NetworkError.InvalidPort,
+        "IPv6 socket ports reject leading zeroes"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]:-1", errors::NetworkError.InvalidPort,
+        "IPv6 socket ports reject signs"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]:65536", errors::NetworkError.InvalidPort,
+        "IPv6 socket ports reject overflow"
+    );
+    assert_ipv6_socket_invalid(
+        t, "[::1]x80", errors::NetworkError.InvalidPort,
+        "the closing bracket must be followed by a colon"
+    );
+}
+
+test portable_socket_addresses_preserve_their_family(
+    &testing::UnitTest t
+) {
+    ipv4 := address::Ipv4SocketAddress::fromParts(
+        address::Ipv4Address::loopback(),
+        8080
+    );
+    portableIpv4 := address::SocketAddress::fromIpv4(ipv4);
+    actualIpv4, hasIpv4 := portableIpv4.ipv4();
+    _, hasIpv6 := portableIpv4.ipv6();
+    formattedIpv4, ipv4FormatError := portableIpv4.toString();
+    asserts::is_true(
+        t,
+        portableIpv4.family() == address::AddressFamily.Ipv4 and
+            portableIpv4.isIpv4() and !portableIpv4.isIpv6() and
+            hasIpv4 and !hasIpv6 and actualIpv4 == ipv4 and
+            ipv4FormatError == none and
+            formattedIpv4.view() == "127.0.0.1:8080",
+        "a portable IPv4 socket address retains its value and family"
+    );
+
+    ipv6 := address::Ipv6SocketAddress::fromParts(
+        address::Ipv6Address::loopback(),
+        443
+    );
+    portableIpv6 := address::SocketAddress::fromIpv6(ipv6);
+    _, hasOtherIpv4 := portableIpv6.ipv4();
+    actualIpv6, hasOtherIpv6 := portableIpv6.ipv6();
+    formattedIpv6, ipv6FormatError := portableIpv6.toString();
+    asserts::is_true(
+        t,
+        portableIpv6.family() == address::AddressFamily.Ipv6 and
+            !portableIpv6.isIpv4() and portableIpv6.isIpv6() and
+            !hasOtherIpv4 and hasOtherIpv6 and actualIpv6 == ipv6 and
+            ipv6FormatError == none and formattedIpv6.view() == "[::1]:443",
+        "a portable IPv6 socket address retains its value and family"
+    );
+}
+
+test dns_resolution_returns_owned_portable_addresses(
+    &testing::UnitTest t
+) {
+    results, resolutionError := dns::resolve("localhost", 4242);
+    asserts::is_true(
+        t,
+        resolutionError == none and results.len() > 0,
+        "localhost resolves to at least one portable address"
+    );
+    if resolutionError != none {
+        return;
+    }
+
+    bool valid = results.len() > 0;
+    loop usize index = 0; index < results.len(); index++ {
+        value := results[index];
+        if value.isIpv4() {
+            ipv4, hasIpv4 := value.ipv4();
+            if !hasIpv4 or ipv4.port() != 4242 {
+                valid = false;
+            }
+        } else if value.isIpv6() {
+            ipv6, hasIpv6 := value.ipv6();
+            if !hasIpv6 or ipv6.port() != 4242 {
+                valid = false;
+            }
+        } else {
+            valid = false;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        valid,
+        "resolution returns every address in an owning array"
+    );
+}
+
+test dns_resolution_rejects_invalid_names(&testing::UnitTest t) {
+    empty, emptyError := dns::resolve("", 80);
+    repeatedDot, repeatedDotError := dns::resolve("bad..name", 80);
+    leadingHyphen, leadingHyphenError := dns::resolve("-bad.example", 80);
+    asserts::is_true(
+        t,
+        emptyError == errors::NetworkError.InvalidName and empty.len() == 0 and
+            repeatedDotError == errors::NetworkError.InvalidName and
+            repeatedDot.len() == 0 and
+            leadingHyphenError == errors::NetworkError.InvalidName and
+            leadingHyphen.len() == 0,
+        "invalid hostnames fail before native resolution"
+    );
+}

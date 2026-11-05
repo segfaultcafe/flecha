@@ -1,0 +1,361 @@
+module clock;
+
+@imports
+    :: root::time::duration
+    :: root::time::errors
+    :: root::time::runtime;
+
+const u64 NANOSECONDS_PER_SECOND = 1000000000;
+
+// Represents an opaque observation of the monotonic clock in this program
+// execution. Its numeric origin is intentionally unavailable.
+export structure Instant {
+    private u64 seconds;
+
+    private u32 nanoseconds;
+
+    private bool valid;
+};
+
+// Returns one monotonic clock observation.
+(Instant, error) Instant::now() {
+    u64 seconds = 0;
+    u32 nanoseconds = 0;
+    unsafe {
+        const i32 STATUS = runtime::flecha_runtime_v1_monotonic_clock_now(
+            &raw seconds,
+            &raw nanoseconds
+        );
+        if STATUS != 0 {
+            return (none, errors::TimeError.ClockUnavailable);
+        }
+    }
+
+    return (build Instant {
+        self.seconds = seconds;
+        self.nanoseconds = nanoseconds;
+        self.valid = true;
+    }, none);
+}
+
+// Reports whether this instant came from the monotonic clock in this execution.
+bool Instant::isValid(&const self) {
+    return self->valid;
+}
+
+// Returns the nonnegative duration since earlier, or reports reversed input.
+(duration::Duration, error) Instant::durationSince(
+    &const self,
+    Instant earlier
+) {
+    if !self->valid or !earlier.valid {
+        return (none, errors::TimeError.InvalidInstant);
+    }
+
+    if self->seconds < earlier.seconds or (
+        self->seconds == earlier.seconds and
+            self->nanoseconds < earlier.nanoseconds
+    ) {
+        return (none, errors::TimeError.NegativeResult);
+    }
+
+    u64 seconds = self->seconds - earlier.seconds;
+    u32 nanoseconds = 0;
+    if self->nanoseconds >= earlier.nanoseconds {
+        nanoseconds = self->nanoseconds - earlier.nanoseconds;
+    } else {
+        seconds--;
+        nanoseconds = (
+            NANOSECONDS_PER_SECOND + self->nanoseconds.cast<u64> -
+                earlier.nanoseconds.cast<u64>
+        ).cast<u32>;
+    }
+
+    return duration::Duration::fromParts(seconds, nanoseconds);
+}
+
+// Returns the monotonic duration since this instant.
+(duration::Duration, error) Instant::elapsed(&const self) {
+    current, currentError := Instant::now();
+    if currentError != none {
+        return (none, currentError);
+    }
+
+    return current.durationSince(*self);
+}
+
+// Returns an instant later by duration, or reports coordinate overflow.
+(Instant, error) Instant::checkedAdd(
+    &const self,
+    duration::Duration value
+) {
+    if !self->valid {
+        return (none, errors::TimeError.InvalidInstant);
+    }
+
+    seconds, overflowed :=
+        self->seconds.overflow_add(value.wholeSeconds());
+    if overflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+
+    u64 nanoseconds =
+        self->nanoseconds.cast<u64> +
+            value.subsecondNanoseconds().cast<u64>;
+    if nanoseconds >= NANOSECONDS_PER_SECOND {
+        nanoseconds = nanoseconds - NANOSECONDS_PER_SECOND;
+        seconds, overflowed = seconds.overflow_add(1);
+        if overflowed {
+            return (none, errors::TimeError.Overflow);
+        }
+    }
+
+    return (build Instant {
+        self.seconds = seconds;
+        self.nanoseconds = nanoseconds.cast<u32>;
+        self.valid = true;
+    }, none);
+}
+
+// Returns an instant earlier by duration, or reports a negative coordinate.
+(Instant, error) Instant::checkedSub(
+    &const self,
+    duration::Duration value
+) {
+    if !self->valid {
+        return (none, errors::TimeError.InvalidInstant);
+    }
+
+    available, availableError :=
+        duration::Duration::fromParts(self->seconds, self->nanoseconds);
+    if availableError != none {
+        return (none, availableError);
+    }
+
+    remaining, subtractionError := available.checkedSub(value);
+    if subtractionError != none {
+        return (none, subtractionError);
+    }
+
+    return (build Instant {
+        self.seconds = remaining.wholeSeconds();
+        self.nanoseconds = remaining.subsecondNanoseconds();
+        self.valid = true;
+    }, none);
+}
+
+// Represents a wall-clock observation as normalized Unix time.
+export structure Timestamp {
+    private i64 seconds;
+
+    private u32 nanoseconds;
+};
+
+// Constructs a normalized Unix timestamp.
+(Timestamp, error) Timestamp::fromUnixParts(
+    i64 seconds,
+    u32 nanoseconds
+) {
+    if nanoseconds.cast<u64> >= NANOSECONDS_PER_SECOND {
+        return (none, errors::TimeError.InvalidNanoseconds);
+    }
+
+    return (build Timestamp {
+        self.seconds = seconds;
+        self.nanoseconds = nanoseconds;
+    }, none);
+}
+
+// Returns one wall-clock observation. Later calls may return earlier values.
+(Timestamp, error) Timestamp::now() {
+    i64 seconds = 0;
+    u32 nanoseconds = 0;
+    unsafe {
+        const i32 STATUS = runtime::flecha_runtime_v1_wall_clock_now(
+            &raw seconds,
+            &raw nanoseconds
+        );
+        if STATUS == 2 {
+            return (none, errors::TimeError.TimestampOutOfRange);
+        }
+        if STATUS != 0 {
+            return (none, errors::TimeError.ClockUnavailable);
+        }
+    }
+
+    return (build Timestamp {
+        self.seconds = seconds;
+        self.nanoseconds = nanoseconds;
+    }, none);
+}
+
+// Returns the signed whole-second component relative to the Unix epoch.
+i64 Timestamp::unixSeconds(&const self) {
+    return self->seconds;
+}
+
+// Returns the normalized nonnegative subsecond nanosecond component.
+u32 Timestamp::subsecondNanoseconds(&const self) {
+    return self->nanoseconds;
+}
+
+// Returns the nonnegative duration since earlier, or reports reversed input.
+(duration::Duration, error) Timestamp::durationSince(
+    &const self,
+    Timestamp earlier
+) {
+    if self->seconds < earlier.seconds or (
+        self->seconds == earlier.seconds and
+            self->nanoseconds < earlier.nanoseconds
+    ) {
+        return (none, errors::TimeError.NegativeResult);
+    }
+
+    u64 seconds = seconds_between(self->seconds, earlier.seconds);
+    u32 nanoseconds = 0;
+    if self->nanoseconds >= earlier.nanoseconds {
+        nanoseconds = self->nanoseconds - earlier.nanoseconds;
+    } else {
+        seconds--;
+        nanoseconds = (
+            NANOSECONDS_PER_SECOND + self->nanoseconds.cast<u64> -
+                earlier.nanoseconds.cast<u64>
+        ).cast<u32>;
+    }
+
+    return duration::Duration::fromParts(seconds, nanoseconds);
+}
+
+// Returns a timestamp later by duration, or reports overflow.
+(Timestamp, error) Timestamp::checkedAdd(
+    &const self,
+    duration::Duration value
+) {
+    u64 secondsToAdd = value.wholeSeconds();
+    u64 nanoseconds =
+        self->nanoseconds.cast<u64> +
+            value.subsecondNanoseconds().cast<u64>;
+    if nanoseconds >= NANOSECONDS_PER_SECOND {
+        nanoseconds = nanoseconds - NANOSECONDS_PER_SECOND;
+        bool secondsOverflowed = false;
+        secondsToAdd, secondsOverflowed = secondsToAdd.overflow_add(1);
+        if secondsOverflowed {
+            return (none, errors::TimeError.Overflow);
+        }
+    }
+
+    seconds, secondsError := add_seconds(self->seconds, secondsToAdd);
+    if secondsError != none {
+        return (none, secondsError);
+    }
+
+    return (build Timestamp {
+        self.seconds = seconds;
+        self.nanoseconds = nanoseconds.cast<u32>;
+    }, none);
+}
+
+// Returns a timestamp earlier by duration, or reports overflow.
+(Timestamp, error) Timestamp::checkedSub(
+    &const self,
+    duration::Duration value
+) {
+    u64 secondsToSubtract = value.wholeSeconds();
+    u32 nanoseconds = 0;
+    if self->nanoseconds >= value.subsecondNanoseconds() {
+        nanoseconds = self->nanoseconds - value.subsecondNanoseconds();
+    } else {
+        bool secondsOverflowed = false;
+        secondsToSubtract, secondsOverflowed =
+            secondsToSubtract.overflow_add(1);
+        if secondsOverflowed {
+            return (none, errors::TimeError.Overflow);
+        }
+        nanoseconds = (
+            NANOSECONDS_PER_SECOND + self->nanoseconds.cast<u64> -
+                value.subsecondNanoseconds().cast<u64>
+        ).cast<u32>;
+    }
+
+    seconds, secondsError :=
+        subtract_seconds(self->seconds, secondsToSubtract);
+    if secondsError != none {
+        return (none, secondsError);
+    }
+
+    return (build Timestamp {
+        self.seconds = seconds;
+        self.nanoseconds = nanoseconds;
+    }, none);
+}
+
+// Blocks the current operating-system thread for at least value unless the
+// host reports an error. Host interruptions never produce shortened success.
+export error sleep(duration::Duration value) {
+    if value.isZero() {
+        return none;
+    }
+
+    unsafe {
+        const i32 STATUS = runtime::flecha_runtime_v1_sleep(
+            value.wholeSeconds(),
+            value.subsecondNanoseconds()
+        );
+        if STATUS == 0 {
+            return none;
+        }
+        if STATUS == 2 {
+            return errors::TimeError.DurationOutOfRange;
+        }
+        if STATUS == 3 {
+            return errors::TimeError.InvalidNanoseconds;
+        }
+        return errors::TimeError.SleepFailed;
+    }
+}
+
+u64 seconds_between(i64 later, i64 earlier) {
+    if earlier >= 0 or later < 0 {
+        return (later - earlier).cast<u64>;
+    }
+
+    const u64 EARLIER_MAGNITUDE =
+        (-(earlier + 1)).cast<u64> + 1;
+    return later.cast<u64> + EARLIER_MAGNITUDE;
+}
+
+(i64, error) add_seconds(i64 initial, u64 amount) {
+    i64 result = initial;
+    const u64 CHUNK = i64.max_value.cast<u64>;
+    while amount > CHUNK {
+        result, overflowed := result.overflow_add(i64.max_value);
+        if overflowed {
+            return (none, errors::TimeError.Overflow);
+        }
+        amount = amount - CHUNK;
+    }
+
+    result, overflowed := result.overflow_add(amount.cast<i64>);
+    if overflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+    return (result, none);
+}
+
+(i64, error) subtract_seconds(i64 initial, u64 amount) {
+    i64 result = initial;
+    const u64 CHUNK = i64.max_value.cast<u64>;
+    while amount > CHUNK {
+        result, overflowed := result.overflow_sub(i64.max_value);
+        if overflowed {
+            return (none, errors::TimeError.Overflow);
+        }
+        amount = amount - CHUNK;
+    }
+
+    result, overflowed := result.overflow_sub(amount.cast<i64>);
+    if overflowed {
+        return (none, errors::TimeError.Overflow);
+    }
+    return (result, none);
+}

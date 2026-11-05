@@ -1,0 +1,11 @@
+void leaf!() {
+    crash("deliberate fixture crash");
+}
+
+void middle!() {
+    leaf!();
+}
+
+void main!() {
+    middle!();
+}

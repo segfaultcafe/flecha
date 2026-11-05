@@ -9,13 +9,22 @@
     {"include": "#imports"},
     {"include": "#tests"},
     {"include": "#callableDeclarations"},
+    {"include": "#typeSetDeclarations"},
+    {"include": "#moduleDeclarations"},
+    {"include": "#namespaces"},
+    {"include": "#typeSets"},
+    {"include": "#floatingConstants"},
+    {"include": "#integerLimits"},
     {"include": "#types"},
     {"include": "#modifiers"},
     {"include": "#control"},
+    {"include": "#borrowAllArguments"},
     {"include": "#constants"},
     {"include": "#labels"},
     {"include": "#numbers"},
+    {"include": "#crashBuiltin"},
     {"include": "#functions"},
+    {"include": "#crashableBangs"},
     {"include": "#operators"}
   ],
   "repository": {
@@ -61,7 +70,7 @@
     },
     "imports": {
       "name": "keyword.control.import.flecha",
-      "match": "@imports\\b"
+      "match": "@[A-Za-z_][A-Za-z0-9_]*(?:\\s*::\\s*[A-Za-z_][A-Za-z0-9_]*)*\\b"
     },
     "tests": {
       "name": "keyword.other.test.flecha",
@@ -70,6 +79,56 @@
     "callableDeclarations": {
       "name": "storage.type.function.flecha",
       "match": "\\bfunc\\b"
+    },
+    "typeSetDeclarations": {
+      "match": "\\b(typeset)(\\s+)([A-Za-z_][A-Za-z0-9_]*)\\b",
+      "captures": {
+        "1": {"name": "storage.type.typeset.flecha"},
+        "3": {"name": "entity.name.type.typeset.flecha"}
+      }
+    },
+    "moduleDeclarations": {
+      "match": "\\b(module)(\\s+)([A-Za-z_][A-Za-z0-9_]*)\\b",
+      "captures": {
+        "1": {"name": "keyword.control.module.flecha"},
+        "3": {"name": "entity.name.namespace.flecha"}
+      }
+    },
+    "namespaces": {
+      "name": "entity.name.namespace.flecha",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b(?=\\s*::)"
+    },
+    "typeSets": {
+      "name": "support.type.typeset.builtin.flecha",
+      "match": "\\b(?:signed_integer|unsigned_integer|integer|floating_point|numeric)\\b"
+    },
+    "integerLimits": {
+      "match": "\\b(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|[A-Z][A-Za-z0-9_]*)(\\s*\\.\\s*)(min_value|max_value)\\b",
+      "captures": {
+        "1": {"name": "storage.type.primitive.flecha"},
+        "2": {"name": "punctuation.accessor.flecha"},
+        "3": {"name": "constant.numeric.integer.bound.flecha"}
+      }
+    },
+    "floatingConstants": {
+      "patterns": [
+        {
+          "match": "\\b(f32|f64)(\\s*\\.\\s*)(nan|infinity|negative_infinity|min_value|max_value|min_positive|epsilon)\\b",
+          "captures": {
+            "1": {"name": "storage.type.primitive.flecha"},
+            "2": {"name": "punctuation.accessor.flecha"},
+            "3": {"name": "constant.numeric.float.property.flecha"}
+          }
+        },
+        {
+          "match": "\\b([A-Z][A-Za-z0-9_]*)(\\s*\\.\\s*)(nan|infinity|negative_infinity|min_positive|epsilon)\\b",
+          "captures": {
+            "1": {"name": "storage.type.primitive.flecha"},
+            "2": {"name": "punctuation.accessor.flecha"},
+            "3": {"name": "constant.numeric.float.property.flecha"}
+          }
+        }
+      ]
     },
     "types": {
       "patterns": [
@@ -85,11 +144,19 @@
     },
     "modifiers": {
       "name": "storage.modifier.flecha",
-      "match": "\\b(?:unsafe|once|export|quiver|extern|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|override)\\b"
+      "match": "\\b(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|override)\\b"
     },
     "control": {
       "name": "keyword.control.flecha",
-      "match": "\\b(?:module|enum|structure|build|return|defer|yield|if|match|else|also|while|for|loop|range|proceed|break|jumpto|as)\\b"
+      "match": "\\b(?:module|enum|structure|decoration|build|return|defer|yield|if|match|else|also|while|for|loop|range|proceed|break|jumpto|as)\\b"
+    },
+    "borrowAllArguments": {
+      "match": "(<-)(\\s*)(\\.\\.\\.)(\\s*)(args)\\b",
+      "captures": {
+        "1": {"name": "keyword.operator.flecha"},
+        "3": {"name": "keyword.operator.flecha"},
+        "5": {"name": "variable.language.flecha"}
+      }
     },
     "constants": {
       "patterns": [
@@ -105,8 +172,12 @@
     "numbers": {
       "patterns": [
         {"name": "constant.numeric.float.flecha", "match": "\\b[0-9]+\\.[0-9]+\\b"},
-        {"name": "constant.numeric.integer.flecha", "match": "\\b[0-9]+\\b"}
+        {"name": "constant.numeric.integer.flecha", "match": "\\b(?:0[xX][0-9A-Fa-f]+|[0-9]+)\\b"}
       ]
+    },
+    "crashBuiltin": {
+      "name": "support.function.crash.flecha",
+      "match": "\\bcrash(?=\\s*\\()"
     },
     "functions": {
       "patterns": [
@@ -115,14 +186,25 @@
           "match": "\\b(?:new|take)(?=\\s*[<(])"
         },
         {
+          "name": "support.function.builtin.flecha",
+          "match": "\\bisof(?=\\s*<)"
+        },
+        {
           "name": "entity.name.function.flecha",
           "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
         }
       ]
     },
+    "crashableBangs": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*(?:\\s*<[^>\\n]*>)?)(\\s*)(!)(?=\\s*\\()",
+      "captures": {
+        "1": {"name": "entity.name.function.flecha"},
+        "3": {"name": "keyword.operator.crashable.flecha"}
+      }
+    },
     "operators": {
       "name": "keyword.operator.flecha",
-      "match": "::|<-|->|=>|:=|===|!==|==|!=|<=|>=|&&|\\|\\||\\b(?:and|or|raw)\\b|[&=+*/%^!<>-]"
+      "match": "::|<-|->|=>|:=|===|!==|==|!=|<<|>>|<=|>=|&&|\\|\\||\\b(?:and|or|raw)\\b|[&|~=+*/%^!<>-]"
     }
   }
 }

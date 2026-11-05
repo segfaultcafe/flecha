@@ -1,0 +1,55 @@
+module stream;
+
+@imports :: root::io::errors;
+
+// Reads up to destination.len() bytes and returns a partial count and error.
+export func Read([]u8 destination) => (usize, error);
+
+// Owns a reusable byte-read operation.
+export structure Reader {
+    private Read operation;
+};
+
+// Creates a reader by taking ownership of operation.
+Reader Reader::init(Read operation) <- operation override {
+    return build Reader {
+        self.operation = operation;
+    };
+}
+
+// Constructs the inert representation used by none.
+Reader Reader::zero() override {
+    return build Reader {
+        self.operation = closed_read;
+    };
+}
+
+// Performs one read and preserves its partial byte count on error.
+(usize, error) Reader::read(&self, []u8 destination) {
+    return (self->operation)(destination);
+}
+
+// Fills destination or returns the first error or IoError.UnexpectedEof.
+error Reader::readExact(&self, []u8 destination) {
+    usize offset = 0;
+    while offset < destination.len() {
+        bytesRead, err := self->read(destination[offset:]);
+        if bytesRead > destination.len() - offset {
+            return errors::IoError.ReadFailed;
+        }
+
+        offset = offset + bytesRead;
+        if err != none {
+            return err;
+        }
+        if bytesRead == 0 {
+            return errors::IoError.UnexpectedEof;
+        }
+    }
+
+    return none;
+}
+
+quiver (usize, error) closed_read([]u8 destination) {
+    return (none, errors::IoError.Closed);
+}

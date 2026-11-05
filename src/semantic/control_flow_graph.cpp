@@ -425,7 +425,11 @@ class GraphBuilder final {
                 if (target->Kind() == core::AstNodeKind::NameExpression) {
                     _graph.nodes[store].write = _model.SymbolFor(
                         static_cast<const core::NameExpression&>(*target));
-                    return BuildExpression(assignment.Value(), store);
+                    const NodeId value =
+                        BuildExpression(assignment.Value(), store);
+                    if (assignment.OperatorType() != TokenType::Assign)
+                        return BuildExpression(*target, value);
+                    return value;
                 }
                 // Indirect stores read the pointer, but do not initialize its
                 // binding or prove another local initialized through aliasing.
@@ -435,20 +439,39 @@ class GraphBuilder final {
             case core::AstNodeKind::CallExpression: {
                 const auto& call =
                     static_cast<const core::CallExpression&>(expression);
+                const auto* callee =
+                    call.Callee().Kind() == core::AstNodeKind::NameExpression
+                        ? _model.SymbolFor(
+                              static_cast<const core::NameExpression&>(
+                                  call.Callee()))
+                        : nullptr;
+                const auto* function =
+                    callee && callee->Kind() == SymbolKind::Function
+                        ? static_cast<const FunctionSymbol*>(callee)
+                        : nullptr;
+                if (function &&
+                    function->BuiltIn() == BuiltInFunction::Crash)
+                    next = AddNode({});
+                const bool allocation =
+                    function &&
+                    (function->BuiltIn() == BuiltInFunction::New ||
+                     function->BuiltIn() == BuiltInFunction::StorageNew);
                 const bool dynamic =
-                    call.TypeArgument() &&
+                    allocation && call.TypeArgument() &&
                     call.TypeArgument()->TypeForm() == core::TypeKind::Slice;
                 const NodeId failure = next;
                 if (dynamic) {
-                    next = AddNode({next, failure});
+                    next = call.IsCrashable() ? AddNode({next})
+                                              : AddNode({next, failure});
                     _graph.nodes[next].allocation = &call;
                 }
-                for (auto argument = call.Arguments().rbegin();
-                     argument != call.Arguments().rend(); ++argument) {
+                const auto arguments = _model.ArgumentsFor(call);
+                for (auto argument = arguments.rbegin();
+                     argument != arguments.rend(); ++argument)
                     next = BuildExpression(**argument, next);
-                }
-                if (call.TypeArgument() && !dynamic) {
-                    next = AddNode({next, failure});
+                if (allocation && call.TypeArgument() && !dynamic) {
+                    next = call.IsCrashable() ? AddNode({next})
+                                              : AddNode({next, failure});
                     _graph.nodes[next].allocation = &call;
                 }
                 return BuildExpression(call.Callee(), next);
@@ -456,10 +479,10 @@ class GraphBuilder final {
             case core::AstNodeKind::MemberCallExpression: {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(expression);
-                for (auto argument = call.Arguments().rbegin();
-                     argument != call.Arguments().rend(); ++argument) {
+                const auto arguments = _model.ArgumentsFor(call);
+                for (auto argument = arguments.rbegin();
+                     argument != arguments.rend(); ++argument)
                     next = BuildExpression(**argument, next);
-                }
                 return call.Access() == TokenType::Scope
                            ? next
                            : BuildExpression(call.Receiver(), next);

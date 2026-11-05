@@ -89,7 +89,7 @@ Statements are terminated with semicolons. Blocks are enclosed in braces.
 Flecha function declarations place modifiers first, followed by the return type, function name, parameters, and body:
 
 ```text
-[modifiers] ReturnType functionName(parameters) [<- borrowSource] {
+[modifiers] ReturnType functionName(parameters) [<- borrowSources] {
     body
 }
 ```
@@ -113,7 +113,92 @@ unsafe void write_value(lend *u32 address, u32 value) {
 &const i32 view(&const i32 value) <- value {
     return value;
 }
+
+&const i32 choose(
+    bool first,
+    &const i32 left,
+    &const i32 right,
+) <- (left, right) {
+    if first {
+        return left;
+    }
+
+    return right;
+}
 ```
+
+Named functions and methods may give trailing parameters default values:
+
+```flecha
+usize format_integer([]u8 destination, i32 value, u8 base = 10) {
+    // ...
+}
+```
+
+Once a parameter has a default, every parameter after it must also have a
+default. A direct call may omit any suffix of defaulted arguments; each omitted
+expression is evaluated for that call in the declaration's module scope.
+Parameters and `self` are not in scope inside a default expression. Defaults
+may produce copyable or movable values and follow the parameter's ordinary
+ownership contract. Callable types and anonymous functions do not carry
+defaults, so indirect calls still require their complete argument list.
+
+A borrow-source contract may name one parameter, group an explicit source list
+as `<- (left, right)`, or select every named parameter with `<- ...args`.
+`args` is not a keyword; it is recognized specially only in that complete
+shorthand.
+
+A free function may declare one final, untyped forwarding pack by suffixing its
+name with `...`:
+
+```flecha
+void print(values...) {
+    stdout(values...);
+}
+
+void printf(stringv format, values...) {
+    stdoutf(format, values...);
+}
+
+export (string, error) sprintf(stringv format, values...) {
+    return __sprintf(format, values...);
+}
+```
+
+This is a compile-time forwarding facility, not a runtime variadic value. The
+body must consist of exactly one named call (or one returned named call for a
+non-`void` result), pass every fixed parameter unchanged and in declaration
+order, and finish with the expanded pack. Callers pass ordinary arguments:
+`print("value: ", 42)`. The pack cannot be stored, indexed, iterated, captured,
+returned, passed without expansion, or converted to a callable value. A
+forwarding declaration emits no function body or variadic ABI; its calls lower
+directly to the final target while retaining ordinary left-to-right argument
+evaluation and ownership checks.
+
+The formatting built-ins accept literal formats with `{}` replacement fields;
+`{{` and `}}` produce literal braces. `sprintf` returns a newly allocated
+owning string or `AllocationError.OutOfMemory` without exposing partial output.
+
+`stdin(promptValues..., &destination)` and
+`stdinln(promptValues..., &destination)` read one complete line. The final
+mutable checked reference must refer to an already-resolved integer,
+floating-point, `bool`, `char`, or owning `string` destination. Conversion is
+selected from that type and consumes the complete line. The destination is
+unchanged when the returned `error` is non-`none`. `stdinln` adds a newline to
+the prompt; it does not change the input delimiter. Formatted prompts use
+`printf` followed by `stdin`; there is no formatted-input builtin.
+
+An explicit typed local declaration may omit `= none` only when its resolved
+type is trivially zeroable: `i32 value;` and `i32 value = none;` are
+equivalent. A type whose default construction performs work must spell
+`= none` explicitly. Type-inferred declarations still require an initializer.
+
+In a function with `values...`, `<- ...values` selects only arguments supplied
+through that pack. Fixed parameters are included explicitly, for example
+`<- (fallback, ...values)`. The legacy `<- ...args` all-fixed-parameter
+shorthand remains unchanged when the function does not declare `args...`; when
+it does, the spelling names that pack and therefore selects only expanded pack
+arguments.
 
 Tentative function modifiers include:
 
@@ -324,6 +409,80 @@ Integer sizes are part of their type names. `isize` and `usize` have the native 
 
 Implicit conversion between distinct primitive types should be avoided. In particular, integers, booleans, and pointers remain differently typed even when their representations or zero values coincide.
 
+`f32` and `f64` use IEEE 754 binary32 and binary64 semantics. Each floating
+type exposes contextual compile-time constants:
+
+```flecha
+quiet := f32.nan;
+positiveInfinity := f64.infinity;
+negativeInfinity := f64.negative_infinity;
+smallestFinite := f32.min_value;
+largestFinite := f32.max_value;
+smallestNormal := f32.min_positive;
+unitRoundoff := f32.epsilon;
+```
+
+`min_value` is the most negative finite value, `max_value` is the most positive
+finite value, `min_positive` is the smallest positive normal value, and
+`epsilon` is the difference between one and the next representable value.
+`nan` is a canonical quiet NaN. The properties also work through a type
+parameter constrained by `floating_point`.
+
+Floating `==` and `===` are ordered: NaN is unequal to every value, including
+itself. Consequently `!=` and `!==` are true if either operand is NaN. Ordered
+comparisons `<`, `<=`, `>`, and `>=` are false if either operand is NaN.
+Positive and negative zero compare equal under both equality forms.
+
+Integer `+`, `-`, and `*` use two's-complement wrapping at the width of the
+operand type. Their result is the mathematical result reduced modulo `2^N`,
+including for signed integer types. Code that must distinguish an exact result
+from an overflow uses the overflowing primitives below.
+
+Integer bit operations use `&` (and), `|` (or), `^` (exclusive or), and `~`
+(complement). Both operands of a binary bit operation have the same integer
+type, and the result keeps that type. `~` likewise preserves its integer
+operand's type.
+
+Shifts use `value << count` and `value >> count`. The left operand may have any
+integer type, the count has type `usize`, and the result keeps the left
+operand's type. Left shift discards bits above that width. Unsigned right shift
+fills with zero; signed right shift sign-extends. A count greater than or equal
+to the value width is defined: left shift and unsigned right shift produce
+zero, while signed right shift produces zero for non-negative values and `-1`
+for negative values. Shift expressions therefore never inherit undefined or
+poison behavior from the code-generation target.
+
+Every integer type exposes its inclusive bounds as contextual compile-time
+properties:
+
+```flecha
+smallest := i32.min_value;
+largest := i32.max_value;
+
+(T, T) bounds<T: integer>() {
+    return (T.min_value, T.max_value);
+}
+```
+
+`min_value` and `max_value` are ordinary identifiers, not reserved keywords.
+They are recognized as properties only after a concrete integer type or an
+integer-constrained type parameter. The bounds of `isize` and `usize` follow
+the native pointer width of the compilation target.
+
+Integer values provide low-level overflowing arithmetic methods:
+
+```flecha
+sum, addOverflow := left.overflow_add(right);
+difference, subOverflow := left.overflow_sub(right);
+product, mulOverflow := left.overflow_mul(right);
+```
+
+Both operands must have the same integer type. Each operation returns the
+wrapped result in that type and a `bool` that is `true` exactly when the
+mathematical result is outside the type's range. These primitives support the
+standard library's checked, wrapping, and saturating arithmetic policies; they
+do not implicitly change the behavior of ordinary arithmetic operators.
+
 ### 7.1 Enums
 
 Enums are nominal scalar types with an integer backing and qualified variants:
@@ -414,25 +573,29 @@ once-per-structure compilation warning. Fixed arrays default each element.
 
 ### 8.1 Initialization
 
-Ordinary typed declarations may omit an initializer, but the variable must be
-assigned on every reachable path before it is read:
+Ordinary typed declarations may omit an initializer only for trivially
+zeroable types. Omission is shorthand for `= none`, so the variable is
+immediately readable:
 
 ```flecha
-i32 count;          // not initialized
-count = 42;         // now readable
+i32 count;          // initialized to zero
+count = 42;
 bool ready = none;  // explicitly initialized to false
 ```
 
-The compiler checks definite assignment through branches, loops, and jumps.
-Owning `string` supports delayed initialization; borrowed `stringv` requires
+Types with nontrivial defaults, including owning `string`, require an explicit
+initializer. Borrowed `stringv` requires
 an initializer. See [definite assignment](docs/definite_assignment.md).
 
 ### 8.2 Const declarations
 
-`const T name = value;` initializes a fixed binding. Its initializer may be a
-runtime expression; `const` does not imply compile-time evaluation. Assignment
-to the binding is an error, even if the assigned value is unchanged. A const
-local must have an initializer; delayed const initialization is not supported.
+Inside a function, `const T name = value;` initializes a fixed local binding.
+Its initializer may be a runtime expression; local `const` does not imply
+compile-time evaluation. Assignment to the binding is an error, even if the
+assigned value is unchanged. A const local of trivially zeroable type may omit
+its initializer as the same `= none` shorthand used by mutable locals. Other
+const locals require an explicit initializer; delayed initialization is not
+supported.
 
 ```flecha
 i32 add(const i32 input) {
@@ -450,6 +613,27 @@ string copies and borrowed-view lifetime checks remain in force.
 The implemented declaration form uses an explicit type; `name := value` still
 creates a mutable binding. `constval` is an ordinary identifier, not a keyword.
 See [const declarations and compound types](docs/const_types.md).
+
+### 8.3 Module constants
+
+At module scope, the same spelling declares a named compile-time constant:
+
+```flecha
+const usize INITIAL_CAPACITY = 8;
+export const usize DEFAULT_CAPACITY = INITIAL_CAPACITY * 2;
+```
+
+Module constants may use literals, other module constants, unary and binary
+operators, casts, `isof`, numeric limits, floating-point constants, enum
+variants, and error values. Runtime calls, allocation, mutable storage, and
+cyclic constant definitions are rejected. Supported result types are numeric
+types, `bool`, `char`, `stringv`, enums, and error values. References to a
+module constant are expanded as immutable constant expressions and do not
+create global mutable storage.
+
+Constants are shared by every source file contributing to the same logical
+module. Like other top-level declarations, they are module-private by default
+and may use `quiver` or `export` visibility.
 
 ## 9. Equality
 
@@ -497,9 +681,7 @@ i32(0) === i32(0); // true
 i32(0) === u32(0); // false
 ```
 
-Strict equality is semantic type-and-value equality, not necessarily raw byte equality. Padding, floating-point representations, and other representation details must not silently turn `===` into a memory comparison. A separate explicit operation may be provided for comparing raw representations.
-
-The behavior of floating-point NaNs and signed zero under both equality operators remains to be specified.
+Strict equality is semantic type-and-value equality, not necessarily raw byte equality. Padding, floating-point representations, and other representation details must not silently turn `===` into a memory comparison. A separate explicit operation may be provided for comparing raw representations. IEEE floating-point values follow the NaN and signed-zero rules specified in the primitive-types section.
 
 ## 10. Tuples and multiple return values
 
@@ -594,9 +776,9 @@ rejected. `none` is contextually success; all named successes widen to the same
 generic success. Strict `===`/`!==` perform no widening or contextual conversion:
 different static error types, and error versus literal `none`, are unequal.
 
-Error values support ordinary const, definite-assignment, aggregate, and
-borrowing rules. An uninitialized error variable cannot be read. They are
-allocation-free and copyable, with no payloads or automatic propagation.
+Error values support ordinary const, aggregate, and borrowing rules. They are
+not eligible for initializer omission; spell `= none` to initialize success.
+They are allocation-free and copyable, with no payloads or automatic propagation.
 See [error_values.md](docs/error_values.md) for implemented behavior and the
 compiler-private representation. The allocator example above still depends on
 future allocation APIs.
@@ -818,11 +1000,19 @@ fields, construction limits, examples, and diagnostics.
 ## 14. Memory and runtime model
 
 Flecha should not require a garbage collector. Stack allocation is the ordinary default. The implemented explicit raw allocation API is `new<T>(value)` returning `(*T, error)`, paired with unsafe `free(ptr)`. It uses the system allocation service; custom allocators remain future work.
+The cross-feature contract for safe storage, movement, destruction, borrowing,
+and unsafe encapsulation is defined by the
+[memory safety invariants](docs/memory_safety_invariants.md). Safe concurrency
+remains gated on a separate accepted concurrent memory model.
 Runtime-sized scalar and supported trivially copyable structure storage uses
 `new<[]T>(count)`, returning a move-only `*[]T` owner whose `{data, length}`
 representation supports checked unsafe indexing without allocator queries. See
 [dynamic arrays](docs/dynamic_arrays.md) for the implemented limits and the
 Flecha `RawArray<T>` library and its safe `Array<T>` wrapper.
+The preferred compiler-managed form is `new<own []T>(count)`, returning a
+move-only `own []T` value with safe checked access and automatic destruction.
+Owning slices may be stored in structures; `own []T` may be weakened by move to
+`own []const T`.
 On failure, new returns null and `AllocationError.OutOfMemory` without evaluating
 the initializer. Free runs typed teardown and accepts null. See
 [raw allocation](docs/raw_allocation.md) for the unsafe contract and current limits.
@@ -833,9 +1023,11 @@ external pointer validity still requires a caller contract.
 
 Raw-pointer contracts use `lend *T` parameters, consuming `own *T` parameters,
 `own *T` returns (including tuple elements), and `own *T` structure fields.
-References never take either qualifier. Ownership remains separate from const
-and nullability. See [ownership contracts](docs/ownership_contracts.md) for
-transfer, teardown, and initial implementation restrictions.
+`own []T` is instead a first-class managed owner, not a raw-pointer contract.
+References and borrowed slices never take `own` or `lend`. Ownership remains
+separate from const and nullability. See
+[ownership contracts](docs/ownership_contracts.md) for raw-pointer transfer,
+teardown, and initial implementation restrictions.
 
 The language should avoid hidden allocation in:
 
@@ -871,6 +1063,31 @@ Flecha should eventually provide:
 
 Layout must not be inferred solely from the behavior of a particular backend. Language-level rules will define which layouts are guaranteed and which remain implementation-defined.
 
+Top-level foreign translation units are implemented for C and target assembly:
+
+```flecha
+foreign c {
+    int answer(void) { return 42; }
+}
+
+extern i32 answer();
+```
+
+```flecha
+foreign asm {
+    // Target-assembler source.
+}
+```
+
+The text between the outer braces is preserved as foreign source and is not
+tokenized as Flecha. Braces nested in foreign source, strings, character
+literals, and C-style comments do not terminate the block. The foreign unit
+does not introduce Flecha declarations; symbols cross the boundary through
+ordinary `extern` declarations and the target C ABI. `foreign c` is compiled as
+C, while `foreign asm` uses the active target assembler syntax and is therefore
+target-specific. Inline, value-producing assembly with typed operands is not
+part of this form.
+
 ## 16. Compilation model
 
 The reference compiler is implemented in C++23.
@@ -892,6 +1109,9 @@ Flecha source
 
 The LLVM backend emits textual IR or a host-native object. The native driver can
 link that object with the version-matched runtime and explicit native inputs.
+For loaded sources containing foreign translation units, the native compiler
+also compiles each unit with the configured host driver and relocatably merges
+the resulting objects into Flecha's emitted object before final linking.
 The compiler does not include a C source backend, optimization-level selection,
 source-level debug information, or explicit cross-compilation in the 0.1 line.
 See [LLVM code generation](docs/llvm_codegen.md) and
@@ -918,6 +1138,7 @@ import gate still controls whether an outside importer can reach it.
 Top-level declarations use `export` for access from every importing module,
 `quiver` for access from modules in the same immediate directory and the same
 source-root or library identity, and no modifier for module-only access.
+This includes module constants declared as `const T name = expression;`.
 Wildcard imports do not bypass these boundaries. Exported and quiver
 structures and enums bundle non-private member functions; member functions do
 not take declaration-visibility modifiers, and private members remain limited
@@ -1000,9 +1221,25 @@ parameters and arguments:
 `Box<T>::method`. Structure specializations have distinct nominal identities;
 callable specializations remain structural. All specializations are checked on
 use.
+
+Direct function and method calls may omit their type arguments when every
+parameter can be inferred uniquely from supplied call arguments and, when
+present, an expected result type. Expected results include explicitly typed
+initializers, declared function results, and known destinations in tuple
+destructuring; unknown destructuring destinations provide no evidence. These
+sources must agree. Omitted default arguments and inferred destinations provide
+no evidence. Calls with missing or conflicting inference require explicit type
+arguments. Generic types, callable aliases, and generic function values remain
+explicit. Declaration visibility does not change call inference.
 References remain valid function parameters and cannot be stored in structure
 fields. Existing ownership, const, visibility, and lifecycle rules apply.
 See [generics](docs/generics.md) for the implemented rules and limits.
+
+Generic parameters may use closed compile-time type-set constraints, as in
+`T identity<T: numeric>(T value)`. Built-in numeric sets and custom
+`typeset name { members, };` declarations are supported. `T.isof<name>` folds
+to a boolean during specialization. Type sets have ordinary module visibility
+and no runtime representation. See [type sets](docs/type_sets.md).
 
 ## 19. Open design questions
 
@@ -1016,7 +1253,6 @@ The following decisions are intentionally not finalized:
 - partial aggregate moves and cleanup rules for future owning types;
 - allocator interfaces;
 - arithmetic overflow behavior;
-- floating-point equality involving NaN and signed zero;
 - compile-time execution and metaprogramming;
 - tuple layout and ABI rules;
 - optional values distinct from primitive zero;

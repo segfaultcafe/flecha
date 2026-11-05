@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/ast.hpp"
@@ -18,6 +19,22 @@ struct ClosureCapture final {
     const core::AnonymousFunctionExpression::Capture* syntax;
     const Symbol* source;
     const VariableSymbol* variable;
+};
+
+enum class JsonDecorationMode { Default, Explicit };
+
+struct JsonFieldMetadata final {
+    const core::StructureField* field;
+    std::string name;
+};
+
+struct JsonStructureMetadata final {
+    JsonDecorationMode mode;
+    std::vector<JsonFieldMetadata> fields;
+    const StructureType* writer = nullptr;
+    std::string writerTypeName;
+    const StructureType* reader = nullptr;
+    std::string readerTypeName;
 };
 
 class SemanticModel final {
@@ -39,6 +56,18 @@ class SemanticModel final {
     [[nodiscard]] SemanticType TypeOf(const core::Expression& expression) const;
     [[nodiscard]] TransferKind TransferOf(
         const core::Expression& expression) const;
+    [[nodiscard]] bool IsBuildInitializer(
+        const core::AssignmentExpression& expression) const {
+        return _buildInitializers.contains(&expression);
+    }
+    [[nodiscard]] std::vector<const core::Expression*> ArgumentsFor(
+        const core::CallExpression& expression) const;
+    [[nodiscard]] std::vector<const core::Expression*> ArgumentsFor(
+        const core::MemberCallExpression& expression) const;
+    [[nodiscard]] const FunctionSymbol* ForwardedFunction(
+        const core::CallExpression& expression) const;
+    [[nodiscard]] const core::ModuleConstantDeclaration* ModuleConstantFor(
+        const Symbol& symbol) const;
     const StructureField* FieldFor(
         const core::MemberAccessExpression& expression) const {
         const auto found = _fields.find(&expression);
@@ -59,6 +88,11 @@ class SemanticModel final {
         const Symbol& variable) const;
     const auto& Structures() const { return _structures; }
     const auto& Enums() const { return _enums; }
+    [[nodiscard]] const JsonStructureMetadata* JsonMetadataFor(
+        const core::StructureDeclaration& structure) const {
+        const auto found = _jsonMetadata.find(&structure);
+        return found == _jsonMetadata.end() ? nullptr : &found->second;
+    }
     [[nodiscard]] const Scope& GlobalScope() const { return *_scopes.front(); }
     [[nodiscard]] const std::vector<std::unique_ptr<Symbol>>& Symbols() const {
         return _symbols;
@@ -71,6 +105,8 @@ class SemanticModel final {
     friend class SemanticAnalyzer;
     std::vector<std::unique_ptr<StructureType>> _structures;
     std::vector<std::unique_ptr<EnumType>> _enums;
+    std::unordered_map<const core::StructureDeclaration*, JsonStructureMetadata>
+        _jsonMetadata;
     std::vector<std::unique_ptr<core::FunctionDeclaration>> _generatedFunctions;
     std::vector<const core::FunctionDeclaration*> _anonymousFunctions;
     std::unordered_map<const core::FunctionDeclaration*,
@@ -93,6 +129,16 @@ class SemanticModel final {
     std::unordered_map<const core::AstNode*, const Symbol*> _declarations;
     std::unordered_map<const core::Expression*, SemanticType> _types;
     std::unordered_map<const core::Expression*, TransferKind> _transfers;
+    std::unordered_set<const core::AssignmentExpression*> _buildInitializers;
+    std::unordered_map<const core::Expression*,
+                       std::vector<const core::Expression*>>
+        _callArguments;
+    std::unordered_map<const FunctionSymbol*, const FunctionSymbol*>
+        _variadicTargets;
+    std::unordered_map<const core::CallExpression*, const FunctionSymbol*>
+        _forwardedFunctions;
+    std::unordered_map<const Symbol*, const core::ModuleConstantDeclaration*>
+        _moduleConstants;
     std::unordered_map<const core::DestructureBinding*, const Symbol*>
         _destructureTargets;
     std::unordered_map<const core::DeferStatement*, std::vector<const Symbol*>>

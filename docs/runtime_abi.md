@@ -14,14 +14,176 @@ and an exact byte length. A terminating null byte is neither required nor
 included in the length.
 
 The compiler emits one typed output call for each supported Flecha scalar
-value. `stdout` and `stdoutln` accept zero or more printable values and emit
-them in argument order; `stdoutln` then emits
-`flecha_runtime_v1_stdout_newline` once. `stdoutf` parses its string-literal
-format at compile time and lowers literal segments and substituted values to
-the same typed calls. It supports `%d` for numeric values, `%s` for `string`,
-`stringv`, or `char`, `%b` for `bool` or `u8`, and `%%` for a literal percent
-sign. `stdoutf` does not append a newline. No variadic C ABI is exposed by
-these language-level facilities.
+value. `stdout`, `stdoutln`, `stderr`, and `stderrln` accept zero or more
+printable values and emit them in argument order. The `ln` forms then emit the
+corresponding `flecha_runtime_v1_*_newline` operation once. `stdoutf` and
+`stderrf` parse their string-literal format at compile time and lower literal
+segments and substituted values to typed stream calls. Each `{}` consumes one
+printable value; `{{` and `}}` emit literal braces. The formatted operations do
+not append a newline.
+
+`__sprintf` uses the same compile-time parser and appends typed values to an
+internal fallible format buffer. Finishing transfers one malloc-compatible
+allocation to an owning Flecha string. Failure releases partial storage and
+produces `AllocationError.OutOfMemory`. No variadic C ABI or runtime type-erased
+argument pack is exposed by any of these language-level facilities.
+
+`__sprintf_crash` uses the same buffer ABI but lowers a failed finish to
+`flecha_runtime_v1_crash`. The crash ABI borrows exact message, file, and
+function byte ranges plus one-based source line and column. It prints the
+Flecha source location, the native stack trace, and a host register snapshot
+where supported, flushes standard error, and terminates with `SIGABRT` on POSIX
+hosts. Explicit crashes are not synthesized segmentation faults, and ordinary
+interrupts such as `SIGINT` are not reclassified as crashes.
+
+`stdin` and `stdinln` lower their prompt values to typed stdout operations,
+flush stdout, and call `flecha_runtime_v1_standard_input_read_line`. The line
+reader consumes the same descriptor-level primitive exposed by
+`flecha_runtime_v1_standard_input_read`, so switching between typed line input
+and `std::io::stdio::StandardInput` cannot strand bytes in a separate native
+read-ahead buffer. It removes LF and a preceding CR, distinguishes immediate
+EOF from a final unterminated line, and transfers malloc-compatible
+owning-string storage only on success. Typed
+`flecha_runtime_v1_input_parse_*` operations consume the complete line. Their
+stable status table is success `0`, EOF `1`, read failure `2`, invalid syntax
+`3`, out of range `4`, prompt flush failure `5`, and out of memory `6`. Code
+generation stores into the referenced destination only on success and maps
+failures to `InputError` or `AllocationError`.
+
+The standard I/O library uses additive byte-read, byte-write, and flush
+operations for process-owned streams. A read or write resets its count output
+before validation and performs one descriptor operation that preserves
+partial progress on failure. Writes first flush typed built-in output already
+pending in the selected C stream. Null storage is valid only with zero length;
+a successful zero-byte read is EOF. These operations do not transfer ownership
+of or close the process streams.
+
+The compiler keeps a parameterless Flecha `main` independent from the host C
+entry ABI. For a `void` or `i32` entry point it emits an `i32 main(i32, char**)`
+wrapper that first passes the host argument table to
+`flecha_runtime_v1_process_arguments_initialize` and then invokes the Flecha
+function. The runtime borrows that table without modifying or releasing it;
+the host retains ownership for the process lifetime. Argument index zero is
+the invocation name supplied by the host. Count does not allocate, and capture
+copies the selected null-terminated host argument into an independent owning
+Flecha string. Capture status is success `0`, out of memory `1`, or invalid
+index `2`; the caller supplies an empty string output, and every failure leaves
+it empty. Argument bytes are preserved exactly as supplied by the host C entry
+environment and are not normalized or validated as Unicode.
+
+The environment ABI reads and mutates the current process environment through
+explicit name and value byte ranges. `environment_get` clears its owning
+string and presence outputs before validation. Success with presence zero
+means that the variable is absent; success with presence one and an empty
+string means that the variable exists with an empty value. A present value is
+copied into independent owning storage. `environment_set` prepares complete
+native name and value copies before mutation, and `environment_remove` treats
+an absent variable as success. Allocation failure therefore leaves the
+existing environment unchanged, while every failed lookup leaves both outputs
+empty.
+
+Names must be nonempty and cannot contain `=` or a null byte. Values may be
+empty but cannot contain a null byte. POSIX hosts preserve name and value bytes
+as supplied. Windows validates UTF-8 and uses the wide-character environment
+API. Status values are success `0`, out of memory `1`, invalid name `2`,
+invalid value `3`, permission denied `4`, and operation failure `5`.
+Environment mutation is process-wide; callers must not concurrently read and
+mutate the environment without external synchronization.
+
+## Time
+
+The version 1 time ABI exposes monotonic and wall-clock observations as
+normalized seconds plus nanoseconds. Monotonic seconds are unsigned and have
+no public epoch. Wall-clock seconds are signed Unix time; times before the Unix
+epoch use a nonnegative subsecond component. The nanosecond output is always
+less than `1_000_000_000` on success.
+
+Both clock queries clear every non-null output before validation, require both
+outputs, and leave both outputs zero on failure. Runtime values are converted
+from host clocks before crossing the ABI; platform ticks, frequencies, clock
+identifiers, and native error codes are never exposed.
+
+Relative sleep accepts normalized unsigned seconds and nanoseconds and blocks
+the current operating-system thread. It rejects an invalid nanosecond
+component or a duration outside the host wait range before blocking. POSIX
+interruptions resume the unelapsed remainder instead of producing shortened
+success. Wall-clock adjustments do not change the relative interval.
+
+The shared status table is success `0`, unavailable `1`, out of range `2`,
+invalid duration `3`, and operation failure `4`. The safe `std::time::clock`
+wrapper maps these values contextually to `TimeError`. Clock and sleep calls
+perform no allocation, transfer no ownership, and are safe for concurrent use.
+The complete public value and error contracts are specified in
+[`time.md`](time.md).
+
+## Randomness
+
+The version 1 randomness ABI fills caller-owned storage directly from the
+host's cryptographically secure random source:
+
+```c
+typedef enum FlechaRuntimeRandomStatus {
+    FLECHA_RUNTIME_RANDOM_OK = 0,
+    FLECHA_RUNTIME_RANDOM_UNAVAILABLE = 1,
+    FLECHA_RUNTIME_RANDOM_FAILED = 2,
+} FlechaRuntimeRandomStatus;
+
+int32_t flecha_runtime_v1_secure_random_fill(uint8_t* destination,
+                                             size_t length);
+```
+
+A zero length succeeds even when `destination` is null. A nonzero length
+requires non-null storage. Success means the complete destination was filled;
+failure may leave any prefix modified, and callers must discard all destination
+contents. The operation allocates no memory, transfers no ownership, maintains
+no userspace state, and is safe for concurrent calls. It may block while the
+host initializes its entropy source.
+
+Linux uses blocking `getrandom` semantics with flags zero, retrying `EINTR` and
+continuing after short reads. macOS uses interruption-safe `getentropy` calls in
+chunks of at most 256 bytes. Windows uses `BCryptGenRandom` with
+`BCRYPT_USE_SYSTEM_PREFERRED_RNG` and chunks lengths to `ULONG`. Unsupported
+host APIs map to status `1`; other host failures map to status `2`. No platform
+error code or deterministic fallback crosses the ABI. The safe standard-library
+contract and deterministic generator are specified in [`random.md`](random.md).
+
+## Constant-time byte comparison
+
+The version 1 security ABI compares two borrowed, equally sized byte regions:
+
+```c
+uint8_t flecha_runtime_v1_constant_time_difference(const uint8_t* left,
+                                                   const uint8_t* right,
+                                                   size_t length);
+```
+
+The operation returns zero only when every corresponding byte is equal and a
+nonzero value otherwise. A zero length accepts null pointers and reports no
+difference. For a nonzero length, either null pointer is invalid and reports a
+nonzero difference. Pointer validity and length are public inputs.
+
+For valid nonempty regions, the implementation performs a volatile read of
+every byte from both inputs and accumulates their differences without
+content-dependent early exit. The loop count depends only on `length`. The
+operation allocates no memory, transfers no ownership, modifies no input,
+maintains no state, does not block, and is safe for concurrent calls. The safe
+`std::bytes::sequence::constant_time_equal` wrapper rejects unequal lengths
+before entering the runtime; `std::text::strings::constant_time_equal` forwards
+the exact bytes of both string views through that wrapper.
+
+The same boundary provides guaranteed zeroing of caller-owned mutable bytes:
+
+```c
+void flecha_runtime_v1_secure_zero(uint8_t* destination, size_t length);
+```
+
+A zero length accepts a null destination. A nonzero length requires a valid
+mutable region of at least `length` bytes. Windows uses `SecureZeroMemory`;
+Linux uses `explicit_bzero`; and macOS uses explicit volatile byte stores.
+These operations prevent the overwrite from being removed as a dead store. The
+safe `std::bytes::sequence::zero_bytes` wrapper supplies a valid mutable slice.
+It does not allocate, transfer ownership, or block, and it is safe for
+concurrent calls on disjoint storage.
 
 Object-only compilation intentionally does not need the runtime archive and
 may leave runtime symbols unresolved. Executable builds automatically link the
@@ -51,6 +213,23 @@ failure and invalid dynamic operations must use the runtime failure mechanism.
 Object-only compilation may leave owning-string runtime symbols unresolved in
 the same way it currently leaves output and bounds-check symbols unresolved.
 
+## Floating-point text conversion
+
+The version 1 runtime exposes typed `f32` and `f64` parsing and formatting
+entry points for the standard text library. Input is an explicit byte pointer
+and length; parsing consumes the complete input, ignores no whitespace, and is
+independent of the process locale. Decimal input accepts an optional sign,
+fraction, and decimal exponent. The only non-finite spellings are `nan`, `inf`,
+and `-inf`, with an optional leading plus accepted by parsing.
+
+Formatting produces lowercase non-finite spellings and otherwise emits the
+shortest decimal representation that round trips to the same width. Negative
+zero retains its sign. The destination is unchanged when it is too small, and
+the written-length output is zero on every failure. Stable status values
+distinguish invalid syntax, an out-of-range value, insufficient space, and
+failure to allocate the parser's null-terminated input copy. The safe `strings`
+wrappers map them to `ParseError`, `FormatError`, and `AllocationError`.
+
 ## File reading
 
 `flecha_runtime_v1_read_file` receives an owning-string output pointer plus
@@ -67,6 +246,12 @@ length limit, and allocation failure. The safe `filesystem::read_file` wrapper
 maps those codes to `IoError` or `AllocationError.OutOfMemory`.
 
 ## Filesystem paths
+
+`flecha_runtime_v1_path_style` reports which lexical grammar matches the
+runtime's filesystem operations: `0` for POSIX and `1` for Windows. It performs
+no allocation or filesystem access. Path joining, normalization, and component
+inspection remain Flecha standard-library code; the runtime supplies only this
+host-policy fact.
 
 The `flecha_runtime_v1_path_exists`, `metadata`, `remove_file`, `rename`, and
 `create_directory` entry points use the same explicit path representation and
@@ -90,6 +275,86 @@ directory. Recursive removal never treats a top-level file as a directory.
 Force suppresses `NotFound`; recursive traversal otherwise preserves the same
 status mapping. `DirectoryNotEmpty` is status `9`, leaving generic operation
 failure at its established status `8`.
+
+`flecha_runtime_v1_temporary_directory_create` atomically creates a new
+directory in the host temporary directory and returns its absolute path as an
+owned Flecha string. The path uses native bytes on POSIX and UTF-8 on Windows.
+POSIX creation uses mode `0700`; Windows names use operating-system
+cryptographic randomness and exclusive directory creation. Any failure removes
+the created directory, frees partial output, and resets the string descriptor.
+Recursive ownership and best-effort teardown remain in
+`std::io::file::TemporaryDirectory`.
+
+The `flecha_runtime_v1_directory_*` entry points expose owning directory
+iterators behind opaque `void*` handles. `open` clears its output before path
+validation. `next` returns one independently allocated entry name, a byte type,
+and a byte presence flag. Types are `0` for other entries, `1` for regular
+files, `2` for directories, and `3` for symbolic links or Windows reparse-point
+links; classification does not follow the entry link. Successful end of
+iteration has a zero presence flag and empty outputs. The caller must provide
+an empty owning-string descriptor.
+
+An entry-name allocation failure leaves the current entry pending so a later
+`next` call can retry it without dropping or reordering entries. Other entry
+errors consume that entry and leave the iterator open. `close` always consumes
+the iterator handle, including when the operating system reports a close
+failure. The runtime returns `.` and `..` when the host iterator provides them;
+the safe Flecha wrapper filters those names.
+
+## Hostname resolution
+
+`flecha_runtime_v1_dns_resolve` accepts one length-delimited ASCII hostname
+and returns an opaque ordered result handle. It validates hostname and label
+lengths and syntax before calling the host resolver. The result set removes
+duplicate addresses while retaining the first host-provided occurrence. It
+contains only IPv4 and IPv6 values; a successful host result with no supported
+family reports `UnsupportedFamily`.
+
+`flecha_runtime_v1_dns_result_count` returns the number of normalized results.
+`flecha_runtime_v1_dns_result_get` copies one result into a family byte and two
+portable numeric halves. Family is `4` or `6`. IPv4 occupies the low 32 bits of
+the low half. IPv6 uses the high and low halves in network segment order. The
+function resets every output before validation. `dns_result_close` consumes
+the opaque result handle and accepts null.
+
+Network status values are success `0`, out of memory `1`, invalid name `2`,
+name not found `3`, temporary failure `4`, unsupported family `5`, resolution
+failure `6`, closed `7`, timeout `8`, connection refused `9`, connection reset
+`10`, network unreachable `11`, address in use `12`, address unavailable `13`,
+broken pipe `14`, generic operation failure `15`, and datagram too large `16`.
+Every `dns_resolve`
+failure leaves its output null.
+The safe `std::net::dns::resolve` wrapper owns the handle while copying every
+result into an exact-size `own []SocketAddress`, attaches the caller-provided
+port, and closes the native handle before returning. Allocation or conversion
+failure closes both partially constructed Flecha storage and the native handle.
+
+## Blocking sockets
+
+The `flecha_runtime_v1_tcp_*` and `flecha_runtime_v1_udp_*` entry points own
+nonblocking native sockets behind opaque handles while presenting blocking
+operations with monotonic user-space deadlines. The runtime retries interrupted
+waits without extending a timeout. IPv6 listeners and UDP sockets are
+IPv6-only, avoiding host-dependent dual-stack behavior.
+
+UDP bind clears its output before validation and transfers one handle only on
+success. Connect selects a default peer without replacing the bound local
+endpoint. Connected `send` and `receive` complement unconnected `send_to` and
+`receive_from`. Every send accepts at most 65,507 bytes, the maximum payload
+that is portable across supported IPv4 and IPv6 hosts, and resets its count
+before validation. Zero-length datagrams are valid.
+`receive_from` resets the count and every address field, then returns one
+sender in the same portable family/high/low/port representation used by DNS and
+TCP. A truncated datagram returns status `16` while retaining its copied prefix
+count and, for `receive_from`, its sender. The remaining bytes are discarded by
+the host as part of the same datagram receive. Local- and peer-address queries
+reset every address output before validation.
+
+UDP timeout direction zero means receive and direction one means send. Enabled
+and direction fields accept only zero or one, nanoseconds must be normalized,
+and enabled zero-duration timeouts request an immediate poll. UDP close always
+consumes the opaque handle, releases the platform socket runtime reference, and
+reports any native close failure afterward.
 
 ## File streams
 
@@ -119,6 +384,15 @@ denied `2`, invalid path `3`, already exists `4`, too large `5`, out of memory
 `6`, invalid options `7`, and operation failure `8`. This table is distinct
 from the older read-file-specific status enum, whose value `4` means a generic
 read failure.
+
+`flecha_runtime_v1_temporary_file_open` atomically creates a new readable and
+writable file in the host temporary directory and returns both a file-stream
+handle and its absolute path. The path uses native bytes on POSIX and UTF-8 on
+Windows. POSIX creation uses mode `0600`; all hosts use exclusive creation and
+a non-inheritable descriptor. The caller owns both outputs on success. Any
+failure closes the descriptor, removes the path, frees partial allocations, and
+clears both outputs. Safe ownership, explicit removal, and deterministic
+best-effort cleanup remain in `std::io::file::TemporaryFile`.
 
 ## Structure values (compiler-private ABI)
 
@@ -198,12 +472,17 @@ recursively torn down in reverse capture order before
 `flecha_runtime_v1_free`. This includes nested callable environments,
 structures, tuples, and fixed arrays. An `own` raw-resource field is released
 in the same order, using its pointee's typed teardown before the runtime free.
-`lend` raw-resource and checked-reference fields are non-owning pointers or
-borrowed descriptors and are not torn down; compile-time lifetime validation
-ensures their targets remain live.
+`lend` raw-resource fields and checked-reference fields are non-owning pointers
+or borrowed descriptors and are not torn down; compile-time lifetime
+validation ensures their targets remain live. `lend` applies only to the raw
+resource form: checked references are inherently borrowed and never spell
+`lend &T`.
 
 Runtime scalar arrays use `flecha_runtime_v1_alloc_array(count, element_size,
 alignment)`, which checks multiplication before allocating zeroed storage.
+Zero-sized elements reserve one physical byte while preserving the requested
+logical element count, so distinct slots may share an address without carrying
+state.
 `flecha_runtime_v1_allocation_count(pointer)` returns the recorded count (zero
 for null); it requires a Flecha allocation base. New generated code carries an
 array owner's count in its `*[]T` value and does not call this function for owner

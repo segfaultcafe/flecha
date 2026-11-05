@@ -1,0 +1,42 @@
+module strings;
+
+@imports :: root::text::ascii;
+
+// Borrows value without leading or trailing ASCII whitespace.
+export stringv trim_ascii(stringv value) <-value {
+    u32 start = 0;
+    while start < value.len() and
+        ascii::is_ascii_whitespace(value[start].cast<char>) {
+        start++;
+    }
+
+    u32 end = value.len();
+    while end > start and
+        ascii::is_ascii_whitespace(value[end - 1].cast<char>) {
+        end--;
+    }
+
+    return value.substr(start, end - start);
+}
+
+// Borrows value without leading ASCII whitespace.
+export stringv trim_ascii_start(stringv value) <-value {
+    u32 start = 0;
+    while start < value.len() and
+        ascii::is_ascii_whitespace(value[start].cast<char>) {
+        start++;
+    }
+
+    return value.substr(start, value.len() - start);
+}
+
+// Borrows value without trailing ASCII whitespace.
+export stringv trim_ascii_end(stringv value) <-value {
+    u32 end = value.len();
+    while end > 0 and
+        ascii::is_ascii_whitespace(value[end - 1].cast<char>) {
+        end--;
+    }
+
+    return value.substr(0, end);
+}

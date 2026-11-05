@@ -1,0 +1,68 @@
+module binary_test;
+
+@imports
+    :: root::bytes::buffer
+    :: root::encoding::binary
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test buffer_grows_and_appends_fixed_unsigned_integers(
+    &testing::UnitTest t
+) {
+    value, allocationError := buffer::Buffer::withCapacity(1);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup Buffer is constructed");
+        return;
+    }
+
+    littleError := binary::append_little<u16>(&value, 4660);
+    bigError := binary::append_big<u32>(&value, 305419896);
+    byteError := binary::append_little<u8>(&value, 171);
+
+    asserts::is_true(
+        t,
+        littleError == none and bigError == none and byteError == none,
+        "typed appends grow the Buffer and succeed"
+    );
+    asserts::is_true(t, value.len() == 7, "typed appends advance the length");
+    asserts::is_true(
+        t,
+        value.capacity() == 8,
+        "typed appends grow capacity geometrically"
+    );
+
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes[0] == 52 and bytes[1] == 18,
+        "append_little uses least-significant bytes first"
+    );
+    asserts::is_true(
+        t,
+        bytes[2] == 18 and bytes[3] == 52 and bytes[4] == 86 and
+            bytes[5] == 120,
+        "append_big uses most-significant bytes first"
+    );
+    asserts::is_true(t, bytes[6] == 171, "typed u8 appends one byte");
+}
+
+test buffer_appends_wide_unsigned_integers(&testing::UnitTest t) {
+    value, allocationError := buffer::Buffer::withCapacity(1);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup Buffer is constructed");
+        return;
+    }
+
+    writeError := binary::append_little<u64>(&value, 72623859790382856);
+    asserts::is_true(t, writeError == none, "typed u64 appends succeed");
+    asserts::is_true(t, value.len() == 8, "typed u64 appends eight bytes");
+
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        bytes[0] == 8 and bytes[1] == 7 and bytes[2] == 6 and
+            bytes[3] == 5 and bytes[4] == 4 and bytes[5] == 3 and
+            bytes[6] == 2 and bytes[7] == 1,
+        "typed u64 appends every byte"
+    );
+}

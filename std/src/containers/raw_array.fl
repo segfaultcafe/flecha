@@ -2,88 +2,107 @@ module raw_array;
 
 @imports :: root::containers::errors;
 
+// Owns low-level growable storage whose element access requires unsafe.
 export structure RawArray<T> {
-    private own *T storage;
+    private own *[]T storage;
     private usize length;
-    private usize allocated;
 };
 
+// Creates an empty raw array with no allocation.
 RawArray<T> RawArray<T>::init() override {
-    return build RawArray<T> {};
-}
-
-void RawArray<T>::tear(&self) override {
     unsafe {
-        free(self->storage);
+        return build RawArray<T> {};
     }
 }
 
-RawArray<T> RawArray<T>::zero() override {
-    return build RawArray<T> {
-        self.storage = null;
-        self.length = 0;
-        self.allocated = 0;
-    };
+// Releases the owned storage.
+void RawArray<T>::tear(&self) override {
+    unsafe {
+        usize remaining = self->length;
+        while remaining > 0 {
+            remaining = remaining - 1;
+            __storage_destroy(self->storage, remaining);
+        }
+
+        __storage_free(self->storage);
+    }
 }
 
+// Returns the number of logical elements.
 usize RawArray<T>::len(&const self) {
     return self->length;
 }
 
+// Returns the number of allocated element slots.
 usize RawArray<T>::capacity(&const self) {
-    return self->allocated;
+    unsafe {
+        return self->storage[:].len();
+    }
 }
 
+// Grows storage to at least capacity while preserving logical elements.
 unsafe error RawArray<T>::reserve(&self, usize capacity) {
-    if capacity <= self->allocated {
+    if capacity <= self->storage[:].len() {
         return none;
     }
 
-    replacement, err := new<[]T>(capacity);
+    replacement, err := __storage_new<[]T>(capacity);
     if err != none {
         return err;
     }
 
     usize i = 0;
     while i < self->length {
-        replacement[i] = self->storage[i];
+        __storage_relocate(replacement, i, self->storage, i);
         i++;
     }
 
     previous := take(self->storage);
-    free(previous);
-
     self->storage = replacement;
-    self->allocated = capacity;
+    __storage_free(previous);
 
     return none;
 }
 
+// Appends value into an uninitialized slot, relocating elements during growth.
 unsafe error RawArray<T>::push(&self, T value) {
-    if self->length != self->allocated {
-        self->storage[self->length] = value;
-        self->length++;
-        return none;
+    if self->length == self->storage[:].len() {
+        return self->pushWithGrowth(value);
     }
 
-    const usize CAPACITY_FACTOR = 2;
-    usize capacity = 4;
-    if self->allocated != 0 {
-        capacity = self->allocated * CAPACITY_FACTOR;
-    } also capacity <= self->allocated {
-        return AllocationError.OutOfMemory;
-    }
-
-    err := self->reserve(capacity);
-    if err != none {
-        return err;
-    }
-
-    self->storage[self->length] = value;
+    __storage_initialize(self->storage, self->length, value);
     self->length++;
     return none;
 }
 
+// Handles the uncommon capacity-exhausted case outside the reserved fast path.
+private unsafe error RawArray<T>::pushWithGrowth(&self, T value) {
+    err := self->grow();
+    if err != none {
+        return err;
+    }
+
+    __storage_initialize(self->storage, self->length, value);
+    self->length++;
+    return none;
+}
+
+// Keeps the common push path small enough for native inlining while isolating
+// allocation and overflow handling on the capacity-exhausted path.
+private unsafe error RawArray<T>::grow(&self) {
+    const usize CAPACITY_FACTOR = 2;
+    const usize CURRENT_CAPACITY = self->storage[:].len();
+    usize capacity = 4;
+    if CURRENT_CAPACITY != 0 {
+        capacity = CURRENT_CAPACITY * CAPACITY_FACTOR;
+    } also capacity <= CURRENT_CAPACITY {
+        return AllocationError.OutOfMemory;
+    }
+
+    return self->reserve(capacity);
+}
+
+// Copies the indexed element or reports ArrayError.IndexOutOfBounds.
 unsafe (T, error) RawArray<T>::get(&const self, usize index) {
     if index >= self->length {
         return (none, errors::ArrayError.IndexOutOfBounds);
@@ -92,33 +111,141 @@ unsafe (T, error) RawArray<T>::get(&const self, usize index) {
     return (self->storage[index], none);
 }
 
+// Replaces the indexed element or reports ArrayError.IndexOutOfBounds.
 unsafe error RawArray<T>::set(&self, usize index, T value) {
     if index >= self->length {
         return errors::ArrayError.IndexOutOfBounds;
     }
 
-    self->storage[index] = value;
+    __storage_destroy(self->storage, index);
+    __storage_initialize(self->storage, index, value);
     return none;
 }
 
+// Removes and returns the final element, or reports ArrayError.Empty.
 unsafe (T, error) RawArray<T>::pop(&self) {
     if self->length == 0 {
         return (none, errors::ArrayError.Empty);
     }
 
-    len := &self->length;
-    *len = *len - 1;
-    return (self->storage[*len], none);
+    self->length = self->length - 1;
+    return (__storage_extract(self->storage, self->length), none);
 }
 
+// Borrows all logical elements as a read-only slice.
 unsafe []const T RawArray<T>::view(&const self) <-self {
     return self->storage[:self->length];
 }
 
+// Mutably borrows all logical elements as a slice.
 unsafe []T RawArray<T>::viewRef(&self) <-self {
     return self->storage[:self->length];
 }
 
+// Removes and returns the indexed element, preserving order.
+unsafe (T, error) RawArray<T>::remove(&self, usize index) {
+    if index >= self->length {
+        return (none, errors::ArrayError.IndexOutOfBounds);
+    }
+
+    const usize LAST = self->length - 1;
+    T removed = __storage_extract(self->storage, index);
+
+    usize current = index;
+    while current < LAST {
+        __storage_relocate(self->storage, current, self->storage, current + 1);
+        current++;
+    }
+
+    self->length = LAST;
+    return (removed, none);
+}
+
+// Removes and returns an element by replacing it with the final element.
+unsafe (T, error) RawArray<T>::swapRemove(&self, usize index) {
+    if index >= self->length {
+        return (none, errors::ArrayError.IndexOutOfBounds);
+    }
+
+    const usize LAST = self->length - 1;
+    T removed = __storage_extract(self->storage, index);
+
+    if index != LAST {
+        __storage_relocate(self->storage, index, self->storage, LAST);
+    }
+
+    self->length = LAST;
+    return (removed, none);
+}
+
+// Removes all logical elements while retaining allocated storage.
 void RawArray<T>::clear(&self) {
-    self->length = 0;
+    unsafe {
+        while self->length > 0 {
+            self->length = self->length - 1;
+            __storage_destroy(self->storage, self->length);
+        }
+    }
+}
+
+// Reverses live elements through relocation rather than semantic copies.
+void RawArray<T>::reverse(&self) {
+    unsafe {
+        usize left = 0;
+        usize right = self->length;
+
+        while left < right {
+            right--;
+            if left >= right {
+                break;
+            }
+
+            self->swapAt(left, right);
+            left++;
+        }
+    }
+}
+
+// Exchanges two caller-proven live elements without semantic copies.
+unsafe void RawArray<T>::swap(&self, usize left, usize right) {
+    self->swapAt(left, right);
+}
+
+// Borrows one caller-proven live element, including during internal compaction.
+unsafe []const T RawArray<T>::viewAt(&const self, usize index) <-self {
+    return self->storage[index:index + 1];
+}
+
+// Destroys one caller-proven live element during internal compaction.
+unsafe void RawArray<T>::destroyAt(&self, usize index) {
+    __storage_destroy(self->storage, index);
+}
+
+// Relocates a live source into a caller-proven uninitialized destination.
+unsafe void RawArray<T>::relocate(
+    &self,
+    usize destination,
+    usize source,
+) {
+    __storage_relocate(self->storage, destination, self->storage, source);
+}
+
+// Commits a caller-proven initialized prefix after internal compaction.
+unsafe void RawArray<T>::commitLength(&self, usize length) {
+    self->length = length;
+}
+
+// Exchanges two caller-proven live elements without copying either value.
+private unsafe void RawArray<T>::swapAt(
+    &self,
+    usize left,
+    usize right,
+) {
+    if left == right {
+        return;
+    }
+
+    T temporary = __storage_extract(self->storage, left);
+    __storage_relocate(self->storage, left, self->storage, right);
+    __storage_initialize(self->storage, right, temporary);
 }

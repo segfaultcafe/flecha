@@ -1,0 +1,127 @@
+module model;
+
+@imports
+    :: lib::std::text::strings;
+
+export error GuardError {
+    Usage,
+    InvalidManifest,
+    UnsupportedEntry,
+    Mismatch,
+    ProcessFailure
+}
+
+export structure Entry {
+    string relativePath;
+    string digest;
+    u64 size;
+};
+
+Entry Entry::init(string relativePath, string digest, u64 size) override {
+    return build Entry {
+        self.relativePath = relativePath;
+        self.digest = digest;
+        self.size = size;
+    };
+}
+
+stringv Entry::path(&const self) <-self {
+    return self->relativePath.view();
+}
+
+stringv Entry::hash(&const self) <-self {
+    return self->digest.view();
+}
+
+u64 Entry::byteSize(&const self) {
+    return self->size;
+}
+
+export bool text_less(stringv left, stringv right) {
+    u32 common = left.len();
+    if right.len() < common {
+        common = right.len();
+    }
+
+    loop u32 index = 0; index < common; index++ {
+        if left[index] < right[index] {
+            return true;
+        }
+        if left[index] > right[index] {
+            return false;
+        }
+    }
+
+    return left.len() < right.len();
+}
+
+export bool entry_less(&const Entry left, &const Entry right) {
+    return text_less(left->path(), right->path());
+}
+
+export bool same_content(&const Entry left, &const Entry right) {
+    return left->byteSize() == right->byteSize() and
+        left->hash() == right->hash();
+}
+
+export (string, error) copy_text(stringv value) {
+    return strings::string_from_bytes(value.cast<[]const u8>);
+}
+
+export (string, error) child_path(stringv parent, stringv name) {
+    if parent.len() == 0 {
+        return copy_text(name);
+    }
+
+    usize capacity = parent.len().cast<usize> + name.len().cast<usize> + 1;
+    if capacity <= parent.len().cast<usize> {
+        return (none, AllocationError.OutOfMemory);
+    }
+
+    builder, allocationError := strings::StringBuilder::withCapacity(capacity);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+    if builder.append(parent) != none or builder.appendChar('/') != none or
+        builder.append(name) != none {
+        return (none, AllocationError.OutOfMemory);
+    }
+
+    return builder.toString();
+}
+
+export bool valid_relative_path(stringv value) {
+    if value.len() == 0 or value[0] == '/' or
+        value[value.len() - 1] == '/' {
+        return false;
+    }
+
+    u32 segmentStart = 0;
+    loop u32 index = 0; index <= value.len(); index++ {
+        if index < value.len() {
+            const char BYTE = value[index];
+            const u8 BYTE_VALUE = BYTE.cast<u8>;
+            if BYTE_VALUE < 32 or BYTE_VALUE == 127 or BYTE == '\\' or
+                BYTE == ':' or BYTE == '*' or BYTE == '?' or BYTE == '"' or
+                BYTE == '<' or BYTE == '>' or BYTE == '|' {
+                return false;
+            }
+            if BYTE != '/' {
+                proceed;
+            }
+        }
+
+        const u32 LENGTH = index - segmentStart;
+        if LENGTH == 0 {
+            return false;
+        }
+        segment := value.substr(segmentStart, LENGTH);
+        if segment == "." or segment == ".." {
+            return false;
+        }
+        segmentStart = index + 1;
+    }
+
+    return true;
+}
+

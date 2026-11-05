@@ -1,0 +1,16 @@
+module runtime;
+
+quiver extern unsafe i32 flecha_runtime_v1_monotonic_clock_now(
+    *u64 seconds,
+    *u32 nanoseconds
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_wall_clock_now(
+    *i64 unixSeconds,
+    *u32 nanoseconds
+);
+
+quiver extern unsafe i32 flecha_runtime_v1_sleep(
+    u64 seconds,
+    u32 nanoseconds
+);

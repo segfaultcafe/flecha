@@ -1,0 +1,13 @@
+module hashing;
+
+// Returns a non-cryptographic structural hash of value. Equal values produce
+// equal hashes. Pointer-containing values are stable only while their pointed
+// allocations remain alive in the current process.
+export usize hash<T>(&const T value) {
+    return __hash<T>(value);
+}
+
+// Hashes borrowed text by content without taking ownership.
+export usize hash_string(stringv value) {
+    return __hash<stringv>(value);
+}

@@ -85,6 +85,12 @@ TEST(DiagnosticTests, SemanticCodesAreStableAndContiguous) {
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidBorrowContract),
               "FLECHA-S0058");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::MovedValue), "FLECHA-S0059");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidFormat),
+              "FLECHA-S0060");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidDefaultArgument),
+              "FLECHA-S0061");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidVariadic),
+              "FLECHA-S0062");
 }
 
 TEST(DiagnosticTests, CompilerCodesAreStableAndContiguous) {
@@ -95,4 +101,27 @@ TEST(DiagnosticTests, CompilerCodesAreStableAndContiguous) {
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::RuntimeUnavailable),
               "FLECHA-C0003");
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::LinkerFailed), "FLECHA-C0004");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::ForeignCompilationFailed),
+              "FLECHA-C0005");
+    EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::TooManyDiagnostics),
+              "FLECHA-C0006");
+}
+
+TEST(DiagnosticTests, BoundsAndMarksDiagnosticFloods) {
+    DiagnosticBag diagnostics;
+    const SourceRange range{{0, 1, 1}, {0, 1, 1}};
+
+    for (std::size_t index = 0; index < DiagnosticBag::MAX_DIAGNOSTICS + 50;
+         ++index) {
+        diagnostics.Report(DiagnosticCode::UnexpectedToken, range,
+                           "invalid token " + std::to_string(index));
+    }
+
+    ASSERT_EQ(diagnostics.Diagnostics().size(),
+              DiagnosticBag::MAX_DIAGNOSTICS + 1);
+    EXPECT_EQ(diagnostics.Diagnostics().back().code,
+              DiagnosticCode::TooManyDiagnostics);
+    EXPECT_EQ(diagnostics.Diagnostics().back().message,
+              "too many diagnostics; stopping after 100");
+    EXPECT_TRUE(diagnostics.HasErrors());
 }

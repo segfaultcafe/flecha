@@ -1,0 +1,223 @@
+module address_runtime;
+
+@imports
+    :: lib::std::net::address
+    :: lib::std::net::dns
+    :: lib::std::net::errors;
+
+i32 main!() {
+    loopback, loopbackError := address::Ipv4Address::parse("127.0.0.1");
+    expectedLoopback := address::Ipv4Address::loopback();
+    if loopbackError != none or loopback != expectedLoopback or
+        !loopback.isLoopback() {
+        return 1;
+    }
+    loopbackText, formatError := loopback.toString();
+    if formatError != none or loopbackText.view() != "127.0.0.1" {
+        return 2;
+    }
+
+    broadcast, broadcastError :=
+        address::Ipv4Address::parse("255.255.255.255");
+    expectedBroadcast :=
+        address::Ipv4Address::fromOctets(255, 255, 255, 255);
+    if broadcastError != none or broadcast != expectedBroadcast {
+        return 3;
+    }
+
+    invalid, invalidError := address::Ipv4Address::parse("256.0.0.1");
+    if invalidError != errors::NetworkError.InvalidAddress or invalid != none {
+        return 4;
+    }
+
+    wildcard := address::Ipv4Address::wildcard();
+    if !wildcard.isWildcard() or wildcard.isLoopback() {
+        return 5;
+    }
+
+    alternateLoopback := address::Ipv4Address::fromOctets(127, 255, 1, 2);
+    ordinary := address::Ipv4Address::fromOctets(126, 255, 1, 2);
+    if !alternateLoopback.isLoopback() or ordinary.isLoopback() {
+        return 6;
+    }
+
+    octets := broadcast.octets();
+    if octets[0] != 255 or octets[1] != 255 or
+        octets[2] != 255 or octets[3] != 255 {
+        return 7;
+    }
+
+    ipv6, ipv6Error :=
+        address::Ipv6Address::parse("2001:db8::ff00:42:8329");
+    expectedIpv6 := address::Ipv6Address::fromSegments(
+        8193,
+        3512,
+        0,
+        0,
+        0,
+        65280,
+        66,
+        33577
+    );
+    if ipv6Error != none or ipv6 != expectedIpv6 {
+        return 8;
+    }
+
+    segments := ipv6.segments();
+    if segments[0] != 8193 or segments[1] != 3512 or
+        segments[5] != 65280 or segments[6] != 66 or
+        segments[7] != 33577 {
+        return 9;
+    }
+
+    ipv6Wildcard, wildcardError := address::Ipv6Address::parse("::");
+    if wildcardError != none or !ipv6Wildcard.isWildcard() or
+        ipv6Wildcard != address::Ipv6Address::wildcard() {
+        return 10;
+    }
+
+    ipv6Loopback, ipv6LoopbackError := address::Ipv6Address::parse("::1");
+    if ipv6LoopbackError != none or !ipv6Loopback.isLoopback() or
+        ipv6Loopback != address::Ipv6Address::loopback() {
+        return 11;
+    }
+
+    invalidIpv6, invalidIpv6Error :=
+        address::Ipv6Address::parse("1::2::3");
+    if invalidIpv6Error != errors::NetworkError.InvalidAddress or
+        invalidIpv6 != none {
+        return 12;
+    }
+
+    formattedIpv6, ipv6FormatError := ipv6.toString();
+    reparsedIpv6, ipv6ReparseError :=
+        address::Ipv6Address::parse(formattedIpv6.view());
+    if ipv6FormatError != none or
+        formattedIpv6.view() != "2001:db8::ff00:42:8329" or
+        ipv6ReparseError != none or reparsedIpv6 != ipv6 {
+        return 13;
+    }
+
+    maximumIpv6 := address::Ipv6Address::fromSegments(
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535,
+        65535
+    );
+    maximumIpv6Text, maximumIpv6Error := maximumIpv6.toString();
+    if maximumIpv6Error != none or maximumIpv6Text.len().cast<usize> !=
+        address::MAX_IPV6_STRING_LENGTH or maximumIpv6Text.view() !=
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" {
+        return 14;
+    }
+
+    wildcardText, ipv6WildcardFormatError := ipv6Wildcard.toString();
+    if ipv6WildcardFormatError != none or wildcardText.view() != "::" {
+        return 15;
+    }
+
+    ipv6LoopbackText, ipv6LoopbackFormatError := ipv6Loopback.toString();
+    if ipv6LoopbackFormatError != none or ipv6LoopbackText.view() != "::1" {
+        return 16;
+    }
+
+    ipv4Socket, ipv4SocketError :=
+        address::Ipv4SocketAddress::parse("192.0.2.1:8080");
+    ipv4SocketText, ipv4SocketFormatError := ipv4Socket.toString();
+    if ipv4SocketError != none or
+        ipv4Socket.address() != address::Ipv4Address::fromOctets(192, 0, 2, 1) or
+        ipv4Socket.port() != 8080 or ipv4SocketFormatError != none or
+        ipv4SocketText.view() != "192.0.2.1:8080" {
+        return 17;
+    }
+
+    invalidIpv4Socket, invalidIpv4SocketError :=
+        address::Ipv4SocketAddress::parse("192.0.2.1:65536");
+    if invalidIpv4SocketError != errors::NetworkError.InvalidPort or
+        invalidIpv4Socket != none {
+        return 18;
+    }
+
+    ipv6Socket, ipv6SocketError :=
+        address::Ipv6SocketAddress::parse("[2001:db8::1]:443");
+    ipv6SocketText, ipv6SocketFormatError := ipv6Socket.toString();
+    expectedIpv6SocketAddress := address::Ipv6Address::fromSegments(
+        8193, 3512, 0, 0, 0, 0, 0, 1
+    );
+    if ipv6SocketError != none or
+        ipv6Socket.address() != expectedIpv6SocketAddress or
+        ipv6Socket.port() != 443 or ipv6SocketFormatError != none or
+        ipv6SocketText.view() != "[2001:db8::1]:443" {
+        return 19;
+    }
+
+    invalidIpv6Socket, invalidIpv6SocketError :=
+        address::Ipv6SocketAddress::parse("::1:443");
+    if invalidIpv6SocketError != errors::NetworkError.InvalidAddress or
+        invalidIpv6Socket != none {
+        return 20;
+    }
+
+    crashableIpv4Text := loopback.toString!();
+    if crashableIpv4Text.view() != "127.0.0.1" {
+        return 21;
+    }
+
+    crashableIpv6Text := ipv6.toString!();
+    if crashableIpv6Text.view() != "2001:db8::ff00:42:8329" {
+        return 22;
+    }
+
+    crashableIpv4SocketText := ipv4Socket.toString!();
+    if crashableIpv4SocketText.view() != "192.0.2.1:8080" {
+        return 23;
+    }
+
+    crashableIpv6SocketText := ipv6Socket.toString!();
+    if crashableIpv6SocketText.view() != "[2001:db8::1]:443" {
+        return 24;
+    }
+
+    genericIpv4 := address::SocketAddress::fromIpv4(ipv4Socket);
+    genericIpv4Value, hasGenericIpv4 := genericIpv4.ipv4();
+    _, hasGenericIpv6 := genericIpv4.ipv6();
+    if !genericIpv4.isIpv4() or genericIpv4.isIpv6() or
+        genericIpv4.family() != address::AddressFamily.Ipv4 or
+        !hasGenericIpv4 or hasGenericIpv6 or genericIpv4Value != ipv4Socket {
+        return 25;
+    }
+
+    resolved, resolveError := dns::resolve("localhost", 4242);
+    if resolveError != none or resolved.len() == 0 {
+        return 26;
+    }
+    loop usize index = 0; index < resolved.len(); index++ {
+        value := resolved[index];
+        if value.isIpv4() {
+            ipv4Value, present := value.ipv4();
+            if !present or ipv4Value.port() != 4242 {
+                return 28;
+            }
+        } else if value.isIpv6() {
+            ipv6Value, present := value.ipv6();
+            if !present or ipv6Value.port() != 4242 {
+                return 29;
+            }
+        } else {
+            return 30;
+        }
+    }
+
+    invalidResolution, invalidResolutionError :=
+        dns::resolve("bad..name", 80);
+    if invalidResolutionError != errors::NetworkError.InvalidName or
+        invalidResolution.len() != 0 {
+        return 31;
+    }
+
+    return 42;
+}

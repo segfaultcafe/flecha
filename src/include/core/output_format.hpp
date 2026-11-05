@@ -9,7 +9,7 @@
 
 namespace flecha::core {
 
-enum class OutputFormatPartKind { Literal, Decimal, String, Boolean };
+enum class OutputFormatPartKind { Literal, Value };
 
 struct OutputFormatPart final {
     OutputFormatPartKind kind;
@@ -40,35 +40,25 @@ struct OutputFormat final {
     };
 
     for (std::size_t index = 0; index < text.size(); ++index) {
-        if (text[index] != '%') {
+        if (text[index] != '{' && text[index] != '}') {
             literal.push_back(text[index]);
             continue;
         }
-        if (++index == text.size()) {
-            result.error = "format string ends with an incomplete '%'";
-            return result;
-        }
-        if (text[index] == '%') {
-            literal.push_back('%');
+        const char brace = text[index];
+        if (index + 1 < text.size() && text[index + 1] == brace) {
+            literal.push_back(brace);
+            ++index;
             continue;
         }
-        flushLiteral();
-        switch (text[index]) {
-            case 'd':
-                result.parts.push_back({OutputFormatPartKind::Decimal, {}});
-                break;
-            case 's':
-                result.parts.push_back({OutputFormatPartKind::String, {}});
-                break;
-            case 'b':
-                result.parts.push_back({OutputFormatPartKind::Boolean, {}});
-                break;
-            default:
-                result.error = "unsupported format specifier '%";
-                result.error.push_back(text[index]);
-                result.error.push_back('\'');
-                return result;
+        if (brace == '{' && index + 1 < text.size() && text[index + 1] == '}') {
+            flushLiteral();
+            result.parts.push_back({OutputFormatPartKind::Value, {}});
+            ++index;
+            continue;
         }
+        result.error = brace == '{' ? "format string contains an unmatched '{'"
+                                    : "format string contains an unmatched '}'";
+        return result;
     }
     flushLiteral();
     return result;

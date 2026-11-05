@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/parser.hpp"
@@ -92,6 +93,770 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                              SemanticType(SemanticTypeKind::Char)));
     EXPECT_FALSE(IsAssignable(SemanticType(SemanticTypeKind::Char),
                               SemanticType(SemanticTypeKind::U8)));
+}
+
+TEST(SemanticTests, DerivesDeterministicJsonFieldMetadata) {
+    Analysis analysis = Analyze(R"(
+        decoration json;
+
+        @json(structure)
+        structure DefaultResponse {
+            i32 value;
+            @json("test") string testMe;
+            private string secret;
+        };
+
+        structure ExplicitResponse {
+            i32 ignored;
+            @json("value") i32 value;
+            @json("test") string testMe;
+            private string secret;
+        };
+
+        @json(structure)
+        structure EmptyObject {
+            private i32 internal;
+        };
+
+        structure Writer {};
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        error Writer::write(&self, string value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    ASSERT_GE(analysis.unit->Declarations().size(), 4u);
+    const auto& defaults = static_cast<const StructureDeclaration&>(
+        *analysis.unit->Declarations()[1]);
+    const JsonStructureMetadata* defaultMetadata =
+        analysis.model.JsonMetadataFor(defaults);
+    ASSERT_NE(defaultMetadata, nullptr);
+    EXPECT_EQ(defaultMetadata->mode, JsonDecorationMode::Default);
+    ASSERT_EQ(defaultMetadata->fields.size(), 2u);
+    EXPECT_EQ(defaultMetadata->fields[0].name, "value");
+    EXPECT_EQ(defaultMetadata->fields[1].name, "test");
+
+    const auto& explicitResponse = static_cast<const StructureDeclaration&>(
+        *analysis.unit->Declarations()[2]);
+    const JsonStructureMetadata* explicitMetadata =
+        analysis.model.JsonMetadataFor(explicitResponse);
+    ASSERT_NE(explicitMetadata, nullptr);
+    EXPECT_EQ(explicitMetadata->mode, JsonDecorationMode::Explicit);
+    ASSERT_EQ(explicitMetadata->fields.size(), 2u);
+    EXPECT_EQ(explicitMetadata->fields[0].name, "value");
+    EXPECT_EQ(explicitMetadata->fields[1].name, "test");
+
+    const auto& empty = static_cast<const StructureDeclaration&>(
+        *analysis.unit->Declarations()[3]);
+    const JsonStructureMetadata* emptyMetadata =
+        analysis.model.JsonMetadataFor(empty);
+    ASSERT_NE(emptyMetadata, nullptr);
+    EXPECT_EQ(emptyMetadata->mode, JsonDecorationMode::Default);
+    EXPECT_TRUE(emptyMetadata->fields.empty());
+}
+
+TEST(SemanticTests, RejectsInvalidJsonDecorations) {
+    Analysis analysis = Analyze(R"(
+        decoration json;
+        decoration other;
+
+        @missing
+        structure UnknownDecoration { i32 value; };
+
+        @json(structure)
+        structure InvalidFields {
+            @json("secret") private string secret;
+            @json("same") i32 first;
+            @json("same") i32 second;
+            @json(structure) i32 invalidArgument;
+        };
+
+        @json(structure)
+        i32 invalidTarget() { return 0; }
+
+        structure Writer {};
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+    )");
+
+    std::size_t invalidDecorations = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::InvalidDecoration)
+            ++invalidDecorations;
+    EXPECT_GE(invalidDecorations, 5u);
+}
+
+TEST(SemanticTests, RejectsLegacyJsonStructureModes) {
+    Analysis analysis = Analyze(R"(
+        decoration json;
+
+        @json
+        structure MissingTarget { i32 value; };
+
+        @json(default)
+        structure LegacyDefault { i32 value; };
+
+        @json(explicit)
+        structure LegacyExplicit { @json("value") i32 value; };
+
+        structure Writer {};
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+    )");
+
+    std::size_t invalidDecorations = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::InvalidDecoration)
+            ++invalidDecorations;
+    EXPECT_GE(invalidDecorations, 3u);
+}
+
+TEST(SemanticTests, RejectsDecorationsWithoutCompilerCounterparts) {
+    Analysis analysis = Analyze(R"(
+        decoration bobby;
+
+        @bobby(structure)
+        structure Response {
+            @bobby("value") i32 value;
+        };
+    )");
+
+    std::size_t invalidDecorations = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::InvalidDecoration &&
+            diagnostic.message.find("no compiler implementation") !=
+                std::string::npos)
+            ++invalidDecorations;
+    EXPECT_EQ(invalidDecorations, 2u);
+}
+
+TEST(SemanticTests, PreservesDecorationsOnGenericSpecializations) {
+    Analysis analysis = Analyze(R"(
+        decoration json;
+
+        @json(structure)
+        structure Box<T> {
+            @json("item") T value;
+            private i32 internal;
+        };
+
+        void use(Box<i32> value) {}
+
+        structure Writer {};
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    const JsonStructureMetadata* metadata = nullptr;
+    for (const auto& declaration : analysis.unit->Declarations()) {
+        if (declaration->Kind() != AstNodeKind::StructureDeclaration) continue;
+        const auto& structure =
+            static_cast<const StructureDeclaration&>(*declaration);
+        metadata = analysis.model.JsonMetadataFor(structure);
+        if (metadata) break;
+    }
+    ASSERT_NE(metadata, nullptr);
+    ASSERT_EQ(metadata->fields.size(), 1u);
+    EXPECT_EQ(metadata->fields[0].name, "item");
+}
+
+TEST(SemanticTests, GeneratesJsonWritersForEveryDecoratedStructure) {
+    Analysis analysis = Analyze(R"(
+        decoration json;
+
+        structure Writer {};
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        error Writer::write(&self, string value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+
+        @json(structure)
+        structure Inner { i32 value; };
+
+        @json(structure)
+        structure Outer {
+            Inner inner;
+            @json("label") string text;
+            private i32 hidden;
+        };
+
+        structure Explicit { @json("value") i32 value; };
+
+        @json(structure)
+        structure Empty { private i32 hidden; };
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    std::unordered_map<std::string, const FunctionDeclaration*> writers;
+    std::unordered_map<std::string, const FunctionDeclaration*> facades;
+    for (const auto& function : analysis.model.GeneratedFunctions())
+        if (function->Name() == "writeJson")
+            writers.emplace(function->Owner(), function.get());
+        else if (function->Name() == "json")
+            facades.emplace(function->Owner(), function.get());
+
+    ASSERT_EQ(writers.size(), 4u);
+    ASSERT_EQ(facades.size(), 4u);
+    ASSERT_TRUE(writers.contains("Inner"));
+    ASSERT_TRUE(writers.contains("Outer"));
+    ASSERT_TRUE(writers.contains("Explicit"));
+    ASSERT_TRUE(writers.contains("Empty"));
+    ASSERT_TRUE(facades.contains("Inner"));
+    ASSERT_TRUE(facades.contains("Outer"));
+    ASSERT_TRUE(facades.contains("Explicit"));
+    ASSERT_TRUE(facades.contains("Empty"));
+    EXPECT_EQ(writers.at("Inner")->Body().Statements().size(), 7u);
+    EXPECT_EQ(writers.at("Outer")->Body().Statements().size(), 11u);
+    EXPECT_EQ(writers.at("Explicit")->Body().Statements().size(), 7u);
+    EXPECT_EQ(writers.at("Empty")->Body().Statements().size(), 3u);
+}
+
+TEST(SemanticTests, GeneratesJsonReadersForEveryDecoratedStructure) {
+    Analysis analysis = Analyze(R"(
+        decoration json;
+
+        structure Writer {};
+        Writer Writer::init() override { return build Writer {}; }
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        error Writer::write(&self, string value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+
+        structure Reader {};
+        Reader Reader::init([]const u8 source) override {
+            return build Reader {};
+        }
+        error Reader::beginObject(&self) { return none; }
+        (bool, error) Reader::nextObjectField(&self) {
+            return (false, none);
+        }
+        bool Reader::keyIs(&const self, stringv expected) { return false; }
+        error Reader::read(&self, &i32 output) { return none; }
+        (string, error) Reader::readString(&self) { return ("", none); }
+        error Reader::skipValue(&self) { return none; }
+        error Reader::finish(&self) { return none; }
+
+        @json(structure)
+        structure Inner { i32 value; };
+
+        @json(structure)
+        structure Outer { Inner inner; string name; };
+
+        structure Explicit { @json("value") i32 value; };
+
+        @json(structure)
+        structure Empty { private i32 hidden; };
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    std::unordered_map<std::string, const FunctionDeclaration*> readers;
+    std::unordered_map<std::string, const FunctionDeclaration*> factories;
+    for (const auto& function : analysis.model.GeneratedFunctions())
+        if (function->Name() == "readJson")
+            readers.emplace(function->Owner(), function.get());
+        else if (function->Name() == "fromJson")
+            factories.emplace(function->Owner(), function.get());
+
+    ASSERT_EQ(readers.size(), 4u);
+    ASSERT_EQ(factories.size(), 4u);
+    EXPECT_TRUE(readers.contains("Inner"));
+    EXPECT_TRUE(readers.contains("Outer"));
+    EXPECT_TRUE(readers.contains("Explicit"));
+    EXPECT_TRUE(readers.contains("Empty"));
+    EXPECT_TRUE(factories.contains("Inner"));
+    EXPECT_TRUE(factories.contains("Outer"));
+    EXPECT_TRUE(factories.contains("Explicit"));
+    EXPECT_TRUE(factories.contains("Empty"));
+}
+
+TEST(SemanticTests, AllowsExactJsonReaderOverridesAndRejectsBadOnes) {
+    const std::string prelude = R"(
+        decoration json;
+        structure Writer {};
+        Writer Writer::init() override { return build Writer {}; }
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+        structure Reader {};
+        Reader Reader::init([]const u8 source) override {
+            return build Reader {};
+        }
+        error Reader::beginObject(&self) { return none; }
+        (bool, error) Reader::nextObjectField(&self) {
+            return (false, none);
+        }
+        bool Reader::keyIs(&const self, stringv expected) { return false; }
+        error Reader::read(&self, &i32 output) { return none; }
+        error Reader::skipValue(&self) { return none; }
+        error Reader::finish(&self) { return none; }
+    )";
+
+    Analysis valid = Analyze(prelude + R"(
+        @json(structure)
+        structure Response { i32 value; };
+        error Response::readJson(&self, &Reader reader) override {
+            return none;
+        }
+        (Response, error) Response::fromJson([]const u8 source) override {
+            return (Response::init(), none);
+        }
+    )");
+    ASSERT_FALSE(valid.diagnostics.HasErrors());
+    for (const auto& function : valid.model.GeneratedFunctions()) {
+        EXPECT_FALSE(function->Name() == "readJson" &&
+                     function->Owner() == "Response");
+        EXPECT_FALSE(function->Name() == "fromJson" &&
+                     function->Owner() == "Response");
+    }
+
+    Analysis invalid = Analyze(prelude + R"(
+        @json(structure)
+        structure Response { i32 value; };
+        error Response::readJson(&const self, &Reader reader) override {
+            return none;
+        }
+    )");
+    EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::InvalidDecoration),
+              nullptr);
+}
+
+TEST(SemanticTests, AllowsExactJsonWriterOverrideAndRejectsBadOverrides) {
+    const std::string prelude = R"(
+        decoration json;
+        structure Writer {};
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+    )";
+
+    Analysis valid = Analyze(prelude + R"(
+        @json(structure)
+        structure Response { i32 value; };
+        error Response::writeJson(&const self, &Writer writer) override {
+            return none;
+        }
+    )");
+    ASSERT_FALSE(valid.diagnostics.HasErrors());
+    for (const auto& function : valid.model.GeneratedFunctions())
+        EXPECT_FALSE(function->Name() == "writeJson" &&
+                     function->Owner() == "Response");
+
+    Analysis invalid = Analyze(prelude + R"(
+        @json(structure)
+        structure Response { i32 value; };
+        error Response::writeJson(&self, &Writer writer) override {
+            return none;
+        }
+    )");
+    EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::InvalidDecoration),
+              nullptr);
+}
+
+TEST(SemanticTests, RejectsJsonFieldsWithoutAWriterRepresentation) {
+    Analysis analysis = Analyze(R"(
+        decoration json;
+        structure Writer {};
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+
+        @json(structure)
+        structure Response { [2]i32 values; };
+    )");
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidDecoration);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_NE(diagnostic->message.find("is not JSON serializable"),
+              std::string::npos);
+}
+
+TEST(SemanticTests, RejectsBorrowedStringViewsForJsonReading) {
+    Analysis analysis = Analyze(R"(
+        decoration json;
+        structure Writer {};
+        Writer Writer::init() override { return build Writer {}; }
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::write(&self, stringv value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+        structure Reader {};
+        Reader Reader::init([]const u8 source) override {
+            return build Reader {};
+        }
+        error Reader::beginObject(&self) { return none; }
+        (bool, error) Reader::nextObjectField(&self) {
+            return (false, none);
+        }
+        bool Reader::keyIs(&const self, stringv expected) { return false; }
+        error Reader::skipValue(&self) { return none; }
+        error Reader::finish(&self) { return none; }
+
+        @json(structure)
+        structure Response { stringv borrowed; };
+    )");
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidDecoration);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_NE(diagnostic->message.find("cannot be JSON deserialized"),
+              std::string::npos);
+}
+
+TEST(SemanticTests, AcceptsTrailingDefaultArgumentsAtDirectCallsAndMethods) {
+    Analysis analysis = Analyze(R"(
+        i32 add(i32 value, i32 amount = 2) { return value + amount; }
+        structure Counter { i32 value; };
+        i32 Counter::add(&const self, i32 amount = 2) {
+            return self->value + amount;
+        }
+        i32 main() {
+            counter := Counter::init();
+            return add(38) + counter.add() + add(0, 2);
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticTests, EnforcesCrashableFunctionEffects) {
+    Analysis valid = Analyze(R"(
+        void terminal!() { crash("boom"); }
+        void forward!() { terminal!(); }
+        void main!() { forward!(); }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+    EXPECT_EQ(FindDiagnostic(valid, DiagnosticCode::InvalidCrashable), nullptr);
+
+    Analysis crashFromNormal = Analyze("void main() { crash(\"boom\"); }");
+    EXPECT_NE(
+        FindErrorDiagnostic(crashFromNormal, DiagnosticCode::InvalidCrashable),
+        nullptr);
+
+    Analysis missingBang = Analyze(R"(
+        void terminal!() { crash("boom"); }
+        void caller!() { terminal(); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(missingBang, DiagnosticCode::UnknownName),
+              nullptr);
+
+    Analysis bangOnNormal = Analyze(R"(
+        void ordinary() {}
+        void caller!() { ordinary!(); crash("boom"); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(bangOnNormal, DiagnosticCode::UnknownName),
+              nullptr);
+
+    Analysis crashableFromNormal = Analyze(R"(
+        void terminal!() { crash("boom"); }
+        void caller() { terminal!(); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(crashableFromNormal,
+                                  DiagnosticCode::InvalidCrashable),
+              nullptr);
+}
+
+TEST(SemanticTests, ResolvesNormalAndCrashableFunctionsAsDistinctOverloads) {
+    Analysis analysis = Analyze(R"(
+        i32 choose() { return 42; }
+        i32 choose!() { crash("no choice"); }
+
+        structure Worker {};
+        i32 Worker::run(&const self) { return 42; }
+        i32 Worker::run!(&const self) { crash("worker failed"); }
+
+        void main!() {
+            value := choose();
+            worker := Worker::init();
+            value = worker.run();
+            if value == 0 { choose!(); }
+            if value == 1 { worker.run!(); }
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+    EXPECT_EQ(FindDiagnostic(analysis, DiagnosticCode::DuplicateDeclaration),
+              nullptr);
+}
+
+TEST(SemanticTests, ResolvesNormalAndCrashableGenericFunctionsIndependently) {
+    Analysis analysis = Analyze(R"(
+        T choose<T>(T value) { return value; }
+        T choose<T>!(T value) { crash("no generic choice"); }
+
+        void main!() {
+            value := choose(42);
+            if value == 0 { choose!(7); }
+            if value == 1 { choose<i32>!(8); }
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+    EXPECT_EQ(FindDiagnostic(analysis, DiagnosticCode::DuplicateDeclaration),
+              nullptr);
+}
+
+TEST(SemanticTests, WarnsWhenCrashableFunctionHasNoCrashPath) {
+    Analysis analysis = Analyze(R"(
+        void first!() { second!(); }
+        void second!() { first!(); }
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    std::size_t warnings = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics()) {
+        if (diagnostic.code == DiagnosticCode::InvalidCrashable &&
+            diagnostic.severity == DiagnosticSeverity::Warning) {
+            ++warnings;
+            EXPECT_NE(
+                diagnostic.message.find("no path leads to a crashable state"),
+                std::string::npos);
+        }
+    }
+    EXPECT_EQ(warnings, 2);
+}
+
+TEST(SemanticTests, AcceptsVariadicForwardingToFormattingBuiltIns) {
+    Analysis analysis = Analyze(R"(
+        void print(values...) { stdout(values...); }
+        void printf(stringv format, values...) {
+            stdoutf(format, values...);
+        }
+        (string, error) sprintf(stringv format, values...) {
+            return __sprintf(format, values...);
+        }
+        i32 main() {
+            print();
+            print("answer: ", 42, true);
+            printf("{} {}", "value", 42);
+            text, err := sprintf("{} {}", "value", 42);
+            if err != none { return 1; }
+            stdout(text);
+            return 0;
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticTests, DistinguishesFixedAndPackBorrowSources) {
+    Analysis analysis = Analyze(R"(
+        stringv target(stringv fixed, stringv value) <- (fixed, value) {
+            return fixed;
+        }
+        stringv forward(stringv fixed, values...)
+            <- (fixed, ...values) {
+            return target(fixed, values...);
+        }
+        void main() { value := forward("fixed", "pack"); stdout(value); }
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    const auto& forward = FunctionAt(analysis, 1);
+    const auto* symbol = static_cast<const FunctionSymbol*>(
+        analysis.model.DeclaredSymbol(forward));
+    ASSERT_NE(symbol, nullptr);
+    ASSERT_EQ(symbol->BorrowSourceIndices().size(), 1);
+    EXPECT_EQ(symbol->BorrowSourceIndices()[0], 0);
+    EXPECT_TRUE(symbol->BorrowsVariadicPack());
+}
+
+TEST(SemanticTests, PackBorrowSourcesRetainLoansAtCallSites) {
+    Analysis analysis = Analyze(R"(
+        &const i32 target(&const i32 value) <- value { return value; }
+        &const i32 forward(values...) <- ...values {
+            return target(values...);
+        }
+        void main() {
+            i32 value = 41;
+            source := &value;
+            borrowed := forward(source);
+            value = 42;
+            stdout(*borrowed);
+        }
+    )");
+
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::BorrowConflict),
+              nullptr);
+}
+
+TEST(SemanticTests, PreservesFixedOwnershipThroughVariadicForwarding) {
+    Analysis analysis = Analyze(R"(
+        unsafe void destroy(own *i32 pointer) { free(pointer); }
+        unsafe void forward_destroy(own *i32 pointer, values...) {
+            destroy(pointer, values...);
+        }
+        unsafe i32 main() {
+            pointer, failure := new<i32>(42);
+            if failure != none { return 1; }
+            forward_destroy(pointer);
+            return 42;
+        }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticTests, RejectsVariadicExpansionOutsideForwardingBody) {
+    Analysis analysis = Analyze(R"(
+        void sink(i32 value) {}
+        void main() { value := 42; sink(value...); }
+    )");
+
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::InvalidVariadic),
+              nullptr);
+}
+
+TEST(SemanticTests, RejectsNonForwardingVariadicBodies) {
+    Analysis analysis = Analyze(R"(
+        void invalid(values...) { stdout(values...); stdoutln(); }
+        void main() {}
+    )");
+
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::InvalidVariadic),
+              nullptr);
+}
+
+TEST(SemanticTests, RejectsVariadicForwardingCyclesAndCallableValues) {
+    Analysis cycle = Analyze(R"(
+        void first(values...) { second(values...); }
+        void second(values...) { first(values...); }
+        void main() {}
+    )");
+    EXPECT_NE(FindDiagnostic(cycle, DiagnosticCode::InvalidVariadic), nullptr);
+
+    Analysis callable = Analyze(R"(
+        func Printer(stringv) => ();
+        void print(values...) { stdout(values...); }
+        void main() { Printer callback = print; }
+    )");
+    EXPECT_NE(FindDiagnostic(callable, DiagnosticCode::InvalidVariadic),
+              nullptr);
+}
+
+TEST(SemanticTests, RejectsRequiredParametersAfterDefaults) {
+    Analysis analysis =
+        Analyze("void invalid(i32 first = 1, i32 second) {} void main() {}");
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidDefaultArgument);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_NE(diagnostic->message.find("required parameter"),
+              std::string::npos);
+}
+
+TEST(SemanticTests, TypeChecksDefaultsAndCallArity) {
+    Analysis incompatible =
+        Analyze("void invalid(i32 value = true) {} void main() {}");
+    EXPECT_NE(
+        FindDiagnostic(incompatible, DiagnosticCode::InvalidDefaultArgument),
+        nullptr);
+
+    Analysis tooFew = Analyze(
+        "void value(i32 required, i32 optional = 2) {} "
+        "void main() { value(); }");
+    EXPECT_NE(FindDiagnostic(tooFew, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+
+    Analysis tooMany = Analyze(
+        "void value(i32 optional = 2) {} "
+        "void main() { value(1, 2); }");
+    EXPECT_NE(FindDiagnostic(tooMany, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+}
+
+TEST(SemanticTests, DoesNotCarryDefaultsThroughCallableValues) {
+    Analysis analysis = Analyze(R"(
+        func Binary(i32, i32) => (i32);
+        i32 add(i32 value, i32 amount = 2) { return value + amount; }
+        i32 invoke(Binary operation) { return operation(40); }
+        i32 main() { return invoke(add); }
+    )");
+
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+}
+
+TEST(SemanticConstTests, ResolvesAndValidatesModuleConstants) {
+    auto valid = Analyze(R"(
+        const usize BASE = 4;
+        const usize LIMIT = BASE * 2;
+        usize value() { return LIMIT; }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(valid.diagnostics.HasErrors());
+    const auto& base = static_cast<const ModuleConstantDeclaration&>(
+        *valid.unit->Declarations()[0]);
+    const Symbol* symbol = valid.model.DeclaredSymbol(base);
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->Kind(), SymbolKind::ModuleConstant);
+    EXPECT_FALSE(symbol->Writable());
+
+    auto runtime = Analyze(
+        "i32 make() { return 42; } const i32 VALUE = make(); "
+        "i32 read() { return VALUE; }");
+    const Diagnostic* runtimeError =
+        FindDiagnostic(runtime, DiagnosticCode::InvalidOperand);
+    ASSERT_NE(runtimeError, nullptr);
+    EXPECT_NE(runtimeError->message.find("compile-time expression"),
+              std::string::npos);
+
+    auto cycle = Analyze(
+        "const i32 LEFT = RIGHT; const i32 RIGHT = LEFT; "
+        "i32 read() { return LEFT; }");
+    const Diagnostic* cycleError =
+        FindDiagnostic(cycle, DiagnosticCode::InvalidOperand);
+    ASSERT_NE(cycleError, nullptr);
+    EXPECT_NE(cycleError->message.find("cyclic module constant"),
+              std::string::npos);
 }
 
 TEST(SemanticCallableTests, ResolvesStructuralSignaturesAndFunctionValues) {
@@ -297,6 +1062,21 @@ TEST(SemanticCallableTests, SpecializesGenericCallableSignaturesStructurally) {
     EXPECT_EQ(symbol->ParameterTypes()[0].Name(), "func(i32) => (i32)");
 }
 
+TEST(SemanticCallableTests, SpecializesGenericFunctionsUsedAsValues) {
+    Analysis result = Analyze(R"(
+        func Mapper<T>(T) => (T);
+        T identity<T>(T value) { return value; }
+        i32 main() {
+            Mapper<i32> mapper = identity<i32>;
+            return mapper(42);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
 TEST(SemanticCallableTests, SpecializesGenericOnceCallableSignatures) {
     Analysis result = Analyze(R"(
         once func Transform<T>(T) => (T);
@@ -352,6 +1132,54 @@ TEST(SemanticCallableTests,
             reference := callback(&value);
             *reference = *reference + 1;
             return value;
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, MultiSourceContractsAreOrderIndependent) {
+    Analysis result = Analyze(R"(
+        func Forward(&const i32 left, &const i32 right) => (&const i32)
+            <- (left, right);
+        func Reverse(&const i32 left, &const i32 right) => (&const i32)
+            <- (right, left);
+        func All(&const i32 left, &const i32 right) => (&const i32)
+            <- ...args;
+        &const i32 choose(&const i32 left, &const i32 right)
+            <- (left, right) {
+            return left;
+        }
+        void use() {
+            Forward forward = choose;
+            Reverse reverse = choose;
+            All all = choose;
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests,
+     AllowsCheckedReferencesToRawOwningStructuresInSafeCallables) {
+    Analysis result = Analyze(R"(
+        structure Owner {
+            *i32 cleanup;
+            i32 value;
+        };
+        Owner Owner::zero() override { return build Owner {}; }
+        void Owner::tear(&self) override {}
+        func Less<T>(&const T, &const T) => (bool);
+        bool less(&const Owner left, &const Owner right) {
+            return left->value < right->value;
+        }
+        i32 main() {
+            Less<Owner> comparison = less;
+            return 0;
         }
     )");
 
@@ -973,13 +1801,11 @@ TEST(SemanticCallableTests, PropagatesBorrowOriginsThroughOwnCaptures) {
         nullptr);
 }
 
-TEST(SemanticCallableTests, ChecksCopyCaptureSourceInitialization) {
-    EXPECT_NE(FindErrorDiagnostic(
-                  Analyze("func Mapper(i32) => (i32); i32 main() { i32 x; "
-                          "Mapper f = [copy x](v) => { return v + x; }; return "
-                          "0; }"),
-                  DiagnosticCode::UninitializedVariable),
-              nullptr);
+TEST(SemanticCallableTests, CopyCapturesDefaultedTypedSources) {
+    EXPECT_FALSE(
+        Analyze("func Mapper(i32) => (i32); i32 main() { i32 x; "
+                "Mapper f = [copy x](v) => { return v + x; }; return f(0); }")
+            .diagnostics.HasErrors());
 }
 
 TEST(SemanticCallableTests, ResolvesCheckedReferenceCaptures) {
@@ -1257,7 +2083,7 @@ TEST(SemanticMatchTests, DiagnosesPatternsExhaustivenessAndArmTypes) {
     }
 }
 
-TEST(SemanticMatchTests, MergesDefiniteAssignmentAcrossEveryArm) {
+TEST(SemanticMatchTests, PreservesDefaultValuesAcrossEveryArm) {
     Analysis valid = Analyze(R"(
         enum State { Idle, Running, }
         i32 f(State state) {
@@ -1282,8 +2108,7 @@ TEST(SemanticMatchTests, MergesDefiniteAssignmentAcrossEveryArm) {
             return result;
         }
     )");
-    EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::UninitializedVariable),
-              nullptr);
+    EXPECT_FALSE(invalid.diagnostics.HasErrors());
 }
 
 TEST(SemanticMatchTests, ExpandsGenericFunctionsContainingMatches) {
@@ -1397,6 +2222,15 @@ TEST(SemanticConversionTests, ConvertsCharactersToBytesImplicitly) {
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticOperatorTests, OrdersCharacters) {
+    Analysis result = Analyze(
+        "bool less(char left, char right) { return left < right; } "
+        "bool less_equal(char left, char right) { return left <= right; } "
+        "bool greater(char left, char right) { return left > right; } "
+        "bool greater_equal(char left, char right) { return left >= right; }");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
 TEST(SemanticExternTests, DoesNotBypassTrackedAllocationContracts) {
     Analysis result = Analyze(
         "extern unsafe void native_use(*i32 value); "
@@ -1430,7 +2264,8 @@ TEST(SemanticDeclarationTests, RegistersFunctionsParametersAndLocals) {
 TEST(SemanticBuiltInTests, ProvidesTypedStandardOutput) {
     Analysis analysis = Analyze(
         "i32 main() { stdout(\"Flecha\"); "
-        "stdoutln(\"Language\"); return 42; }");
+        "stdoutln(\"Language\"); stderr(\"error\"); "
+        "stderrln(\"detail\"); return 42; }");
 
     ASSERT_FALSE(analysis.diagnostics.HasErrors());
     const FunctionDeclaration& function = FunctionAt(analysis, 0);
@@ -1460,12 +2295,73 @@ TEST(SemanticBuiltInTests, ProvidesTypedStandardOutput) {
         static_cast<const FunctionSymbol*>(analysis.model.SymbolFor(lineName));
     ASSERT_NE(lineSymbol, nullptr);
     EXPECT_EQ(lineSymbol->BuiltIn(), BuiltInFunction::StdoutLine);
+
+    const ExpressionStatement& errorStatement =
+        static_cast<const ExpressionStatement&>(
+            *function.Body().Statements()[2]);
+    const CallExpression& errorCall =
+        static_cast<const CallExpression&>(errorStatement.Value());
+    const NameExpression& errorName =
+        static_cast<const NameExpression&>(errorCall.Callee());
+    const FunctionSymbol* errorSymbol =
+        static_cast<const FunctionSymbol*>(analysis.model.SymbolFor(errorName));
+    ASSERT_NE(errorSymbol, nullptr);
+    EXPECT_EQ(errorSymbol->BuiltIn(), BuiltInFunction::Stderr);
+
+    const ExpressionStatement& errorLineStatement =
+        static_cast<const ExpressionStatement&>(
+            *function.Body().Statements()[3]);
+    const CallExpression& errorLineCall =
+        static_cast<const CallExpression&>(errorLineStatement.Value());
+    const NameExpression& errorLineName =
+        static_cast<const NameExpression&>(errorLineCall.Callee());
+    const FunctionSymbol* errorLineSymbol = static_cast<const FunctionSymbol*>(
+        analysis.model.SymbolFor(errorLineName));
+    ASSERT_NE(errorLineSymbol, nullptr);
+    EXPECT_EQ(errorLineSymbol->BuiltIn(), BuiltInFunction::StderrLine);
 }
 
-TEST(SemanticBuiltInTests, ValidatesStandardOutputArguments) {
+TEST(SemanticBuiltInTests, SpecializesAndValidatesStructuralHashing) {
+    Analysis valid = Analyze(
+        "usize hash_value(&const i32 value) { return __hash<i32>(value); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(valid.diagnostics.HasErrors());
+    const auto& returnStatement = static_cast<const ReturnStatement&>(
+        *FunctionAt(valid, 0).Body().Statements()[0]);
+    const auto& call =
+        static_cast<const CallExpression&>(*returnStatement.Value());
+    const auto& name = static_cast<const NameExpression&>(call.Callee());
+    const auto* symbol =
+        static_cast<const FunctionSymbol*>(valid.model.SymbolFor(name));
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->BuiltIn(), BuiltInFunction::Hash);
+    EXPECT_EQ(symbol->ReturnType().Kind(), SemanticTypeKind::USize);
+    ASSERT_EQ(symbol->ParameterTypes().size(), 1);
+    EXPECT_EQ(symbol->ParameterTypes()[0].Kind(), SemanticTypeKind::Reference);
+
+    Analysis wrongType = Analyze(
+        "usize hash_value() { i32 value = 1; return __hash<i64>(&value); }");
+    EXPECT_NE(FindDiagnostic(wrongType, DiagnosticCode::IncompatibleArgument),
+              nullptr);
+
+    Analysis unsupported = Analyze(
+        "usize hash_values([]i32 values) { return __hash<[]i32>(values); }");
+    EXPECT_NE(FindDiagnostic(unsupported, DiagnosticCode::InvalidOperand),
+              nullptr);
+
+    Analysis wrongCount =
+        Analyze("usize hash_value() { return __hash<i32>(); }");
+    EXPECT_NE(FindDiagnostic(wrongCount, DiagnosticCode::WrongArgumentCount),
+              nullptr);
+}
+
+TEST(SemanticBuiltInTests, ValidatesStandardOutputAndErrorArguments) {
     Analysis valid = Analyze(
         "void Main() { stdout(); stdout(42, false, 'x', 1.5); "
-        "stdoutln(); stdoutln(\"answer: \", 42); }");
+        "stdoutln(); stdoutln(\"answer: \", 42); stderr(); "
+        "stderr(42, false, 'x', 1.5); stderrln(); "
+        "stderrln(\"failure: \", 42); }");
     EXPECT_FALSE(valid.diagnostics.HasErrors());
 
     Analysis wrongType = Analyze("void Main() { stdout(null); }");
@@ -1476,53 +2372,119 @@ TEST(SemanticBuiltInTests, ValidatesStandardOutputArguments) {
     EXPECT_NE(
         FindDiagnostic(lineWrongType, DiagnosticCode::IncompatibleArgument),
         nullptr);
+
+    Analysis errorWrongType = Analyze("void Main() { stderr(null); }");
+    EXPECT_NE(
+        FindDiagnostic(errorWrongType, DiagnosticCode::IncompatibleArgument),
+        nullptr);
+
+    Analysis errorLineWrongType = Analyze("void Main() { stderrln(none); }");
+    EXPECT_NE(FindDiagnostic(errorLineWrongType,
+                             DiagnosticCode::IncompatibleArgument),
+              nullptr);
 }
 
-TEST(SemanticBuiltInTests, ValidatesFormattedStandardOutput) {
-    Analysis unsupported = Analyze(
-        "void Main() { stdoutf(\"expected: %d, text: %s%c\", 42, "
-        "\"flecha\", '!', true); }");
-    EXPECT_NE(FindDiagnostic(unsupported, DiagnosticCode::InvalidFormat),
-              nullptr);
+TEST(SemanticBuiltInTests, ValidatesFormattedStandardOutputAndError) {
     EXPECT_EQ(DiagnosticCodeName(DiagnosticCode::InvalidFormat),
               "FLECHA-S0060");
 
     Analysis supported = Analyze(
-        "void Main() { stdoutf(\"expected: %d, text: %s%s, ok: %b/%b, "
-        "percent: %%\", 42, \"flecha\", '!', true, 1 as u8); }");
+        "void Main() { stdoutf(\"expected: {}, text: {}{}, ok: {}/{}, "
+        "braces: {{}}\", 42, \"flecha\", '!', true, 1 as u8); "
+        "stderrf(\"error: {}\", \"detail\"); }");
     EXPECT_FALSE(supported.diagnostics.HasErrors());
 
     Analysis missingFormat = Analyze("void Main() { stdoutf(); }");
     EXPECT_NE(FindDiagnostic(missingFormat, DiagnosticCode::WrongArgumentCount),
               nullptr);
 
+    Analysis missingErrorFormat = Analyze("void Main() { stderrf(); }");
+    EXPECT_NE(
+        FindDiagnostic(missingErrorFormat, DiagnosticCode::WrongArgumentCount),
+        nullptr);
+
     Analysis nonLiteral = Analyze(
-        "void Main() { stringv format = \"%d\"; stdoutf(format, 42); }");
+        "void Main() { stringv format = \"{}\"; stdoutf(format, 42); }");
     EXPECT_NE(FindDiagnostic(nonLiteral, DiagnosticCode::InvalidFormat),
               nullptr);
 
-    Analysis incomplete = Analyze("void Main() { stdoutf(\"value: %\", 1); }");
+    Analysis incomplete = Analyze("void Main() { stdoutf(\"value: {\", 1); }");
     EXPECT_NE(FindDiagnostic(incomplete, DiagnosticCode::InvalidFormat),
               nullptr);
 
-    Analysis wrongCount = Analyze("void Main() { stdoutf(\"%d %s\", 1); }");
+    Analysis unmatchedClose = Analyze("void Main() { stderrf(\"value: }\"); }");
+    EXPECT_NE(FindDiagnostic(unmatchedClose, DiagnosticCode::InvalidFormat),
+              nullptr);
+
+    Analysis wrongCount = Analyze("void Main() { stdoutf(\"{} {}\", 1); }");
     EXPECT_NE(FindDiagnostic(wrongCount, DiagnosticCode::WrongArgumentCount),
               nullptr);
 
-    Analysis wrongDecimal = Analyze("void Main() { stdoutf(\"%d\", false); }");
-    EXPECT_NE(
-        FindDiagnostic(wrongDecimal, DiagnosticCode::IncompatibleArgument),
-        nullptr);
-
-    Analysis wrongString = Analyze("void Main() { stdoutf(\"%s\", 42); }");
-    EXPECT_NE(FindDiagnostic(wrongString, DiagnosticCode::IncompatibleArgument),
+    Analysis wrongType = Analyze("void Main() { stderrf(\"{}\", none); }");
+    EXPECT_NE(FindDiagnostic(wrongType, DiagnosticCode::IncompatibleArgument),
               nullptr);
 
-    Analysis wrongBoolean =
-        Analyze("void Main() { stdoutf(\"%b\", 1 as u16); }");
+    Analysis stringSupported = Analyze(
+        "void Main() { text, err := __sprintf(\"{} {{}} {}\", 42, true); "
+        "if err == none { stdout(text); } }");
+    EXPECT_FALSE(stringSupported.diagnostics.HasErrors());
+
+    Analysis stringNonLiteral = Analyze(
+        "void Main() { stringv format = \"{}\"; "
+        "text, err := __sprintf(format, 42); }");
+    EXPECT_NE(FindDiagnostic(stringNonLiteral, DiagnosticCode::InvalidFormat),
+              nullptr);
+
+    Analysis stringWrongCount =
+        Analyze("void Main() { text, err := __sprintf(\"{} {}\", 1); }");
     EXPECT_NE(
-        FindDiagnostic(wrongBoolean, DiagnosticCode::IncompatibleArgument),
+        FindDiagnostic(stringWrongCount, DiagnosticCode::WrongArgumentCount),
         nullptr);
+}
+
+TEST(SemanticBuiltInTests, InfersStandardInputConversionFromDestination) {
+    Analysis supported = Analyze(R"(
+        void Main() {
+            i8 a; i16 b; i32 c; i64 d; isize e;
+            u8 f; u16 g; u32 h; u64 i; usize j;
+            f32 k; f64 l; bool m; char n; string text = none;
+            error first = stdin("number: ", &c);
+            error second = stdinln("text", &text);
+            stdin(&a); stdin(&b); stdin(&d); stdin(&e);
+            stdin(&f); stdin(&g); stdin(&h); stdin(&i); stdin(&j);
+            stdin(&k); stdin(&l); stdin(&m); stdin(&n);
+        }
+    )");
+    EXPECT_FALSE(supported.diagnostics.HasErrors());
+}
+
+TEST(SemanticBuiltInTests, RejectsInvalidStandardInputDestinations) {
+    EXPECT_NE(FindDiagnostic(Analyze("void Main() { stdin(); }"),
+                             DiagnosticCode::WrongArgumentCount),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(Analyze("void Main() { stdin(42); }"),
+                             DiagnosticCode::IncompatibleArgument),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("void Main() { const i32 value; stdin(&value); }"),
+                  DiagnosticCode::IncompatibleArgument),
+              nullptr);
+    EXPECT_NE(
+        FindDiagnostic(Analyze("structure Value { i32 field; }; void Main() { "
+                               "Value value; stdin(&value); }"),
+                       DiagnosticCode::IncompatibleArgument),
+        nullptr);
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("void Main() { i32 value; stdin(null, &value); }"),
+                  DiagnosticCode::IncompatibleArgument),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("void Main() { string value; other := &value; }"),
+                  DiagnosticCode::InvalidReference),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(Analyze("void Main() { stdin(&missing); }"),
+                             DiagnosticCode::UnknownName),
+              nullptr);
 }
 
 TEST(SemanticStringViewTests, TypesEveryStringViewOperation) {
@@ -1584,6 +2546,28 @@ TEST(SemanticStringTests, SupportsOwningConversionsAndLiteralMembers) {
     EXPECT_EQ(
         analysis.model.DeclaredSymbol(VariableAt(function, 2))->Type().Kind(),
         SemanticTypeKind::StringView);
+}
+
+TEST(SemanticStringTests, CastsBorrowedByteSlicesToStringViews) {
+    Analysis valid = Analyze(
+        "stringv view([]const u8 bytes) <-bytes { "
+        "return bytes.cast<stringv>; }");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis mutableSlice = Analyze(
+        "stringv view([]u8 bytes) <-bytes { return bytes.cast<stringv>; }");
+    EXPECT_FALSE(mutableSlice.diagnostics.HasErrors());
+
+    Analysis wrongElement =
+        Analyze("void bad([]const i8 bytes) { bytes.cast<stringv>; }");
+    EXPECT_NE(FindDiagnostic(wrongElement, DiagnosticCode::InvalidCast),
+              nullptr);
+
+    Analysis missingContract = Analyze(
+        "stringv bad([]const u8 bytes) { return bytes.cast<stringv>; }");
+    EXPECT_NE(
+        FindDiagnostic(missingContract, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
 }
 
 TEST(SemanticStringTests, FormatsScalarsOnlyAsOwningStrings) {
@@ -1746,30 +2730,25 @@ TEST(SemanticDeclarationTests, SupportsExplicitInferenceAndLaterAssignments) {
         SemanticTypeKind::I32);
 }
 
-TEST(SemanticDeclarationTests, SupportsDefiniteAssignmentForValueTypes) {
+TEST(SemanticDeclarationTests, DefaultsExplicitValueTypesToNone) {
     Analysis valid = Analyze(
         "i32 Main(bool choose) { i32 value; string text; "
-        "if choose { value = 40; text = \"left\"; } "
-        "else { value = 42; text = \"right\"; } "
+        "if choose { value = 40; text = \"left\"; } else { text = \"right\"; } "
         "stdoutln(text); return value; }");
     EXPECT_FALSE(valid.diagnostics.HasErrors());
 
     Analysis directRead = Analyze("i32 Main() { i32 value; return value; }");
-    EXPECT_NE(FindDiagnostic(directRead, DiagnosticCode::UninitializedVariable),
-              nullptr);
+    EXPECT_FALSE(directRead.diagnostics.HasErrors());
 
     Analysis incompleteBranch = Analyze(
         "i32 Main(bool choose) { i32 value; if choose { value = 42; } "
         "return value; }");
-    EXPECT_NE(
-        FindDiagnostic(incompleteBranch, DiagnosticCode::UninitializedVariable),
-        nullptr);
+    EXPECT_FALSE(incompleteBranch.diagnostics.HasErrors());
 
     Analysis loopOnly = Analyze(
         "i32 Main(bool run) { i32 value; while run { value = 42; break; } "
         "return value; }");
-    EXPECT_NE(FindDiagnostic(loopOnly, DiagnosticCode::UninitializedVariable),
-              nullptr);
+    EXPECT_FALSE(loopOnly.diagnostics.HasErrors());
 
     Analysis everyType = Analyze(
         "void Main() { i8 a; i16 b; i32 c; i64 d; isize e; "
@@ -1782,11 +2761,76 @@ TEST(SemanticDeclarationTests, SupportsDefiniteAssignmentForValueTypes) {
     EXPECT_FALSE(everyType.diagnostics.HasErrors());
 }
 
-TEST(SemanticDeclarationTests, BorrowedViewsRequireImmediateInitialization) {
-    Analysis analysis = Analyze("void Main() { stringv view; }");
-    EXPECT_NE(
-        FindDiagnostic(analysis, DiagnosticCode::BorrowRequiresInitializer),
-        nullptr);
+TEST(SemanticDeclarationTests,
+     RequiresOmittedInitializersToBeTriviallyZeroable) {
+    const Analysis valid = Analyze(R"(
+        structure Pair { i32 left; i32 right; };
+        structure Text { string value; };
+        enum Zero { default Empty = 0, One = 1, }
+        unsafe void valid() {
+            i32 scalar;
+            *u8 pointer;
+            [2]bool flags;
+            (i32, bool) pair;
+            string text;
+            error firstError, closeErr;
+            (string, string) textPair;
+            Text compositeText;
+            Pair composite;
+            Zero enumeration;
+        }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    const std::string declarations = R"(
+        error Fault { Bad }
+        enum Offset { default One = 1, Two = 2, }
+        structure Nontrivial { i32 value; };
+        Nontrivial Nontrivial::zero() override {
+            return build Nontrivial { self.value = 1; };
+        }
+    )";
+    for (const std::string& local :
+         {"stringv value;", "Offset value;", "Nontrivial value;"}) {
+        SCOPED_TRACE(local);
+        const Analysis invalid =
+            Analyze(declarations + "void invalid() { " + local + " }");
+        const Diagnostic* diagnostic =
+            FindDiagnostic(invalid, DiagnosticCode::InvalidVariableType);
+        ASSERT_NE(diagnostic, nullptr);
+        EXPECT_NE(diagnostic->message.find("trivially zeroable"),
+                  std::string::npos);
+    }
+
+    const Analysis explicitDefaults = Analyze(declarations + R"(
+        void explicitDefaults() {
+            string text = none;
+            error any = none;
+            Fault fault = none;
+            Offset offset = none;
+            Nontrivial composite = none;
+        }
+    )");
+    EXPECT_FALSE(explicitDefaults.diagnostics.HasErrors());
+
+    const Analysis implicitErrors = Analyze(declarations + R"(
+        void implicitErrors() {
+            error any;
+            Fault fault;
+        }
+    )");
+    EXPECT_FALSE(implicitErrors.diagnostics.HasErrors());
+
+    EXPECT_FALSE(Analyze(R"(
+        T defaultValue<T>() { T value; return value; }
+        i32 use() { return defaultValue<i32>(); }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_FALSE(Analyze(R"(
+        T defaultValue<T>() { T value; return value; }
+        string use() { return defaultValue<string>(); }
+    )")
+                     .diagnostics.HasErrors());
 }
 
 TEST(SemanticInferenceTests, InfersEverySupportedLiteralCategory) {
@@ -1894,6 +2938,32 @@ TEST(SemanticCastTests, AllowsSameTypeCastsInBothForms) {
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
+TEST(SemanticCastTests, AllowsExplicitCastsBetweenBytesAndCharacters) {
+    Analysis analysis = Analyze(
+        "i32 main() { u8 byte = 65; character := byte.cast<char>; "
+        "roundTrip := character.cast<u8>; return roundTrip as i32; }");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    const FunctionDeclaration& function = FunctionAt(analysis, 0);
+    EXPECT_EQ(
+        analysis.model.DeclaredSymbol(VariableAt(function, 1))->Type().Kind(),
+        SemanticTypeKind::Char);
+    EXPECT_EQ(
+        analysis.model.DeclaredSymbol(VariableAt(function, 2))->Type().Kind(),
+        SemanticTypeKind::U8);
+}
+
+TEST(SemanticCastTests, RestrictsCharacterCastsToBytes) {
+    Analysis fromSignedByte =
+        Analyze("void Test() { i8 byte = 65; value := byte.cast<char>; }");
+    Analysis toSignedByte = Analyze("void Test() { value := 'A'.cast<i8>; }");
+
+    EXPECT_NE(FindDiagnostic(fromSignedByte, DiagnosticCode::InvalidCast),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(toSignedByte, DiagnosticCode::InvalidCast),
+              nullptr);
+}
+
 TEST(SemanticCastTests, RejectsNonNumericCasts) {
     Analysis analysis =
         Analyze("i32 main() { value := true.cast<i32>; return 0; }");
@@ -1904,6 +2974,12 @@ TEST(SemanticCastTests, RejectsNonNumericCasts) {
 TEST(SemanticCastTests, CentralizesExtensibleExplicitCastPolicy) {
     EXPECT_TRUE(CanExplicitlyCast(SemanticType(SemanticTypeKind::I32),
                                   SemanticType(SemanticTypeKind::F64)));
+    EXPECT_TRUE(CanExplicitlyCast(SemanticType(SemanticTypeKind::U8),
+                                  SemanticType(SemanticTypeKind::Char)));
+    EXPECT_TRUE(CanExplicitlyCast(SemanticType(SemanticTypeKind::Char),
+                                  SemanticType(SemanticTypeKind::U8)));
+    EXPECT_FALSE(CanExplicitlyCast(SemanticType(SemanticTypeKind::I8),
+                                   SemanticType(SemanticTypeKind::Char)));
     EXPECT_FALSE(CanExplicitlyCast(SemanticType(SemanticTypeKind::StringView),
                                    SemanticType(SemanticTypeKind::I32)));
 }
@@ -1983,6 +3059,29 @@ TEST(SemanticDiagnosticTests, ChecksOperatorsConditionsReturnsAndVoidLocals) {
               nullptr);
 }
 
+TEST(SemanticOperatorTests, TypesIntegerBitwiseAndShiftOperators) {
+    Analysis analysis = Analyze(R"(
+        u8 combine(u8 left, u8 right, usize count) {
+            return (~(left & right) | (left ^ right)) << count >> count;
+        }
+        i8 preserve_sign(i8 value, usize count) { return value >> count; }
+        u8 contextual() { return ~0 | (1 << 7); }
+    )");
+
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticOperatorTests, RejectsInvalidBitwiseAndShiftOperands) {
+    for (const std::string& expression :
+         {"true & false", "(1 as i32) | (2 as u8)", "~false", "1.0 ^ 2.0",
+          "(1 as u8) << (1 as i32)", "(1 as u8) >> false"}) {
+        SCOPED_TRACE(expression);
+        EXPECT_NE(FindDiagnostic(Analyze("void f() { " + expression + "; }"),
+                                 DiagnosticCode::InvalidOperand),
+                  nullptr);
+    }
+}
+
 TEST(SemanticDiagnosticTests, RequiresReturnsOnEveryReachableValuePath) {
     Analysis missing = Analyze(
         "i32 empty() {} "
@@ -2045,13 +3144,12 @@ TEST(SemanticCallTests, ResolvesForwardAndRecursiveCalls) {
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
-TEST(SemanticCallTests, RejectsDuplicateFunctionDeclarations) {
+TEST(SemanticCallTests, AcceptsFunctionDeclarationsWithDifferentParameters) {
     Analysis analysis = Analyze(
         "i32 Calculate(i32 value) { return value; } "
         "bool Calculate(bool value) { return value; }");
 
-    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::DuplicateDeclaration),
-              nullptr);
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
 TEST(SemanticIntegrationTests, AnalyzesCompleteValidProgram) {
@@ -2099,7 +3197,7 @@ TEST(SemanticControlFlowAssignmentTests, IntersectsOnlyFallthroughBranches) {
         "else if b { x = 42; } else { x = 40; } return x; }",
         "i32 main(bool a, bool b) { i32 x; if a { if b { x = 42; } "
         "else { return 0; } } else { x = 40; } return x; }",
-        "i32 main(bool c) { string x; if c { x = \"yes\"; } "
+        "i32 main(bool c) { string x = none; if c { x = \"yes\"; } "
         "else { x = \"no\"; } stdoutln(x); return 42; }",
         "i32 main(bool c) { i32 x; if c { return 1; } else { return 2; } "
         "return x; }",
@@ -2110,7 +3208,7 @@ TEST(SemanticControlFlowAssignmentTests, IntersectsOnlyFallthroughBranches) {
     }
 }
 
-TEST(SemanticControlFlowAssignmentTests, RejectsIncompleteBranchJoins) {
+TEST(SemanticControlFlowAssignmentTests, DefaultsSurviveIncompleteBranches) {
     const std::vector<std::string> programs = {
         "i32 main(bool c) { i32 x; if c { x = 42; } else {} return x; }",
         "i32 main(bool c) { i32 x; if c { x = 42; } return x; }",
@@ -2118,16 +3216,14 @@ TEST(SemanticControlFlowAssignmentTests, RejectsIncompleteBranchJoins) {
         "else if b { return 0; } return x; }",
         "i32 main(bool a, bool b) { i32 x; if a { if b { x = 42; } } "
         "else { x = 40; } return x; }",
-        "i32 main(bool c) { string x; if c { x = \"yes\"; } stdoutln(x); "
+        "i32 main(bool c) { string x = none; if c { x = \"yes\"; } "
+        "stdoutln(x); "
         "return 0; }",
         "i32 main(bool c) { i32 x; if c {} also c { x = 42; } return x; }",
     };
     for (const std::string& program : programs) {
         SCOPED_TRACE(program);
-        Analysis analysis = Analyze(program);
-        ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-        EXPECT_EQ(analysis.diagnostics.Diagnostics()[0].code,
-                  DiagnosticCode::UninitializedVariable);
+        EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
     }
 }
 
@@ -2154,7 +3250,7 @@ TEST(SemanticControlFlowAssignmentTests, ModelsBreakProceedAndAlsoEdges) {
 }
 
 TEST(SemanticControlFlowAssignmentTests,
-     RejectsLoopOnlyAndUnreachableAssignments) {
+     DefaultsSurviveLoopOnlyAndUnreachableAssignments) {
     const std::vector<std::string> programs = {
         "i32 main(bool c) { i32 x; while c { x = 42; break; } return x; }",
         "i32 main(bool c) { i32 x; while c { x = 42; proceed; } return x; }",
@@ -2170,10 +3266,7 @@ TEST(SemanticControlFlowAssignmentTests,
     };
     for (const std::string& program : programs) {
         SCOPED_TRACE(program);
-        Analysis analysis = Analyze(program);
-        ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-        EXPECT_EQ(analysis.diagnostics.Diagnostics()[0].code,
-                  DiagnosticCode::UninitializedVariable);
+        EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
     }
 }
 
@@ -2192,8 +3285,8 @@ TEST(SemanticControlFlowAssignmentTests, FollowsForwardBackwardAndNestedJumps) {
         "}",
         "void main(bool c) { while c { i32 x; if c { jumpto end; } "
         "else { x = 42; } stdoutln(x); #end break; } }",
-        "void main(bool c) { while c { jumpto position; string x; "
-        "#position x = \"ready\"; stdoutln(x); break; } }",
+        "void main(bool c) { while c { jumpto position; i32 x; "
+        "#position x = 42; stdoutln(x); break; } }",
     };
     for (const std::string& program : programs) {
         SCOPED_TRACE(program);
@@ -2203,14 +3296,8 @@ TEST(SemanticControlFlowAssignmentTests, FollowsForwardBackwardAndNestedJumps) {
 
 TEST(SemanticControlFlowAssignmentTests,
      RejectsBypassedDeclarationsAndAssignments) {
-    const std::vector<std::string> programs = {
+    const std::vector<std::string> defaulted = {
         "void main(bool c) { i32 x; while c { jumpto end; x = 42; "
-        "#end stdoutln(x); break; } }",
-        "void main(bool c) { while c { jumpto end; x := 42; "
-        "#end stdoutln(x); break; } }",
-        "void main(bool c) { while c { jumpto end; string x = \"ready\"; "
-        "#end stdoutln(x); break; } }",
-        "void main(bool c) { while c { jumpto end; stringv x = \"ready\"; "
         "#end stdoutln(x); break; } }",
         "void main(bool c) { i32 x; while c { if c { jumpto end; } "
         "x = 42; #end stdoutln(x); break; } }",
@@ -2221,13 +3308,26 @@ TEST(SemanticControlFlowAssignmentTests,
         "void main(bool c) { i32 x; while c { jumpto inner; "
         "#outer stdoutln(x); break; while c { #inner jumpto outer; x = 42; } } "
         "}",
-        "void main(bool c) { while c { jumpto inner; while c { x := 42; "
-        "#inner stdoutln(x); break; } } }",
         "void main(bool c) { while c { #again i32 x; if c { x = 42; jumpto "
         "again; } "
         "stdoutln(x); break; } }",
     };
-    for (const std::string& program : programs) {
+    for (const std::string& program : defaulted) {
+        SCOPED_TRACE(program);
+        EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
+    }
+
+    const std::vector<std::string> bypassed = {
+        "void main(bool c) { while c { jumpto end; x := 42; "
+        "#end stdoutln(x); break; } }",
+        "void main(bool c) { while c { jumpto end; string x = \"ready\"; "
+        "#end stdoutln(x); break; } }",
+        "void main(bool c) { while c { jumpto end; stringv x = \"ready\"; "
+        "#end stdoutln(x); break; } }",
+        "void main(bool c) { while c { jumpto inner; while c { x := 42; "
+        "#inner stdoutln(x); break; } } }",
+    };
+    for (const std::string& program : bypassed) {
         SCOPED_TRACE(program);
         Analysis analysis = Analyze(program);
         ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
@@ -2250,9 +3350,7 @@ TEST(SemanticControlFlowAssignmentTests, DistinguishesShadowedSymbols) {
     Analysis invalid = Analyze(
         "i32 main(bool c) { i32 x; if c { x := 42; stdoutln(x); } "
         "else { x = 40; } return x; }");
-    ASSERT_EQ(invalid.diagnostics.Diagnostics().size(), 1);
-    EXPECT_EQ(invalid.diagnostics.Diagnostics()[0].code,
-              DiagnosticCode::UninitializedVariable);
+    EXPECT_FALSE(invalid.diagnostics.HasErrors());
     Analysis valid = Analyze(
         "i32 main(bool c) { x := 42; if c { i32 x; x = 1; stdoutln(x); } "
         "return x; }");
@@ -2279,7 +3377,7 @@ TEST(SemanticControlFlowAssignmentTests,
         SCOPED_TRACE(program);
         EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
     }
-    const std::vector<std::string> invalid = {
+    const std::vector<std::string> defaulted = {
         "bool main(bool c) { bool x; c and (x = true); return x; }",
         "bool main(bool c) { bool x; c or (x = true); return x; }",
         "void main(bool c) { bool x; if c and (x = c) {} else { stdoutln(x); } "
@@ -2288,16 +3386,13 @@ TEST(SemanticControlFlowAssignmentTests,
         "i32 main() { i32 x; return x + (x = 21); }",
         "i32 main() { i32 x; x = x + 1; return x; }",
     };
-    for (const std::string& program : invalid) {
+    for (const std::string& program : defaulted) {
         SCOPED_TRACE(program);
-        Analysis analysis = Analyze(program);
-        ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-        EXPECT_EQ(analysis.diagnostics.Diagnostics()[0].code,
-                  DiagnosticCode::UninitializedVariable);
+        EXPECT_FALSE(Analyze(program).diagnostics.HasErrors());
     }
 }
 
-TEST(SemanticControlFlowAssignmentTests, ReportsExactReachableReadRangeOnce) {
+TEST(SemanticControlFlowAssignmentTests, AllowsReadsOfDefaultedValuesAtJumps) {
     const std::string source =
         "void main(bool c) {\n"
         "    i32 value;\n"
@@ -2309,15 +3404,7 @@ TEST(SemanticControlFlowAssignmentTests, ReportsExactReachableReadRangeOnce) {
         "    }\n"
         "}";
     Analysis analysis = Analyze(source);
-    ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-    const Diagnostic& diagnostic = analysis.diagnostics.Diagnostics()[0];
-    EXPECT_EQ(DiagnosticCodeName(diagnostic.code), "FLECHA-S0021");
-    EXPECT_EQ(diagnostic.range.start.offset, source.find("value);"));
-    EXPECT_EQ(diagnostic.range.start.line, 6);
-    EXPECT_EQ(diagnostic.range.start.column, 24);
-    EXPECT_EQ(diagnostic.range.end.line, 6);
-    EXPECT_EQ(diagnostic.range.end.column, 29);
-    EXPECT_EQ(diagnostic.range.Length(), 5);
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
 TEST(SemanticTypeTests, NormalizesAliasesAndRetainsEachQualifierLayer) {
@@ -2398,20 +3485,12 @@ TEST(SemanticConstTests, RejectsWritesToLocalsAndParametersAtExactNameRange) {
     }
 }
 
-TEST(SemanticConstTests, RequiresInitializerAndPreservesBorrowRestrictions) {
+TEST(SemanticConstTests, DefaultsTypedDeclarationsAndPreservesBorrows) {
     Analysis analysis = Analyze("void f() { const i32 value; }");
-    ASSERT_EQ(analysis.diagnostics.Diagnostics().size(), 1);
-    const Diagnostic& diagnostic = analysis.diagnostics.Diagnostics()[0];
-    EXPECT_EQ(DiagnosticCodeName(diagnostic.code), "FLECHA-S0023");
-    EXPECT_EQ(diagnostic.range.start.offset, 21);
-    EXPECT_EQ(diagnostic.range.Length(), 5);
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
     Analysis borrowed = Analyze("void f() { const stringv value; }");
-    EXPECT_NE(
-        FindDiagnostic(borrowed, DiagnosticCode::BorrowRequiresInitializer),
-        nullptr);
-    EXPECT_NE(
-        FindDiagnostic(borrowed, DiagnosticCode::ConstRequiresInitializer),
-        nullptr);
+    EXPECT_NE(FindDiagnostic(borrowed, DiagnosticCode::InvalidVariableType),
+              nullptr);
     Analysis escaped = Analyze(
         "stringv f() { const string value = \"hi\"; return value.view(); }");
     EXPECT_NE(FindDiagnostic(escaped, DiagnosticCode::BorrowEscapesOwner),
@@ -2534,28 +3613,27 @@ TEST(SemanticUnsafeTests, SeparatesBindingConstnessFromTargetConstness) {
     Analysis deep = Analyze("unsafe void f(**i32 p) { **const i32 q = p; }");
     EXPECT_NE(FindDiagnostic(deep, DiagnosticCode::IncompatibleType), nullptr);
     Analysis missing = Analyze("void f() { constptr i32 p; }");
-    EXPECT_NE(FindDiagnostic(missing, DiagnosticCode::ConstRequiresInitializer),
-              nullptr);
+    EXPECT_FALSE(missing.diagnostics.HasErrors());
 }
 
 TEST(SemanticUnsafeTests, ChecksInitializedAddressesAndIndirectStoreTargets) {
-    const std::vector<std::string> invalid{
+    const std::vector<std::string> defaulted{
         "unsafe void f() { i32 x; *i32 p = &raw x; }",
         "unsafe void f() { *i32 p; *p = 42; }",
         "unsafe void f() { *i32 p; *p = 42; *p; }",
         "i32 init(*i32 p) { return 42; } unsafe void f() { *i32 p; *p = init(p "
         "= none); }",
         "void f() { i32 x; unsafe { i32 y = x; } }",
-        "void f(bool c) { i32 x; if c { unsafe { x = 1; } } stdoutln(x); }",
-        "void f() { while true { jumpto use; unsafe { *i32 p = none; #use *p = "
-        "1; } } }"};
-    for (const std::string& source : invalid) {
+        "void f(bool c) { i32 x; if c { unsafe { x = 1; } } stdoutln(x); }"};
+    for (const std::string& source : defaulted) {
         SCOPED_TRACE(source);
-        Analysis analysis = Analyze(source);
-        EXPECT_NE(
-            FindDiagnostic(analysis, DiagnosticCode::UninitializedVariable),
-            nullptr);
+        EXPECT_FALSE(Analyze(source).diagnostics.HasErrors());
     }
+    Analysis bypassed = Analyze(
+        "void f() { while true { jumpto use; unsafe { *i32 p = none; #use *p "
+        "= 1; } } }");
+    EXPECT_NE(FindDiagnostic(bypassed, DiagnosticCode::UninitializedVariable),
+              nullptr);
     Analysis valid = Analyze(
         "i32 f() { i32 x; unsafe { (x) = 42; } { i32 x = 0; x = 1; } return x; "
         "}");
@@ -2702,10 +3780,9 @@ TEST(SemanticReferenceTests,
 TEST(SemanticReferenceTests,
      RequiresInitializedNonNullStorageAndCompatibleTypes) {
     const std::vector<std::pair<std::string, DiagnosticCode>> cases{
-        {"&i32 r;", DiagnosticCode::ReferenceRequiresInitializer},
+        {"&i32 r;", DiagnosticCode::IncompatibleType},
         {"&i32 r = none;", DiagnosticCode::IncompatibleType},
         {"&i32 r = null;", DiagnosticCode::IncompatibleType},
-        {"i32 x; r := &x;", DiagnosticCode::UninitializedVariable},
         {"r := &42;", DiagnosticCode::InvalidReference},
         {"i32 x = 1; u32 y = 2; r := &x; r = &y;",
          DiagnosticCode::IncompatibleType},
@@ -2856,6 +3933,42 @@ TEST(SemanticReferenceTests, ValidatesBorrowedResultContracts) {
     ASSERT_NE(diagnostic, nullptr);
     EXPECT_EQ(diagnostic->range.start.offset, unknown.find("missing"));
     EXPECT_EQ(diagnostic->range.Length(), std::string("missing").size());
+}
+
+TEST(SemanticReferenceTests, SupportsMultipleBorrowResultSources) {
+    const std::string grouped =
+        "&const i32 choose(bool first, &const i32 left, &const i32 right) "
+        "<- (left, right) { if first { return left; } return right; } ";
+    EXPECT_FALSE(Analyze(grouped).diagnostics.HasErrors());
+
+    const std::string all =
+        "&const i32 choose_all(&const i32 args, &const i32 other) "
+        "<- ...args { return args; } ";
+    EXPECT_FALSE(Analyze(all).diagnostics.HasErrors());
+
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(all + "i32 conflict() { i32 left = 1; i32 right = 2; "
+                          "result := choose_all(&left, &right); right = 3; "
+                          "return *result; }"),
+            DiagnosticCode::BorrowConflict),
+        nullptr);
+
+    EXPECT_FALSE(
+        Analyze("&const i32 identity(&const i32 args) <- args { return args; }")
+            .diagnostics.HasErrors());
+
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze("&const i32 duplicate(&const i32 left, &const i32 right) "
+                    "<- (left, left) { return left; }"),
+            DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+    EXPECT_NE(FindDiagnostic(
+                  Analyze("&const i32 invalid(bool first, &const i32 value) "
+                          "<- ...args { return value; }"),
+                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
 }
 
 TEST(SemanticReferenceTests, PropagatesBorrowedResultsIntoCallerState) {
@@ -3034,6 +4147,21 @@ TEST(SemanticReferenceTests,
         nullptr);
 }
 
+TEST(SemanticReferenceTests, AcceptsHexadecimalIntegerLiterals) {
+    EXPECT_FALSE(Analyze("enum Code: u32 { Value = 0x6a09e667, }"
+                         "u8 f() { [0x10]u8 bytes = none; "
+                         "bytes[0x0] = 0Xff; return bytes[0x0]; }")
+                     .diagnostics.HasErrors());
+
+    for (const std::string& declaration :
+         {"u8 x = 0x100;", "i8 x = 0X80;", "u64 x = 0x10000000000000000;"}) {
+        SCOPED_TRACE(declaration);
+        EXPECT_NE(FindDiagnostic(Analyze("void f() { " + declaration + " }"),
+                                 DiagnosticCode::IntegerLiteralOutOfRange),
+                  nullptr);
+    }
+}
+
 TEST(SemanticReferenceTests, HandlesShortCircuitMovesAndUnreachableCode) {
     EXPECT_NE(FindDiagnostic(Analyze("bool take(&i32 a) { return true; }"
                                      "i32 f(bool flag) { i32 x = 1; i32 y = 2; "
@@ -3088,9 +4216,8 @@ TEST(SemanticReferenceTests,
     Analysis analysis = Analyze(
         "void bad() { &i32 missing; }"
         "i32 moved() { i32 x = 1; r := &x; next := r; return *r; }");
-    EXPECT_NE(
-        FindDiagnostic(analysis, DiagnosticCode::ReferenceRequiresInitializer),
-        nullptr);
+    EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::IncompatibleType),
+              nullptr);
     EXPECT_NE(FindDiagnostic(analysis, DiagnosticCode::MovedReference),
               nullptr);
 }
@@ -3141,9 +4268,8 @@ TEST(SemanticArrayTests,
          {"[2]u8 a; a[0] = 1;", "[2]u8 a; a.len();", "[2]u8 a; r := &a[0];",
           "[2]u8 a; copy := a;", "[2]u8 a; while true { a[0] = 1; break; }"}) {
         SCOPED_TRACE(body);
-        EXPECT_NE(FindDiagnostic(Analyze("void f() { " + body + " }"),
-                                 DiagnosticCode::UninitializedVariable),
-                  nullptr);
+        EXPECT_FALSE(
+            Analyze("void f() { " + body + " }").diagnostics.HasErrors());
     }
 }
 
@@ -3284,9 +4410,8 @@ TEST(SemanticArrayTests,
                                "&a[0]; while flag { *r = 3; a[1] = 4; } }"),
                        DiagnosticCode::BorrowConflict),
         nullptr);
-    EXPECT_NE(FindDiagnostic(Analyze("void f() { i32 x; a := [x; 0]; }"),
-                             DiagnosticCode::UninitializedVariable),
-              nullptr);
+    EXPECT_FALSE(
+        Analyze("void f() { i32 x; a := [x; 0]; }").diagnostics.HasErrors());
     EXPECT_NE(
         FindDiagnostic(
             Analyze("void f() { i32 x = 1; r := &x; moved := r; a := [*r]; }"),
@@ -3369,10 +4494,37 @@ TEST(SemanticAnalyzerTests, AcceptsRangeBindingsEmptyArraysAndCountedLoops) {
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticAnalyzerTests, AcceptsStringAndStringViewRanges) {
+    Analysis result = Analyze(R"(
+        void from_view(stringv value) {
+            for (index, character) := range value {
+                u32 exposed_index = index;
+                char exposed_character = character;
+            }
+        }
+        void from_string(string value) {
+            for (u32 index, char character) = range value {
+                if index == 0 { character = 'x'; }
+            }
+        }
+    )");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticAnalyzerTests, RequiresU32StringRangeIndices) {
+    for (const std::string& source :
+         {"void f(stringv value) { for (usize i, char c) = range value {} }",
+          "void f(string value) { for (i32 i, char c) = range value {} }"}) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(
+            FindDiagnostic(Analyze(source), DiagnosticCode::IncompatibleType),
+            nullptr);
+    }
+}
+
 TEST(SemanticAnalyzerTests, ChecksRangeSourceBindingTypesAndIndexCapacity) {
     for (const std::string& source :
          {"void f() { for i := range 4 {} }",
-          "void f() { for i := range \"abc\" {} }",
           "void f() { a := [1]; for (u32 i, u8 v) = range a {} }",
           "void f() { a := [1]; for (f64 i, i32 v) = range a {} }",
           "void f() { a := [1]; for (f64 _, i32 v) = range a {} }",
@@ -3395,9 +4547,6 @@ TEST(SemanticAnalyzerTests, ChecksLoopScopeInitializationAndUpdateEdges) {
     for (const std::string& source :
          {"void f() { loop i := 0; i < 2; i++ {} i++; }",
           "void f() { a := [1]; for (i, v) := range a {} v++; }",
-          "void f() { i32 x; loop i := 0; i < 2; i++ { x = 2; } x++; }",
-          "void f() { i32 x; loop i := 0; i < 2; x++ { proceed; } }",
-          "void f() { [2]u8 a; for i := range a {} }",
           "void f() { loop i := 0; 1; i++ {} }",
           "void f() { loop i := 0; i < 2; local++ { local := 1; } }"}) {
         SCOPED_TRACE(source);
@@ -3406,13 +4555,20 @@ TEST(SemanticAnalyzerTests, ChecksLoopScopeInitializationAndUpdateEdges) {
     EXPECT_FALSE(
         Analyze("void f() { i32 x; loop i := 0; i < 2; x++ { x = 1; i++; } }")
             .diagnostics.HasErrors());
+    for (const std::string& source :
+         {"void f() { i32 x; loop i := 0; i < 2; i++ { x = 2; } x++; }",
+          "void f() { i32 x; loop i := 0; i < 2; x++ { proceed; } }",
+          "void f() { [2]u8 a; for i := range a {} }"}) {
+        SCOPED_TRACE(source);
+        EXPECT_FALSE(Analyze(source).diagnostics.HasErrors());
+    }
 }
 
 TEST(SemanticAnalyzerTests, IncrementHonorsPlacesConstBorrowingAndUnsafe) {
     for (const std::string& source :
-         {"void f() { i32 x; x++; }", "void f() { const i32 x = 1; x++; }",
-          "void f() { (1 + 2)++; }", "void f() { [1, 2][0]++; }",
-          "void f() { f64 x = 1.0; x++; }", "void f() { bool x = false; x++; }",
+         {"void f() { const i32 x = 1; x++; }", "void f() { (1 + 2)++; }",
+          "void f() { [1, 2][0]++; }", "void f() { f64 x = 1.0; x++; }",
+          "void f() { bool x = false; x++; }",
           "void f() { *u8 p = none; p++; }", "void f(*u8 p) { (*p)++; }",
           "void f() { x := 1; r := &x; x++; *r = 2; }",
           "void f() { x := 1; &const i32 r = &x; (*r)++; }",
@@ -3423,6 +4579,24 @@ TEST(SemanticAnalyzerTests, IncrementHonorsPlacesConstBorrowingAndUnsafe) {
     EXPECT_FALSE(Analyze("void f() { x := 1; r := &x; (*r)++; unsafe { p := "
                          "&raw x; (*p)++; } }")
                      .diagnostics.HasErrors());
+    EXPECT_FALSE(Analyze("void f() { i32 x; x++; }").diagnostics.HasErrors());
+}
+
+TEST(SemanticAnalyzerTests, CompoundUpdatesHonorTypesPlacesAndInitialization) {
+    EXPECT_FALSE(Analyze("void f() { i := 8; i--; i += 2; i -= 1; i *= 3; "
+                         "i /= 2; i ^= 4; f64 x = 8.0; x += 2.0; x -= 1.0; "
+                         "x *= 3.0; x /= 2.0; bool b = true; b ^= false; }")
+                     .diagnostics.HasErrors());
+
+    for (const std::string& source : {"void f() { const i32 x = 1; x -= 1; }",
+                                      "void f() { f64 x = 1.0; x ^= 1.0; }",
+                                      "void f() { bool x = true; x += false; }",
+                                      "void f() { (1 + 2) *= 3; }"}) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+    EXPECT_FALSE(
+        Analyze("void f() { i32 x; x--; x += 1; }").diagnostics.HasErrors());
 }
 
 TEST(SemanticAnalyzerTests, RangeCopiesRespectLoansAndIterationLifetimes) {
@@ -3447,6 +4621,7 @@ TEST(SemanticSliceTests, AcceptsCheckedSlicesCallsConstAndElementReferences) {
     const Analysis result = Analyze(R"(
         void bump([]i32 s) { s.front()++; s.back() = 4; }
         i32 read([]const i32 s) { return s.front(); }
+        void strings([]string values) { values.len(); }
         void f() {
             a := [1, 2, 3];
             s := a[:];
@@ -3503,7 +4678,6 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
           "void f() { []u8 s; }",
           "void f() { []u8 s = none; }",
           "void f() { []u8 s = null; }",
-          "void f([]string s) {}",
           "void f([]&u8 s) {}",
           "void f([][]u8 s) {}",
           "void f([2][]u8 a) {}",
@@ -3512,7 +4686,6 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
           "unsafe void f(*[2]u8 p) { s := (*p)[:]; }",
           "void f() { a := [1]; s := a[:]; unsafe { p := &raw s; } }",
           "void f() { a := [1]; s := a[:]; unsafe { p := &raw s.front(); } }",
-          "void f() { [2]u8 a; s := a[:]; }",
           "void f() { a := [1]; s := a[:]; s.len() = 1; }",
           "void f() { a := [1]; s := a[:]; s.front(0); }",
           "void f() { a := [1]; s := a[:]; s == s; }",
@@ -3520,6 +4693,8 @@ TEST(SemanticSliceTests, RejectsBadBoundsSourcesAndUnsupportedStorage) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+    EXPECT_FALSE(
+        Analyze("void f() { [2]u8 a; s := a[:]; }").diagnostics.HasErrors());
 }
 
 TEST(SemanticMemoryTests, RuntimeArrayOwnersPreserveLengthAndMoveOwnership) {
@@ -3537,8 +4712,7 @@ TEST(SemanticMemoryTests, RuntimeArrayOwnersPreserveLengthAndMoveOwnership) {
                     .diagnostics.HasErrors());
 }
 
-TEST(SemanticMemoryTests,
-     StructuresWithOwningBuffersCanBeTriviallyZeroable) {
+TEST(SemanticMemoryTests, StructuresWithOwningBuffersCanBeTriviallyZeroable) {
     auto result = Analyze(R"(
         structure Buffer { *[]u8 storage; usize length; };
         Buffer Buffer::zero() override {
@@ -3553,8 +4727,8 @@ TEST(SemanticMemoryTests,
         ADD_FAILURE() << diagnostic.message;
     ASSERT_FALSE(result.diagnostics.HasErrors());
     ASSERT_EQ(result.model.Structures().size(), 1u);
-    EXPECT_TRUE(SemanticType(result.model.Structures()[0].get())
-                    .IsTriviallyZeroable());
+    EXPECT_TRUE(
+        SemanticType(result.model.Structures()[0].get()).IsTriviallyZeroable());
 }
 
 TEST(SemanticSliceTests, EnforcesReadOnlyElementsAndFixedHandles) {
@@ -3656,11 +4830,13 @@ TEST(SemanticDeferTests, CapturesAtRegistrationAndChecksCallsNormally) {
           "void f() { defer missing(); }",
           "void g(i32 x) {} void f() { defer g(); }",
           "void g(i32 x) {} void f() { defer g(true); }",
-          "void g(i32 x) {} void f() { i32 x; defer g(x); x = 1; }",
           "unsafe void g() {} void f() { defer g(); }"}) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+    EXPECT_FALSE(Analyze("void g(i32 x) {} void f() { i32 x; defer g(x); x = "
+                         "1; }")
+                     .diagnostics.HasErrors());
     const Analysis invalid = Analyze("void f() { defer 42; }");
     const auto* diagnostic =
         FindDiagnostic(invalid, DiagnosticCode::InvalidDefer);
@@ -3798,7 +4974,7 @@ TEST(SemanticTupleTests, SupportsValuesReturnsParametersAndContextualElements) {
         (u8, (bool, string)) f(u8 n) { return (n, (true, "text")); }
         (u8, (bool, string)) pass((u8, (bool, string)) p) { return p; }
         i32 main() {
-            (u8, (bool, string)) t;
+            (u8, (bool, string)) t = none;
             t = pass(f(42));
             (n, nested) := t;
             (bool ok, string text) = nested;
@@ -3857,6 +5033,12 @@ TEST(SemanticTupleTests, ChecksArityTypesMutabilityAndUnsupportedElements) {
 TEST(SemanticTupleTests, PreservesInitializationAndSimultaneousBindingRules) {
     for (const std::string& source :
          {"void f() { i32 a; i32 b; (a, b) = (1, 2); stdoutln(a + b); }",
+          "void f() { i32 a; i32 b; (a, b) = (1, a); }",
+          "void f(bool c) { i32 a; i32 b; if c { (a, b) = (1, 2); } "
+          "stdoutln(a); }",
+          "void f() { i32 a; while true { jumpto use; (a, i32 b) = (1, 2); "
+          "#use stdoutln(a); break; } }",
+          "void f() { (i32, bool) t; (a, b) := t; }",
           "void f() { i32 a; (i32 b, i32 c) = (a = 1, a); stdoutln(a); }",
           "void f() { a := 1; b := 2; (a, b) = (b, a); }",
           "void f() { a := 1; { (a, b) := (a, 2); stdoutln(a); } }",
@@ -3873,13 +5055,7 @@ TEST(SemanticTupleTests, PreservesInitializationAndSimultaneousBindingRules) {
         EXPECT_FALSE(Analyze(source).diagnostics.HasErrors());
     }
     for (const std::string& source :
-         {"void f() { i32 a; i32 b; (a, b) = (1, a); }",
-          "void f() { (a, b) := (1, a); }",
-          "void f(bool c) { i32 a; i32 b; if c { (a, b) = (1, 2); } "
-          "stdoutln(a); }",
-          "void f() { i32 a; while true { jumpto use; (a, i32 b) = (1, 2); "
-          "#use stdoutln(a); break; } }",
-          "void f() { (i32, bool) t; (a, b) := t; }",
+         {"void f() { (a, b) := (1, a); }",
           "void f() { a, b := (1, 2); a, b := (3, 4); }",
           "void f() { err := 0; _, err := (1, 2); }",
           "void f() { const i32 err = 0; value, err := (1, 2); }",
@@ -4093,9 +5269,9 @@ TEST(SemanticEnumTests, ResolvesNominalValuesDefaultsAndMemberFunctions) {
     ASSERT_TRUE(enumeration.defaultValue.has_value());
     EXPECT_EQ(*enumeration.defaultValue, 3);
     EXPECT_TRUE(enumeration.methods.contains("is_running"));
-    EXPECT_TRUE(enumeration.methods.at("is_running")->HasReceiver());
+    EXPECT_TRUE(enumeration.methods.at("is_running").front()->HasReceiver());
     EXPECT_TRUE(enumeration.methods.contains("done"));
-    EXPECT_FALSE(enumeration.methods.at("done")->HasReceiver());
+    EXPECT_FALSE(enumeration.methods.at("done").front()->HasReceiver());
 }
 
 TEST(SemanticEnumTests, RequiresDefaultsForNoneAndKeepsEnumsNominal) {
@@ -4158,17 +5334,14 @@ TEST(SemanticEnumTests, SupportsGenericMemberFunctions) {
 
 TEST(SemanticErrorTests, IntegratesDefiniteAssignmentQualifiersAndBorrowing) {
     const std::string prefix = "error Fault { Bad } ";
-    EXPECT_NE(
-        FindDiagnostic(Analyze(prefix + "error f() { error e; return e; }"),
-                       DiagnosticCode::UninitializedVariable),
-        nullptr);
-    EXPECT_NE(
-        FindDiagnostic(Analyze(prefix + "Fault f(bool flag) { Fault e; if flag "
-                                        "{ e = Fault.Bad; } return e; }"),
-                       DiagnosticCode::UninitializedVariable),
-        nullptr);
-    EXPECT_FALSE(Analyze(prefix + "error f(bool flag) { error e; if flag { e = "
-                                  "Fault.Bad; } else { e = none; } return e; }")
+    EXPECT_FALSE(Analyze(prefix + "error f() { error e; return e; }")
+                     .diagnostics.HasErrors());
+    EXPECT_FALSE(Analyze(prefix + "Fault f(bool flag) { Fault e; if flag "
+                                  "{ e = Fault.Bad; } return e; }")
+                     .diagnostics.HasErrors());
+    EXPECT_FALSE(Analyze(prefix +
+                         "error f(bool flag) { error e = none; if flag "
+                         "{ e = Fault.Bad; } return e; }")
                      .diagnostics.HasErrors());
     EXPECT_NE(FindDiagnostic(
                   Analyze(prefix +
@@ -4208,6 +5381,28 @@ TEST(SemanticStructureTests,
     EXPECT_NE(result.model.Structures()[0]->zero, nullptr);
     EXPECT_EQ(result.model.Structures()[0]->fields.size(), 2);
     EXPECT_EQ(result.model.GeneratedFunctions().size(), 2);
+}
+
+TEST(SemanticStructureTests, ResolvesFieldsAndMethodsWithTheSameNameByUse) {
+    Analysis result = Analyze(R"(
+        structure Cursor { private usize position; };
+        Cursor Cursor::init(usize position) override {
+            return build Cursor { self.position = position; };
+        }
+        usize Cursor::position(&const self) { return self->position; }
+        usize Cursor::throughReference(&const self) {
+            return self->position();
+        }
+        usize main() {
+            cursor := Cursor::init(42);
+            direct := cursor.position();
+            reference := &cursor;
+            return direct + reference->position() +
+                reference->throughReference();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
 }
 
 TEST(SemanticStructureTests, ValidatesZeroLifecycleAndContextualNone) {
@@ -4306,17 +5501,66 @@ TEST(SemanticStructureTests, NoneDirectlyConstructsNonCopyableStructures) {
         "structure Factory { i32 value; }; "
         "Factory Factory::zero() override { Temporary::init(); return build "
         "Factory {}; } "
-        "Box make() { return none; } "
-        "void f() { Box value = none; value = none; }");
+        "Box make() { return none; } Temporary makeTemporary() { return none; "
+        "} "
+        "void f() { Box value = none; value = none; "
+        "Temporary temporary = none; Temporary implicit; }");
     EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticStructureTests,
+     GeneratesStructuralZeroIndependentlyOfInitAndTear) {
+    Analysis result = Analyze(R"(
+        structure Owner { string text; i32 number; };
+        Owner Owner::init(string text, i32 number) override {
+            return build Owner {
+                self.text = text;
+                self.number = number;
+            };
+        }
+        void Owner::tear(&self) override {}
+        Owner make() { return none; }
+        void use() {
+            Owner explicit = none;
+            Owner implicit;
+            explicit = Owner::init("value".string(), 42);
+        }
+    )");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.Structures().size(), 1);
+    const StructureType* owner = result.model.Structures()[0].get();
+    ASSERT_NE(owner->zero, nullptr);
+    EXPECT_TRUE(owner->zeroIsGenerated);
+    EXPECT_TRUE(SemanticType(owner).IsTriviallyZeroable());
+}
+
+TEST(SemanticStructureTests,
+     ComposesStructuralZeroForNestedTypesWithUnsafeTear) {
+    Analysis result = Analyze(R"(
+        structure Resource { i32 value; };
+        unsafe void Resource::tear(&self) override {}
+        structure Owner { Resource resource; string text; };
+        unsafe void use() { Owner owner = none; }
+    )");
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.Structures().size(), 2);
+    for (const auto& structure : result.model.Structures()) {
+        ASSERT_NE(structure->zero, nullptr);
+        EXPECT_TRUE(structure->zeroIsGenerated);
+        EXPECT_TRUE(SemanticType(structure.get()).IsTriviallyZeroable());
+    }
+
+    EXPECT_NE(FindErrorDiagnostic(Analyze(R"(
+                  structure Resource { i32 value; };
+                  unsafe void Resource::tear(&self) override {}
+                  structure Owner { Resource resource; };
+                  void use() { Owner owner = none; }
+              )"),
+                                  DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
 TEST(SemanticStructureTests, RejectsInvalidAndRecursiveZeroConstruction) {
-    EXPECT_TRUE(
-        Analyze("structure Box { i32 value; }; Box Box::init(i32 value) "
-                "override { return build Box { self.value = value; }; } "
-                "void f() { Box box = none; }")
-            .diagnostics.HasErrors());
     EXPECT_NE(FindErrorDiagnostic(
                   Analyze("structure Box { i32 value; }; i32 noisy() { "
                           "stdoutln(1); return 0; } Box Box::zero() override { "
@@ -4545,6 +5789,58 @@ TEST(SemanticStructureTests, MovesSafeTearValuesAndRestoresReassignedSources) {
     )");
     for (const auto& diagnostic : result.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticStructureTests, OwningReceiversConsumeValuesAndChainTemporaries) {
+    const std::string source = R"(
+        structure Box { i32 value; };
+        void Box::tear(&self) override {}
+        Box Box::withValue(self, i32 value) {
+            self.value = value;
+            return self;
+        }
+    )";
+
+    Analysis valid = Analyze(source + R"(
+        i32 use() {
+            box := Box::init().withValue(42).withValue(21);
+            return box.value * 2;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis moved = Analyze(source + R"(
+        i32 use() {
+            box := Box::init();
+            changed := box.withValue(42);
+            return box.value;
+        }
+    )");
+    EXPECT_NE(FindDiagnostic(moved, DiagnosticCode::MovedValue), nullptr);
+}
+
+TEST(SemanticStructureTests, OwningReceiversCanReplaceBorrowCarryingFields) {
+    Analysis result = Analyze(R"(
+        func Action(i32) => (i32);
+        structure Holder { Action action; };
+        Holder Holder::withAction(self, Action action) <- ...args {
+            self.action = action;
+            return self;
+        }
+        i32 first(i32 value) { return value; }
+        i32 second(i32 value) { return value * 2; }
+        i32 use() {
+            holder := build Holder { self.action = first; };
+            changed := holder.withAction(second);
+            return (changed.action)(21);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
 }
 
 TEST(SemanticStructureTests, DiscardingAWholeNonCopyableValueConsumesIt) {
@@ -4779,19 +6075,19 @@ TEST(SemanticStructureTests,
         "i32 Box::get(&const self) { return self->value; } "
         "void Box::set(&self, i32 value) { self->value = value; } ";
 
-    Analysis sharedArgument = Analyze(
-        source + "void Box::forward(&self) { self->set(self->get()); } "
-                 "void f() { Box box = none; box.set(box.get()); }");
+    Analysis sharedArgument =
+        Analyze(source +
+                "void Box::forward(&self) { self->set(self->get()); } "
+                "void f() { Box box = none; box.set(box.get()); }");
     for (const auto& diagnostic : sharedArgument.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
     EXPECT_FALSE(sharedArgument.diagnostics.HasErrors());
 
     EXPECT_NE(
         FindDiagnostic(
-            Analyze(source +
-                    "i32 Box::bump(&self) { self->value++; return "
-                    "self->value; } void f() { Box box = none; "
-                    "box.set(box.bump()); }"),
+            Analyze(source + "i32 Box::bump(&self) { self->value++; return "
+                             "self->value; } void f() { Box box = none; "
+                             "box.set(box.bump()); }"),
             DiagnosticCode::BorrowConflict),
         nullptr);
 
@@ -4812,7 +6108,6 @@ TEST(SemanticStructureTests,
          {"structure Box { Box value; };",
           "structure A { B b; }; structure B { A a; };",
           "structure Box { void value; };",
-          "structure Box { &i32 reference; };",
           "structure Box {}; Box Box::init() override { return build Box { "
           "copy := self; }; }",
           "structure Box {}; void Box::f(&self) {} Box Box::init() override { "
@@ -4825,6 +6120,8 @@ TEST(SemanticStructureTests,
     EXPECT_FALSE(Analyze("structure Node { *Node next; i32 value; }; void f() "
                          "{ Node n = Node::init(); }")
                      .diagnostics.HasErrors());
+    EXPECT_FALSE(
+        Analyze("structure Box { &i32 reference; };").diagnostics.HasErrors());
 }
 
 TEST(SemanticStructureTests, ReportsPreciseAccessAndLifecycleRanges) {
@@ -4937,10 +6234,13 @@ TEST(SemanticStructureTests,
                          "(Box, i32) pair = (Box::init(3), 4); *Box pointer; "
                          "}; void f() { Parent p = Parent::init(); }")
                      .diagnostics.HasErrors());
-    EXPECT_NE(FindDiagnostic(
-                  Analyze(prefix + "structure Parent { &Box reference; };"),
-                  DiagnosticCode::InvalidStructure),
-              nullptr);
+    EXPECT_FALSE(Analyze(prefix +
+                         "structure Parent { &Box reference; }; "
+                         "Parent Parent::init(&Box reference) <- reference "
+                         "override { return build Parent { self.reference = "
+                         "reference; }; } void use() { Box box = Box::init(1); "
+                         "Parent parent = Parent::init(&box); }")
+                     .diagnostics.HasErrors());
 }
 
 TEST(SemanticAllocationTests, TypesNewFreeAndAllocationErrors) {
@@ -4971,8 +6271,7 @@ TEST(SemanticAllocationTests, TypesNewFreeAndAllocationErrors) {
 TEST(SemanticAllocationTests, RejectsUnsupportedStorageAndInvalidCalls) {
     for (const std::string& body :
          {"new(42);", "new<void>(none);", "new<stringv>(\"view\");",
-          "new<&i32>(none);", "new<[]string>(1);", "free(42);",
-          "*void p = null; free(p);"}) {
+          "new<&i32>(none);", "free(42);", "*void p = null; free(p);"}) {
         SCOPED_TRACE(body);
         EXPECT_NE(FindDiagnostic(Analyze("unsafe void f() { " + body + " }"),
                                  DiagnosticCode::InvalidAllocation),
@@ -5004,6 +6303,66 @@ TEST(SemanticAllocationTests, RejectsUnsupportedStorageAndInvalidCalls) {
 }
 
 TEST(SemanticAllocationTests,
+     TypesUnsafeInitializedStorageAndRejectsImmovableElements) {
+    Analysis valid = Analyze(R"(
+        unsafe void f() {
+            first, firstError := __storage_new<[]i32>(1);
+            if firstError != none { return; }
+            second, secondError := __storage_new<[]i32>(1);
+            if secondError != none {
+                __storage_free(first);
+                return;
+            }
+            __storage_initialize(first, 0, 42);
+            __storage_relocate(second, 0, first, 0);
+            extracted := __storage_extract(second, 0);
+            __storage_initialize(first, 0, extracted);
+            __storage_destroy(first, 0);
+            __storage_free(first);
+            __storage_free(second);
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    for (const std::string& source : {
+             "void f() { __storage_new<[]i32>(1); }",
+             "void f(*i32 storage) { "
+             "__storage_initialize(storage, 0, 42); }",
+             "void f(*i32 destination, *i32 source) { "
+             "__storage_relocate(destination, 0, source, 0); }",
+             "void f(*i32 storage) { __storage_extract(storage, 0); }",
+             "void f(*i32 storage) { __storage_destroy(storage, 0); }",
+             "void f(*i32 storage) { __storage_free(storage); }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_NE(
+            FindDiagnostic(Analyze(source), DiagnosticCode::UnsafeOperation),
+            nullptr);
+    }
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+                      structure Fixed {};
+                      unsafe void Fixed::tear(&self) override {}
+                      unsafe void f() { __storage_new<[]Fixed>(1); }
+                  )"),
+                             DiagnosticCode::InvalidAllocation),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+                      structure Fixed {};
+                      unsafe void Fixed::tear(&self) override {}
+                      unsafe void f(*Fixed storage) {
+                          __storage_extract(storage, 0);
+                      }
+                  )"),
+                             DiagnosticCode::InvalidAllocation),
+              nullptr);
+    EXPECT_NE(FindDiagnostic(Analyze("unsafe void f(*i32 storage) { "
+                                     "__storage_extract(storage); }"),
+                             DiagnosticCode::WrongArgumentCount),
+              nullptr);
+}
+
+TEST(SemanticAllocationTests,
      PreservesConstructionAndConditionalInitializationRules) {
     const std::string prefix =
         "structure Box { i32 x; }; unsafe void Box::tear(&self) override {} ";
@@ -5018,15 +6377,10 @@ TEST(SemanticAllocationTests,
                     "unsafe void f() { Box b = Box::init(); new<Box>(b); }"),
             DiagnosticCode::NonCopyableValue),
         nullptr);
-    EXPECT_NE(
-        FindDiagnostic(Analyze(prefix + "unsafe void f() { new<Box>(none); }"),
-                       DiagnosticCode::IncompatibleArgument),
-        nullptr);
-    EXPECT_NE(FindDiagnostic(Analyze("unsafe i32 f() { i32 x; p, e := "
-                                     "new<i32>(x = 42); free(p); return x; }"),
-                             DiagnosticCode::UninitializedVariable),
-              nullptr);
-    EXPECT_FALSE(Analyze("unsafe i32 f() { i32 x = 0; p, e := new<i32>(x = "
+    EXPECT_FALSE(Analyze(prefix + "unsafe void f() { p, e := new<Box>(none); "
+                                  "if e != none { return; } free(p); }")
+                     .diagnostics.HasErrors());
+    EXPECT_FALSE(Analyze("unsafe i32 f() { i32 x; p, e := new<i32>(x = "
                          "42); free(p); return x; }")
                      .diagnostics.HasErrors());
     EXPECT_NE(
@@ -5100,6 +6454,27 @@ TEST(SemanticMemoryTests, CorrelatesFailureAndChecksNullDereferences) {
         Analyze("unsafe void f() { p, e := new<u8>(42); "
                 "ok := e == none and p != null; if ok { *p = 1; } free(p); }")
             .diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, CorrelatesNamedErrorResultsWithNullableStructures) {
+    Analysis result = Analyze(R"(
+        error LookupError { Missing }
+        structure Value { i32 number; };
+        Value Value::zero() override { return build Value {}; }
+        void Value::tear(&self) override {}
+        i32 Value::get(&const self) { return self->number; }
+        (Value, error) find(bool present) {
+            if present { return (Value::init(), none); }
+            return (none, LookupError.Missing);
+        }
+        i32 read(bool present) {
+            value, err := find(present);
+            if err != none { return 0; }
+            return value.get();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
 }
 
 TEST(SemanticMemoryTests, AliasesShareAllocationIdentity) {
@@ -5239,6 +6614,31 @@ TEST(SemanticMemoryTests, RejectsForeignFreesAndUnverifiedStorage) {
                                "recurse(p); free(p); }"),
                        DiagnosticCode::UnverifiedOwnership),
         nullptr);
+}
+
+TEST(SemanticMemoryTests, SummarizesRecursiveSafeAggregateOwnership) {
+    Analysis result = Analyze(R"(
+        structure Box { own *i32 data; };
+        Box Box::zero() override { return build Box {}; }
+        unsafe Box Box::init(own *i32 data) override {
+            return build Box { self.data = data; };
+        }
+        void Box::tear(&self) override { unsafe { free(self->data); } }
+        unsafe (Box, error) make_recursive(u32 depth) {
+            if depth == 0 {
+                data, err := new<i32>(42);
+                if err != none { return (none, err); }
+                return (Box::init(data), none);
+            }
+            return make_recursive(depth - 1);
+        }
+        unsafe void use() {
+            value, err := make_recursive(3);
+            if err != none { return; }
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
 }
 
 TEST(SemanticMemoryTests, PreservesTupleAndIndirectBindingAliases) {
@@ -5485,6 +6885,7 @@ TEST(SemanticMemoryTests, ContractsNeverQualifyReferencesOrOrdinaryStorage) {
     for (const std::string& source : {
              "void f(own &i32 x) {}",
              "void f(lend &i32 x) {}",
+             "void f(lend []i32 x) {}",
              "void f(own i32 x) {}",
              "unsafe lend *i32 f() { return null; }",
              "structure Box { lend *i32 p; };",
@@ -5531,19 +6932,344 @@ TEST(SemanticMemoryTests, RuntimeArraysUseCountsAndExistingOwnershipContracts) {
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests, OwningSlicesAreSafeManagedMoveOnlyBuffers) {
+    auto valid = Analyze(
+        "void consume(own []const i32 values) { values.len(); } "
+        "void f() { values, failure := new<own []i32>(2); "
+        "if failure != none { return; } values[0] = 42; "
+        "view := values[:]; view[1] = view[0]; consume(values); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    EXPECT_NE(
+        FindDiagnostic(Analyze("void consume(own []i32 values) {} void f() { "
+                               "values, failure := new<own []i32>(2); "
+                               "consume(values); values.len(); }"),
+                       DiagnosticCode::MovedValue),
+        nullptr);
+    EXPECT_TRUE(Analyze("void f() { values, failure := new<own []const "
+                        "i32>(2); values[0] = 1; }")
+                    .diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, CrashableNewReturnsOwnerDirectly) {
+    Analysis valid = Analyze(R"(
+        own []string allocate!(usize count) {
+            return new<own []string>!(count);
+        }
+        unsafe i32 scalar!() {
+            value := new<i32>!(42);
+            result := *value;
+            free(value);
+            return result;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_NE(FindDiagnostic(Analyze("void f() { new<own []u8>!(1); }"),
+                             DiagnosticCode::InvalidCrashable),
+              nullptr);
+}
+
 TEST(SemanticMemoryTests,
-     RuntimeArraysRejectUnsupportedElementsAndInvalidCounts) {
+     ManagedSliceFactoriesDoNotExpandRawAllocationStatesAtCallers) {
+    auto analysis = Analyze(R"(
+        (own []u8, error) make() {
+            return new<own []u8>(1);
+        }
+        void use() {
+            _, a := make();
+            _, b := make();
+            _, c := make();
+            _, d := make();
+            _, e := make();
+            _, f := make();
+            _, g := make();
+            _, h := make();
+            _, i := make();
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, StructuresWithOwningSlicesAreTriviallyZeroable) {
+    auto generated = Analyze(R"(
+        structure Buffer { own []u8 storage; usize length; };
+        Buffer make() { return none; }
+        (Buffer, error) fail(error failure) { return (none, failure); }
+        void use() {
+            Buffer first = none;
+            second, failure := fail(none);
+            Buffer moved = first;
+        }
+    )");
+    for (const auto& diagnostic : generated.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(generated.diagnostics.HasErrors());
+    ASSERT_EQ(generated.model.Structures().size(), 1u);
+    EXPECT_NE(generated.model.Structures()[0]->zero, nullptr);
+    EXPECT_TRUE(SemanticType(generated.model.Structures()[0].get())
+                    .IsTriviallyZeroable());
+
+    auto overridden = Analyze(R"(
+        structure Buffer { own []u8 storage; usize length; };
+        Buffer Buffer::zero() override {
+            return build Buffer {
+                self.storage = none;
+                self.length = 0;
+            };
+        }
+        (Buffer, error) fail(error failure) { return (none, failure); }
+    )");
+    for (const auto& diagnostic : overridden.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(overridden.diagnostics.HasErrors());
+    ASSERT_EQ(overridden.model.Structures().size(), 1u);
+    EXPECT_TRUE(SemanticType(overridden.model.Structures()[0].get())
+                    .IsTriviallyZeroable());
+}
+
+TEST(SemanticReferenceTests, StructuresCanStoreSliceBorrows) {
+    const std::string writer =
+        "structure Writer { []u8 destination; usize position; }; "
+        "Writer Writer::init([]u8 destination) <- destination override { "
+        "return build Writer { self.destination = destination; "
+        "self.position = 0; }; } ";
+    auto valid = Analyze(
+        writer +
+        "usize use([]u8 destination) { writer := Writer::init(destination); "
+        "writer.destination[0] = 7; return writer.destination.len(); }");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(writer +
+                    "u8 conflict([]u8 destination) { writer := "
+                    "Writer::init(destination); destination[0] = 1; return "
+                    "writer.destination[0]; }"),
+            DiagnosticCode::BorrowConflict),
+        nullptr);
+    EXPECT_NE(
+        FindDiagnostic(
+            Analyze(writer +
+                    "Writer escape([]u8 destination) <- destination { "
+                    "[1]u8 local = none; return Writer::init(local[:]); }"),
+            DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+}
+
+TEST(SemanticReferenceTests,
+     StructuresCarryCheckedReferencesWithoutBecomingZeroable) {
+    Analysis result = Analyze(R"(
+        structure MutableView { &i32 value; };
+        MutableView MutableView::init(&i32 value) <- value override {
+            return build MutableView { self.value = value; };
+        }
+        structure SharedView { &const i32 value; };
+        SharedView SharedView::init(&const i32 value) <- value override {
+            return build SharedView { self.value = value; };
+        }
+        structure NestedMutable { MutableView view; };
+        NestedMutable NestedMutable::init(&i32 value) <- value override {
+            return build NestedMutable {
+                self.view = MutableView::init(value);
+            };
+        }
+        structure NestedShared { SharedView view; };
+        NestedShared NestedShared::init(&const i32 value) <- value override {
+            return build NestedShared {
+                self.view = SharedView::init(value);
+            };
+        }
+        structure PointerSlot { &*i32 slot; };
+        PointerSlot PointerSlot::init(&*i32 slot) <- slot override {
+            return build PointerSlot { self.slot = slot; };
+        }
+        structure Unconstructed { &i32 value; };
+        structure SharedTearView { &const i32 value; };
+        SharedTearView SharedTearView::init(&const i32 value) <- value override {
+            return build SharedTearView { self.value = value; };
+        }
+        void SharedTearView::tear(&self) override {}
+        structure PinnedView { &i32 value; };
+        unsafe PinnedView PinnedView::init(&i32 value) <- value override {
+            return build PinnedView { self.value = value; };
+        }
+        unsafe void PinnedView::tear(&self) override {}
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_EQ(result.model.Structures().size(), 8);
+
+    for (const auto& structure : result.model.Structures()) {
+        const SemanticType type(structure.get());
+        EXPECT_TRUE(type.ContainsReference());
+        EXPECT_FALSE(type.IsZeroable());
+        EXPECT_FALSE(type.IsTriviallyZeroable());
+        EXPECT_EQ(structure->zero, nullptr);
+    }
+    EXPECT_FALSE(SemanticType(result.model.Structures()[0].get()).IsCopyable());
+    EXPECT_TRUE(SemanticType(result.model.Structures()[1].get()).IsCopyable());
+    EXPECT_FALSE(SemanticType(result.model.Structures()[2].get()).IsCopyable());
+    EXPECT_TRUE(SemanticType(result.model.Structures()[3].get()).IsCopyable());
+    EXPECT_FALSE(SemanticType(result.model.Structures()[4].get()).IsCopyable());
+    EXPECT_EQ(result.model.Structures()[5]->init, nullptr);
+    EXPECT_FALSE(SemanticType(result.model.Structures()[6].get()).IsCopyable());
+    EXPECT_FALSE(
+        SemanticType(result.model.Structures()[6].get()).IsImmovable());
+    EXPECT_FALSE(SemanticType(result.model.Structures()[7].get()).IsCopyable());
+    EXPECT_TRUE(SemanticType(result.model.Structures()[7].get()).IsImmovable());
+    for (std::size_t index = 0; index < 7; ++index)
+        EXPECT_FALSE(
+            SemanticType(result.model.Structures()[index].get()).IsImmovable());
+}
+
+TEST(SemanticReferenceTests,
+     ReferenceFieldsPreserveBorrowCopyAndMoveContracts) {
+    const std::string declarations = R"(
+        structure MutableView { &i32 value; };
+        MutableView MutableView::init(&i32 value) <- value override {
+            return build MutableView { self.value = value; };
+        }
+        structure SharedView { &const i32 value; };
+        SharedView SharedView::init(&const i32 value) <- value override {
+            return build SharedView { self.value = value; };
+        }
+    )";
+
+    Analysis valid = Analyze(declarations + R"(
+        i32 use() {
+            i32 value = 21;
+            mutable := MutableView::init(&value);
+            moved := mutable;
+            *moved.value = 21;
+            shared := SharedView::init(&value);
+            copied := shared;
+            return *shared.value + *copied.value;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_NE(FindErrorDiagnostic(Analyze(declarations + R"(
+                  void use() {
+                      i32 value = 0;
+                      first := MutableView::init(&value);
+                      second := first;
+                      *first.value = 1;
+                  }
+              )"),
+                                  DiagnosticCode::MovedValue),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(declarations + R"(
+                  i32 use() {
+                      i32 value = 0;
+                      view := MutableView::init(&value);
+                      value = 1;
+                      return *view.value;
+                  }
+              )"),
+                                  DiagnosticCode::BorrowConflict),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(declarations + R"(
+                  MutableView escape(&i32 source) <- source {
+                      i32 local = 0;
+                      return MutableView::init(&local);
+                  }
+              )"),
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(declarations + R"(
+                  MutableView missing(&i32 source) {
+                      return MutableView::init(source);
+                  }
+              )"),
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+}
+
+TEST(SemanticReferenceTests,
+     ReferenceFieldsRequireExplicitNonzeroConstruction) {
+    const std::string declarations = R"(
+        structure View { &i32 value; i32 tag; };
+        View View::init(&i32 value) <- value override {
+            return build View { self.value = value; self.tag = 1; };
+        }
+    )";
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze(declarations + "void use() { View value; }"),
+                  DiagnosticCode::InvalidVariableType),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(
+                  Analyze(declarations + "void use() { View value = none; }"),
+                  DiagnosticCode::IncompatibleType),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(R"(
+                  structure View { &i32 value; };
+                  View make(&i32 value) <- value {
+                      return build View {};
+                  }
+              )"),
+                                  DiagnosticCode::InvalidStructure),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(R"(
+                  structure View { i32 tag; &i32 value; };
+                  View make(&i32 value) <- value {
+                      return build View {
+                          self.tag = 1;
+                          self.value = value;
+                      };
+                  }
+              )"),
+                                  DiagnosticCode::InvalidStructure),
+              nullptr);
+    EXPECT_NE(FindErrorDiagnostic(Analyze(R"(
+                  structure View { &i32 value; };
+                  View View::zero() override {
+                      i32 local = 0;
+                      return build View { self.value = &local; };
+                  }
+              )"),
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+    EXPECT_NE(
+        FindErrorDiagnostic(Analyze("structure View { &i32 value = none; };"),
+                            DiagnosticCode::InvalidStructure),
+        nullptr);
+}
+
+TEST(SemanticMemoryTests,
+     RuntimeArraysAcceptSizedMovableSemanticallyZeroableElements) {
+    auto analysis = Analyze(R"(
+        void use() {
+            strings, stringError := new<own []string>(2);
+            if stringError != none { return; }
+            strings[0] = "flecha";
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests,
+     RuntimeArraysRejectNonzeroableImmovableElementsAndInvalidCounts) {
     for (const std::string source :
          {"unsafe void f(i32 n) { p, e := new<[]i32>(n); free(p); }",
           "unsafe void f() { p, e := new<[]i32>(-1); free(p); }",
-          "unsafe void f() { p, e := new<[]string>(2); free(p); }",
-          "unsafe void f() { p, e := new<[]*i32>(2); free(p); }",
-          "structure Text { string value; }; Text Text::zero() override { "
-          "return build Text {}; } unsafe void f() { p, e := "
-          "new<[]Text>(2); free(p); }",
-          "structure Owned { i32 value; }; void Owned::tear(&self) override "
-          "{} Owned Owned::zero() override { return build Owned {}; } "
-          "unsafe void f() { p, e := new<[]Owned>(2); free(p); }",
+          "enum Status: u8 { Ready } unsafe void f() { p, e := "
+          "new<[]Status>(2); free(p); }",
+          "structure Immovable { i32 value; }; unsafe void "
+          "Immovable::tear(&self) override {} Immovable "
+          "Immovable::zero() override { return build Immovable {}; } "
+          "unsafe void f() { p, e := new<[]Immovable>(2); free(p); }",
           "unsafe void f() { p, e := new<[]i32>(); }",
           "void f() { p, e := new<[]i32>(2); }"})
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors()) << source;
@@ -5744,6 +7470,20 @@ TEST(SemanticGenericTests, StructuresMethodsNestedTypesAndFieldComparisons) {
         ADD_FAILURE() << d.message;
 }
 
+TEST(SemanticGenericTests, FieldsAndGenericMethodsMayShareNames) {
+    auto result = Analyze(R"(
+        structure Box<T> { T value; };
+        T Box<T>::value(&const self) { return self->value; }
+        i32 main() {
+            box := Box<i32>::init();
+            box.value = 42;
+            return box.value();
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
 TEST(SemanticGenericTests,
      GenericMethodsOnlyInstantiateForTheirActualReceiver) {
     auto result = Analyze(R"(
@@ -5776,7 +7516,7 @@ TEST(SemanticGenericTests,
 TEST(SemanticGenericTests,
      RequiresExplicitArgumentsAndRejectsInvalidTemplates) {
     for (const auto& source :
-         {"T id<T>(T x) { return x; } void main() { id(1); }",
+         {"T make<T>() { return none; } void main() { make(); }",
           "T id<T>(T x) { return x; } void main() { id<i32, f64>(1); }",
           "i32 id(i32 x) { return x; } void main() { id<i32>(1); }",
           "structure Box<T> { T value; }; void main() { Box value; }",
@@ -5789,6 +7529,163 @@ TEST(SemanticGenericTests,
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+}
+
+TEST(SemanticGenericTests, InfersFreeFunctionArgumentsFromCallsAndResults) {
+    auto result = Analyze(R"(
+        structure Box<T> { T value; };
+        func Parser() => (i32);
+        T identity<T>(T value) { return value; }
+        T first<T>([]const T values) { return values[0]; }
+        T unbox<T>(Box<T> value) { return value.value; }
+        (T, U) pair<T, U>(T left, U right) { return (left, right); }
+        T with_default<T>(T value, T fallback = none) { return value; }
+        T parse<T: integer>(stringv value) { return none; }
+        i16 parse_i16(stringv value) { return parse(value); }
+        Parser make_parser() {
+            return []() => (i32) { return parse("42"); };
+        }
+
+        i32 main() {
+            i32 literal = identity(42);
+            u8 byte = 7;
+            u8 copied = identity(byte);
+            [2]i16 values = [20, 22];
+            i16 element = first(values[:]);
+            box := Box<i64>::init();
+            i64 boxed = unbox(box);
+            left, right := pair(byte, 9 as i64);
+            u8 defaulted = with_default(byte);
+            i32 parsed = parse("42");
+            i16 returned = parse_i16("42");
+            Parser parser = make_parser();
+            i32 callback_parsed = parser();
+            return literal + copied.cast<i32> + element.cast<i32> +
+                boxed.cast<i32> + left.cast<i32> + right.cast<i32> +
+                defaulted.cast<i32> + parsed + returned.cast<i32> +
+                callback_parsed;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests,
+     InfersGenericMethodsFromArgumentsAndExpectedResults) {
+    auto result = Analyze(R"(
+        export structure PublicBox<T> { T value; };
+        U PublicBox<T>::identity<U>(&const self, U value) { return value; }
+        U PublicBox<T>::parse<U>(&const self) { return none; }
+        (U, error) PublicBox<T>::parse_pair<U>(&const self) {
+            return (none, none);
+        }
+        private U PublicBox<T>::hidden<U>(&const self, U value) {
+            return value;
+        }
+        U PublicBox<T>::through_hidden<U>(&const self, U value) {
+            return self->hidden(value);
+        }
+
+        quiver structure SharedBox { i32 value; };
+        U SharedBox::identity<U>(&const self, U value) { return value; }
+
+        structure InternalBox { i32 value; };
+        U InternalBox::identity<U>(&const self, U value) { return value; }
+        U InternalBox::static_identity<U>(U value) { return value; }
+
+        export T exported_identity<T>(T value) { return value; }
+        quiver T shared_identity<T>(T value) { return value; }
+        T internal_identity<T>(T value) { return value; }
+
+        i32 main() {
+            publicBox := PublicBox<i64>::init();
+            sharedBox := SharedBox::init();
+            internalBox := InternalBox::init();
+            i16 small = 7;
+            i16 fromArgument = publicBox.identity(small);
+            i32 secondSpecialization = publicBox.identity(42);
+            i64 fromResult = publicBox.parse();
+            i32 paired;
+            paired, pairError := publicBox.parse_pair();
+            i32 hidden = publicBox.through_hidden(42);
+            i32 shared = sharedBox.identity(42);
+            i32 internal = internalBox.identity(42);
+            i32 staticValue = InternalBox::static_identity(42);
+            return fromArgument.cast<i32> + secondSpecialization +
+                fromResult.cast<i32> + paired + hidden + shared + internal +
+                staticValue + exported_identity(1) + shared_identity(1) +
+                internal_identity(1);
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests, DiagnosesMissingAndConflictingMethodInference) {
+    auto missing = Analyze(R"(
+        structure Box {};
+        T Box::make<T>() { return none; }
+        void main() { Box::make(); }
+    )");
+    const auto* missingDiagnostic =
+        FindDiagnostic(missing, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(missingDiagnostic, nullptr);
+    EXPECT_NE(missingDiagnostic->message.find(
+                  "cannot infer type argument 'T' for generic method 'make'"),
+              std::string::npos);
+
+    auto conflicting = Analyze(R"(
+        structure Box {};
+        T Box::choose<T>(&const self, T value) { return value; }
+        void main() {
+            box := Box::init();
+            i16 small = 1;
+            i32 result = box.choose(small);
+        }
+    )");
+    const auto* conflictDiagnostic =
+        FindDiagnostic(conflicting, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(conflictDiagnostic, nullptr);
+    EXPECT_NE(conflictDiagnostic->message.find(
+                  "conflicting inferred type arguments for 'T'"),
+              std::string::npos);
+}
+
+TEST(SemanticGenericTests, DiagnosesMissingAndConflictingCallInference) {
+    auto missing = Analyze(R"(
+        T parse<T>(stringv value) { return none; }
+        void main() { parse("42"); }
+    )");
+    const auto* missingDiagnostic =
+        FindDiagnostic(missing, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(missingDiagnostic, nullptr);
+    EXPECT_NE(missingDiagnostic->message.find("cannot infer type argument 'T'"),
+              std::string::npos);
+
+    auto inferredDestination = Analyze(R"(
+        T parse<T>(stringv value) { return none; }
+        void main() { value := parse("42"); }
+    )");
+    EXPECT_NE(
+        FindDiagnostic(inferredDestination, DiagnosticCode::InvalidGeneric),
+        nullptr);
+
+    auto conflicting = Analyze(R"(
+        T choose<T>(T left, T right) { return left; }
+        void main() {
+            i8 small = 1;
+            i16 large = 2;
+            choose(small, large);
+        }
+    )");
+    const auto* conflictDiagnostic =
+        FindDiagnostic(conflicting, DiagnosticCode::InvalidGeneric);
+    ASSERT_NE(conflictDiagnostic, nullptr);
+    EXPECT_NE(conflictDiagnostic->message.find(
+                  "conflicting inferred type arguments for 'T'"),
+              std::string::npos);
 }
 
 TEST(SemanticGenericTests,
@@ -5807,6 +7704,187 @@ TEST(SemanticGenericTests,
     EXPECT_FALSE(
         Analyze("T plus<T>(T value) { return value + value; } void main() {}")
             .diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests,
+     SuppressesInstantiationCascadesAfterInvalidDefaultConstruction) {
+    auto result = Analyze(R"(
+        enum Kind { First, Second, }
+        structure Frame { Kind kind; };
+        T fallback<T>() { return none; }
+        (T, error) tupleFallback<T>() { return (none, none); }
+        Frame load() { return fallback<Frame>(); }
+        (Frame, error) loadTuple() { return tupleFallback<Frame>(); }
+    )");
+
+    ASSERT_EQ(result.diagnostics.Diagnostics().size(), 1);
+    EXPECT_EQ(result.diagnostics.Diagnostics().front().code,
+              DiagnosticCode::InvalidStructure);
+    EXPECT_NE(result.diagnostics.Diagnostics().front().message.find(
+                  "has no default variant"),
+              std::string::npos);
+}
+
+TEST(SemanticGenericTests, EnforcesBuiltinTypeSetConstraints) {
+    auto valid = Analyze(R"(
+        T integer_identity<T: integer>(T value) { return value; }
+        T numeric_identity<T: numeric>(T value) { return value; }
+        void main() {
+            integer_identity<i32>(1);
+            integer_identity<usize>(1);
+            numeric_identity<f64>(1.5);
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    auto invalid = Analyze(R"(
+        T integer_identity<T: integer>(T value) { return value; }
+        void main() { integer_identity<f64>(1.5); }
+    )");
+    EXPECT_TRUE(invalid.diagnostics.HasErrors());
+    bool constraint = false;
+    for (const auto& diagnostic : invalid.diagnostics.Diagnostics())
+        constraint |=
+            diagnostic.message.find("does not satisfy type set 'integer'") !=
+            std::string::npos;
+    EXPECT_TRUE(constraint);
+}
+
+TEST(SemanticGenericTests, SupportsNestedAndNominalCustomTypeSets) {
+    auto result = Analyze(R"(
+        structure UserId { i32 value; };
+        structure Box<T> { T value; };
+        typeset identifiers { integer, UserId, };
+        typeset application_values { identifiers, f64, Box<u32>, };
+        T identity<T: application_values>(T value) { return value; }
+        void main() {
+            identity<i32>(1);
+            identity<f64>(1.5);
+            identity<UserId>(UserId::init());
+            identity<Box<u32>>(Box<u32>::init());
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_EQ(result.unit->typeSets.size(), 2u);
+}
+
+TEST(SemanticGenericTests, FoldsTypeSetMembershipExpressions) {
+    auto result = Analyze(R"(
+        typeset exact { i32, };
+        bool is_number<T>() { return T.isof<numeric>; }
+        bool is_exact<T>() { return T.isof<exact>; }
+        void main() {
+            bool a = is_number<i32>();
+            bool b = is_number<bool>();
+            bool c = is_exact<i32>();
+            bool d = is_exact<i64>();
+            bool e = 3.isof<i32>;
+            bool f = 3.isof<numeric>;
+            bool g = 3.isof<f64>;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticGenericTests, TypesOverflowingIntegerArithmetic) {
+    auto valid = Analyze(R"(
+        (T, bool) add<T: integer>(T left, T right) {
+            result, overflowed := left.overflow_add(right);
+            return (result, overflowed);
+        }
+        void main() {
+            sum, add_overflow := add<i8>(127, 1);
+            difference, sub_overflow := (0 as u8).overflow_sub(1);
+            product, mul_overflow := (64 as i8).overflow_mul(2);
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    for (const auto& source : {
+             "void main() { 1.0.overflow_add(2.0); }",
+             "void main() { (1 as i8).overflow_add(1 as i16); }",
+             "void main() { (1 as i8).overflow_mul(); }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, ResolvesContextualIntegerTypeLimits) {
+    auto valid = Analyze(R"(
+        (T, T) bounds<T: integer>() {
+            return (T.min_value, T.max_value);
+        }
+
+        i32 min_value() { return 1; }
+
+        void main() {
+            low, high := bounds<i8>();
+            i32 direct_low = i32.min_value;
+            u64 direct_high = u64.max_value;
+            i32 minimum = min_value();
+            i32 maximum = minimum;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    for (const auto& source : {
+             "void main() { value := i32.unknown_limit; }",
+             "void main() { i32 value = 1; other := value.max_value; }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, ResolvesContextualFloatingPointConstants) {
+    auto valid = Analyze(R"(
+        (T, T, T, T, T, T, T) constants<T: floating_point>() {
+            return (T.nan, T.infinity, T.negative_infinity, T.min_value,
+                    T.max_value, T.min_positive, T.epsilon);
+        }
+
+        void main() {
+            f32 nan = f32.nan;
+            f32 infinity = f32.infinity;
+            f64 negative = f64.negative_infinity;
+            f64 minimum = f64.min_value;
+            f64 maximum = f64.max_value;
+            f32 positive = f32.min_positive;
+            f32 epsilon = f32.epsilon;
+            constants<f64>();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    for (const auto& source : {
+             "void main() { value := f32.unknown_constant; }",
+             "void main() { value := i32.nan; }",
+             "void main() { f32 value = 1.0; other := value.infinity; }",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, RejectsInvalidTypeSetDefinitionsAndConstraints) {
+    for (const auto& source : {
+             "typeset first { second, }; typeset second { first, };",
+             "T identity<T: missing>(T value) { return value; }",
+             "i32 value() { return 0; } T identity<T: value>(T input) { "
+             "return input; }",
+             "typeset integer { bool, };",
+         }) {
+        SCOPED_TRACE(source);
+        EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
+    }
 }
 
 TEST(SemanticGenericTests, BoundsExpandingRecursion) {
@@ -5842,6 +7920,33 @@ TEST(SemanticGenericTests, PreservesReferenceStorageAndOwnershipRules) {
         }
     )")
                      .diagnostics.HasErrors());
+}
+
+TEST(SemanticGenericTests, PreservesOwningSliceTypeArguments) {
+    auto valid = Analyze(R"(
+        T identity<T>(T value) { return value; }
+        void main() {
+            values, failure := new<own []i32>(1);
+            if failure != none { return; }
+            values[0] = 42;
+            moved := identity<own []i32>(values);
+            moved[0];
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_NE(FindDiagnostic(Analyze(R"(
+            T identity<T>(T value) { return value; }
+            void main() {
+                values, failure := new<own []i32>(1);
+                moved := identity<own []i32>(values);
+                values.len();
+            }
+        )"),
+                             DiagnosticCode::MovedValue),
+              nullptr);
 }
 
 TEST(SemanticGenericTests, MethodsResolveHeapTupleArrayAndSliceReceivers) {
@@ -5897,6 +8002,28 @@ TEST(SemanticGenericTests, GenericSafeTearValuesMoveByValue) {
         ADD_FAILURE() << diagnostic.message;
 }
 
+TEST(SemanticGenericTests, OrdinaryMethodsInstantiateOnlyWhenCalled) {
+    const std::string declarations = R"(
+        structure Owner { i32 value; };
+        void Owner::tear(&self) override {}
+        Owner Owner::zero() override { return build Owner {}; }
+        structure Box<T> { T value; };
+        T Box<T>::get(&const self) { return self->value; }
+    )";
+
+    EXPECT_FALSE(Analyze(declarations + R"(
+        void main() { value := Box<Owner>::init(); }
+    )")
+                     .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze(declarations + R"(
+        void main() {
+            value := Box<Owner>::init();
+            copy := value.get();
+        }
+    )")
+                    .diagnostics.HasErrors());
+}
+
 TEST(SemanticGenericTests, GenericMethodsResolveMixedTuplesAndBuildSelfFields) {
     auto result = Analyze(R"(
         structure Box<T> { T n; };
@@ -5918,19 +8045,22 @@ TEST(SemanticGenericTests, GenericMethodsResolveMixedTuplesAndBuildSelfFields) {
         ADD_FAILURE() << d.message;
 }
 
-TEST(SemanticGenericTests,
-     SupportsRecursivePointerTypesAndRejectsMemberCollisions) {
+TEST(SemanticGenericTests, SupportsRecursivePointerTypesAndFieldMethodNames) {
     EXPECT_FALSE(Analyze(R"(
         structure Node<T> { T value; *Node<T> next; };
         void main() { node := Node<i32>::init(); }
     )")
                      .diagnostics.HasErrors());
-    EXPECT_TRUE(Analyze(R"(
+    EXPECT_FALSE(Analyze(R"(
         structure Box { i32 value; };
         T Box::value<T>(&const self) { return none; }
-        void main() {}
+        i32 main() {
+            box := Box::init();
+            box.value = 42;
+            return box.value<i32>();
+        }
     )")
-                    .diagnostics.HasErrors());
+                     .diagnostics.HasErrors());
 }
 
 TEST(SemanticGenericTests, TypeArgumentsRespectLocalShadowing) {
@@ -6097,4 +8227,156 @@ TEST(SemanticReferenceTests, DerefMemberSharesDereferenceLvalueAndBorrowRules) {
         SCOPED_TRACE(source);
         EXPECT_TRUE(Analyze(source).diagnostics.HasErrors());
     }
+}
+
+TEST(SemanticOverloadTests, ResolvesFreeStaticInstanceAndPrivateFunctions) {
+    Analysis analysis = Analyze(R"(
+        i32 select(i32 value) { return value; }
+        i64 select(i64 value) { return value; }
+
+        structure Box { i32 value; };
+        i32 Box::select(&const self, i32 value) {
+            return self->value + value;
+        }
+        i64 Box::select(&const self, i64 value) { return value; }
+        i32 Box::make(i32 value) { return value; }
+        i64 Box::make(i64 value) { return value; }
+        private i32 Box::secret(&const self, i32 value) { return value; }
+        private i64 Box::secret(&const self, i64 value) { return value; }
+        i32 Box::reveal(&const self) {
+            return self->secret(20) +
+                self->secret(22.cast<i64>).cast<i32>;
+        }
+
+        i32 check() {
+            box := Box::init();
+            i32 small = select(20);
+            i64 large = select(22.cast<i64>);
+            i32 memberSmall = box.select(20);
+            i64 memberLarge = box.select(22.cast<i64>);
+            return small + large.cast<i32> + memberSmall +
+                memberLarge.cast<i32> + Box::make(1) +
+                Box::make(1.cast<i64>).cast<i32> + box.reveal();
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticOverloadTests, ResolvesStringViewsAndByteSlicesExactly) {
+    Analysis analysis = Analyze(R"(
+        i32 size(stringv value) { return value.len().cast<i32>; }
+        i32 size([]const u8 value) { return value.len().cast<i32>; }
+        i32 check() {
+            [3]u8 bytes = [1, 2, 3];
+            fromText := size("flecha");
+            fromBytes := size(bytes[:]);
+            viewBytes := "abc".cast<[]const u8>;
+            return fromText + fromBytes + size(viewBytes);
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticOverloadTests, RejectsReturnOnlyAndMixedSafetyOverloads) {
+    Analysis returnOnly = Analyze(R"(
+        i32 convert(i32 value) { return value; }
+        i64 convert(i32 value) { return value.cast<i64>; }
+    )");
+    const Diagnostic* duplicate =
+        FindErrorDiagnostic(returnOnly, DiagnosticCode::DuplicateDeclaration);
+    ASSERT_NE(duplicate, nullptr);
+    EXPECT_NE(duplicate->message.find("same parameter types"),
+              std::string::npos);
+
+    Analysis mixedSafety = Analyze(R"(
+        i32 access(i32 value) { return value; }
+        unsafe i64 access(i64 value) { return value; }
+    )");
+    const Diagnostic* safety =
+        FindErrorDiagnostic(mixedSafety, DiagnosticCode::DuplicateDeclaration);
+    ASSERT_NE(safety, nullptr);
+    EXPECT_NE(safety->message.find("mix safe and unsafe"), std::string::npos);
+}
+
+TEST(SemanticOverloadTests, RejectsExternAndAmbiguousOverloads) {
+    Analysis foreign = Analyze(R"(
+        extern i32 host(i32 value);
+        extern i64 host(i64 value);
+    )");
+    EXPECT_NE(FindErrorDiagnostic(foreign, DiagnosticCode::InvalidExtern),
+              nullptr);
+
+    Analysis ambiguous = Analyze(R"(
+        i64 choose(i64 value) { return value; }
+        u64 choose(u64 value) { return value; }
+        void check() { choose(1); }
+    )");
+    const Diagnostic* diagnostic =
+        FindErrorDiagnostic(ambiguous, DiagnosticCode::IncompatibleArgument);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_NE(diagnostic->message.find("ambiguous overload"),
+              std::string::npos);
+}
+
+TEST(SemanticOverloadTests, KeepsUniformlyUnsafeSetsUnsafe) {
+    Analysis valid = Analyze(R"(
+        unsafe i32 read(*const i32 value) { return 20; }
+        unsafe i64 read(*const i64 value) { return 22; }
+        unsafe i32 check(*const i32 small, *const i64 large) {
+            return read(small) + read(large).cast<i32>;
+        }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis invalid = Analyze(R"(
+        unsafe i32 read(*const i32 value) { return 20; }
+        unsafe i64 read(*const i64 value) { return 22; }
+        i32 check(*const i32 value) { return read(value); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::UnsafeOperation),
+              nullptr);
+}
+
+TEST(SemanticOverloadTests, RejectsBareAndDefaultAmbiguousOverloads) {
+    Analysis bare = Analyze(R"(
+        i32 choose(i32 value) { return value; }
+        i64 choose(i64 value) { return value; }
+        func Choice(i32) => (i32);
+        void check() { Choice selected = choose; }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(bare, DiagnosticCode::InvalidOperand),
+              nullptr);
+
+    Analysis defaults = Analyze(R"(
+        i32 choose(i32 value = 1) { return value; }
+        i64 choose(i64 value = 1) { return value; }
+        void check() { choose(); }
+    )");
+    const Diagnostic* ambiguity =
+        FindErrorDiagnostic(defaults, DiagnosticCode::IncompatibleArgument);
+    ASSERT_NE(ambiguity, nullptr);
+    EXPECT_NE(ambiguity->message.find("ambiguous overload"), std::string::npos);
+}
+
+TEST(SemanticCastTests, StringViewsCastOnlyToConstByteSlices) {
+    Analysis valid = Analyze(R"(
+        usize length(stringv value) {
+            bytes := value.cast<[]const u8>;
+            return bytes.len();
+        }
+    )");
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    Analysis invalid = Analyze(R"(
+        void mutate(stringv value) {
+            bytes := value.cast<[]u8>;
+            bytes[0] = 0;
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::InvalidCast),
+              nullptr);
 }

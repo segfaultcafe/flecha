@@ -7,12 +7,14 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "codegen/llvm_code_generator.hpp"
 #include "codegen/native_compiler.hpp"
 #include "core/module_loader.hpp"
+#include "core/package_graph.hpp"
 #include "flecha/version.hpp"
 #include "lowering/lowerer.hpp"
 #include "semantic/semantic_analyzer.hpp"
@@ -39,14 +41,15 @@ void PrintDiagnostics(const flecha::diagnostics::DiagnosticBag& diagnostics) {
 int Compile(const std::string& command, const std::string& input,
             const std::string& output, const std::filesystem::path& root,
             const std::map<std::string, std::filesystem::path>& libraries,
+            const flecha::core::PackageGraph* packageGraph,
             const std::vector<std::string>& linkInputs, bool verboseTests) {
     flecha::diagnostics::DiagnosticBag diagnostics;
     flecha::core::ModuleLoader loader(diagnostics);
-    auto unit =
-        loader.Load(input, root, libraries,
-                    command == "test" ? flecha::core::ModuleLoadMode::Test
-                                      : flecha::core::ModuleLoadMode::Runtime,
-                    verboseTests);
+    const auto mode = command == "test" ? flecha::core::ModuleLoadMode::Test
+                                        : flecha::core::ModuleLoadMode::Runtime;
+    auto unit = packageGraph
+                    ? loader.Load(input, *packageGraph, mode, verboseTests)
+                    : loader.Load(input, root, libraries, mode, verboseTests);
     if (diagnostics.HasErrors()) {
         PrintDiagnostics(diagnostics);
         return 1;
@@ -140,6 +143,7 @@ void PrintUsage(const char* executable) {
               << " <check|build|test|--emit-llvm|--emit-object> <input.fl> [-o "
                  "output]"
                  " [--root source-directory] [--lib name=source-directory ...]"
+                 " [--package-graph graph.json]"
                  " [--link object-or-library ...] [--verbose]\n";
 }
 }  // namespace
@@ -160,6 +164,7 @@ int main(int argc, char** argv) {
     }
     std::string output;
     std::filesystem::path root;
+    std::filesystem::path packageGraphFile;
     std::map<std::string, std::filesystem::path> libraries;
     std::vector<std::string> linkInputs;
     bool verboseTests = false;
@@ -182,6 +187,8 @@ int main(int argc, char** argv) {
             output = value;
         else if (option == "--root")
             root = value;
+        else if (option == "--package-graph")
+            packageGraphFile = value;
         else if (option == "--lib") {
             const auto equals = value.find('=');
             if (equals == std::string::npos || equals == 0 ||
@@ -207,8 +214,24 @@ int main(int argc, char** argv) {
         std::cerr << "--link is supported only by build and test\n";
         return 1;
     }
+    if (!packageGraphFile.empty() && (!root.empty() || !libraries.empty())) {
+        std::cerr
+            << "--package-graph cannot be combined with --root or --lib\n";
+        return 1;
+    }
     try {
-        return Compile(command, argv[2], output, root, libraries, linkInputs,
+        std::optional<flecha::core::PackageGraph> packageGraph;
+        if (!packageGraphFile.empty()) {
+            std::string error;
+            packageGraph =
+                flecha::core::PackageGraph::Load(packageGraphFile, error);
+            if (!packageGraph) {
+                std::cerr << "package graph error: " << error << "\n";
+                return 1;
+            }
+        }
+        return Compile(command, argv[2], output, root, libraries,
+                       packageGraph ? &*packageGraph : nullptr, linkInputs,
                        verboseTests);
     } catch (const std::filesystem::filesystem_error& error) {
         std::cerr << error.what() << "\n";

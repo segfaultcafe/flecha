@@ -1,0 +1,692 @@
+module buffered_test;
+
+@imports
+    :: root::io::buffered
+    :: root::io::errors
+    :: root::io::stream
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+structure CleanupOwner {
+    *usize cleanupCount;
+};
+
+CleanupOwner CleanupOwner::init(*usize cleanupCount) override {
+    return build CleanupOwner {
+        self.cleanupCount = cleanupCount;
+    };
+}
+
+CleanupOwner CleanupOwner::zero() override {
+    return build CleanupOwner {
+        self.cleanupCount = null;
+    };
+}
+
+void CleanupOwner::tear(&self) override {
+    unsafe {
+        if self->cleanupCount != null {
+            *self->cleanupCount = *self->cleanupCount + 1;
+        }
+    }
+}
+
+test constructors_reject_zero_capacity(&testing::UnitTest t) {
+    reader := stream::Reader::init(
+        [](destination) => {
+            return (none, none);
+        }
+    );
+    _, readError := buffered::BufferedReader::withCapacity(reader, 0);
+    asserts::is_true(
+        t,
+        readError == errors::IoError.InvalidOptions,
+        "a buffered reader requires nonempty storage"
+    );
+
+    writer := stream::Writer::init(
+        [](source) => {
+            return (source.len(), none);
+        }
+    );
+    _, writeError := buffered::BufferedWriter::withCapacity(writer, 0);
+    asserts::is_true(
+        t,
+        writeError == errors::IoError.InvalidOptions,
+        "a buffered writer requires nonempty storage"
+    );
+}
+
+test empty_reads_do_not_touch_the_underlying_reader(&testing::UnitTest t) {
+    usize calls = 0;
+    reader := stream::Reader::init(
+        [&calls](destination) => {
+            calls++;
+            return (destination.len(), none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedReader::withCapacity(reader, 4);
+    asserts::is_true(t, allocationError == none, "reader allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [0]u8 destination = none;
+    count, readError := value.read(destination[:]);
+    asserts::is_true(
+        t,
+        count == 0 and readError == none,
+        "an empty read succeeds without progress"
+    );
+    asserts::is_true(t, calls == 0, "an empty read bypasses the source");
+}
+
+test small_reads_use_read_ahead_and_consume_it_in_order(
+    &testing::UnitTest t
+) {
+    [6]u8 source = [1, 2, 3, 4, 5, 6];
+    usize position = 0;
+    usize calls = 0;
+    reader := stream::Reader::init(
+        [&const source, &position, &calls](destination) => {
+            calls++;
+            usize count = destination.len();
+            const usize REMAINING = source.len() - position;
+            if count > REMAINING {
+                count = REMAINING;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[index] = source[position + index];
+            }
+            position = position + count;
+            return (count, none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedReader::withCapacity(reader, 4);
+    asserts::is_true(t, allocationError == none, "reader allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [2]u8 first = none;
+    firstCount, firstError := value.read(first[:]);
+    asserts::is_true(
+        t,
+        firstCount == 2 and firstError == none,
+        "the first small read succeeds"
+    );
+    asserts::is_true(
+        t,
+        first[0] == 1 and first[1] == 2 and calls == 1,
+        "the first small read fills the internal buffer"
+    );
+
+    [2]u8 second = none;
+    secondCount, secondError := value.read(second[:]);
+    asserts::is_true(
+        t,
+        secondCount == 2 and secondError == none,
+        "the second small read succeeds"
+    );
+    asserts::is_true(
+        t,
+        second[0] == 3 and second[1] == 4 and calls == 1,
+        "buffered bytes are consumed without another source read"
+    );
+
+    [1]u8 third = none;
+    thirdCount, thirdError := value.read(third[:]);
+    asserts::is_true(
+        t,
+        thirdCount == 1 and thirdError == none and third[0] == 5,
+        "the next refill continues at the source position"
+    );
+    asserts::is_true(t, calls == 2, "a refill occurs only after consumption");
+}
+
+test equal_and_large_reads_bypass_the_internal_buffer(
+    &testing::UnitTest t
+) {
+    usize equalRequest = 0;
+    equalReader := stream::Reader::init(
+        [&equalRequest](destination) => {
+            equalRequest = destination.len();
+            loop usize index = 0; index < destination.len(); index++ {
+                destination[index] = (index + 1).cast<u8>;
+            }
+            return (destination.len(), none);
+        }
+    );
+    equalValue, equalAllocationError :=
+        buffered::BufferedReader::withCapacity(equalReader, 4);
+    asserts::is_true(
+        t,
+        equalAllocationError == none,
+        "equal reader allocation succeeds"
+    );
+    if equalAllocationError == none {
+        [4]u8 destination = none;
+        count, readError := equalValue.read(destination[:]);
+        asserts::is_true(
+            t,
+            count == 4 and readError == none and equalRequest == 4,
+            "an equal-sized destination is read directly"
+        );
+    }
+
+    usize largeRequest = 0;
+    largeReader := stream::Reader::init(
+        [&largeRequest](destination) => {
+            largeRequest = destination.len();
+            loop usize index = 0; index < destination.len(); index++ {
+                destination[index] = (index + 10).cast<u8>;
+            }
+            return (destination.len(), none);
+        }
+    );
+    largeValue, largeAllocationError :=
+        buffered::BufferedReader::withCapacity(largeReader, 4);
+    asserts::is_true(
+        t,
+        largeAllocationError == none,
+        "large reader allocation succeeds"
+    );
+    if largeAllocationError == none {
+        [6]u8 destination = none;
+        count, readError := largeValue.read(destination[:]);
+        asserts::is_true(
+            t,
+            count == 6 and readError == none and largeRequest == 6,
+            "a larger destination is read directly"
+        );
+        asserts::is_true(
+            t,
+            destination[0] == 10 and destination[5] == 15,
+            "the direct read preserves byte order"
+        );
+    }
+}
+
+test read_exact_crosses_boundaries_and_collects_short_reads(
+    &testing::UnitTest t
+) {
+    [7]u8 source = [10, 20, 30, 40, 50, 60, 70];
+    usize position = 0;
+    usize calls = 0;
+    reader := stream::Reader::init(
+        [&const source, &position, &calls](destination) => {
+            calls++;
+            usize count = destination.len();
+            if count > 2 {
+                count = 2;
+            }
+            const usize REMAINING = source.len() - position;
+            if count > REMAINING {
+                count = REMAINING;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[index] = source[position + index];
+            }
+            position = position + count;
+            return (count, none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedReader::withCapacity(reader, 3);
+    asserts::is_true(t, allocationError == none, "reader allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [7]u8 destination = none;
+    readError := value.readExact(destination[:]);
+    asserts::is_true(t, readError == none, "readExact accepts short reads");
+    asserts::is_true(
+        t,
+        destination[0] == 10 and destination[3] == 40 and
+            destination[6] == 70,
+        "readExact preserves every byte across boundaries"
+    );
+    asserts::is_true(t, calls == 4, "readExact performs the required refills");
+}
+
+test eof_is_reported_after_buffered_data_is_consumed(&testing::UnitTest t) {
+    bool firstCall = true;
+    usize calls = 0;
+    reader := stream::Reader::init(
+        [&firstCall, &calls](destination) => {
+            calls++;
+            if !firstCall {
+                return (none, none);
+            }
+
+            firstCall = false;
+            destination[0] = 7;
+            destination[1] = 8;
+            destination[2] = 9;
+            return (3, none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedReader::withCapacity(reader, 4);
+    asserts::is_true(t, allocationError == none, "reader allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [2]u8 first = none;
+    firstCount, firstError := value.read(first[:]);
+    [2]u8 second = none;
+    secondCount, secondError := value.read(second[:]);
+    [1]u8 eof = none;
+    eofCount, eofError := value.read(eof[:]);
+    repeatedCount, repeatedError := value.read(eof[:]);
+
+    asserts::is_true(
+        t,
+        firstCount == 2 and firstError == none and
+            secondCount == 1 and secondError == none,
+        "all buffered bytes precede EOF"
+    );
+    asserts::is_true(
+        t,
+        first[0] == 7 and first[1] == 8 and second[0] == 9,
+        "EOF does not drop buffered bytes"
+    );
+    asserts::is_true(
+        t,
+        eofCount == 0 and eofError == none and
+            repeatedCount == 0 and repeatedError == none,
+        "EOF remains a successful zero-byte read"
+    );
+    asserts::is_true(t, calls == 2, "remembered EOF avoids repeated reads");
+}
+
+test partial_read_errors_follow_the_final_buffered_byte(
+    &testing::UnitTest t
+) {
+    reader := stream::Reader::init(
+        [](destination) => {
+            destination[0] = 11;
+            destination[1] = 12;
+            destination[2] = 13;
+            return (3, errors::IoError.ReadFailed);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedReader::withCapacity(reader, 4);
+    asserts::is_true(t, allocationError == none, "reader allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [2]u8 first = none;
+    firstCount, firstError := value.read(first[:]);
+    [2]u8 second = none;
+    secondCount, secondError := value.read(second[:]);
+
+    asserts::is_true(
+        t,
+        firstCount == 2 and firstError == none,
+        "an error is deferred while read-ahead bytes remain"
+    );
+    asserts::is_true(
+        t,
+        secondCount == 1 and secondError == errors::IoError.ReadFailed,
+        "the error accompanies the final buffered byte"
+    );
+    asserts::is_true(
+        t,
+        first[0] == 11 and first[1] == 12 and second[0] == 13,
+        "a partial error preserves all preceding bytes"
+    );
+}
+
+test impossible_read_counts_are_rejected(&testing::UnitTest t) {
+    reader := stream::Reader::init(
+        [](destination) => {
+            return (destination.len() + 1, none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedReader::withCapacity(reader, 2);
+    asserts::is_true(t, allocationError == none, "reader allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [1]u8 destination = none;
+    count, readError := value.read(destination[:]);
+    asserts::is_true(
+        t,
+        count == 0 and readError == errors::IoError.ReadFailed,
+        "an impossible source count becomes ReadFailed"
+    );
+}
+
+test small_writes_buffer_until_flush_and_empty_flush_is_a_no_op(
+    &testing::UnitTest t
+) {
+    [4]u8 destination = none;
+    usize position = 0;
+    usize calls = 0;
+    writer := stream::Writer::init(
+        [&destination, &position, &calls](source) => {
+            calls++;
+            loop usize index = 0; index < source.len(); index++ {
+                destination[position + index] = source[index];
+            }
+            position = position + source.len();
+            return (source.len(), none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedWriter::withCapacity(writer, 4);
+    asserts::is_true(t, allocationError == none, "writer allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    asserts::is_true(t, value.flush() == none, "an empty flush succeeds");
+    asserts::is_true(t, calls == 0, "an empty flush bypasses the destination");
+
+    [2]u8 source = [21, 22];
+    count, writeError := value.write(source[:]);
+    asserts::is_true(
+        t,
+        count == 2 and writeError == none,
+        "a small write is accepted completely"
+    );
+    asserts::is_true(t, calls == 0, "a small write remains buffered");
+
+    flushError := value.flush();
+    asserts::is_true(t, flushError == none, "a nonempty flush succeeds");
+    asserts::is_true(
+        t,
+        calls == 1 and position == 2 and
+            destination[0] == 21 and destination[1] == 22,
+        "flush emits the buffered bytes in order"
+    );
+}
+
+test equal_sized_writes_bypass_the_internal_buffer(&testing::UnitTest t) {
+    usize request = 0;
+    writer := stream::Writer::init(
+        [&request](source) => {
+            request = source.len();
+            return (2, none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedWriter::withCapacity(writer, 4);
+    asserts::is_true(t, allocationError == none, "writer allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [4]u8 source = [1, 2, 3, 4];
+    count, writeError := value.write(source[:]);
+    asserts::is_true(
+        t,
+        count == 2 and writeError == none and request == 4,
+        "an equal-sized write forwards the partial result directly"
+    );
+}
+
+test writes_cross_buffer_boundaries_without_reordering(
+    &testing::UnitTest t
+) {
+    [5]u8 destination = none;
+    usize position = 0;
+    writer := stream::Writer::init(
+        [&destination, &position](source) => {
+            loop usize index = 0; index < source.len(); index++ {
+                destination[position + index] = source[index];
+            }
+            position = position + source.len();
+            return (source.len(), none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedWriter::withCapacity(writer, 4);
+    asserts::is_true(t, allocationError == none, "writer allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [2]u8 prefix = [1, 2];
+    [3]u8 suffix = [3, 4, 5];
+    prefixCount, prefixError := value.write(prefix[:]);
+    suffixCount, suffixError := value.write(suffix[:]);
+    flushError := value.flush();
+
+    asserts::is_true(
+        t,
+        prefixCount == 2 and prefixError == none and
+            suffixCount == 3 and suffixError == none and flushError == none,
+        "writes on both sides of a boundary succeed"
+    );
+    asserts::is_true(
+        t,
+        position == 5 and destination[0] == 1 and destination[1] == 2 and
+            destination[2] == 3 and destination[3] == 4 and
+            destination[4] == 5,
+        "boundary flushing neither duplicates nor reorders bytes"
+    );
+}
+
+test write_all_and_flush_complete_short_underlying_writes(
+    &testing::UnitTest t
+) {
+    [7]u8 destination = none;
+    usize position = 0;
+    writer := stream::Writer::init(
+        [&destination, &position](source) => {
+            usize count = source.len();
+            if count > 2 {
+                count = 2;
+            }
+            loop usize index = 0; index < count; index++ {
+                destination[position + index] = source[index];
+            }
+            position = position + count;
+            return (count, none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedWriter::withCapacity(writer, 3);
+    asserts::is_true(t, allocationError == none, "writer allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [7]u8 source = [10, 20, 30, 40, 50, 60, 70];
+    writeError := value.writeAll(source[:]);
+    flushError := value.flush();
+    asserts::is_true(
+        t,
+        writeError == none and flushError == none and position == 7,
+        "writeAll and flush complete every short write"
+    );
+    asserts::is_true(
+        t,
+        destination[0] == 10 and destination[3] == 40 and
+            destination[6] == 70,
+        "short writes preserve byte order"
+    );
+}
+
+test flush_errors_preserve_the_unwritten_suffix_for_retry(
+    &testing::UnitTest t
+) {
+    [3]u8 destination = none;
+    usize position = 0;
+    bool failFirst = true;
+    writer := stream::Writer::init(
+        [&destination, &position, &failFirst](source) => {
+            usize count = source.len();
+            if failFirst {
+                failFirst = false;
+                if count > 2 {
+                    count = 2;
+                }
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[position + index] = source[index];
+            }
+            position = position + count;
+            if !failFirst and position == 2 {
+                return (count, errors::IoError.WriteFailed);
+            }
+            return (count, none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedWriter::withCapacity(writer, 4);
+    asserts::is_true(t, allocationError == none, "writer allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [3]u8 source = [31, 32, 33];
+    count, writeError := value.write(source[:]);
+    firstFlushError := value.flush();
+    secondFlushError := value.flush();
+
+    asserts::is_true(
+        t,
+        count == 3 and writeError == none and
+            firstFlushError == errors::IoError.WriteFailed,
+        "the first partial flush returns its error"
+    );
+    asserts::is_true(
+        t,
+        secondFlushError == none and position == 3,
+        "retry writes only the preserved suffix"
+    );
+    asserts::is_true(
+        t,
+        destination[0] == 31 and destination[1] == 32 and
+            destination[2] == 33,
+        "flush retry neither drops nor duplicates bytes"
+    );
+}
+
+test zero_progress_flushes_fail_without_discarding_data(
+    &testing::UnitTest t
+) {
+    [2]u8 destination = none;
+    usize position = 0;
+    bool stall = true;
+    writer := stream::Writer::init(
+        [&destination, &position, &stall](source) => {
+            if stall {
+                stall = false;
+                return (none, none);
+            }
+
+            loop usize index = 0; index < source.len(); index++ {
+                destination[position + index] = source[index];
+            }
+            position = position + source.len();
+            return (source.len(), none);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedWriter::withCapacity(writer, 3);
+    asserts::is_true(t, allocationError == none, "writer allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [2]u8 source = [41, 42];
+    _, writeError := value.write(source[:]);
+    firstFlushError := value.flush();
+    secondFlushError := value.flush();
+    asserts::is_true(
+        t,
+        writeError == none and
+            firstFlushError == errors::IoError.WriteFailed,
+        "a zero-progress flush reports WriteFailed"
+    );
+    asserts::is_true(
+        t,
+        secondFlushError == none and position == 2 and
+            destination[0] == 41 and destination[1] == 42,
+        "retry receives every byte preserved by the stalled flush"
+    );
+}
+
+test direct_write_errors_preserve_partial_counts(&testing::UnitTest t) {
+    writer := stream::Writer::init(
+        [](source) => {
+            return (2, errors::IoError.WriteFailed);
+        }
+    );
+    value, allocationError :=
+        buffered::BufferedWriter::withCapacity(writer, 4);
+    asserts::is_true(t, allocationError == none, "writer allocation succeeds");
+    if allocationError != none {
+        return;
+    }
+
+    [5]u8 source = [1, 2, 3, 4, 5];
+    count, writeError := value.write(source[:]);
+    asserts::is_true(
+        t,
+        count == 2 and writeError == errors::IoError.WriteFailed,
+        "a direct write preserves the underlying partial result"
+    );
+}
+
+test movement_cleans_stream_owners_once_and_destruction_does_not_flush(
+    &testing::UnitTest t
+) {
+    usize cleanupCount = 0;
+    usize writeCalls = 0;
+    {
+        CleanupOwner owner = none;
+        unsafe {
+            owner = CleanupOwner::init(&raw cleanupCount);
+        }
+        writer := stream::Writer::init(
+            [own owner, &writeCalls](source) => {
+                writeCalls++;
+                return (source.len(), none);
+            }
+        );
+        value, allocationError :=
+            buffered::BufferedWriter::withCapacity(writer, 4);
+        asserts::is_true(
+            t,
+            allocationError == none,
+            "writer allocation succeeds"
+        );
+        if allocationError == none {
+            moved := value;
+            [1]u8 source = [99];
+            count, writeError := moved.write(source[:]);
+            asserts::is_true(
+                t,
+                count == 1 and writeError == none,
+                "a moved buffered writer remains usable"
+            );
+        }
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 1,
+        "movement destroys the captured stream owner exactly once"
+    );
+    asserts::is_true(
+        t,
+        writeCalls == 0,
+        "buffered-writer destruction does not flush pending data"
+    );
+}

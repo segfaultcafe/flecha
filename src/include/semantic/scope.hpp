@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "symbol.hpp"
 
@@ -17,14 +18,19 @@ class Scope final {
     [[nodiscard]] const Scope* Parent() const { return _parent; }
     [[nodiscard]] bool Declare(const Symbol& symbol);
     bool DeclareAs(std::string name, const Symbol& symbol);
+    bool DeclareOverloadAs(std::string name, const FunctionSymbol& symbol);
     [[nodiscard]] const Symbol* LookupLocal(std::string_view name) const;
     [[nodiscard]] const Symbol* Lookup(std::string_view name) const;
+    [[nodiscard]] const std::vector<const Symbol*>& LookupAllLocal(
+        std::string_view name) const;
+    [[nodiscard]] const std::vector<const Symbol*>& LookupAll(
+        std::string_view name) const;
     [[nodiscard]] std::optional<std::string> NameFor(
         const Symbol& symbol) const;
 
    private:
     const Scope* _parent;
-    std::unordered_map<std::string, const Symbol*> _symbols;
+    std::unordered_map<std::string, std::vector<const Symbol*>> _symbols;
 };
 
 }  // namespace flecha::semantic

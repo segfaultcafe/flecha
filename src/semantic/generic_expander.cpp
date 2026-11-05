@@ -18,6 +18,12 @@ using Tokens = std::vector<Token>;
 using Arguments = std::vector<Tokens>;
 using Callback = std::function<void(AstNode&, bool)>;
 
+bool IsPrimitiveNumericTypeName(const std::string& name) {
+    return name == "i8" || name == "i16" || name == "i32" || name == "i64" ||
+           name == "isize" || name == "u8" || name == "u16" || name == "u32" ||
+           name == "u64" || name == "usize" || name == "f32" || name == "f64";
+}
+
 // One structural walk is shared by rewriting, substitution-site discovery, and
 // template checks. Re-parsing templates preserves all existing desugarings.
 void Walk(const AstNode& input, const Callback& callback) {
@@ -67,6 +73,17 @@ void Walk(const AstNode& input, const Callback& callback) {
             optional(n.BackingType());
             break;
         }
+        case AstNodeKind::TypeSetDeclaration: {
+            NODE(TypeSetDeclaration);
+            list(n.Members());
+            break;
+        }
+        case AstNodeKind::ModuleConstantDeclaration: {
+            NODE(ModuleConstantDeclaration);
+            visit(n.Type());
+            visit(n.Initializer());
+            break;
+        }
         case AstNodeKind::StructureField: {
             NODE(StructureField);
             visit(n.Type());
@@ -76,6 +93,7 @@ void Walk(const AstNode& input, const Callback& callback) {
         case AstNodeKind::Parameter: {
             NODE(Parameter);
             visit(n.Type());
+            optional(n.DefaultValue());
             break;
         }
         case AstNodeKind::BlockStatement: {
@@ -185,6 +203,12 @@ void Walk(const AstNode& input, const Callback& callback) {
             visit(n.TargetType());
             break;
         }
+        case AstNodeKind::IsOfExpression: {
+            NODE(IsOfExpression);
+            visit(n.Value());
+            visit(n.Target());
+            break;
+        }
         case AstNodeKind::UnaryExpression: {
             NODE(UnaryExpression);
             visit(n.Operand());
@@ -243,6 +267,7 @@ void Walk(const AstNode& input, const Callback& callback) {
         case AstNodeKind::CompilationUnit:
         case AstNodeKind::AnonymousCapture:
         case AstNodeKind::ErrorDeclaration:
+        case AstNodeKind::DecorationDeclaration:
         case AstNodeKind::ProceedStatement:
         case AstNodeKind::BreakStatement:
         case AstNodeKind::JumpToStatement:
@@ -254,14 +279,24 @@ void Walk(const AstNode& input, const Callback& callback) {
     callback(node, false);
 }
 std::string Name(const Declaration& declaration) {
-    if (declaration.Kind() == AstNodeKind::FunctionDeclaration)
-        return static_cast<const FunctionDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::FunctionDeclaration) {
+        const auto& function =
+            static_cast<const FunctionDeclaration&>(declaration);
+        return function.Name() + (function.IsCrashable() ? "!" : "");
+    }
     if (declaration.Kind() == AstNodeKind::StructureDeclaration)
         return static_cast<const StructureDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::EnumDeclaration)
         return static_cast<const EnumDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::CallableTypeDeclaration)
         return static_cast<const CallableTypeDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::TypeSetDeclaration)
+        return static_cast<const TypeSetDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::ModuleConstantDeclaration)
+        return static_cast<const ModuleConstantDeclaration&>(declaration)
+            .Name();
+    if (declaration.Kind() == AstNodeKind::DecorationDeclaration)
+        return static_cast<const DecorationDeclaration&>(declaration).Name();
     return static_cast<const ErrorDeclaration&>(declaration).Name();
 }
 bool Template(const Declaration& d) {
@@ -285,6 +320,7 @@ struct Instance {
 };
 struct MethodRequest {
     std::string name, concreteName;
+    bool crashable = false;
     Arguments arguments;
     source::SourceRange range;
 };
@@ -307,7 +343,10 @@ class Expander {
             }
             const auto [existing, inserted] = declarations.emplace(
                 std::make_pair(d->moduleId, Name(*d)), d.get());
-            if (!inserted && (Template(*d) || Template(*existing->second)))
+            if (!inserted &&
+                (Template(*d) || Template(*existing->second) ||
+                 d->Kind() == AstNodeKind::TypeSetDeclaration ||
+                 existing->second->Kind() == AstNodeKind::TypeSetDeclaration))
                 diagnostics.Report(DiagnosticCode::DuplicateDeclaration,
                                    d->Range(),
                                    "duplicate declaration '" + Name(*d) + "'");
@@ -317,6 +356,16 @@ class Expander {
                         Error(d->Range(),
                               "import alias conflicts with declaration '" +
                                   import.alias + "'");
+        }
+        {
+            std::set<const Declaration*> visiting, validated;
+            for (const auto& [key, declaration] : declarations) {
+                (void)key;
+                if (declaration->Kind() == AstNodeKind::TypeSetDeclaration)
+                    ValidateTypeSet(
+                        static_cast<const TypeSetDeclaration&>(*declaration),
+                        visiting, validated);
+            }
         }
         std::map<std::pair<const Declaration*, std::string>,
                  const FunctionDeclaration*>
@@ -334,19 +383,11 @@ class Expander {
             }
             const auto* owner = found->second;
             const auto [previous, inserted] = methodNames.emplace(
-                std::make_pair(owner, method->Name()), method);
+                std::make_pair(owner, Name(*method)), method);
             if (!inserted && (Template(*method) || Template(*previous->second)))
                 Error(method->Range(),
-                      "duplicate method declaration '" + method->Name() + "'");
-            if (Template(*method) &&
-                owner->Kind() == AstNodeKind::StructureDeclaration)
-                for (const auto& field :
-                     static_cast<const StructureDeclaration*>(owner)->Fields())
-                    if (field->Name() == method->Name())
-                        Error(method->Range(),
-                              "generic method conflicts with field '" +
-                                  method->Name() + "'");
-            if (Template(*method) &&
+                      "duplicate method declaration '" + Name(*method) + "'");
+            if (Template(*method) && !method->IsCrashable() &&
                 owner->Kind() == AstNodeKind::EnumDeclaration)
                 for (const auto& variant :
                      static_cast<const EnumDeclaration*>(owner)->Variants())
@@ -366,7 +407,7 @@ class Expander {
                           "method type parameter shadows its owner's type "
                           "parameter '" +
                               p + "'");
-            if (!method->genericParameters.empty() &&
+            if (!method->genericParameters.empty() && !method->IsCrashable() &&
                 (method->Name() == "init" || method->Name() == "tear"))
                 Error(method->Range(),
                       "lifecycle methods cannot declare additional type "
@@ -375,7 +416,7 @@ class Expander {
                 !method->genericParameters.empty())
                 genericMethods[owner].push_back(method);
             else
-                concreteMethods[{owner, method->Name()}] = method;
+                concreteMethods[{owner, Name(*method)}] = method;
         }
         for (auto& declaration : originals) {
             if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
@@ -386,7 +427,9 @@ class Expander {
                     DiagnosticCode::InvalidExtern, declaration->Range(),
                     "extern declarations cannot have generic parameters");
             Validate(*declaration);
-            if (Template(*declaration))
+            if (declaration->Kind() == AstNodeKind::TypeSetDeclaration)
+                unit.typeSets.push_back(std::move(declaration));
+            else if (Template(*declaration))
                 unit.genericTemplates.push_back(std::move(declaration));
             else
                 unit.AddDeclaration(std::move(declaration));
@@ -411,6 +454,198 @@ class Expander {
    private:
     void Error(source::SourceRange range, const std::string& message) {
         diagnostics.Report(DiagnosticCode::InvalidGeneric, range, message);
+    }
+    static bool BuiltinTypeSet(const std::string& name) {
+        return name == "signed_integer" || name == "unsigned_integer" ||
+               name == "integer" || name == "floating_point" ||
+               name == "numeric";
+    }
+    static bool PrimitiveMember(const Tokens& argument,
+                                const std::string& set) {
+        std::size_t index = 0;
+        if (index < argument.size() && argument[index].type == TokenType::Const)
+            ++index;
+        if (index + 1 != argument.size()) return false;
+        const TokenType type = argument[index].type;
+        const bool signedInteger =
+            type == TokenType::I8 || type == TokenType::I16 ||
+            type == TokenType::I32 || type == TokenType::I64 ||
+            type == TokenType::ISize;
+        const bool unsignedInteger =
+            type == TokenType::U8 || type == TokenType::U16 ||
+            type == TokenType::U32 || type == TokenType::U64 ||
+            type == TokenType::USize;
+        const bool floatingPoint =
+            type == TokenType::F32 || type == TokenType::F64;
+        if (set == "signed_integer") return signedInteger;
+        if (set == "unsigned_integer") return unsignedInteger;
+        if (set == "integer") return signedInteger || unsignedInteger;
+        if (set == "floating_point") return floatingPoint;
+        return set == "numeric" &&
+               (signedInteger || unsignedInteger || floatingPoint);
+    }
+    static Tokens Unqualified(Tokens tokens) {
+        if (!tokens.empty() && tokens.front().type == TokenType::Const)
+            tokens.erase(tokens.begin());
+        return tokens;
+    }
+    const Declaration* LookupFrom(const std::string& name,
+                                  const Declaration& context,
+                                  source::SourceRange range,
+                                  bool diagnose = true) {
+        Declaration* saved = current;
+        current = const_cast<Declaration*>(&context);
+        const Declaration* result =
+            Lookup(name, context.moduleId, range, diagnose);
+        current = saved;
+        return result;
+    }
+    bool Satisfies(const Tokens& argument, const std::string& setName,
+                   const Declaration& context, source::SourceRange range,
+                   std::set<const Declaration*>& visiting) {
+        if (BuiltinTypeSet(setName)) return PrimitiveMember(argument, setName);
+        const Declaration* declaration =
+            LookupFrom(setName, context, range, true);
+        if (!declaration) {
+            Error(range, "unknown type set '" + setName + "'");
+            return false;
+        }
+        if (declaration->Kind() != AstNodeKind::TypeSetDeclaration) {
+            Error(range, "'" + setName + "' is not a type set");
+            return false;
+        }
+        if (!visiting.insert(declaration).second) {
+            Error(range, "cyclic type-set definition involving '" +
+                             Name(*declaration) + "'");
+            return false;
+        }
+
+        const auto& set = static_cast<const TypeSetDeclaration&>(*declaration);
+        for (const auto& member : set.Members()) {
+            if (member->TypeForm() == TypeKind::Named &&
+                member->typeArguments.empty()) {
+                const std::string& nestedName = member->Name();
+                if (BuiltinTypeSet(nestedName)) {
+                    if (PrimitiveMember(argument, nestedName)) {
+                        visiting.erase(declaration);
+                        return true;
+                    }
+                    continue;
+                }
+                const Declaration* nested = LookupFrom(nestedName, *declaration,
+                                                       member->Range(), false);
+                if (nested &&
+                    nested->Kind() == AstNodeKind::TypeSetDeclaration) {
+                    if (Satisfies(argument, nestedName, *declaration,
+                                  member->Range(), visiting)) {
+                        visiting.erase(declaration);
+                        return true;
+                    }
+                    continue;
+                }
+            }
+
+            Declaration* saved = current;
+            current = const_cast<Declaration*>(declaration);
+            Tokens concrete = TypeTokens(const_cast<TypeNode&>(*member),
+                                         declaration->moduleId);
+            current = saved;
+            if (Key({Unqualified(concrete)}) == Key({Unqualified(argument)})) {
+                visiting.erase(declaration);
+                return true;
+            }
+        }
+        visiting.erase(declaration);
+        return false;
+    }
+    bool Satisfies(const Tokens& argument, const std::string& setName,
+                   const Declaration& context, source::SourceRange range) {
+        std::set<const Declaration*> visiting;
+        return Satisfies(argument, setName, context, range, visiting);
+    }
+    bool ValidateConstraints(const Declaration& origin,
+                             const Arguments& arguments,
+                             source::SourceRange range) {
+        bool valid = true;
+        const std::size_t offset = origin.ownerParameters.size();
+        for (std::size_t index = 0; index < origin.genericParameters.size();
+             ++index) {
+            const auto found =
+                origin.genericConstraints.find(origin.genericParameters[index]);
+            if (found == origin.genericConstraints.end()) continue;
+            if (offset + index >= arguments.size() ||
+                !Satisfies(arguments[offset + index], found->second, origin,
+                           range)) {
+                Error(range, "type argument for '" +
+                                 origin.genericParameters[index] +
+                                 "' does not satisfy type set '" +
+                                 found->second + "'");
+                valid = false;
+            }
+        }
+        return valid;
+    }
+    bool VisibleTypeSetMember(const Declaration& member,
+                              const TypeSetDeclaration& set) const {
+        if (set.exported) return member.exported;
+        if (set.quiverVisible)
+            return member.exported ||
+                   (member.quiverVisible && member.quiverId == set.quiverId);
+        return true;
+    }
+    void ValidateTypeSet(const TypeSetDeclaration& set,
+                         std::set<const Declaration*>& visiting,
+                         std::set<const Declaration*>& validated) {
+        if (validated.contains(&set)) return;
+        if (BuiltinTypeSet(set.Name())) {
+            Error(set.NameRange(),
+                  "cannot redeclare built-in type set '" + set.Name() + "'");
+            validated.insert(&set);
+            return;
+        }
+        if (!visiting.insert(&set).second) {
+            Error(set.Range(),
+                  "cyclic type-set definition involving '" + set.Name() + "'");
+            return;
+        }
+        for (const auto& member : set.Members()) {
+            const Declaration* declaration = nullptr;
+            if (member->TypeForm() == TypeKind::Named &&
+                member->typeArguments.empty() && BuiltinTypeSet(member->Name()))
+                continue;
+            if (member->TypeForm() == TypeKind::Named &&
+                member->typeArguments.empty() &&
+                !BuiltinTypeSet(member->Name())) {
+                declaration =
+                    LookupFrom(member->Name(), set, member->Range(), false);
+                if (declaration &&
+                    declaration->Kind() == AstNodeKind::TypeSetDeclaration) {
+                    if (!VisibleTypeSetMember(*declaration, set))
+                        Error(member->Range(),
+                              "visible type sets cannot include less-visible "
+                              "type sets");
+                    ValidateTypeSet(
+                        static_cast<const TypeSetDeclaration&>(*declaration),
+                        visiting, validated);
+                    continue;
+                }
+            }
+
+            Declaration* saved = current;
+            current = const_cast<TypeSetDeclaration*>(&set);
+            Tokens tokens =
+                TypeTokens(const_cast<TypeNode&>(*member), set.moduleId);
+            current = saved;
+            (void)tokens;
+            if (!declaration && member->TypeForm() == TypeKind::Named)
+                declaration =
+                    LookupFrom(member->Name(), set, member->Range(), false);
+            if (declaration && !VisibleTypeSetMember(*declaration, set))
+                Error(member->Range(),
+                      "visible type sets cannot include less-visible types");
+        }
+        visiting.erase(&set);
+        validated.insert(&set);
     }
     bool Local(const std::string& name) const {
         for (const auto& scope : locals)
@@ -438,10 +673,9 @@ class Expander {
             return alias->second;
         std::string target = module, shortName = name;
         const auto separator = name.find("::");
-        const Module* source =
-            current && modules.contains(current->sourceId)
-                ? modules.at(current->sourceId)
-                : nullptr;
+        const Module* source = current && modules.contains(current->sourceId)
+                                   ? modules.at(current->sourceId)
+                                   : nullptr;
         if (separator != std::string::npos) {
             const auto prefix = name.substr(0, separator);
             shortName = name.substr(separator + 2);
@@ -497,6 +731,10 @@ class Expander {
         const auto emit = [&](TokenType kind, const std::string& spelling) {
             result.emplace_back(kind, spelling, type.Range());
         };
+        if (type.Contract() == OwnershipContract::Own)
+            emit(TokenType::Own, "own");
+        else if (type.Contract() == OwnershipContract::Lend)
+            emit(TokenType::Lend, "lend");
         if (type.IsConst()) emit(TokenType::Const, "const");
         if (type.TypeForm() == TypeKind::Named) {
             const Declaration* declaration =
@@ -592,6 +830,38 @@ class Expander {
     }
     void Validate(const Declaration& declaration) {
         if (!Template(declaration)) return;
+        const Declaration* constraintApi = &declaration;
+        if (declaration.Kind() == AstNodeKind::FunctionDeclaration) {
+            const auto& function =
+                static_cast<const FunctionDeclaration&>(declaration);
+            if (!function.Owner().empty() &&
+                !function.HasModifier(FunctionModifier::Private)) {
+                const Declaration* owner = Lookup(
+                    function.Owner(), function.moduleId, function.Range());
+                if (owner) constraintApi = owner;
+            }
+        }
+        for (const auto& [parameter, constraint] :
+             declaration.genericConstraints) {
+            (void)parameter;
+            if (BuiltinTypeSet(constraint)) continue;
+            const Declaration* set =
+                LookupFrom(constraint, declaration, declaration.Range(), true);
+            if (!set)
+                Error(declaration.Range(),
+                      "unknown type set '" + constraint + "'");
+            else if (set->Kind() != AstNodeKind::TypeSetDeclaration)
+                Error(declaration.Range(),
+                      "'" + constraint + "' is not a type set");
+            else if (constraintApi->exported && !set->exported)
+                Error(declaration.Range(),
+                      "exported generics cannot use non-exported type sets");
+            else if (constraintApi->quiverVisible && !set->exported &&
+                     !(set->quiverVisible &&
+                       set->quiverId == constraintApi->quiverId))
+                Error(declaration.Range(),
+                      "quiver generics cannot use module-private type sets");
+        }
         std::set<std::string> parameters(declaration.genericParameters.begin(),
                                          declaration.genericParameters.end());
         parameters.insert(declaration.ownerParameters.begin(),
@@ -655,6 +925,7 @@ class Expander {
     Declaration* Clone(const Declaration& origin, const Arguments& arguments,
                        const std::string& name, source::SourceRange at,
                        const std::string& owner = {}) {
+        if (!ValidateConstraints(origin, arguments, at)) return nullptr;
         if (generatedDeclarations >= 2048 ||
             (current && current->instantiationOrigins.size() >= 64) ||
             generatedTokens + origin.templateTokens.size() > 1000000) {
@@ -677,8 +948,19 @@ class Expander {
         for (std::size_t i = 0; i < parameters.size(); ++i)
             substitutions[parameters[i]] = arguments[i];
         std::set<std::size_t> sites;
+        std::map<std::size_t, const IsOfExpression*> isOfSites;
         Walk(origin, [&](AstNode& node, bool enter) {
             if (!enter) return;
+            if (node.Kind() == AstNodeKind::IsOfExpression) {
+                const auto& expression =
+                    static_cast<const IsOfExpression&>(node);
+                if (expression.Value().Kind() == AstNodeKind::NameExpression) {
+                    const auto& receiver =
+                        static_cast<const NameExpression&>(expression.Value());
+                    if (substitutions.contains(receiver.Name()))
+                        isOfSites[receiver.Range().start.offset] = &expression;
+                }
+            }
             std::string parameter;
             if (node.Kind() == AstNodeKind::Type)
                 parameter = static_cast<TypeNode&>(node).Name();
@@ -698,6 +980,28 @@ class Expander {
                 if (i >= begin && i < end) erase = true;
             if (erase) continue;
             Token token = origin.templateTokens[i];
+            // A type parameter is not a value expression after substitution
+            // (`i32.isof<...>` cannot be parsed), so fold these queries while
+            // cloning the specialization.
+            if (const auto found = isOfSites.find(token.range.start.offset);
+                found != isOfSites.end()) {
+                const auto& query = *found->second;
+                const auto& receiver =
+                    static_cast<const NameExpression&>(query.Value());
+                const bool member =
+                    MatchesIsOfTarget(substitutions[receiver.Name()], query,
+                                      origin, substitutions);
+                token.type = member ? TokenType::True : TokenType::False;
+                token.value = member ? "true" : "false";
+                tokens.push_back(std::move(token));
+                while (i + 1 < origin.templateTokens.size() &&
+                       origin.templateTokens[i + 1].range.start.file ==
+                           query.Range().start.file &&
+                       origin.templateTokens[i + 1].range.end.offset <=
+                           query.Range().end.offset)
+                    ++i;
+                continue;
+            }
             if (i == origin.nameTokenIndex) {
                 token.value = name;
                 tokens.push_back(token);
@@ -706,7 +1010,23 @@ class Expander {
                 tokens.push_back(token);
             } else if (sites.contains(token.range.start.offset) &&
                        substitutions.contains(token.value)) {
-                for (auto argument : substitutions[token.value]) {
+                Tokens arguments = substitutions[token.value];
+                // A const-qualified template parameter such as `[]const T`
+                // becomes `[]own const []U` when T is an owning slice. Keep
+                // the ownership contract outermost so the specialized tokens
+                // remain valid type syntax and const qualifies the owner.
+                if (!tokens.empty() && tokens.back().type == TokenType::Const &&
+                    !arguments.empty() &&
+                    (arguments.front().type == TokenType::Own ||
+                     arguments.front().type == TokenType::Lend)) {
+                    Token qualifier = std::move(tokens.back());
+                    tokens.pop_back();
+                    Token contract = std::move(arguments.front());
+                    arguments.erase(arguments.begin());
+                    tokens.push_back(std::move(contract));
+                    tokens.push_back(std::move(qualifier));
+                }
+                for (auto argument : arguments) {
                     argument.range = token.range;
                     if (argument.type == TokenType::Const && !tokens.empty() &&
                         tokens.back().type == TokenType::Const)
@@ -739,6 +1059,7 @@ class Expander {
         concrete->moduleId = origin.moduleId;
         concrete->sourceId = origin.sourceId;
         concrete->quiverId = origin.quiverId;
+        concrete->decorations = origin.decorations;
         // A concrete nominal type can appear in an exported ordinary signature
         // only when both its template and all nominal arguments are exported.
         // A quiver template, or an exported template applied to a quiver type,
@@ -816,11 +1137,23 @@ class Expander {
         if (origin.Kind() == AstNodeKind::StructureDeclaration) {
             Instance instance{&origin, concrete, arguments};
             instances.push_back(instance);
+            Declaration* saved = current;
+            current = concrete;
+            for (const auto& field :
+                 static_cast<StructureDeclaration&>(*concrete).Fields())
+                Walk(field->Type(), [&](AstNode& node, bool enter) {
+                    if (enter && node.Kind() == AstNodeKind::Type)
+                        Rewrite(node, true);
+                });
+            current = saved;
             for (const auto* method : genericMethods[instance.origin])
-                if (method->genericParameters.empty())
+                if (!method->IsCrashable() &&
+                    method->genericParameters.empty() &&
+                    (method->Name() == "init" || method->Name() == "zero" ||
+                     method->Name() == "tear"))
                     if (auto* clone = Clone(*method, arguments, method->Name(),
                                             at, Name(*concrete)))
-                        concreteMethods[{concrete, method->Name()}] =
+                        concreteMethods[{concrete, Name(*clone)}] =
                             static_cast<FunctionDeclaration*>(clone);
         }
         return concrete;
@@ -829,6 +1162,7 @@ class Expander {
                            const MethodRequest& request) {
         for (const auto* method : genericMethods[instance.origin]) {
             if (method->Name() != request.name ||
+                method->IsCrashable() != request.crashable ||
                 method->genericParameters.size() != request.arguments.size())
                 continue;
             const auto key =
@@ -839,7 +1173,9 @@ class Expander {
                              request.arguments.end());
             if (auto* clone = Clone(*method, arguments, request.concreteName,
                                     request.range, Name(*instance.concrete)))
-                concreteMethods[{instance.concrete, request.concreteName}] =
+                concreteMethods[{
+                    instance.concrete,
+                    request.concreteName + (request.crashable ? "!" : "")}] =
                     static_cast<FunctionDeclaration*>(clone);
         }
     }
@@ -848,6 +1184,13 @@ class Expander {
         std::string module;
         int extraPointers = 0;
     };
+    TypeView LocalType(const std::string& name) const {
+        for (auto scope = localTypes.rbegin(); scope != localTypes.rend();
+             ++scope)
+            if (const auto found = scope->find(name); found != scope->end())
+                return found->second;
+        return {};
+    }
     TypeView Element(TypeView value) {
         if (value.extraPointers > 0) {
             --value.extraPointers;
@@ -857,10 +1200,12 @@ class Expander {
         value.syntax = value.syntax->Target();
         return value;
     }
-    const Declaration* ResolveName(NameExpression& name) {
+    const Declaration* ResolveName(NameExpression& name,
+                                   bool crashable = false) {
         if (Local(name.Name())) return nullptr;
-        const auto* origin = Lookup(name.Name(), current->moduleId,
-                                    name.Range(), !name.typeArguments.empty());
+        const auto* origin =
+            Lookup(name.Name() + (crashable ? "!" : ""), current->moduleId,
+                   name.Range(), !name.typeArguments.empty());
         if (!name.typeArguments.empty()) {
             const auto arguments =
                 ResolveArguments(name.typeArguments, current->moduleId);
@@ -930,7 +1275,116 @@ class Expander {
                 source.IsConst(), source.QualifierRange(), source.Length());
         for (const auto& type : source.typeArguments)
             result->typeArguments.push_back(CopyType(*type));
+        result->SetContract(source.Contract());
         return result;
+    }
+    void AddBuiltinCandidates(const std::string& set, source::SourceRange range,
+                              std::vector<std::unique_ptr<TypeNode>>& result) {
+        const auto add = [&](PrimitiveType type) {
+            result.push_back(std::make_unique<TypeNode>(range, type));
+        };
+        if (set == "signed_integer" || set == "integer" || set == "numeric") {
+            add(PrimitiveType::I8);
+            add(PrimitiveType::I16);
+            add(PrimitiveType::I32);
+            add(PrimitiveType::I64);
+            add(PrimitiveType::ISize);
+        }
+        if (set == "unsigned_integer" || set == "integer" || set == "numeric") {
+            add(PrimitiveType::U8);
+            add(PrimitiveType::U16);
+            add(PrimitiveType::U32);
+            add(PrimitiveType::U64);
+            add(PrimitiveType::USize);
+        }
+        if (set == "floating_point" || set == "numeric") {
+            add(PrimitiveType::F32);
+            add(PrimitiveType::F64);
+        }
+    }
+    void CollectTypeSetCandidates(
+        const TypeSetDeclaration& set,
+        std::vector<std::unique_ptr<TypeNode>>& result,
+        std::set<const Declaration*>& visiting) {
+        if (!visiting.insert(&set).second) return;
+        for (const auto& member : set.Members()) {
+            if (member->TypeForm() == TypeKind::Named &&
+                member->typeArguments.empty()) {
+                if (BuiltinTypeSet(member->Name())) {
+                    AddBuiltinCandidates(member->Name(), member->Range(),
+                                         result);
+                    continue;
+                }
+                const Declaration* nested =
+                    LookupFrom(member->Name(), set, member->Range(), false);
+                if (nested &&
+                    nested->Kind() == AstNodeKind::TypeSetDeclaration) {
+                    CollectTypeSetCandidates(
+                        static_cast<const TypeSetDeclaration&>(*nested), result,
+                        visiting);
+                    continue;
+                }
+            }
+            auto candidate = CopyType(*member);
+            Declaration* saved = current;
+            current = const_cast<TypeSetDeclaration*>(&set);
+            TypeTokens(*candidate, set.moduleId);
+            current = saved;
+            result.push_back(std::move(candidate));
+        }
+        visiting.erase(&set);
+    }
+    void PrepareIsOf(IsOfExpression& expression) {
+        std::vector<std::unique_ptr<TypeNode>> candidates;
+        auto& target = expression.Target();
+        if (target.TypeForm() == TypeKind::Named &&
+            target.typeArguments.empty()) {
+            if (BuiltinTypeSet(target.Name())) {
+                AddBuiltinCandidates(target.Name(), target.Range(), candidates);
+                expression.SetCandidates(std::move(candidates), true);
+                return;
+            }
+            const Declaration* set =
+                Lookup(target.Name(), current->moduleId, target.Range(), false);
+            if (set && set->Kind() == AstNodeKind::TypeSetDeclaration) {
+                std::set<const Declaration*> visiting;
+                CollectTypeSetCandidates(
+                    static_cast<const TypeSetDeclaration&>(*set), candidates,
+                    visiting);
+                expression.SetCandidates(std::move(candidates), true);
+                return;
+            }
+        }
+        auto candidate = CopyType(target);
+        TypeTokens(*candidate, current->moduleId);
+        candidates.push_back(std::move(candidate));
+        expression.SetCandidates(std::move(candidates), false);
+    }
+    bool MatchesIsOfTarget(const Tokens& argument,
+                           const IsOfExpression& expression,
+                           const Declaration& origin,
+                           const std::map<std::string, Tokens>& substitutions) {
+        const TypeNode& target = expression.Target();
+        if (target.TypeForm() == TypeKind::Named &&
+            target.typeArguments.empty()) {
+            if (const auto substituted = substitutions.find(target.Name());
+                substituted != substitutions.end())
+                return Key({argument}) == Key({substituted->second});
+            if (BuiltinTypeSet(target.Name()))
+                return Satisfies(argument, target.Name(), origin,
+                                 target.Range());
+            const Declaration* set =
+                LookupFrom(target.Name(), origin, target.Range(), false);
+            if (set && set->Kind() == AstNodeKind::TypeSetDeclaration)
+                return Satisfies(argument, target.Name(), origin,
+                                 target.Range());
+        }
+        auto concrete = CopyType(target);
+        Declaration* saved = current;
+        current = const_cast<Declaration*>(&origin);
+        Tokens targetTokens = TypeTokens(*concrete, origin.moduleId);
+        current = saved;
+        return Key({argument}) == Key({targetTokens});
     }
     std::unique_ptr<TypeNode> CopyView(TypeView view,
                                        source::SourceRange range) {
@@ -944,17 +1398,256 @@ class Expander {
                                                 std::move(result));
         return result;
     }
+    bool IsGenericParameter(const Declaration& origin,
+                            const std::string& name) const {
+        return std::find(origin.genericParameters.begin(),
+                         origin.genericParameters.end(),
+                         name) != origin.genericParameters.end();
+    }
+    bool ContainsGenericParameter(const TypeNode& type,
+                                  const Declaration& origin) const {
+        if (type.TypeForm() == TypeKind::Named && type.typeArguments.empty() &&
+            IsGenericParameter(origin, type.Name()))
+            return true;
+        if (type.Target() && ContainsGenericParameter(*type.Target(), origin))
+            return true;
+        for (const auto& element : type.Elements())
+            if (ContainsGenericParameter(*element, origin)) return true;
+        for (const auto& argument : type.typeArguments)
+            if (ContainsGenericParameter(*argument, origin)) return true;
+        return false;
+    }
+    Tokens WithoutPatternQualifiers(Tokens tokens, const TypeNode& pattern) {
+        if (pattern.Contract() != OwnershipContract::None && !tokens.empty() &&
+            (tokens.front().type == TokenType::Own ||
+             tokens.front().type == TokenType::Lend))
+            tokens.erase(tokens.begin());
+        if (pattern.IsConst() && !tokens.empty() &&
+            tokens.front().type == TokenType::Const)
+            tokens.erase(tokens.begin());
+        return tokens;
+    }
+    bool BindInferred(const TypeNode& pattern, Tokens argument,
+                      std::map<std::string, Tokens>& inferred,
+                      std::string& conflict) {
+        argument = WithoutPatternQualifiers(std::move(argument), pattern);
+        const auto found = inferred.find(pattern.Name());
+        if (found == inferred.end()) {
+            inferred[pattern.Name()] = std::move(argument);
+            return true;
+        }
+        if (Key({found->second}) == Key({argument})) return true;
+        conflict = pattern.Name();
+        return false;
+    }
+    bool InferTypeArgument(const TypeNode& pattern, const TypeNode& actual,
+                           const FunctionDeclaration& origin,
+                           std::map<std::string, Tokens>& inferred,
+                           std::string& conflict) {
+        // Partial expected tuples use void elements for destinations whose
+        // type is not known yet. They provide no inference evidence.
+        if (actual.TypeForm() == TypeKind::Primitive &&
+            actual.Type() == PrimitiveType::Void)
+            return true;
+        if (pattern.TypeForm() == TypeKind::Named &&
+            pattern.typeArguments.empty() &&
+            IsGenericParameter(origin, pattern.Name())) {
+            auto concrete = CopyType(actual);
+            return BindInferred(pattern,
+                                TypeTokens(*concrete, current->moduleId),
+                                inferred, conflict);
+        }
+        if (!ContainsGenericParameter(pattern, origin)) return true;
+
+        if (pattern.TypeForm() == TypeKind::Tuple) {
+            if (actual.TypeForm() != TypeKind::Tuple ||
+                pattern.Elements().size() != actual.Elements().size())
+                return false;
+            for (std::size_t index = 0; index < pattern.Elements().size();
+                 ++index)
+                if (!InferTypeArgument(*pattern.Elements()[index],
+                                       *actual.Elements()[index], origin,
+                                       inferred, conflict))
+                    return false;
+            return true;
+        }
+
+        if (pattern.Target()) {
+            const bool compatibleSlice =
+                pattern.TypeForm() == TypeKind::Slice &&
+                actual.TypeForm() == TypeKind::Array;
+            const bool compatibleIndirection =
+                (pattern.TypeForm() == TypeKind::Reference ||
+                 pattern.TypeForm() == TypeKind::Pointer) &&
+                (actual.TypeForm() == TypeKind::Reference ||
+                 actual.TypeForm() == TypeKind::Pointer);
+            if (!actual.Target() && !compatibleIndirection) return false;
+            if (pattern.TypeForm() != actual.TypeForm() && !compatibleSlice &&
+                !compatibleIndirection)
+                return false;
+            if (!actual.Target()) return false;
+            return InferTypeArgument(*pattern.Target(), *actual.Target(),
+                                     origin, inferred, conflict);
+        }
+
+        if (pattern.TypeForm() != TypeKind::Named ||
+            actual.TypeForm() != TypeKind::Named)
+            return false;
+
+        if (!pattern.typeArguments.empty() && !actual.typeArguments.empty() &&
+            pattern.Name() == actual.Name() &&
+            pattern.typeArguments.size() == actual.typeArguments.size()) {
+            for (std::size_t index = 0; index < pattern.typeArguments.size();
+                 ++index)
+                if (!InferTypeArgument(*pattern.typeArguments[index],
+                                       *actual.typeArguments[index], origin,
+                                       inferred, conflict))
+                    return false;
+            return true;
+        }
+
+        const Declaration* concrete =
+            Lookup(actual.Name(), current->moduleId, actual.Range(), false);
+        const Declaration* expected =
+            LookupFrom(pattern.Name(), origin, pattern.Range(), false);
+        for (const auto& instance : instances) {
+            if (instance.concrete != concrete || instance.origin != expected ||
+                instance.arguments.size() != pattern.typeArguments.size())
+                continue;
+            for (std::size_t index = 0; index < pattern.typeArguments.size();
+                 ++index) {
+                const auto& nested = *pattern.typeArguments[index];
+                if (!ContainsGenericParameter(nested, origin)) continue;
+                if (nested.TypeForm() != TypeKind::Named ||
+                    !nested.typeArguments.empty() ||
+                    !IsGenericParameter(origin, nested.Name()))
+                    return false;
+                if (!BindInferred(nested, instance.arguments[index], inferred,
+                                  conflict))
+                    return false;
+            }
+            return true;
+        }
+        return false;
+    }
+    bool InferCallArguments(
+        const FunctionDeclaration& origin,
+        const std::vector<std::unique_ptr<Expression>>& supplied,
+        std::size_t parameterOffset, const Expression& call,
+        const std::string& declarationKind, Arguments& arguments) {
+        std::map<std::string, Tokens> inferred;
+        std::string conflict;
+        const std::size_t parameterCount =
+            origin.Parameters().size() > parameterOffset
+                ? origin.Parameters().size() - parameterOffset
+                : 0;
+        const std::size_t count = std::min(supplied.size(), parameterCount);
+        for (std::size_t index = 0; index < count; ++index) {
+            const TypeNode& pattern =
+                origin.Parameters()[index + parameterOffset]->Type();
+            if (!ContainsGenericParameter(pattern, origin)) continue;
+            auto actual = CopyView(ExpressionType(*supplied[index]),
+                                   supplied[index]->Range());
+            if (!actual) continue;
+            InferTypeArgument(pattern, *actual, origin, inferred, conflict);
+            if (!conflict.empty()) break;
+        }
+        if (conflict.empty()) {
+            const auto expected = contextualTypes.find(&call);
+            if (expected != contextualTypes.end() &&
+                ContainsGenericParameter(origin.ReturnType(), origin)) {
+                auto actual = CopyView(expected->second, call.Range());
+                if (actual)
+                    InferTypeArgument(origin.ReturnType(), *actual, origin,
+                                      inferred, conflict);
+            }
+        }
+        if (!conflict.empty()) {
+            Error(call.Range(), "conflicting inferred type arguments for '" +
+                                    conflict + "' in call to '" +
+                                    origin.Name() + "'");
+            return false;
+        }
+        for (const auto& parameter : origin.genericParameters) {
+            const auto found = inferred.find(parameter);
+            if (found == inferred.end()) {
+                Error(call.Range(), "cannot infer type argument '" + parameter +
+                                        "' for generic " + declarationKind +
+                                        " '" + origin.Name() +
+                                        "'; specify it explicitly");
+                return false;
+            }
+            arguments.push_back(found->second);
+        }
+        return true;
+    }
+    void PrepareCallInference(CallExpression& call) {
+        if (call.Callee().Kind() != AstNodeKind::NameExpression) return;
+        auto& callee = const_cast<NameExpression&>(
+            static_cast<const NameExpression&>(call.Callee()));
+        if (call.IsCrashable()) crashableCallCallees.insert(&callee);
+        if (!callee.typeArguments.empty() || Local(callee.Name())) return;
+        const auto* declaration =
+            Lookup(callee.Name() + (call.IsCrashable() ? "!" : ""),
+                   current->moduleId, callee.Range(), false);
+        if (!declaration ||
+            declaration->Kind() != AstNodeKind::FunctionDeclaration ||
+            declaration->genericParameters.empty())
+            return;
+        const auto* function =
+            static_cast<const FunctionDeclaration*>(declaration);
+        if (!function->Owner().empty()) return;
+        inferredCalls[&callee] = function;
+    }
+    void RewriteInferredCall(CallExpression& call) {
+        if (call.Callee().Kind() != AstNodeKind::NameExpression) return;
+        auto& callee = const_cast<NameExpression&>(
+            static_cast<const NameExpression&>(call.Callee()));
+        const auto request = inferredCalls.find(&callee);
+        if (request == inferredCalls.end()) return;
+        const auto& origin = *request->second;
+        Arguments arguments;
+        if (!InferCallArguments(origin, call.Arguments(), 0, call, "function",
+                                arguments))
+            return;
+        if (auto* concrete = Instantiate(origin, arguments, call.Range()))
+            callee.Rename(Alias(*concrete));
+    }
     TypeView ExpressionType(const Expression& expression) {
         switch (expression.Kind()) {
+            case AstNodeKind::LiteralExpression: {
+                const auto& literal =
+                    static_cast<const LiteralExpression&>(expression);
+                PrimitiveType type;
+                switch (literal.LiteralType()) {
+                    case TokenType::NumberLiteral:
+                        type = PrimitiveType::I32;
+                        break;
+                    case TokenType::FloatLiteral:
+                        type = PrimitiveType::F64;
+                        break;
+                    case TokenType::True:
+                    case TokenType::False:
+                        type = PrimitiveType::Bool;
+                        break;
+                    case TokenType::CharLiteral:
+                        type = PrimitiveType::Char;
+                        break;
+                    case TokenType::StringLiteral:
+                        type = PrimitiveType::StringView;
+                        break;
+                    default:
+                        return {};
+                }
+                if (!expressionTypes.contains(&expression))
+                    expressionTypes[&expression] =
+                        std::make_unique<TypeNode>(expression.Range(), type);
+                return {expressionTypes[&expression].get(), current->moduleId};
+            }
             case AstNodeKind::NameExpression: {
                 const auto& name =
                     static_cast<const NameExpression&>(expression).Name();
-                for (auto scope = localTypes.rbegin();
-                     scope != localTypes.rend(); ++scope)
-                    if (const auto found = scope->find(name);
-                        found != scope->end())
-                        return found->second;
-                return {};
+                return LocalType(name);
             }
             case AstNodeKind::ArrayExpression:
             case AstNodeKind::TupleExpression: {
@@ -1044,16 +1737,40 @@ class Expander {
                     static_cast<const CallExpression&>(expression);
                 if (call.Callee().Kind() != AstNodeKind::NameExpression)
                     return {};
+                const auto& callee =
+                    static_cast<const NameExpression&>(call.Callee());
+                if (call.TypeArgument() && callee.Name() == "__hash") {
+                    if (!expressionTypes.contains(&expression))
+                        expressionTypes[&expression] =
+                            std::make_unique<TypeNode>(expression.Range(),
+                                                       PrimitiveType::USize);
+                    return {expressionTypes[&expression].get(),
+                            current->moduleId};
+                }
                 if (call.TypeArgument()) {
                     if (!expressionTypes.contains(&expression)) {
                         const auto& element =
                             call.TypeArgument()->TypeForm() == TypeKind::Slice
                                 ? *call.TypeArgument()->Target()
                                 : *call.TypeArgument();
+                        std::unique_ptr<TypeNode> owner;
+                        if (call.TypeArgument()->TypeForm() ==
+                                TypeKind::Slice &&
+                            call.TypeArgument()->Contract() ==
+                                OwnershipContract::Own) {
+                            owner = CopyType(*call.TypeArgument());
+                        } else {
+                            owner = std::make_unique<TypeNode>(
+                                expression.Range(), TypeKind::Pointer,
+                                CopyType(element));
+                        }
+                        if (call.IsCrashable()) {
+                            expressionTypes[&expression] = std::move(owner);
+                            return {expressionTypes[&expression].get(),
+                                    current->moduleId};
+                        }
                         std::vector<std::unique_ptr<TypeNode>> values;
-                        values.push_back(std::make_unique<TypeNode>(
-                            expression.Range(), TypeKind::Pointer,
-                            CopyType(element)));
+                        values.push_back(std::move(owner));
                         values.push_back(std::make_unique<TypeNode>(
                             expression.Range(), PrimitiveType::ErrorValue));
                         expressionTypes[&expression] =
@@ -1063,9 +1780,10 @@ class Expander {
                     return {expressionTypes[&expression].get(),
                             current->moduleId};
                 }
-                const auto* declaration =
-                    ResolveName(const_cast<NameExpression&>(
-                        static_cast<const NameExpression&>(call.Callee())));
+                const auto* declaration = ResolveName(
+                    const_cast<NameExpression&>(
+                        static_cast<const NameExpression&>(call.Callee())),
+                    call.IsCrashable());
                 if (!declaration &&
                     static_cast<const NameExpression&>(call.Callee()).Name() ==
                         "take" &&
@@ -1100,7 +1818,8 @@ class Expander {
                 }
                 const auto* owner = Receiver(call);
                 if (!owner) return {};
-                const auto found = concreteMethods.find({owner, call.Member()});
+                const auto found = concreteMethods.find(
+                    {owner, call.Member() + (call.IsCrashable() ? "!" : "")});
                 if (found != concreteMethods.end())
                     return {&found->second->ReturnType(),
                             found->second->moduleId};
@@ -1143,8 +1862,69 @@ class Expander {
                       "a local value cannot be a generic type argument");
         });
     }
+    void PrepareDestructureContext(DestructureStatement& destructure) {
+        std::vector<std::unique_ptr<TypeNode>> elements;
+        bool hasEvidence = false;
+        for (const auto& binding : destructure.Bindings()) {
+            std::unique_ptr<TypeNode> type;
+            if (binding->ExplicitType()) {
+                type = CopyType(*binding->ExplicitType());
+            } else if (binding->Name() != "_") {
+                type = CopyView(LocalType(binding->Name()), binding->Range());
+            }
+            if (type)
+                hasEvidence = true;
+            else
+                type = std::make_unique<TypeNode>(binding->Range(),
+                                                  PrimitiveType::Void);
+            elements.push_back(std::move(type));
+        }
+        if (!hasEvidence) return;
+        contextualTypeStorage[&destructure.Value()] =
+            std::make_unique<TypeNode>(destructure.Value().Range(),
+                                       std::move(elements));
+        contextualTypes[&destructure.Value()] = {
+            contextualTypeStorage[&destructure.Value()].get(),
+            current->moduleId};
+    }
     void Rewrite(AstNode& node, bool enter) {
         if (failedBudget) return;
+        if (node.Kind() == AstNodeKind::FunctionDeclaration) {
+            if (enter)
+                functionContexts.push_back(
+                    &static_cast<const FunctionDeclaration&>(node));
+            else {
+                functionContexts.pop_back();
+                return;
+            }
+        }
+        if (enter && node.Kind() == AstNodeKind::VariableDeclarationStatement) {
+            const auto& variable =
+                static_cast<const VariableDeclarationStatement&>(node);
+            if (variable.ExplicitType() && variable.Initializer())
+                contextualTypes[variable.Initializer()] = {
+                    variable.ExplicitType(), current->moduleId};
+        }
+        if (enter && node.Kind() == AstNodeKind::ReturnStatement) {
+            const auto& statement = static_cast<const ReturnStatement&>(node);
+            if (statement.Value() && !functionContexts.empty())
+                contextualTypes[statement.Value()] = {
+                    &functionContexts.back()->ReturnType(),
+                    functionContexts.back()->moduleId};
+        }
+        if (enter && node.Kind() == AstNodeKind::DestructureStatement)
+            PrepareDestructureContext(static_cast<DestructureStatement&>(node));
+        if (enter && node.Kind() == AstNodeKind::ParenthesizedExpression) {
+            const auto& parenthesized =
+                static_cast<const ParenthesizedExpression&>(node);
+            const auto expected = contextualTypes.find(&parenthesized);
+            if (expected != contextualTypes.end())
+                contextualTypes[&parenthesized.Inner()] = expected->second;
+        }
+        if (enter && node.Kind() == AstNodeKind::CallExpression)
+            PrepareCallInference(static_cast<CallExpression&>(node));
+        if (enter && node.Kind() == AstNodeKind::IsOfExpression)
+            PrepareIsOf(static_cast<IsOfExpression&>(node));
         if (node.Kind() == AstNodeKind::BuildExpression) {
             if (enter) {
                 locals.emplace_back();
@@ -1168,6 +1948,8 @@ class Expander {
             }
         }
         if (!enter) {
+            if (node.Kind() == AstNodeKind::CallExpression)
+                RewriteInferredCall(static_cast<CallExpression&>(node));
             if (node.Kind() == AstNodeKind::MemberCallExpression)
                 RewriteMethod(static_cast<MemberCallExpression&>(node));
             if (node.Kind() == AstNodeKind::VariableDeclarationStatement) {
@@ -1234,15 +2016,17 @@ class Expander {
         }
         if (node.Kind() == AstNodeKind::NameExpression) {
             auto& name = static_cast<NameExpression&>(node);
+            if (IsPrimitiveNumericTypeName(name.Name())) return;
             if (Local(name.Name())) {
                 if (!name.typeArguments.empty())
                     Error(name.Range(),
                           "a local value cannot have type arguments");
                 return;
             }
+            const bool crashable = crashableCallCallees.contains(&name);
             const auto* origin =
-                Lookup(name.Name(), current->moduleId, name.Range(),
-                       !name.typeArguments.empty());
+                Lookup(name.Name() + (crashable ? "!" : ""), current->moduleId,
+                       name.Range(), !name.typeArguments.empty());
             if (!name.typeArguments.empty()) {
                 for (const auto& argument : name.typeArguments)
                     CheckTypeNames(*argument);
@@ -1255,41 +2039,79 @@ class Expander {
                              Instantiate(*origin, arguments, name.Range()))
                     name.Rename(Alias(*concrete));
                 name.typeArguments.clear();
-            } else if (origin && !origin->genericParameters.empty())
+            } else if (origin && !origin->genericParameters.empty() &&
+                       !inferredCalls.contains(&name))
                 Error(name.Range(), "generic declaration '" + name.Name() +
                                         "' requires explicit type arguments");
         }
     }
     void RewriteMethod(MemberCallExpression& call) {
-        if (call.typeArguments.empty()) return;
+        const bool explicitArguments = !call.typeArguments.empty();
         for (const auto& argument : call.typeArguments)
             CheckTypeNames(*argument);
-        const auto arguments =
-            ResolveArguments(call.typeArguments, current->moduleId);
-        const auto key = call.Member() + Key(arguments);
         const auto* owner = Receiver(call);
         if (!owner) {
-            Error(call.Range(),
-                  "cannot resolve receiver type for generic method '" +
-                      call.Member() + "'");
+            if (explicitArguments)
+                Error(call.Range(),
+                      "cannot resolve receiver type for generic method '" +
+                          call.Member() + "'");
             return;
         }
-        if (!requestNames.contains(key))
-            requestNames[key] =
-                "$generic_method" + std::to_string(requestNames.size());
-        const MethodRequest request{call.Member(), requestNames[key], arguments,
-                                    call.Range()};
-        bool found = false;
+        const std::string effectMember =
+            call.Member() + (call.IsCrashable() ? "!" : "");
+        if (!explicitArguments &&
+            concreteMethods.contains({owner, effectMember}))
+            return;
+        const Instance* receiverInstance = nullptr;
         for (const auto& instance : instances)
             if (instance.concrete == owner) {
-                MaterializeMethod(instance, request);
-                found = concreteMethods.contains({owner, request.concreteName});
+                receiverInstance = &instance;
                 break;
             }
-        if (!found)
+        const FunctionDeclaration* origin = nullptr;
+        if (receiverInstance)
+            for (const auto* method : genericMethods[receiverInstance->origin])
+                if (method->Name() == call.Member() &&
+                    method->IsCrashable() == call.IsCrashable()) {
+                    origin = method;
+                    break;
+                }
+        Arguments arguments =
+            explicitArguments
+                ? ResolveArguments(call.typeArguments, current->moduleId)
+                : Arguments{};
+        if (!explicitArguments && origin &&
+            !origin->genericParameters.empty()) {
+            const std::size_t parameterOffset =
+                !origin->Parameters().empty() &&
+                        origin->Parameters().front()->Name() == "self"
+                    ? 1
+                    : 0;
+            if (!InferCallArguments(*origin, call.Arguments(), parameterOffset,
+                                    call, "method", arguments))
+                return;
+        }
+        const auto key = effectMember + Key(arguments);
+        const bool specialized = explicitArguments || !arguments.empty();
+        if (!requestNames.contains(key))
+            requestNames[key] =
+                specialized
+                    ? "$generic_method" + std::to_string(requestNames.size())
+                    : call.Member();
+        const MethodRequest request{call.Member(), requestNames[key],
+                                    call.IsCrashable(), arguments,
+                                    call.Range()};
+        bool found = false;
+        if (receiverInstance) {
+            MaterializeMethod(*receiverInstance, request);
+            found = concreteMethods.contains(
+                {owner, request.concreteName + (request.crashable ? "!" : "")});
+        }
+        if (!found && explicitArguments)
             Error(call.Range(),
                   "unknown generic method or wrong type argument count for '" +
                       call.Member() + "'");
+        if (!found) return;
         call.Rename(requestNames[key]);
         call.typeArguments.clear();
     }
@@ -1316,6 +2138,12 @@ class Expander {
         concreteMethods;
     std::map<const Declaration*, std::unique_ptr<TypeNode>> ownerTypes;
     std::map<const Expression*, std::unique_ptr<TypeNode>> expressionTypes;
+    std::map<const Expression*, std::unique_ptr<TypeNode>>
+        contextualTypeStorage;
+    std::map<const NameExpression*, const FunctionDeclaration*> inferredCalls;
+    std::set<const NameExpression*> crashableCallCallees;
+    std::map<const Expression*, TypeView> contextualTypes;
+    std::vector<const FunctionDeclaration*> functionContexts;
 };
 }  // namespace
 void ExpandGenerics(core::CompilationUnit& unit,

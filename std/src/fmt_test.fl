@@ -1,0 +1,63 @@
+module fmt_test;
+
+@imports
+    :: root::fmt
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+test sprintf_formats_values_in_order(&testing::UnitTest t) {
+    text, err := fmt::sprintf(
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        1 as i8,
+        2 as i16,
+        3,
+        4 as i64,
+        5 as isize,
+        6 as u8,
+        7 as u16,
+        8 as u32,
+        9 as u64,
+        10 as usize,
+        1.25 as f32,
+        1.5,
+        true,
+        'x',
+        "text"
+    );
+
+    asserts::is_true(t, err == none, "sprintf succeeds");
+    asserts::is_true(
+        t,
+        text == "1|2|3|4|5|6|7|8|9|10|1.25|1.5|true|x|text",
+        "sprintf preserves every value in order"
+    );
+}
+
+test sprintf_handles_empty_text_and_escaped_braces(&testing::UnitTest t) {
+    empty, emptyError := fmt::sprintf("");
+    braces, bracesError := fmt::sprintf("{{{}}}", "inside");
+
+    asserts::is_true(
+        t,
+        emptyError == none and empty == "",
+        "an empty format produces an empty owning string"
+    );
+    asserts::is_true(
+        t,
+        bracesError == none and braces == "{inside}",
+        "doubled braces produce literal braces"
+    );
+}
+
+test sprintf_copies_borrowed_text(&testing::UnitTest t) {
+    string source = "before".string();
+    text, err := fmt::sprintf("{}", source);
+    source = "after".string();
+
+    asserts::is_true(t, err == none, "borrowed text formats successfully");
+    asserts::is_true(
+        t,
+        text == "before" and source == "after",
+        "the formatted result owns an independent copy"
+    );
+}

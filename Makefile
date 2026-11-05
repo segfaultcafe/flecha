@@ -3,6 +3,8 @@ CMAKE_GENERATOR ?= Ninja
 BUILD_DIR ?= build
 TEST_BUILD_DIR ?= build-tests
 SANITIZER_BUILD_DIR ?= build-sanitizers
+PERFORMANCE_BUILD_DIR ?= build-performance
+PERFORMANCE_OUTPUT_DIR ?= build/performance
 GTEST_SOURCE_DIR ?=
 NPM ?= npm
 VSCODE_DIR ?= editors/vscode
@@ -16,21 +18,28 @@ HOST_NVIM_CONFIG ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/nvim,$(HOME)/.con
 
 .DEFAULT_GOAL := build
 
-.PHONY: help configure build configure-tests build-tests test \
+.PHONY: help configure build configure-tests build-tests test test-stress \
+	test-stress-campaign test-hardening test-hardening-campaign \
 	test-semantic llvm-poc native-poc native-if-also native-functions \
 	native-callables native-while native-loop-control native-casts native-string-view \
 	native-string-view-operations native-owning-string native-stdout \
 	native-definite-assignment package-vscode test-neovim test-sanitizers clean \
-	sandbox enter-sandbox
+	performance-self-test performance sandbox enter-sandbox
 
 help:
 	@echo "Flecha build targets:"
 	@echo "  make build          Configure and build Flecha"
 	@echo "  make test           Configure, build, and run all tests"
+	@echo "  make test-stress    Run the fast deterministic compiler corpus"
+	@echo "  make test-stress-campaign Run release-qualification compiler stress"
+	@echo "  make test-hardening Run fast property and stateful hardening"
+	@echo "  make test-hardening-campaign Run the large property and soak campaign"
 	@echo "  make test-semantic  Run only semantic and scope tests"
 	@echo "  make test-neovim    Test Neovim filetype and syntax support"
 	@echo "  make package-vscode Build and verify the installable VSIX"
 	@echo "  make test-sanitizers Run unit tests with ASan and UBSan"
+	@echo "  make performance-self-test Validate performance scoring and baselines"
+	@echo "  make performance    Run the controlled v0.3 performance campaign"
 	@echo "  make sandbox        Build and start the current Flecha Docker sandbox"
 	@echo "  make enter-sandbox  Open an interactive shell in the sandbox"
 	@echo "  make llvm-poc       Emit and execute the LLVM proof of concept"
@@ -51,6 +60,27 @@ help:
 	@echo "Overrides: CMAKE, CMAKE_GENERATOR, BUILD_DIR, TEST_BUILD_DIR, NPM, VSCODE_DIR"
 	@echo "           DOCKER, SANDBOX_IMAGE, SANDBOX_CONTAINER, SANDBOX_DOCKERFILE"
 	@echo "           SANDBOX_BUILD_VERSION, HOST_NVIM_CONFIG"
+	@echo "           PERFORMANCE_BUILD_DIR, PERFORMANCE_OUTPUT_DIR"
+
+performance-self-test:
+	python3 tools/performance.py self-test
+
+performance:
+	$(CMAKE) -S . -B $(PERFORMANCE_BUILD_DIR) -G "$(CMAKE_GENERATOR)" \
+		-DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
+	$(CMAKE) --build $(PERFORMANCE_BUILD_DIR) \
+		--target flecha longbow --parallel
+	python3 tools/performance.py run \
+		--flecha $(PERFORMANCE_BUILD_DIR)/flecha \
+		--longbow $(PERFORMANCE_BUILD_DIR)/longbow \
+		--std std/src \
+		--build-dir $(PERFORMANCE_OUTPUT_DIR)/work \
+		--samples 11 --warmups 3 --timeout 120 \
+		--output $(PERFORMANCE_OUTPUT_DIR)/results.json \
+		--markdown $(PERFORMANCE_OUTPUT_DIR)/results.md \
+		--svg $(PERFORMANCE_OUTPUT_DIR)/results.svg
+	python3 tools/performance.py competitive-check \
+		--results $(PERFORMANCE_OUTPUT_DIR)/results.json --minimum C
 
 sandbox:
 	$(DOCKER) build --file $(SANDBOX_DOCKERFILE) \
@@ -104,6 +134,38 @@ build-tests: configure-tests
 test: build-tests
 	$(CMAKE) --build $(TEST_BUILD_DIR) --target test
 
+test-stress: build-tests
+	ctest --test-dir $(TEST_BUILD_DIR) --output-on-failure \
+		-R '^CompilerStress\.Fast$$'
+
+test-stress-campaign: build-tests
+	$(TEST_BUILD_DIR)/src/tests/compiler_stress \
+		$(TEST_BUILD_DIR)/flecha std/src \
+		$(TEST_BUILD_DIR)/src/tests/compiler-stress-campaign campaign
+
+test-hardening: build-tests
+	ctest --test-dir $(TEST_BUILD_DIR) --output-on-failure \
+		-R '^HardeningCampaign\.Fast$$'
+	$(CMAKE) \
+		-DFLECHA_TEST_BINARY=$(CURDIR)/$(TEST_BUILD_DIR)/src/tests/test_flecha \
+		-DFLECHA_CTEST=ctest \
+		-DFLECHA_BUILD_DIR=$(CURDIR)/$(TEST_BUILD_DIR) \
+		-DFLECHA_OUTPUT=$(CURDIR)/$(TEST_BUILD_DIR)/src/tests/hardening-soak-fast \
+		-DFLECHA_PROFILE=fast \
+		-P src/tests/run_hardening_soak.cmake
+
+test-hardening-campaign: build-tests
+	$(TEST_BUILD_DIR)/src/tests/hardening_campaign \
+		src/tests/fixtures/community_packages/package \
+		$(TEST_BUILD_DIR)/src/tests/hardening-campaign-release campaign
+	$(CMAKE) \
+		-DFLECHA_TEST_BINARY=$(CURDIR)/$(TEST_BUILD_DIR)/src/tests/test_flecha \
+		-DFLECHA_CTEST=ctest \
+		-DFLECHA_BUILD_DIR=$(CURDIR)/$(TEST_BUILD_DIR) \
+		-DFLECHA_OUTPUT=$(CURDIR)/$(TEST_BUILD_DIR)/src/tests/hardening-soak-release \
+		-DFLECHA_PROFILE=campaign \
+		-P src/tests/run_hardening_soak.cmake
+
 test-semantic: build-tests
 	$(TEST_BUILD_DIR)/src/tests/test_flecha \
 		--gtest_filter='Semantic*:*ScopeTests*'
@@ -137,8 +199,26 @@ test-sanitizers:
 		$(SANITIZER_BUILD_DIR)/src/tests/test_flecha
 	ASAN_OPTIONS=detect_leaks=1 \
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+		$(SANITIZER_BUILD_DIR)/src/tests/compiler_stress \
+		$(SANITIZER_BUILD_DIR)/flecha std/src \
+		$(SANITIZER_BUILD_DIR)/src/tests/compiler-stress-sanitizer sanitizer
+	ASAN_OPTIONS=detect_leaks=1 \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+		$(SANITIZER_BUILD_DIR)/src/tests/hardening_campaign \
+		src/tests/fixtures/community_packages/package \
+		$(SANITIZER_BUILD_DIR)/src/tests/hardening-campaign-sanitizer sanitizer
+	ASAN_OPTIONS=detect_leaks=1 \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \
 		-R '^NativeSemanticTests.(ControlFlowDefiniteAssignment|ConstDeclarations|UnsafePointers|CheckedReferences|FixedArrays|Iteration|CheckedSlices|Defer|Tuples|ErrorValues|Structures|RawAllocation|Modules|CallableIntegration|CallableAllocationFailure)$$'
+	ASAN_OPTIONS=detect_leaks=1 \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \
+		-R '^StandardLibraryTests\.(Sha(256|512)|Hmac)Fixture$$'
+	ASAN_OPTIONS=detect_leaks=1 \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \
+		-R '^(StandardLibraryTests\.(RawArray|RawArrayScalarTypes|RawArrayStructures|SafeArray\..*|SafeHashMap\..*|BufferedIo\..*)|CompilerDiagnostics\.BufferedIo)$$'
 
 llvm-poc: build
 	$(BUILD_DIR)/flecha --emit-llvm examples/llvm_poc.fl \

@@ -1,0 +1,220 @@
+module collections_test;
+
+@imports
+    :: root::containers::collections
+    :: root::containers::errors
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+bool integerLess(&const i32 left, &const i32 right) {
+    return *left < *right;
+}
+
+bool integerGreater(&const i32 left, &const i32 right) {
+    return *left > *right;
+}
+
+bool ownerLess(&const PushOwner left, &const PushOwner right) {
+    return left->get() < right->get();
+}
+
+test empty_heap_reports_heap_errors(&testing::UnitTest t) {
+    values := collections::BinaryHeap<i32>::init(integerLess);
+
+    missingTop, topError := values.top();
+    missingPop, popError := values.pop();
+
+    asserts::is_true(t, values.empty(), "a new heap is empty");
+    asserts::is_true(t, values.len() == 0, "a new heap has zero length");
+    asserts::is_true(t, values.capacity() == 0, "a new heap has no allocation");
+    asserts::is_true(
+        t,
+        missingTop == none and topError == errors::HeapError.Empty,
+        "top reports HeapError.Empty"
+    );
+    asserts::is_true(
+        t,
+        missingPop == none and popError == errors::HeapError.Empty,
+        "pop reports HeapError.Empty"
+    );
+}
+
+test push_top_and_pop_follow_heap_priority(&testing::UnitTest t) {
+    values := collections::BinaryHeap<i32>::init(integerLess);
+
+    pushError := values.push(4);
+    pushError = values.push(1);
+    pushError = values.push(9);
+    pushError = values.push(3);
+    pushError = values.push(7);
+
+    top, topError := values.top();
+
+    bool ordered = true;
+    i32 expected = 9;
+
+    first, firstError := values.pop();
+    second, secondError := values.pop();
+    third, thirdError := values.pop();
+    fourth, fourthError := values.pop();
+    fifth, fifthError := values.pop();
+
+    ordered =
+        firstError == none and first == 9 and
+        secondError == none and second == 7 and
+        thirdError == none and third == 4 and
+        fourthError == none and fourth == 3 and
+        fifthError == none and fifth == 1;
+
+    asserts::is_true(t, pushError == none, "push accepts values");
+    asserts::is_true(
+        t,
+        topError == none and top == expected,
+        "top returns the highest-priority value"
+    );
+    asserts::is_true(
+        t,
+        ordered and values.empty(),
+        "pop removes values in priority order"
+    );
+}
+
+test reversed_comparator_creates_a_min_heap(&testing::UnitTest t) {
+    values := collections::BinaryHeap<i32>::init(integerGreater);
+
+    pushError := values.push(4);
+    pushError = values.push(1);
+    pushError = values.push(9);
+
+    first, firstError := values.pop();
+    second, secondError := values.pop();
+    third, thirdError := values.pop();
+
+    asserts::is_true(
+        t,
+        pushError == none and
+            firstError == none and first == 1 and
+            secondError == none and second == 4 and
+            thirdError == none and third == 9,
+        "the comparator controls heap priority"
+    );
+}
+
+test reserve_clear_and_reuse_retain_heap_storage(&testing::UnitTest t) {
+    values := collections::BinaryHeap<i32>::init(integerLess);
+
+    reserveError := values.reserve(8);
+    pushError := values.push(2);
+    pushError = values.push(8);
+    pushError = values.push(5);
+
+    values.clear();
+
+    asserts::is_true(
+        t,
+        reserveError == none and pushError == none and
+            values.empty() and values.capacity() == 8,
+        "clear destroys values and retains reserved storage"
+    );
+
+    pushError = values.push(11);
+    top, topError := values.top();
+
+    asserts::is_true(
+        t,
+        pushError == none and topError == none and top == 11 and
+            values.len() == 1 and values.capacity() == 8,
+        "a cleared heap reuses its retained allocation"
+    );
+}
+
+test capturing_comparator_controls_heap_priority(&testing::UnitTest t) {
+    bool reverse = true;
+    values := collections::BinaryHeap<i32>::init(
+        [copy reverse](left, right) => {
+            if reverse {
+                return *left > *right;
+            }
+
+            return *left < *right;
+        }
+    );
+    pushError := values.push(4);
+    pushError = values.push(1);
+    pushError = values.push(9);
+
+    first, firstError := values.pop();
+    second, secondError := values.pop();
+    third, thirdError := values.pop();
+
+    asserts::is_true(
+        t,
+        pushError == none and
+            firstError == none and first == 1 and
+            secondError == none and second == 4 and
+            thirdError == none and third == 9,
+        "the heap retains and invokes a capturing comparator"
+    );
+}
+
+test move_only_push_pop_clear_and_growth_cleanup_once(&testing::UnitTest t) {
+    i32 cleanupCount = 0;
+
+    {
+        values := collections::BinaryHeap<PushOwner>::init(ownerLess);
+
+        unsafe {
+            pushError := values.push(PushOwner::init(&raw cleanupCount, 10));
+            pushError = values.push(PushOwner::init(&raw cleanupCount, 30));
+            pushError = values.push(PushOwner::init(&raw cleanupCount, 20));
+            reserveError := values.reserve(8);
+
+            asserts::is_true(
+                t,
+                pushError == none and reserveError == none and
+                    cleanupCount == 0 and values.capacity() == 8,
+                "push and growth relocate move-only values without cleanup"
+            );
+        }
+
+        {
+            highest, popError := values.pop();
+            asserts::is_true(
+                t,
+                popError == none and highest.get() == 30,
+                "pop transfers the highest-priority move-only value"
+            );
+        }
+
+        asserts::is_true(
+            t,
+            cleanupCount == 1,
+            "the extracted owner is cleaned exactly once"
+        );
+
+        values.clear();
+        asserts::is_true(
+            t,
+            cleanupCount == 3 and values.empty() and values.capacity() == 8,
+            "clear cleans the remaining owners and retains capacity"
+        );
+
+        unsafe {
+            reuseError := values.push(PushOwner::init(
+                &raw cleanupCount,
+                40
+            ));
+            asserts::is_true(
+                t,
+                reuseError == none and values.len() == 1,
+                "a cleared move-only heap can be reused"
+            );
+        }
+    }
+
+    asserts::is_true(
+        t,
+        cleanupCount == 4,
+        "heap destruction cleans the final move-only value exactly once"
+    );
+}

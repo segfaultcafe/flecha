@@ -1,0 +1,20 @@
+module errors;
+
+export error ParseError {
+    Empty,
+    InvalidSyntax,
+    InvalidBase,
+    Overflow,
+}
+
+export error FormatError {
+    InvalidBase,
+    InsufficientSpace,
+}
+
+export error Utf8Error {
+    InvalidEncoding,
+    Truncated,
+    InvalidOffset,
+    InvalidCodePoint,
+}

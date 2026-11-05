@@ -32,8 +32,10 @@ queries are used.
 The compilation-unit scope contains functions and named error types. Each function has a child scope
 containing its parameters and top-level body locals. Conditional bodies,
 `else` bodies, and `also` bodies introduce nested lexical scopes. Lookup starts
-in the current scope and walks outward. A declaration name may appear only once
-in a scope; a nested declaration may intentionally shadow an outer symbol.
+in the current scope and walks outward. A non-function declaration name may
+appear only once in a scope. Functions may form a parameter-based overload set;
+a nested declaration may intentionally shadow an outer symbol. See
+[function overloading](function_overloading.md).
 
 Function declarations are callable and not writable. Parameters and local
 variables are writable under the current language rules. A `:=` declaration
@@ -66,15 +68,27 @@ coerced. Integer literals may adopt an expected integer type with a range check;
 unconstrained literals retain the table defaults. `none` is contextually
 assignable to non-void, non-reference value types, matching
 the language specification's universal-zero rule. Arithmetic requires equal
-numeric operand types; comparisons produce `bool`; logical/bitwise operators
-require equal boolean or integer types. Recursive compound types preserve
+numeric operand types; comparisons produce `bool`; logical/legacy bitwise
+operators require equal boolean or integer types. Symbolic integer operators
+`&` and `|` require equal integer operands, while `~` requires one integer
+operand. Shifts preserve the left integer type and require a `usize` count.
+Recursive compound types preserve
 qualifiers at each layer. [Raw pointers](unsafe_pointers.md) require unsafe
 permission for dereference; [checked references](checked_references.md) use
 safe dereference and a separate borrow/move pass on the shared control-flow graph.
 
-Calls currently require a directly resolved function symbol. Analysis checks
-callability, argument count, and each known argument type. Function values and
-overloads are not yet part of the language model.
+Floating-point type properties `nan`, `infinity`, `negative_infinity`,
+`min_value`, `max_value`, `min_positive`, and `epsilon` resolve contextually for
+`f32`, `f64`, and specialized `floating_point` parameters. Floating equality
+uses IEEE ordered equality and unordered inequality: NaN never equals a value,
+while `!=` is true when either operand is NaN. Relational comparisons remain
+ordered and therefore return false for NaN operands.
+
+Calls to an overloaded name select a unique candidate from the argument types,
+preferring exact matches over ordinary assignment or reborrow conversions.
+Analysis then checks callability, argument count, and each argument type against
+the selected signature. An overloaded name cannot yet be used as a bare
+function value.
 
 ## Diagnostics and recovery
 
@@ -123,9 +137,10 @@ The source must be a fixed array; explicit index types must represent every
 possible index and element bindings follow ordinary assignment compatibility.
 Range source snapshots and iteration declarations use the shared scope,
 initialization, and borrow analysis. The CFG routes `proceed` through counted-loop
-updates, and header variables end at the loop boundary. Integer postfix increment
-requires initialized writable storage and participates in borrow checking as a
-write. See [iteration.md](iteration.md) for syntax and exact evaluation rules.
+updates, and header variables end at the loop boundary. Integer postfix updates
+and compound assignments require initialized writable storage and participate in
+borrow checking as writes. See [iteration.md](iteration.md) for syntax and exact
+evaluation rules.
 
 ### Checked slices
 

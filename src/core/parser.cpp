@@ -1,31 +1,37 @@
 #include "core/parser.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <string>
 #include <utility>
+
+#include "core/integer_literal.hpp"
 
 namespace flecha::core {
 namespace {
 
 std::unique_ptr<TypeNode> CloneType(const TypeNode& type) {
+    std::unique_ptr<TypeNode> result;
     if (type.TypeForm() == TypeKind::Named)
-        return std::make_unique<TypeNode>(
+        result = std::make_unique<TypeNode>(
             type.Range(), type.Name(), type.IsConst(), type.QualifierRange());
-    if (type.TypeForm() == TypeKind::Tuple) {
+    else if (type.TypeForm() == TypeKind::Tuple) {
         std::vector<std::unique_ptr<TypeNode>> elements;
         for (const auto& element : type.Elements())
             elements.push_back(CloneType(*element));
-        return std::make_unique<TypeNode>(type.Range(), std::move(elements),
-                                          type.IsConst(),
-                                          type.QualifierRange());
-    }
-    if (type.TypeForm() == TypeKind::Primitive)
-        return std::make_unique<TypeNode>(
+        result =
+            std::make_unique<TypeNode>(type.Range(), std::move(elements),
+                                       type.IsConst(), type.QualifierRange());
+    } else if (type.TypeForm() == TypeKind::Primitive)
+        result = std::make_unique<TypeNode>(
             type.Range(), type.Type(), type.IsConst(), type.QualifierRange());
-    return std::make_unique<TypeNode>(type.Range(), type.TypeForm(),
-                                      CloneType(*type.Target()), type.IsConst(),
-                                      type.QualifierRange(), type.Length());
+    else
+        result = std::make_unique<TypeNode>(
+            type.Range(), type.TypeForm(), CloneType(*type.Target()),
+            type.IsConst(), type.QualifierRange(), type.Length());
+    for (const auto& argument : type.typeArguments)
+        result->typeArguments.push_back(CloneType(*argument));
+    result->SetContract(type.Contract());
+    return result;
 }
 
 source::SourceRange EndOfInputRange(const std::vector<Token>& tokens) {
@@ -66,6 +72,14 @@ bool Parser::Check(TokenType type) const { return Current().type == type; }
 bool Parser::IsInferredVariableDeclaration() const {
     return Check(TokenType::Identifier) &&
            Peek(1).type == TokenType::DeclareAssign;
+}
+
+bool Parser::IsModuleConstantDeclaration() const {
+    if (!Check(TokenType::Const)) return false;
+    std::size_t offset = 0;
+    if (!ScanType(offset) || Peek(offset).type != TokenType::Identifier)
+        return false;
+    return Peek(offset + 1).type == TokenType::Assign;
 }
 
 const Token& Parser::Advance() {
@@ -148,31 +162,57 @@ bool Parser::StartsType() const {
 }
 
 bool Parser::ScanType(std::size_t& offset) const {
-    if (Peek(offset).type == TokenType::Own ||
-        Peek(offset).type == TokenType::Lend)
+    bool pendingGreater = false;
+    return ScanType(offset, pendingGreater) && !pendingGreater;
+}
+
+TokenType Parser::ScanToken(std::size_t offset, bool pendingGreater) const {
+    return pendingGreater ? TokenType::Greater : Peek(offset).type;
+}
+
+bool Parser::ScanGreater(std::size_t& offset, bool& pendingGreater) const {
+    if (pendingGreater) {
+        pendingGreater = false;
         ++offset;
-    if (Peek(offset).type == TokenType::Const) ++offset;
-    const TokenType token = Peek(offset).type;
+        return true;
+    }
+    if (Peek(offset).type == TokenType::Greater) {
+        ++offset;
+        return true;
+    }
+    if (Peek(offset).type == TokenType::ShiftRight) {
+        pendingGreater = true;
+        return true;
+    }
+    return false;
+}
+
+bool Parser::ScanType(std::size_t& offset, bool& pendingGreater) const {
+    if (ScanToken(offset, pendingGreater) == TokenType::Own ||
+        ScanToken(offset, pendingGreater) == TokenType::Lend)
+        ++offset;
+    if (ScanToken(offset, pendingGreater) == TokenType::Const) ++offset;
+    const TokenType token = ScanToken(offset, pendingGreater);
     if (token == TokenType::Mul || token == TokenType::Ampersand ||
         token == TokenType::ConstPtr || token == TokenType::ConstRef) {
         ++offset;
-        return ScanType(offset);
+        return ScanType(offset, pendingGreater);
     }
     if (token == TokenType::LBracket) {
         ++offset;
         if (Peek(offset).type == TokenType::NumberLiteral) ++offset;
         if (Peek(offset).type != TokenType::RBracket) return false;
         ++offset;
-        return ScanType(offset);
+        return ScanType(offset, pendingGreater);
     }
     if (token == TokenType::LParen) {
         ++offset;
-        if (!ScanType(offset)) return false;
+        if (!ScanType(offset, pendingGreater)) return false;
         if (Peek(offset).type != TokenType::Comma) return false;
         do {
             ++offset;
             if (Peek(offset).type == TokenType::RParen) break;
-            if (!ScanType(offset)) return false;
+            if (!ScanType(offset, pendingGreater)) return false;
         } while (Peek(offset).type == TokenType::Comma);
         if (Peek(offset).type != TokenType::RParen) return false;
         ++offset;
@@ -187,23 +227,27 @@ bool Parser::ScanType(std::size_t& offset) const {
             offset += 2;
         if (token == TokenType::Identifier &&
             Peek(offset).type == TokenType::Less)
-            return ScanTypeArguments(offset);
+            return ScanTypeArguments(offset, pendingGreater);
         return true;
     }
     return false;
 }
 
 bool Parser::ScanTypeArguments(std::size_t& offset) const {
-    if (Peek(offset).type != TokenType::Less) return false;
+    bool pendingGreater = false;
+    return ScanTypeArguments(offset, pendingGreater) && !pendingGreater;
+}
+
+bool Parser::ScanTypeArguments(std::size_t& offset,
+                               bool& pendingGreater) const {
+    if (ScanToken(offset, pendingGreater) != TokenType::Less) return false;
     ++offset;
-    if (!ScanType(offset)) return false;
-    while (Peek(offset).type == TokenType::Comma) {
+    if (!ScanType(offset, pendingGreater)) return false;
+    while (ScanToken(offset, pendingGreater) == TokenType::Comma) {
         ++offset;
-        if (!ScanType(offset)) return false;
+        if (!ScanType(offset, pendingGreater)) return false;
     }
-    if (Peek(offset).type != TokenType::Greater) return false;
-    ++offset;
-    return true;
+    return ScanGreater(offset, pendingGreater);
 }
 
 std::vector<std::unique_ptr<TypeNode>> Parser::ParseTypeArguments() {
@@ -214,11 +258,12 @@ std::vector<std::unique_ptr<TypeNode>> Parser::ParseTypeArguments() {
         if (!argument) break;
         arguments.push_back(std::move(argument));
     } while (Match(TokenType::Comma));
-    Consume(TokenType::Greater, "'>' after type arguments");
+    ConsumeTypeArgumentClose("'>' after type arguments");
     return arguments;
 }
 
-std::vector<std::string> Parser::ParseGenericParameters() {
+std::vector<std::string> Parser::ParseGenericParameters(
+    std::map<std::string, std::string>* constraints) {
     std::vector<std::string> parameters;
     if (!Match(TokenType::Less)) return parameters;
     do {
@@ -232,8 +277,22 @@ std::vector<std::string> Parser::ParseGenericParameters() {
                 parameter->range,
                 "duplicate generic type parameter '" + parameter->value + "'");
         parameters.push_back(parameter->value);
+        if (Match(TokenType::Colon)) {
+            const Token* set =
+                Consume(TokenType::Identifier, "type-set name after ':'");
+            if (!set) break;
+            std::string name = set->value;
+            if (_importAliases.contains(name) && Match(TokenType::Scope)) {
+                const Token* member =
+                    Consume(TokenType::Identifier,
+                            "type-set declaration after module qualifier");
+                if (!member) break;
+                name += "::" + member->value;
+            }
+            if (constraints) (*constraints)[parameter->value] = std::move(name);
+        }
     } while (Match(TokenType::Comma));
-    Consume(TokenType::Greater, "'>' after type parameters");
+    ConsumeTypeArgumentClose("'>' after type parameters");
     return parameters;
 }
 
@@ -247,6 +306,24 @@ const Token* Parser::Consume(TokenType type, std::string_view expectation) {
                         "expected " + std::string(expectation) + ", found '" +
                             Current().value + "'");
     return nullptr;
+}
+
+const Token* Parser::ConsumeTypeArgumentClose(std::string_view expectation) {
+    if (!Check(TokenType::ShiftRight))
+        return Consume(TokenType::Greater, expectation);
+
+    // A lexer-level `>>` is a shift in expressions, but closes two adjacent
+    // generic argument lists in type context. Consume its first byte now and
+    // leave a synthetic `>` at the current parser position for the owner.
+    const Token combined = Current();
+    source::SourceLocation middle = combined.range.start;
+    ++middle.offset;
+    ++middle.column;
+    _splitGreater =
+        Token(TokenType::Greater, ">", {combined.range.start, middle});
+    _tokens[_position] =
+        Token(TokenType::Greater, ">", {middle, combined.range.end});
+    return &_splitGreater;
 }
 
 void Parser::ReportUnexpectedToken(std::string_view context) {
@@ -263,12 +340,16 @@ std::unique_ptr<TypeNode> Parser::ParseType(bool allowOwn, bool allowLend,
         const Token contract = Advance();
         auto type = ParseType();
         if (!type) return nullptr;
-        if (type->TypeForm() != TypeKind::Pointer ||
-            (contract.type == TokenType::Own ? !allowOwn : !allowLend)) {
+        const bool ownedSlice = contract.type == TokenType::Own &&
+                                type->TypeForm() == TypeKind::Slice;
+        if ((!ownedSlice && type->TypeForm() != TypeKind::Pointer) ||
+            (!ownedSlice &&
+             (contract.type == TokenType::Own ? !allowOwn : !allowLend))) {
             _diagnostics.Report(
                 diagnostics::DiagnosticCode::UnexpectedToken, contract.range,
-                "ownership contracts require a raw pointer parameter, owning "
-                "return, or owning field; references never own or lend");
+                "ownership contracts require an owning slice or a raw pointer "
+                "parameter, owning return, or owning field; references never "
+                "own or lend");
             return nullptr;
         }
         type->SetContract(contract.type == TokenType::Own
@@ -437,9 +518,17 @@ std::unique_ptr<Parameter> Parser::ParseParameter() {
         return nullptr;
     }
 
-    return std::make_unique<Parameter>(
-        source::SourceRange{start, name->range.end}, std::move(type),
-        name->value, name->range);
+    std::unique_ptr<Expression> defaultValue;
+    source::SourceLocation end = name->range.end;
+    if (Match(TokenType::Assign)) {
+        defaultValue = ParseExpression();
+        if (defaultValue == nullptr) return nullptr;
+        end = defaultValue->Range().end;
+    }
+
+    return std::make_unique<Parameter>(source::SourceRange{start, end},
+                                       std::move(type), name->value,
+                                       name->range, std::move(defaultValue));
 }
 
 std::unique_ptr<Parameter> Parser::ParseCallableParameter() {
@@ -478,8 +567,10 @@ Parser::ParseCallableTypeDeclaration() {
     const Token* name = Consume(TokenType::Identifier, "callable type name");
     if (name == nullptr) return nullptr;
     const auto parameterStart = _position;
-    auto genericParameters = ParseGenericParameters();
+    std::map<std::string, std::string> genericConstraints;
+    auto genericParameters = ParseGenericParameters(&genericConstraints);
     const auto parameterEnd = _position;
+    const bool isCrashable = Match(TokenType::Bang);
     if (Consume(TokenType::LParen, "'(' after callable type name") == nullptr)
         return nullptr;
 
@@ -508,23 +599,20 @@ Parser::ParseCallableTypeDeclaration() {
     if (Consume(TokenType::RParen, "')' after callable results") == nullptr)
         return nullptr;
 
-    std::string borrowSource;
-    source::SourceRange borrowSourceRange;
-    if (Match(TokenType::LeftArrow)) {
-        const Token* source =
-            Consume(TokenType::Identifier, "borrow source after '<-'");
-        if (source == nullptr) return nullptr;
-        borrowSource = source->value;
-        borrowSourceRange = source->range;
-    }
+    std::vector<std::string> borrowSources;
+    std::vector<source::SourceRange> borrowSourceRanges;
+    if (!ParseBorrowSources(parameters, borrowSources, borrowSourceRanges))
+        return nullptr;
     const Token* semicolon =
         Consume(TokenType::SemiColon, "';' after callable type declaration");
     if (semicolon == nullptr) return nullptr;
     auto declaration = std::make_unique<CallableTypeDeclaration>(
         source::SourceRange{start, semicolon->range.end}, name->value,
         name->range, std::move(parameters), std::move(results), isUnsafe,
-        isOnce, std::move(borrowSource), borrowSourceRange);
+        isOnce, isCrashable, std::move(borrowSources),
+        std::move(borrowSourceRanges));
     declaration->genericParameters = std::move(genericParameters);
+    declaration->genericConstraints = std::move(genericConstraints);
     if (parameterStart != parameterEnd)
         declaration->parameterTokenRanges.emplace_back(
             parameterStart - tokenStart, parameterEnd - tokenStart);
@@ -535,16 +623,120 @@ Parser::ParseCallableTypeDeclaration() {
     return declaration;
 }
 
+bool Parser::ParseBorrowSources(
+    const std::vector<std::unique_ptr<Parameter>>& parameters,
+    std::vector<std::string>& sources, std::vector<source::SourceRange>& ranges,
+    const std::string* variadicPackName, bool* borrowsVariadicPack) {
+    if (!Match(TokenType::LeftArrow)) return true;
+
+    const auto parseExpandedSource = [&]() {
+        const Token* args =
+            Consume(TokenType::Identifier, "'args' after '<- ...'");
+        if (args == nullptr) return false;
+        if (variadicPackName != nullptr && args->value == *variadicPackName) {
+            if (borrowsVariadicPack != nullptr && *borrowsVariadicPack) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::InvalidBorrowContract,
+                    args->range,
+                    "duplicate borrow source '..." + args->value + "'");
+                return false;
+            }
+            if (borrowsVariadicPack != nullptr) *borrowsVariadicPack = true;
+            return true;
+        }
+        if (args->value != "args" || variadicPackName != nullptr) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::InvalidBorrowContract, args->range,
+                "expanded borrow source '..." + args->value +
+                    "' must name the variadic pack");
+            return false;
+        }
+        if (parameters.empty()) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::InvalidBorrowContract, args->range,
+                "'<- ...args' requires at least one named parameter");
+            return false;
+        }
+        for (const auto& parameter : parameters) {
+            if (parameter->Name().empty()) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::InvalidBorrowContract,
+                    parameter->Range(),
+                    "'<- ...args' requires every parameter to be named");
+                return false;
+            }
+            sources.push_back(parameter->Name());
+            ranges.push_back(parameter->NameRange());
+        }
+        return true;
+    };
+
+    if (Match(TokenType::Ellipsis)) {
+        return parseExpandedSource();
+    }
+
+    if (Match(TokenType::LParen)) {
+        if (Check(TokenType::RParen)) {
+            const Token* close =
+                Consume(TokenType::RParen, "borrow sources after '<- ('");
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::InvalidBorrowContract,
+                close == nullptr ? Current().range : close->range,
+                "a grouped borrow contract requires at least one source");
+            return false;
+        }
+        while (!Check(TokenType::RParen) && !IsAtEnd()) {
+            if (Match(TokenType::Ellipsis)) {
+                if (!parseExpandedSource()) return false;
+                if (!Match(TokenType::Comma)) break;
+                continue;
+            }
+            const Token* source =
+                Consume(TokenType::Identifier, "borrow source name");
+            if (source == nullptr) return false;
+            if (variadicPackName != nullptr &&
+                source->value == *variadicPackName) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::InvalidBorrowContract,
+                    source->range,
+                    "variadic borrow source must be expanded as '..." +
+                        source->value + "'");
+                return false;
+            }
+            sources.push_back(source->value);
+            ranges.push_back(source->range);
+            if (!Match(TokenType::Comma)) break;
+        }
+        return Consume(TokenType::RParen, "')' after grouped borrow sources") !=
+               nullptr;
+    }
+
+    const Token* source =
+        Consume(TokenType::Identifier, "borrow source after '<-'");
+    if (source == nullptr) return false;
+    if (variadicPackName != nullptr && source->value == *variadicPackName) {
+        _diagnostics.Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                            source->range,
+                            "variadic borrow source must be expanded as '..." +
+                                source->value + "'");
+        return false;
+    }
+    sources.push_back(source->value);
+    ranges.push_back(source->range);
+    return true;
+}
+
 std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     const auto tokenStart = _position;
     std::vector<std::pair<std::size_t, std::size_t>> erased;
-    auto parametersAtName = [&](Parser& parser) {
-        const auto begin = _position;
-        auto parameters = parser.ParseGenericParameters();
-        if (_position != begin)
-            erased.emplace_back(begin - tokenStart, _position - tokenStart);
-        return parameters;
-    };
+    auto parametersAtName =
+        [&](Parser& parser, std::map<std::string, std::string>& constraints) {
+            const auto begin = _position;
+            auto parameters = parser.ParseGenericParameters(&constraints);
+            if (_position != begin)
+                erased.emplace_back(begin - tokenStart, _position - tokenStart);
+            return parameters;
+        };
     const source::SourceLocation start = Current().range.start;
     std::vector<FunctionModifier> modifiers;
     while (Check(TokenType::Unsafe) || Check(TokenType::Private) ||
@@ -570,31 +762,62 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     }
     const auto ownerToken =
         static_cast<std::size_t>(name - _tokens.data()) - tokenStart;
-    auto genericParameters = parametersAtName(*this);
+    std::map<std::string, std::string> genericConstraints;
+    auto genericParameters = parametersAtName(*this, genericConstraints);
     std::vector<std::string> ownerParameters;
     std::string owner;
     if (Match(TokenType::Scope)) {
         ownerParameters = std::move(genericParameters);
+        if (!genericConstraints.empty())
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::InvalidGeneric, name->range,
+                "method owner parameters inherit constraints from their "
+                "owning type");
+        genericConstraints.clear();
         owner = name->value;
         name = Consume(TokenType::Identifier, "method name after '::'");
         if (name == nullptr) return nullptr;
-        genericParameters = parametersAtName(*this);
+        genericParameters = parametersAtName(*this, genericConstraints);
     }
+    const bool isCrashable = Match(TokenType::Bang);
     if (Consume(TokenType::LParen, "'(' after function name") == nullptr) {
         return nullptr;
     }
 
     std::vector<std::unique_ptr<Parameter>> parameters;
+    std::string variadicPackName;
+    source::SourceRange variadicPackRange;
     while (!Check(TokenType::RParen) && !IsAtEnd()) {
+        if (Check(TokenType::Identifier) &&
+            Peek(1).type == TokenType::Ellipsis) {
+            const Token& pack = Advance();
+            Advance();
+            variadicPackName = pack.value;
+            variadicPackRange = pack.range;
+            if (Match(TokenType::Comma)) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::InvalidVariadic,
+                    Current().range,
+                    "a variadic pack must be the final parameter");
+                while (!IsAtEnd() && !Check(TokenType::RParen)) Advance();
+            }
+            break;
+        }
         std::unique_ptr<Parameter> parameter;
         // Receiver shorthand is only legal in the first slot of a method.
         if (!owner.empty() && parameters.empty() &&
-            (Check(TokenType::Ampersand) || Check(TokenType::Mul)) &&
-            ((Peek(1).type == TokenType::Identifier &&
-              Peek(1).value == "self") ||
-             (Peek(1).type == TokenType::Const &&
-              Peek(2).type == TokenType::Identifier &&
-              Peek(2).value == "self"))) {
+            Check(TokenType::Identifier) && Current().value == "self") {
+            const Token& self = Advance();
+            auto receiver = std::make_unique<TypeNode>(self.range, owner);
+            parameter = std::make_unique<Parameter>(
+                receiver->Range(), std::move(receiver), self.value, self.range);
+        } else if (!owner.empty() && parameters.empty() &&
+                   (Check(TokenType::Ampersand) || Check(TokenType::Mul)) &&
+                   ((Peek(1).type == TokenType::Identifier &&
+                     Peek(1).value == "self") ||
+                    (Peek(1).type == TokenType::Const &&
+                     Peek(2).type == TokenType::Identifier &&
+                     Peek(2).value == "self"))) {
             const Token& prefix = Advance();
             const bool readonly = Match(TokenType::Const);
             const Token& self = Advance();
@@ -627,15 +850,14 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         return nullptr;
     }
 
-    std::string borrowSource;
-    source::SourceRange borrowSourceRange;
-    if (Match(TokenType::LeftArrow)) {
-        const Token* source =
-            Consume(TokenType::Identifier, "borrow source after '<-'");
-        if (source == nullptr) return nullptr;
-        borrowSource = source->value;
-        borrowSourceRange = source->range;
-    }
+    std::vector<std::string> borrowSources;
+    std::vector<source::SourceRange> borrowSourceRanges;
+    bool borrowsVariadicPack = false;
+    const std::string* packName =
+        variadicPackName.empty() ? nullptr : &variadicPackName;
+    if (!ParseBorrowSources(parameters, borrowSources, borrowSourceRanges,
+                            packName, &borrowsVariadicPack))
+        return nullptr;
 
     if (Match(TokenType::Override))
         modifiers.push_back(FunctionModifier::Override);
@@ -658,10 +880,13 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     auto declaration = std::make_unique<FunctionDeclaration>(
         source::SourceRange{start, end}, std::move(modifiers),
         std::move(returnType), name->value, std::move(parameters),
-        std::move(body), name->range, std::move(owner), std::move(borrowSource),
-        borrowSourceRange);
+        std::move(body), name->range, std::move(owner),
+        std::move(borrowSources), std::move(borrowSourceRanges),
+        std::move(variadicPackName), variadicPackRange, borrowsVariadicPack,
+        isCrashable);
     declaration->genericParameters = std::move(genericParameters);
     declaration->ownerParameters = std::move(ownerParameters);
+    declaration->genericConstraints = std::move(genericConstraints);
     declaration->parameterTokenRanges = std::move(erased);
     declaration->nameTokenIndex =
         static_cast<std::size_t>(name - _tokens.data()) - tokenStart;
@@ -747,7 +972,8 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
     const auto start = Advance().range.start;
     const Token* name = Consume(TokenType::Identifier, "structure name");
     const auto parameterStart = _position;
-    auto genericParameters = ParseGenericParameters();
+    std::map<std::string, std::string> genericConstraints;
+    auto genericParameters = ParseGenericParameters(&genericConstraints);
     const auto parameterEnd = _position;
     if (!name || !Consume(TokenType::LCurly, "'{' after structure name"))
         return nullptr;
@@ -766,6 +992,7 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
                 source::SourceRange{start, end->range.end}, name->value,
                 name->range, std::move(fields));
             declaration->genericParameters = std::move(genericParameters);
+            declaration->genericConstraints = std::move(genericConstraints);
             if (parameterStart != parameterEnd)
                 declaration->parameterTokenRanges.emplace_back(
                     parameterStart - tokenStart, parameterEnd - tokenStart);
@@ -775,10 +1002,16 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
                                                _tokens.begin() + _position);
             return declaration;
         }
+        std::vector<DecorationApplication> decorations = ParseDecorations();
         bool isPrivate = privateBlock;
         if (Match(TokenType::Private)) {
             isPrivate = true;
             if (Match(TokenType::LCurly)) {
+                if (!decorations.empty())
+                    _diagnostics.Report(
+                        diagnostics::DiagnosticCode::UnexpectedToken,
+                        decorations.front().range,
+                        "decorations cannot target a private field group");
                 if (privateBlock) {
                     ReportUnexpectedToken("in nested private block");
                     return nullptr;
@@ -790,25 +1023,149 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
         auto type = ParseType(true);
         if (!type) return nullptr;
         const auto fieldStart = type->Range().start;
-        const Token* field = Consume(TokenType::Identifier, "field name");
-        if (!field) return nullptr;
-        std::unique_ptr<Expression> initializer;
-        if (Match(TokenType::Assign)) {
-            initializer = ParseExpression();
-            if (!initializer) return nullptr;
-        }
+        struct ParsedField {
+            std::string name;
+            source::SourceRange nameRange;
+            std::unique_ptr<Expression> initializer;
+        };
+        std::vector<ParsedField> parsedFields;
+        do {
+            const Token* field = Consume(TokenType::Identifier, "field name");
+            if (!field) return nullptr;
+            std::unique_ptr<Expression> initializer;
+            if (Match(TokenType::Assign)) {
+                initializer = ParseExpression();
+                if (!initializer) return nullptr;
+            }
+            parsedFields.push_back(
+                {field->value, field->range, std::move(initializer)});
+        } while (Match(TokenType::Comma));
         const Token* end =
             Consume(TokenType::SemiColon, "';' after structure field");
         if (!end) return nullptr;
-        fields.push_back(std::make_unique<StructureField>(
-            source::SourceRange{fieldStart, end->range.end}, std::move(type),
-            field->value, field->range, std::move(initializer), isPrivate));
+        for (std::size_t index = 0; index < parsedFields.size(); ++index) {
+            ParsedField& field = parsedFields[index];
+            fields.push_back(std::make_unique<StructureField>(
+                source::SourceRange{
+                    index == 0 ? fieldStart : field.nameRange.start,
+                    end->range.end},
+                CloneType(*type), std::move(field.name), field.nameRange,
+                std::move(field.initializer), isPrivate, decorations));
+        }
     }
     ReportUnexpectedToken("in structure declaration");
     return nullptr;
 }
 
+std::vector<DecorationApplication> Parser::ParseDecorations() {
+    std::vector<DecorationApplication> decorations;
+    while (Check(TokenType::At)) {
+        const source::SourceLocation start = Advance().range.start;
+        DecorationApplication decoration;
+        const Token* segment =
+            Consume(TokenType::Identifier, "decoration name after '@'");
+        if (!segment) break;
+        decoration.path.push_back(segment->value);
+        decoration.pathRanges.push_back(segment->range);
+        source::SourceLocation end = segment->range.end;
+        while (Match(TokenType::Scope)) {
+            segment =
+                Consume(TokenType::Identifier, "decoration name after '::'");
+            if (!segment) break;
+            decoration.path.push_back(segment->value);
+            decoration.pathRanges.push_back(segment->range);
+            end = segment->range.end;
+        }
+        if (Match(TokenType::LParen)) {
+            if (!Check(TokenType::RParen)) {
+                do {
+                    const Token* argument = nullptr;
+                    DecorationArgumentKind kind =
+                        DecorationArgumentKind::Identifier;
+                    if (Check(TokenType::Identifier) ||
+                        Check(TokenType::Structure)) {
+                        argument = &Advance();
+                    } else if (Check(TokenType::StringLiteral)) {
+                        argument = &Advance();
+                        kind = DecorationArgumentKind::String;
+                    } else {
+                        ReportUnexpectedToken("in decoration arguments");
+                        break;
+                    }
+                    decoration.arguments.push_back(
+                        {kind, argument->value, argument->range});
+                } while (Match(TokenType::Comma));
+            }
+            if (const Token* close = Consume(TokenType::RParen,
+                                             "')' after decoration arguments"))
+                end = close->range.end;
+        }
+        decoration.range = {start, end};
+        decorations.push_back(std::move(decoration));
+    }
+    return decorations;
+}
+
+std::unique_ptr<DecorationDeclaration> Parser::ParseDecorationDeclaration() {
+    const source::SourceLocation start = Advance().range.start;
+    const Token* name = Consume(TokenType::Identifier, "decoration name");
+    if (!name) return nullptr;
+    const Token* end =
+        Consume(TokenType::SemiColon, "';' after decoration declaration");
+    if (!end) return nullptr;
+    return std::make_unique<DecorationDeclaration>(
+        source::SourceRange{start, end->range.end}, name->value, name->range);
+}
+
+std::unique_ptr<TypeSetDeclaration> Parser::ParseTypeSetDeclaration() {
+    const auto start = Advance().range.start;
+    const Token* name = Consume(TokenType::Identifier, "type-set name");
+    if (!name || !Consume(TokenType::LCurly, "'{' after type-set name"))
+        return nullptr;
+
+    std::vector<std::unique_ptr<TypeNode>> members;
+    while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+        auto member = ParseType();
+        if (!member) return nullptr;
+        members.push_back(std::move(member));
+        if (!Match(TokenType::Comma)) break;
+    }
+    const Token* close =
+        Consume(TokenType::RCurly, "'}' after type-set members");
+    const Token* end =
+        close ? Consume(TokenType::SemiColon, "';' after type-set declaration")
+              : nullptr;
+    if (!close || !end) return nullptr;
+    return std::make_unique<TypeSetDeclaration>(
+        source::SourceRange{start, end->range.end}, name->value, name->range,
+        std::move(members));
+}
+
+std::unique_ptr<ModuleConstantDeclaration>
+Parser::ParseModuleConstantDeclaration() {
+    const source::SourceLocation start = Current().range.start;
+    auto type = ParseType();
+    if (!type) return nullptr;
+    const Token* name = Consume(TokenType::Identifier, "constant name");
+    if (!name || !Consume(TokenType::Assign, "'=' after module constant name"))
+        return nullptr;
+    auto initializer = ParseExpression();
+    if (!initializer) return nullptr;
+    const Token* end =
+        Consume(TokenType::SemiColon, "';' after module constant declaration");
+    if (!end) return nullptr;
+    return std::make_unique<ModuleConstantDeclaration>(
+        source::SourceRange{start, end->range.end}, std::move(type),
+        name->value, name->range, std::move(initializer));
+}
+
 std::unique_ptr<Declaration> Parser::ParseDeclaration() {
+    if (Check(TokenType::At)) {
+        std::vector<DecorationApplication> decorations = ParseDecorations();
+        auto declaration = ParseDeclaration();
+        if (declaration) declaration->decorations = std::move(decorations);
+        return declaration;
+    }
     if (Check(TokenType::Export) || Check(TokenType::Quiver)) {
         const Token modifier = Advance();
         auto declaration = ParseDeclaration();
@@ -830,6 +1187,9 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
         return declaration;
     }
     if (Check(TokenType::Test)) return ParseTestDeclaration();
+    if (IsModuleConstantDeclaration()) return ParseModuleConstantDeclaration();
+    if (Check(TokenType::TypeSet)) return ParseTypeSetDeclaration();
+    if (Check(TokenType::Decoration)) return ParseDecorationDeclaration();
     if (Check(TokenType::Structure)) return ParseStructureDeclaration();
     if (Check(TokenType::Enum)) return ParseEnumDeclaration();
     if (Check(TokenType::Error) && Peek(1).type == TokenType::Identifier &&
@@ -889,6 +1249,17 @@ std::unique_ptr<BlockStatement> Parser::ParseBlockStatement(bool isUnsafe) {
 
     std::vector<std::unique_ptr<Statement>> statements;
     while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+        if ((StartsType() || IsInferredVariableDeclaration()) &&
+            !IsDestructureStatement()) {
+            auto declarations = ParseVariableDeclarationStatements();
+            if (declarations.empty()) {
+                SynchronizeStatement();
+                continue;
+            }
+            for (auto& declaration : declarations)
+                statements.push_back(std::move(declaration));
+            continue;
+        }
         std::unique_ptr<Statement> statement = ParseStatement();
         if (statement != nullptr) {
             statements.push_back(std::move(statement));
@@ -934,10 +1305,6 @@ std::unique_ptr<Statement> Parser::ParseStatement() {
     if (Check(TokenType::JumpTo)) return ParseJumpToStatement();
     if (Check(TokenType::Hash)) return ParsePositionStatement();
     if (IsDestructureStatement()) return ParseDestructureStatement();
-    if (StartsType() || IsInferredVariableDeclaration()) {
-        return ParseVariableDeclarationStatement();
-    }
-
     const source::SourceLocation start = Current().range.start;
     std::unique_ptr<Expression> expression = ParseExpression();
     if (expression == nullptr) {
@@ -1035,48 +1402,71 @@ std::unique_ptr<Statement> Parser::ParseDestructureStatement() {
         std::move(bindings), std::move(value), inferred);
 }
 
-std::unique_ptr<VariableDeclarationStatement>
-Parser::ParseVariableDeclarationStatement() {
+std::vector<std::unique_ptr<VariableDeclarationStatement>>
+Parser::ParseVariableDeclarationStatements() {
+    struct ParsedVariable {
+        std::string name;
+        source::SourceRange nameRange;
+        std::unique_ptr<Expression> initializer;
+        bool implicitlyDefaulted;
+    };
+
     const source::SourceLocation start = Current().range.start;
     std::unique_ptr<TypeNode> type;
-    const Token* name = nullptr;
-    bool hasInitializer = false;
     if (IsInferredVariableDeclaration()) {
-        name = &Advance();
+        const Token name = Advance();
         Advance();
-        hasInitializer = true;
-    } else {
-        type = ParseType();
-        if (type == nullptr) {
-            return nullptr;
-        }
-
-        name = Consume(TokenType::Identifier, "variable name");
-        if (name == nullptr) {
-            return nullptr;
-        }
-        if (Check(TokenType::Assign)) {
-            Advance();
-            hasInitializer = true;
-        }
+        auto initializer = ParseExpression();
+        if (initializer == nullptr) return {};
+        const Token* semicolon =
+            Consume(TokenType::SemiColon, "';' after variable declaration");
+        const source::SourceLocation end = semicolon == nullptr
+                                               ? initializer->Range().end
+                                               : semicolon->range.end;
+        std::vector<std::unique_ptr<VariableDeclarationStatement>> result;
+        result.push_back(std::make_unique<VariableDeclarationStatement>(
+            source::SourceRange{start, end}, nullptr, name.value,
+            std::move(initializer), name.range));
+        return result;
     }
 
-    std::unique_ptr<Expression> initializer;
-    if (hasInitializer) {
-        initializer = ParseExpression();
-        if (initializer == nullptr) return nullptr;
-    }
+    type = ParseType();
+    if (type == nullptr) return {};
+
+    std::vector<ParsedVariable> variables;
+    do {
+        const Token* name = Consume(TokenType::Identifier, "variable name");
+        if (name == nullptr) return {};
+        bool hasInitializer = Match(TokenType::Assign);
+        std::unique_ptr<Expression> initializer;
+        if (hasInitializer) {
+            initializer = ParseExpression();
+            if (initializer == nullptr) return {};
+        } else {
+            initializer = std::make_unique<LiteralExpression>(
+                name->range, TokenType::None, "none");
+        }
+        variables.push_back({name->value, name->range, std::move(initializer),
+                             !hasInitializer});
+    } while (Match(TokenType::Comma));
 
     const Token* semicolon =
         Consume(TokenType::SemiColon, "';' after variable declaration");
     const source::SourceLocation end =
-        semicolon == nullptr
-            ? (initializer == nullptr ? name->range.end
-                                      : initializer->Range().end)
-            : semicolon->range.end;
-    return std::make_unique<VariableDeclarationStatement>(
-        source::SourceRange{start, end}, std::move(type), name->value,
-        std::move(initializer), name->range);
+        semicolon == nullptr ? variables.back().initializer->Range().end
+                             : semicolon->range.end;
+    std::vector<std::unique_ptr<VariableDeclarationStatement>> result;
+    result.reserve(variables.size());
+    for (std::size_t index = 0; index < variables.size(); ++index) {
+        ParsedVariable& variable = variables[index];
+        result.push_back(std::make_unique<VariableDeclarationStatement>(
+            source::SourceRange{index == 0 ? start : variable.nameRange.start,
+                                end},
+            CloneType(*type), std::move(variable.name),
+            std::move(variable.initializer), variable.nameRange, false,
+            variable.implicitlyDefaulted));
+    }
+    return result;
 }
 
 std::unique_ptr<AlsoClause> Parser::ParseAlsoClause() {
@@ -1208,9 +1598,10 @@ std::unique_ptr<Statement> Parser::ParseLoopStatement() {
     std::vector<std::unique_ptr<Statement>> statements;
     if (!Match(TokenType::SemiColon)) {
         if (StartsType() || IsInferredVariableDeclaration()) {
-            auto initializer = ParseVariableDeclarationStatement();
-            if (initializer == nullptr) return nullptr;
-            statements.push_back(std::move(initializer));
+            auto initializers = ParseVariableDeclarationStatements();
+            if (initializers.empty()) return nullptr;
+            for (auto& initializer : initializers)
+                statements.push_back(std::move(initializer));
         } else {
             auto initializer = ParseExpression();
             if (initializer == nullptr) return nullptr;
@@ -1284,6 +1675,13 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
     const auto Name = [&](const std::string& name) {
         return std::make_unique<NameExpression>(sourceRange, name);
     };
+    const auto RangeIndex = [&]() {
+        std::vector<std::unique_ptr<Expression>> arguments;
+        arguments.push_back(Name(cursorName));
+        return std::make_unique<MemberCallExpression>(
+            sourceRange, Name(sourceName), "$range_index", sourceRange,
+            std::move(arguments));
+    };
     std::vector<std::unique_ptr<Statement>> outer;
     auto snapshot = std::make_unique<VariableDeclarationStatement>(
         sourceRange, nullptr, sourceName, std::move(source), sourceRange, true);
@@ -1300,9 +1698,10 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
     for (std::size_t binding = 0; binding < names.size(); ++binding) {
         std::unique_ptr<Expression> value;
         if (binding == 0) {
-            value = Name(cursorName);
+            value = RangeIndex();
             // A typed index uses a checked-at-analysis conversion. The cursor
-            // itself remains usize even when the exposed index is narrower.
+            // itself remains usize even when the source exposes another index
+            // type or the explicit binding is narrower.
             if (types[binding] != nullptr) {
                 value = std::make_unique<CastExpression>(
                     names[binding]->range, std::move(value),
@@ -1310,7 +1709,7 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
             }
         } else {
             value = std::make_unique<IndexExpression>(
-                sourceRange, Name(sourceName), Name(cursorName), true);
+                sourceRange, Name(sourceName), RangeIndex(), true);
         }
         auto declaration = std::make_unique<VariableDeclarationStatement>(
             names[binding]->range, std::move(types[binding]),
@@ -1322,11 +1721,14 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
         iteration.push_back(std::move(declaration));
     }
     iteration.push_back(std::move(body));
+    auto length = std::make_unique<MemberCallExpression>(
+        sourceRange, Name(sourceName), "len", sourceRange,
+        std::vector<std::unique_ptr<Expression>>{});
     auto condition = std::make_unique<BinaryExpression>(
         range, Name(cursorName), TokenType::Less,
-        std::make_unique<MemberCallExpression>(
-            sourceRange, Name(sourceName), "len", sourceRange,
-            std::vector<std::unique_ptr<Expression>>{}));
+        std::make_unique<CastExpression>(
+            sourceRange, std::move(length),
+            std::make_unique<TypeNode>(sourceRange, PrimitiveType::USize)));
     auto update = std::make_unique<UnaryExpression>(range, TokenType::Increment,
                                                     Name(cursorName));
     outer.push_back(std::make_unique<WhileStatement>(
@@ -1402,9 +1804,13 @@ std::unique_ptr<Expression> Parser::ParseExpression() {
 
 std::unique_ptr<Expression> Parser::ParseAssignmentExpression() {
     std::unique_ptr<Expression> target = ParseBinaryExpression(1);
-    if (target == nullptr || !Match(TokenType::Assign)) {
+    if (target == nullptr ||
+        (!Check(TokenType::Assign) && !Check(TokenType::AddAssign) &&
+         !Check(TokenType::SubAssign) && !Check(TokenType::MulAssign) &&
+         !Check(TokenType::DivAssign) && !Check(TokenType::XorAssign))) {
         return target;
     }
+    const TokenType operation = Advance().type;
 
     const source::SourceRange targetRange = target->Range();
     const Expression* place = target.get();
@@ -1431,7 +1837,7 @@ std::unique_ptr<Expression> Parser::ParseAssignmentExpression() {
 
     return std::make_unique<AssignmentExpression>(
         source::SourceRange{targetRange.start, value->Range().end},
-        std::move(target), std::move(value));
+        std::move(target), std::move(value), operation);
 }
 
 int Parser::BinaryPrecedence(TokenType type) const {
@@ -1440,25 +1846,32 @@ int Parser::BinaryPrecedence(TokenType type) const {
             return 1;
         case TokenType::And:
             return 2;
-        case TokenType::Xor:
+        case TokenType::BitOr:
             return 3;
+        case TokenType::Xor:
+            return 4;
+        case TokenType::Ampersand:
+            return 5;
         case TokenType::Equal:
         case TokenType::NotEqual:
         case TokenType::StrictEqual:
         case TokenType::StrictNotEqual:
-            return 4;
+            return 6;
         case TokenType::Less:
         case TokenType::LessEqual:
         case TokenType::Greater:
         case TokenType::GreaterEqual:
-            return 5;
+            return 7;
+        case TokenType::ShiftLeft:
+        case TokenType::ShiftRight:
+            return 8;
         case TokenType::Add:
         case TokenType::Sub:
-            return 6;
+            return 9;
         case TokenType::Mul:
         case TokenType::Div:
         case TokenType::Mod:
-            return 7;
+            return 10;
         default:
             return 0;
     }
@@ -1469,9 +1882,10 @@ int Parser::UnaryPrecedence(TokenType type) const {
         case TokenType::Add:
         case TokenType::Sub:
         case TokenType::Bang:
+        case TokenType::BitNot:
         case TokenType::Mul:
         case TokenType::Ampersand:
-            return 8;
+            return 11;
         default:
             return 0;
     }
@@ -1536,18 +1950,25 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
 
     while (true) {
         if (expression->Kind() == AstNodeKind::NameExpression &&
-            static_cast<const NameExpression&>(*expression).Name() == "new" &&
+            (static_cast<const NameExpression&>(*expression).Name() == "new" ||
+             static_cast<const NameExpression&>(*expression).Name() ==
+                 "__storage_new" ||
+             static_cast<const NameExpression&>(*expression).Name() ==
+                 "__hash") &&
             Match(TokenType::Less)) {
-            auto type = ParseType();
-            if (!type ||
-                !Consume(TokenType::Greater, "'>' after allocation type") ||
-                !Consume(TokenType::LParen, "'(' after new<T>"))
+            auto type = ParseType(true);
+            if (!type || !ConsumeTypeArgumentClose("'>' after intrinsic type"))
+                return expression;
+            const bool isCrashable = Match(TokenType::Bang);
+            if (!Consume(TokenType::LParen, "'(' after typed intrinsic"))
                 return expression;
             source::SourceLocation end = expression->Range().end;
-            auto arguments = ParseArgumentList(end);
+            std::vector<bool> expandedArguments;
+            auto arguments = ParseArgumentList(end, &expandedArguments);
             expression = std::make_unique<CallExpression>(
                 source::SourceRange{expression->Range().start, end},
-                std::move(expression), std::move(arguments), std::move(type));
+                std::move(expression), std::move(arguments), std::move(type),
+                std::move(expandedArguments), isCrashable);
             continue;
         }
         if (expression->Kind() == AstNodeKind::NameExpression &&
@@ -1555,18 +1976,25 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             std::size_t offset = 0;
             if (ScanTypeArguments(offset) &&
                 (Peek(offset).type == TokenType::LParen ||
-                 Peek(offset).type == TokenType::Scope)) {
+                 (Peek(offset).type == TokenType::Bang &&
+                  Peek(offset + 1).type == TokenType::LParen) ||
+                 Peek(offset).type == TokenType::Scope ||
+                 Peek(offset).type == TokenType::SemiColon ||
+                 Peek(offset).type == TokenType::Comma ||
+                 Peek(offset).type == TokenType::RParen ||
+                 Peek(offset).type == TokenType::RBracket ||
+                 Peek(offset).type == TokenType::RCurly)) {
                 static_cast<NameExpression&>(*expression).typeArguments =
                     ParseTypeArguments();
                 continue;
             }
         }
-        if (Check(TokenType::Increment)) {
+        if (Check(TokenType::Increment) || Check(TokenType::Decrement)) {
             const Token& operation = Advance();
             expression = std::make_unique<UnaryExpression>(
                 source::SourceRange{expression->Range().start,
                                     operation.range.end},
-                TokenType::Increment, std::move(expression));
+                operation.type, std::move(expression));
             continue;
         }
         if (Match(TokenType::As)) {
@@ -1590,11 +2018,23 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
                     Consume(TokenType::Identifier, "member name after '.'");
             }
             if (member == nullptr) return expression;
+            if (member->value == "isof" && Match(TokenType::Less)) {
+                std::unique_ptr<TypeNode> target = ParseType();
+                if (target == nullptr) return expression;
+                const Token* close =
+                    ConsumeTypeArgumentClose("'>' after isof target");
+                const source::SourceLocation end =
+                    close == nullptr ? target->Range().end : close->range.end;
+                expression = std::make_unique<IsOfExpression>(
+                    source::SourceRange{expression->Range().start, end},
+                    std::move(expression), std::move(target));
+                continue;
+            }
             if (member->value == "cast" && Match(TokenType::Less)) {
                 std::unique_ptr<TypeNode> targetType = ParseType();
                 if (targetType == nullptr) return expression;
                 const Token* close =
-                    Consume(TokenType::Greater, "'>' after cast type");
+                    ConsumeTypeArgumentClose("'>' after cast type");
                 const source::SourceLocation end = close == nullptr
                                                        ? targetType->Range().end
                                                        : close->range.end;
@@ -1606,8 +2046,13 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             std::vector<std::unique_ptr<TypeNode>> typeArguments;
             std::size_t argumentEnd = 0;
             if (Check(TokenType::Less) && ScanTypeArguments(argumentEnd) &&
-                Peek(argumentEnd).type == TokenType::LParen)
+                (Peek(argumentEnd).type == TokenType::LParen ||
+                 (Peek(argumentEnd).type == TokenType::Bang &&
+                  Peek(argumentEnd + 1).type == TokenType::LParen)))
                 typeArguments = ParseTypeArguments();
+            const bool isCrashable =
+                Check(TokenType::Bang) && Peek(1).type == TokenType::LParen;
+            if (isCrashable) Advance();
             if (!Match(TokenType::LParen)) {
                 expression = std::make_unique<MemberAccessExpression>(
                     source::SourceRange{expression->Range().start,
@@ -1617,8 +2062,9 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
                 continue;
             }
             source::SourceLocation end = member->range.end;
+            std::vector<bool> expandedArguments;
             std::vector<std::unique_ptr<Expression>> arguments =
-                ParseArgumentList(end);
+                ParseArgumentList(end, &expandedArguments);
             // Reference member spelling shares the dereference AST, including
             // its lvalue, borrowing, and code-generation behavior.
             if (access == TokenType::Arrow && member->value == "deref" &&
@@ -1631,7 +2077,8 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             expression = std::make_unique<MemberCallExpression>(
                 source::SourceRange{expression->Range().start, end},
                 std::move(expression), member->value, member->range,
-                std::move(arguments), access);
+                std::move(arguments), access, std::move(expandedArguments),
+                isCrashable);
             static_cast<MemberCallExpression&>(*expression).typeArguments =
                 std::move(typeArguments);
             continue;
@@ -1668,20 +2115,25 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             continue;
         }
 
+        const bool isCrashable =
+            Check(TokenType::Bang) && Peek(1).type == TokenType::LParen;
+        if (isCrashable) Advance();
         if (!Match(TokenType::LParen)) break;
         source::SourceLocation end = expression->Range().end;
+        std::vector<bool> expandedArguments;
         std::vector<std::unique_ptr<Expression>> arguments =
-            ParseArgumentList(end);
+            ParseArgumentList(end, &expandedArguments);
         expression = std::make_unique<CallExpression>(
             source::SourceRange{expression->Range().start, end},
-            std::move(expression), std::move(arguments));
+            std::move(expression), std::move(arguments), nullptr,
+            std::move(expandedArguments), isCrashable);
     }
 
     return expression;
 }
 
 std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
-    source::SourceLocation& end) {
+    source::SourceLocation& end, std::vector<bool>* expandedArguments) {
     std::vector<std::unique_ptr<Expression>> arguments;
     while (!Check(TokenType::RParen) && !IsAtEnd()) {
         std::unique_ptr<Expression> argument = ParseExpression();
@@ -1692,7 +2144,11 @@ std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
             }
         } else {
             end = argument->Range().end;
+            const bool expanded = Check(TokenType::Ellipsis);
+            if (expanded) end = Advance().range.end;
             arguments.push_back(std::move(argument));
+            if (expandedArguments != nullptr)
+                expandedArguments->push_back(expanded);
         }
 
         if (Match(TokenType::Comma)) {
@@ -1877,20 +2333,16 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
                 : "explicit anonymous functions require a type for every "
                   "parameter");
 
-    std::string borrowSource;
-    source::SourceRange borrowSourceRange;
-    if (Match(TokenType::LeftArrow)) {
-        const Token* source =
-            Consume(TokenType::Identifier, "borrow source after '<-'");
-        if (source == nullptr) return nullptr;
-        borrowSource = source->value;
-        borrowSourceRange = source->range;
-        if (inferredSignature)
-            _diagnostics.Report(
-                diagnostics::DiagnosticCode::UnexpectedToken, source->range,
-                "a contextually inferred anonymous function inherits its "
-                "borrow contract");
-    }
+    std::vector<std::string> borrowSources;
+    std::vector<source::SourceRange> borrowSourceRanges;
+    if (!ParseBorrowSources(parameters, borrowSources, borrowSourceRanges))
+        return nullptr;
+    if (inferredSignature && !borrowSources.empty())
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::UnexpectedToken,
+            borrowSourceRanges.front(),
+            "a contextually inferred anonymous function inherits its borrow "
+            "contract");
 
     auto body = ParseBlockStatement();
     if (body == nullptr) return nullptr;
@@ -1914,7 +2366,7 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
     auto function = std::make_unique<FunctionDeclaration>(
         range, std::move(modifiers), std::move(returnType), name,
         std::move(parameters), std::move(body), first.range, "",
-        std::move(borrowSource), borrowSourceRange);
+        std::move(borrowSources), std::move(borrowSourceRanges));
     return std::make_unique<AnonymousFunctionExpression>(
         range, std::move(function), std::move(captures), inferredSignature,
         explicitCaptureList);
@@ -1925,10 +2377,7 @@ std::optional<std::uint64_t> Parser::ParseArrayLength() {
                                  "nonnegative integer literal array length");
     if (count == nullptr) return std::nullopt;
     std::uint64_t length = 0;
-    const auto result = std::from_chars(
-        count->value.data(), count->value.data() + count->value.size(), length);
-    if (result.ec != std::errc{} ||
-        result.ptr != count->value.data() + count->value.size()) {
+    if (!ParseUnsignedIntegerLiteral(count->value, length)) {
         _diagnostics.Report(diagnostics::DiagnosticCode::InvalidArrayLength,
                             count->range, "array length is too large");
         return std::nullopt;
@@ -2053,6 +2502,27 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpression() {
             Advance();
             return std::make_unique<LiteralExpression>(token.range, token.type,
                                                        token.value);
+        case TokenType::I8:
+        case TokenType::I16:
+        case TokenType::I32:
+        case TokenType::I64:
+        case TokenType::ISize:
+        case TokenType::U8:
+        case TokenType::U16:
+        case TokenType::U32:
+        case TokenType::U64:
+        case TokenType::USize:
+        case TokenType::F32:
+        case TokenType::F64:
+            // Primitive type names are expressions only as the receiver of a
+            // contextual type property such as `i32.max_value` or `f32.nan`.
+            if (Peek(1).type != TokenType::Dot) {
+                _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                                    token.range, "expected an expression");
+                return nullptr;
+            }
+            Advance();
+            return std::make_unique<NameExpression>(token.range, token.value);
         case TokenType::Identifier: {
             Advance();
             std::string name = token.value;
@@ -2118,7 +2588,8 @@ void Parser::SynchronizeTopLevel() {
     while (!IsAtEnd() && !StartsType() && !Check(TokenType::Func) &&
            !Check(TokenType::Once) && !Check(TokenType::Unsafe) &&
            !Check(TokenType::Structure) && !Check(TokenType::Private) &&
-           !Check(TokenType::Test)) {
+           !Check(TokenType::TypeSet) && !Check(TokenType::Test) &&
+           !Check(TokenType::Const)) {
         Advance();
     }
 }
@@ -2146,7 +2617,9 @@ void Parser::ParseHeader() {
         if (name) moduleName = name->value;
         Consume(TokenType::SemiColon, "';' after module declaration");
     }
-    if (Match(TokenType::At)) {
+    if (Check(TokenType::At) && Peek(1).type == TokenType::Identifier &&
+        Peek(1).value == "imports") {
+        Advance();
         const Token* directive =
             Consume(TokenType::Identifier, "imports after '@'");
         if (!directive || directive->value != "imports")
@@ -2238,8 +2711,53 @@ std::unique_ptr<CompilationUnit> Parser::Parse() {
                 "duplicate import alias '" + import.alias + "'");
     }
     std::vector<std::unique_ptr<Declaration>> declarations;
+    std::vector<ForeignSource> foreignSources;
     while (!IsAtEnd()) {
         const std::size_t startPosition = _position;
+        if (Check(TokenType::ForeignBlock)) {
+            const Token& token = Advance();
+            const std::size_t languageEnd = token.value.find('\0');
+            const std::size_t lineEnd =
+                languageEnd == std::string::npos
+                    ? std::string::npos
+                    : token.value.find('\0', languageEnd + 1);
+            if (languageEnd == std::string::npos ||
+                lineEnd == std::string::npos) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::UnexpectedToken, token.range,
+                    "malformed foreign source block");
+            } else {
+                const std::string language = token.value.substr(0, languageEnd);
+                ForeignLanguage kind;
+                bool supported = true;
+                if (language == "c")
+                    kind = ForeignLanguage::C;
+                else if (language == "asm")
+                    kind = ForeignLanguage::Assembly;
+                else {
+                    supported = false;
+                    _diagnostics.Report(
+                        diagnostics::DiagnosticCode::UnexpectedToken,
+                        token.range,
+                        "unsupported foreign language '" + language +
+                            "'; expected 'c' or 'asm'");
+                }
+                if (supported) {
+                    std::uint32_t bodyLine = token.range.start.line;
+                    try {
+                        bodyLine = static_cast<std::uint32_t>(
+                            std::stoul(token.value.substr(
+                                languageEnd + 1, lineEnd - languageEnd - 1)));
+                    } catch (...) {
+                    }
+                    foreignSources.push_back({kind,
+                                              token.value.substr(lineEnd + 1),
+                                              token.range, bodyLine});
+                }
+            }
+            Match(TokenType::SemiColon);
+            continue;
+        }
         std::unique_ptr<Declaration> declaration = ParseDeclaration();
         if (declaration != nullptr) {
             declarations.push_back(std::move(declaration));
@@ -2257,6 +2775,7 @@ std::unique_ptr<CompilationUnit> Parser::Parse() {
     unit->moduleName = std::move(_moduleName);
     unit->privateModule = _modulePrivate;
     unit->imports = std::move(_imports);
+    unit->foreignSources = std::move(foreignSources);
     return unit;
 }
 

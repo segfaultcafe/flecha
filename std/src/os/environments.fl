@@ -1,0 +1,63 @@
+module environment;
+
+@imports 
+    :: root::os::runtime
+    :: root::os::errors;
+
+// Returns an independent owning copy of an environment variable.
+//
+// found is false when the variable is absent. A present variable containing an
+// empty value returns ("", true, none). On failure, the returned value is empty
+// and found is false.
+export (string, bool, error) get(stringv name) {
+    string value; 
+    u8 present = 0;    
+
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_environment_get(
+            &raw value,
+            &raw present,
+            name.data(),
+            name.len().cast<usize>
+        );
+
+        err := errors::from_runtime(status, errors::EnvironmentError.ReadFailed);
+        if err != none {
+            return (none, false, err);
+        }
+    }
+
+    return (value, present != 0, none);
+}
+
+// Sets a process-wide environment variable.
+//
+// The runtime copies name and value before changing the environment. An empty
+// value is valid. Allocation or validation failure leaves the previous value
+// unchanged.
+export error set(stringv name, stringv value) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_environment_set(
+            name.data(),
+            name.len().cast<usize>,
+            value.data(),
+            value.len().cast<usize>
+        );
+
+        return errors::from_runtime(status, errors::EnvironmentError.WriteFailed);
+    }    
+}
+
+// Removes a process-wide environment variable.
+//
+// Removing a variable that is already absent succeeds.
+export error remove(stringv name) {
+    unsafe {
+        i32 status = runtime::flecha_runtime_v1_environment_remove(
+            name.data(),
+            name.len().cast<usize>
+        );
+
+        return errors::from_runtime(status, errors::EnvironmentError.WriteFailed);
+    }    
+}
