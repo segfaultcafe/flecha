@@ -25,6 +25,10 @@ else()
     endif()
 endif()
 set(testSupportLibraryArguments --lib "std=${STANDARD_LIBRARY}")
+set(qualificationEvidence
+    "format=1"
+    "profile=installed-package"
+)
 
 execute_process(
     COMMAND "${FLECHA_COMPILER}" --version
@@ -39,6 +43,7 @@ if(NOT versionResult EQUAL 0 OR NOT versionOutput MATCHES
         "compiler version probe failed: ${versionOutput}${versionError}")
 endif()
 string(REGEX REPLACE "^flecha " "" expectedVersion "${versionOutput}")
+list(APPEND qualificationEvidence "compiler=${expectedVersion}")
 
 execute_process(
     COMMAND "${LONGBOW}" --version
@@ -90,11 +95,15 @@ execute_process(
 if(NOT compileResult EQUAL 0)
     message(FATAL_ERROR "native smoke compilation failed: ${compileError}")
 endif()
-execute_process(COMMAND "${nativeOutput}" RESULT_VARIABLE nativeResult)
-if(NOT nativeResult EQUAL 42)
-    message(FATAL_ERROR
-        "native smoke returned ${nativeResult} instead of 42")
-endif()
+foreach(repetition RANGE 1 2)
+    execute_process(COMMAND "${nativeOutput}" RESULT_VARIABLE nativeResult)
+    if(NOT nativeResult EQUAL 42)
+        message(FATAL_ERROR
+            "native smoke repetition ${repetition} returned "
+            "${nativeResult} instead of 42")
+    endif()
+endforeach()
+list(APPEND qualificationEvidence "native-smoke=pass:2")
 
 set(testSupportSource "${OUTPUT_ROOT}/test-support-smoke.fl")
 file(WRITE "${testSupportSource}"
@@ -147,14 +156,18 @@ if(NOT testSupportCompileResult EQUAL 0)
     message(FATAL_ERROR
         "test support smoke compilation failed: ${testSupportCompileError}")
 endif()
-execute_process(
-    COMMAND "${testSupportOutput}"
-    RESULT_VARIABLE testSupportResult
-)
-if(NOT testSupportResult EQUAL 42)
-    message(FATAL_ERROR
-        "test support smoke returned ${testSupportResult} instead of 42")
-endif()
+foreach(repetition RANGE 1 2)
+    execute_process(
+        COMMAND "${testSupportOutput}"
+        RESULT_VARIABLE testSupportResult
+    )
+    if(NOT testSupportResult EQUAL 42)
+        message(FATAL_ERROR
+            "test support smoke repetition ${repetition} returned "
+            "${testSupportResult} instead of 42")
+    endif()
+endforeach()
+list(APPEND qualificationEvidence "test-support-smoke=pass:2")
 
 # Run the published one-million-'a' SHA-256 and SHA-512 vectors through both
 # source-tree and relocated standard-library packages on every release target.
@@ -226,14 +239,18 @@ if(NOT sha2SmokeCompileResult EQUAL 0)
     message(FATAL_ERROR
         "SHA-2 smoke compilation failed: ${sha2SmokeCompileError}")
 endif()
-execute_process(
-    COMMAND "${sha2SmokeOutput}"
-    RESULT_VARIABLE sha2SmokeResult
-)
-if(NOT sha2SmokeResult EQUAL 42)
-    message(FATAL_ERROR
-        "SHA-2 smoke returned ${sha2SmokeResult} instead of 42")
-endif()
+foreach(repetition RANGE 1 2)
+    execute_process(
+        COMMAND "${sha2SmokeOutput}"
+        RESULT_VARIABLE sha2SmokeResult
+    )
+    if(NOT sha2SmokeResult EQUAL 42)
+        message(FATAL_ERROR
+            "SHA-2 smoke repetition ${repetition} returned "
+            "${sha2SmokeResult} instead of 42")
+    endif()
+endforeach()
+list(APPEND qualificationEvidence "sha2-smoke=pass:2")
 
 # Exercise the installed standard library and runtime through a real TCP
 # client/server exchange. The native helper supplies only the peer thread
@@ -400,17 +417,20 @@ if(NOT tcpSmokeCompileResult EQUAL 0)
     message(FATAL_ERROR
         "TCP client/server smoke compilation failed: ${tcpSmokeCompileError}")
 endif()
-execute_process(
-    COMMAND "${tcpSmokeOutput}"
-    RESULT_VARIABLE tcpSmokeResult
-    ERROR_VARIABLE tcpSmokeError
-    TIMEOUT 15
-)
-if(NOT tcpSmokeResult EQUAL 42)
-    message(FATAL_ERROR
-        "TCP client/server smoke returned ${tcpSmokeResult} instead of 42: "
-        "${tcpSmokeError}")
-endif()
+foreach(repetition RANGE 1 2)
+    execute_process(
+        COMMAND "${tcpSmokeOutput}"
+        RESULT_VARIABLE tcpSmokeResult
+        ERROR_VARIABLE tcpSmokeError
+        TIMEOUT 15
+    )
+    if(NOT tcpSmokeResult EQUAL 42)
+        message(FATAL_ERROR
+            "TCP client/server smoke repetition ${repetition} returned "
+            "${tcpSmokeResult} instead of 42: ${tcpSmokeError}")
+    endif()
+endforeach()
+list(APPEND qualificationEvidence "tcp-loopback-smoke=pass:2")
 
 set(callableRoot "${OUTPUT_ROOT}/callable-smoke")
 file(MAKE_DIRECTORY "${callableRoot}")
@@ -522,14 +542,18 @@ if(NOT callableCompileResult EQUAL 0)
     message(FATAL_ERROR
         "callable ABI smoke compilation failed: ${callableCompileError}")
 endif()
-execute_process(
-    COMMAND "${callableOutput}"
-    RESULT_VARIABLE callableResult
-)
-if(NOT callableResult EQUAL 42)
-    message(FATAL_ERROR
-        "callable ABI smoke returned ${callableResult} instead of 42")
-endif()
+foreach(repetition RANGE 1 2)
+    execute_process(
+        COMMAND "${callableOutput}"
+        RESULT_VARIABLE callableResult
+    )
+    if(NOT callableResult EQUAL 42)
+        message(FATAL_ERROR
+            "callable ABI smoke repetition ${repetition} returned "
+            "${callableResult} instead of 42")
+    endif()
+endforeach()
+list(APPEND qualificationEvidence "callable-abi-smoke=pass:2")
 
 execute_process(
     COMMAND "${LONGBOW}" new hello
@@ -568,18 +592,28 @@ if(NOT longbowBuildResult EQUAL 0)
     message(FATAL_ERROR
         "Longbow build failed: ${longbowBuildOutput}${longbowBuildError}")
 endif()
-execute_process(
-    COMMAND "${LONGBOW}" run
-    WORKING_DIRECTORY "${OUTPUT_ROOT}/hello"
-    RESULT_VARIABLE runResult
-    OUTPUT_VARIABLE runOutput
-    ERROR_VARIABLE runError
-)
-string(REPLACE "\r\n" "\n" runOutput "${runOutput}")
-if(NOT runResult EQUAL 0 OR NOT runOutput STREQUAL "Hello from Flecha!\n")
-    message(FATAL_ERROR
-        "Longbow smoke failed: ${runOutput}${runError}")
-endif()
+foreach(repetition RANGE 1 2)
+    if(repetition EQUAL 2)
+        file(REMOVE_RECURSE "${OUTPUT_ROOT}/hello/target")
+    endif()
+    execute_process(
+        COMMAND "${LONGBOW}" run
+        WORKING_DIRECTORY "${OUTPUT_ROOT}/hello"
+        RESULT_VARIABLE runResult
+        OUTPUT_VARIABLE runOutput
+        ERROR_VARIABLE runError
+    )
+    string(REPLACE "\r\n" "\n" runOutput "${runOutput}")
+    if(NOT runResult EQUAL 0 OR
+       NOT runOutput STREQUAL "Hello from Flecha!\n")
+        message(FATAL_ERROR
+            "Longbow smoke repetition ${repetition} failed: "
+            "${runOutput}${runError}")
+    endif()
+endforeach()
+string(SHA256 longbowOutputHash "${runOutput}")
+list(APPEND qualificationEvidence
+    "longbow-clean-rebuild=pass:2:${longbowOutputHash}")
 
 if(DEFINED COMMUNITY_PACKAGE_ROOT)
     get_filename_component(
@@ -660,6 +694,17 @@ if(DEFINED COMMUNITY_PACKAGE_ROOT)
             "offline community package returned ${communityOfflineResult}, "
             "expected 42: ${communityOfflineOutput}${communityOfflineError}")
     endif()
+    file(SHA256 "${communityProject}/longbow.lock" communityLockOffline)
+    file(READ "${communityProject}/target/package-graph.json"
+        communityOfflineGraph)
+    if(NOT communityLockBefore STREQUAL communityLockOffline OR
+       NOT communityGraph STREQUAL communityOfflineGraph)
+        message(FATAL_ERROR
+            "offline community rebuild changed the lock or package graph")
+    endif()
+    string(SHA256 communityGraphHash "${communityGraph}")
+    list(APPEND qualificationEvidence
+        "community-package=pass:online-offline:${communityLockBefore}:${communityGraphHash}")
 endif()
 
 if(DEFINED STANDARD_LIBRARY_EXAMPLE_ROOT)
@@ -720,20 +765,26 @@ kind = "program"
         message(FATAL_ERROR
             "installed standard-library example executable was not produced")
     endif()
-    execute_process(
-        COMMAND "${standardLibraryExecutable}"
-        RESULT_VARIABLE standardLibraryRunResult
-        OUTPUT_VARIABLE standardLibraryRunOutput
-        ERROR_VARIABLE standardLibraryRunError)
-    string(REPLACE "\r\n" "\n"
-        standardLibraryRunOutput "${standardLibraryRunOutput}")
-    if(NOT standardLibraryRunResult EQUAL 0 OR
-       NOT standardLibraryRunOutput STREQUAL
-           "standard library API tour: ok\n")
-        message(FATAL_ERROR
-            "installed standard-library example run failed: "
-            "${standardLibraryRunOutput}${standardLibraryRunError}")
-    endif()
+    foreach(repetition RANGE 1 2)
+        execute_process(
+            COMMAND "${standardLibraryExecutable}"
+            RESULT_VARIABLE standardLibraryRunResult
+            OUTPUT_VARIABLE standardLibraryRunOutput
+            ERROR_VARIABLE standardLibraryRunError)
+        string(REPLACE "\r\n" "\n"
+            standardLibraryRunOutput "${standardLibraryRunOutput}")
+        if(NOT standardLibraryRunResult EQUAL 0 OR
+           NOT standardLibraryRunOutput STREQUAL
+               "standard library API tour: ok\n")
+            message(FATAL_ERROR
+                "installed standard-library example repetition "
+                "${repetition} failed: "
+                "${standardLibraryRunOutput}${standardLibraryRunError}")
+        endif()
+    endforeach()
+    string(SHA256 standardLibraryOutputHash "${standardLibraryRunOutput}")
+    list(APPEND qualificationEvidence
+        "standard-library-tour=pass:2:${standardLibraryOutputHash}")
 endif()
 
 if(DEFINED WORKSPACE_GUARD_ROOT)
@@ -878,6 +929,8 @@ kind = "program"
             "installed workspace_guard mismatch contract failed: "
             "${workspaceGuardMismatchOutput}${workspaceGuardMismatchError}")
     endif()
+    list(APPEND qualificationEvidence
+        "workspace-guard=pass:${workspaceGuardHash}")
 endif()
 
 if(DEFINED LEDGER_ROOT)
@@ -1009,4 +1062,14 @@ kind = "program"
             "installed ledger malformed-input contract failed: "
             "${ledgerMalformedOutput}${ledgerMalformedError}")
     endif()
+    list(APPEND qualificationEvidence
+        "ledger=pass:2:${ledgerFirstHash}")
 endif()
+
+list(SORT qualificationEvidence)
+string(JOIN "\n" qualificationReport ${qualificationEvidence})
+file(WRITE "${OUTPUT_ROOT}/qualification-report.txt"
+    "${qualificationReport}\n")
+message(STATUS
+    "Installed-package qualification evidence: "
+    "${OUTPUT_ROOT}/qualification-report.txt")
