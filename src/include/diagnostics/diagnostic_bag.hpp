@@ -10,6 +10,8 @@ namespace flecha::diagnostics {
 
 class DiagnosticBag {
    public:
+    static constexpr std::size_t MAX_DIAGNOSTICS = 100;
+
     void Report(DiagnosticCode code, source::SourceRange range,
                 std::string message,
                 DiagnosticSeverity severity = DiagnosticSeverity::Error);
@@ -22,6 +24,7 @@ class DiagnosticBag {
 
    private:
     std::vector<Diagnostic> _diagnostics;
+    bool _limitReported = false;
 };
 
 }  // namespace flecha::diagnostics

@@ -541,6 +541,11 @@ The intent is a bulletproof regression boundary for the supported 0.3 surface:
 ordinary correctness tests prove individual contracts, while this stage attacks
 their composition, scale, repetition, failure behavior, and performance.
 
+The compiler-stress portion is implemented by the deterministic fast,
+sanitizer, and release-qualification profiles documented in
+[`compiler_stress.md`](compiler_stress.md). Other Stage 9 rows remain separate
+release-gate work.
+
 ## Milestone discoveries
 
 Implementation work may reveal useful behavior that follows from existing

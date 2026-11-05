@@ -210,6 +210,17 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: build-sanitizers/src/tests/test_flecha
 
+      - name: Run sanitized deterministic compiler stress
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          build-sanitizers/src/tests/compiler_stress
+          build-sanitizers/flecha
+          std/src
+          build-sanitizers/src/tests/compiler-stress-sanitizer
+          sanitizer
+
       - name: Run sanitized native smoke tests
         env:
           ASAN_OPTIONS: detect_leaks=1
