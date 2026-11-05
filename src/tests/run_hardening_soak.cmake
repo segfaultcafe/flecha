@@ -37,8 +37,19 @@ if(DEFINED FLECHA_DISABLE_NETWORK AND FLECHA_DISABLE_NETWORK)
     set(include_network FALSE)
 endif()
 
+function(require_clean_temporary_directory directory label)
+    file(GLOB_RECURSE leftovers
+        LIST_DIRECTORIES TRUE "${directory}/*")
+    if(leftovers)
+        list(JOIN leftovers "\n  " leftover_list)
+        message(FATAL_ERROR
+            "${label} accumulated temporary state:\n  ${leftover_list}")
+    endif()
+    file(REMOVE_RECURSE "${directory}")
+endfunction()
+
 file(REMOVE_RECURSE "${FLECHA_OUTPUT}")
-file(MAKE_DIRECTORY "${FLECHA_OUTPUT}/tmp")
+file(MAKE_DIRECTORY "${FLECHA_OUTPUT}/tmp/runtime")
 set(log "${FLECHA_OUTPUT}/hardening-soak.log")
 
 set(runtime_filter
@@ -56,9 +67,9 @@ endif()
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env
-        "TMPDIR=${FLECHA_OUTPUT}/tmp"
-        "TMP=${FLECHA_OUTPUT}/tmp"
-        "TEMP=${FLECHA_OUTPUT}/tmp"
+        "TMPDIR=${FLECHA_OUTPUT}/tmp/runtime"
+        "TMP=${FLECHA_OUTPUT}/tmp/runtime"
+        "TEMP=${FLECHA_OUTPUT}/tmp/runtime"
         "${FLECHA_TEST_BINARY}"
         "--gtest_filter=${runtime_filter}"
         "--gtest_repeat=${runtime_repeats}"
@@ -76,6 +87,8 @@ if(NOT runtime_result STREQUAL "0")
     message(FATAL_ERROR
         "repeated runtime campaign failed (${runtime_result}); see ${log}")
 endif()
+require_clean_temporary_directory(
+    "${FLECHA_OUTPUT}/tmp/runtime" "repeated runtime campaign")
 
 set(stateful_tests
     RuntimeFilesystemMutationTests.PreservesPendingEntryOnAllocationFailure
@@ -166,11 +179,14 @@ foreach(round RANGE 0 ${last_round})
         list(REVERSE round_tests)
     endif()
     foreach(test_name IN LISTS round_tests)
+        set(child_tmp
+            "${FLECHA_OUTPUT}/tmp/round-${round}/${test_name}")
+        file(MAKE_DIRECTORY "${child_tmp}")
         execute_process(
             COMMAND "${CMAKE_COMMAND}" -E env
-                "TMPDIR=${FLECHA_OUTPUT}/tmp"
-                "TMP=${FLECHA_OUTPUT}/tmp"
-                "TEMP=${FLECHA_OUTPUT}/tmp"
+                "TMPDIR=${child_tmp}"
+                "TMP=${child_tmp}"
+                "TEMP=${child_tmp}"
                 "${FLECHA_CTEST}" --test-dir "${FLECHA_BUILD_DIR}"
                 --output-on-failure -R "^${test_name}$"
             RESULT_VARIABLE test_result
@@ -185,16 +201,14 @@ foreach(round RANGE 0 ${last_round})
                 "stateful test ${test_name} failed in round ${round} "
                 "(${test_result}); see ${log}\n${test_output}${test_error}")
         endif()
+        require_clean_temporary_directory(
+            "${child_tmp}" "stateful test ${test_name}")
     endforeach()
+    file(REMOVE_RECURSE "${FLECHA_OUTPUT}/tmp/round-${round}")
 endforeach()
 
-file(GLOB_RECURSE temporary_leftovers
-    LIST_DIRECTORIES TRUE "${FLECHA_OUTPUT}/tmp/*")
-if(temporary_leftovers)
-    list(JOIN temporary_leftovers "\n  " leftover_list)
-    message(FATAL_ERROR
-        "hardening campaign accumulated temporary state:\n  ${leftover_list}")
-endif()
+require_clean_temporary_directory(
+    "${FLECHA_OUTPUT}/tmp" "hardening campaign")
 
 file(WRITE "${FLECHA_OUTPUT}/hardening-soak-report.json"
     "{\n"
