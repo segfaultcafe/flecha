@@ -1,0 +1,74 @@
+module commands;
+
+@imports
+    :: root::storage
+    :: lib::std::encoding::hex
+    :: lib::std::fmt;
+
+export error create(stringv path) {
+    result := storage::create(path);
+    if result == none {
+        fmt::println("created: 0 blocks");
+    }
+    return result;
+}
+
+export error append(stringv path, stringv payload) {
+    index, digest, appendError := storage::append(path, payload);
+    if appendError != none {
+        return appendError;
+    }
+    fmt::print("appended: ");
+    fmt::print(index);
+    fmt::print(" ");
+    fmt::println(digest.view());
+    return none;
+}
+
+export error verify(stringv path) {
+    blocks, loadError := storage::load(path);
+    if loadError != none {
+        return loadError;
+    }
+
+    fmt::print("verified: ");
+    fmt::print(blocks.len());
+    fmt::print(" blocks");
+    if !blocks.empty() {
+        values := blocks.view();
+        head, hexError := hex::encode_bytes(values[values.len() - 1].hash());
+        if hexError != none {
+            return hexError;
+        }
+        fmt::print(" ");
+        fmt::print(head.view());
+    }
+    fmt::println("");
+    return none;
+}
+
+export error list(stringv path) {
+    blocks, loadError := storage::load(path);
+    if loadError != none {
+        return loadError;
+    }
+
+    values := blocks.view();
+    loop usize index = 0; index < values.len(); index++ {
+        digest, digestError := hex::encode_bytes(values[index].hash());
+        if digestError != none {
+            return digestError;
+        }
+        payload, payloadError := hex::encode(values[index].payload());
+        if payloadError != none {
+            return payloadError;
+        }
+        fmt::print(values[index].index());
+        fmt::print(" ");
+        fmt::print(digest.view());
+        fmt::print(" ");
+        fmt::println(payload.view());
+    }
+    return none;
+}
+

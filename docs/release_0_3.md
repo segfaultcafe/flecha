@@ -654,17 +654,28 @@ native shim.
 
 ## North-star ledger
 
-The ledger example validates several stages together. It must:
+The persistence-facing gate is [`examples/ledger`](../examples/ledger). It
+validates several stages together by:
 
-- define a canonical block-header encoding without hashing structure memory;
-- link blocks through fixed-size SHA-256 digests;
-- append and validate blocks;
-- persist and reload the chain through standard I/O APIs;
-- reject malformed, truncated, and tampered storage;
-- reproduce identical hashes and serialized bytes on every supported target;
+- defining a canonical block-header encoding without hashing structure memory;
+- linking blocks through fixed-size SHA-256 digests;
+- appending and validating blocks;
+- persisting and reloading the chain through standard I/O APIs;
+- rejecting malformed, truncated, and tampered storage;
+- reproducing identical hashes and serialized bytes on every supported target;
   and
-- use no native application-specific shim once the required standard-library
+- using no native application-specific shim once the required standard-library
   stages are complete.
+
+The versioned file format uses fixed-width big-endian indices and payload
+lengths, 32-byte previous and current digests, and exact payload bytes. Hashes
+are domain-separated and cover the canonical header plus payload. Flecha-native
+tests publish golden record, block-hash, and complete-file vectors and reject
+malformed, truncated, reordered, payload-tampered, and digest-tampered input.
+The focused lifecycle test exercises create, append, reload, list, validation,
+preserved existing files, and byte-identical relocated chains. Every clean
+installed release package builds and runs the same example and golden tests on
+Linux, Windows, and macOS without an application-specific native shim.
 
 Peer-to-peer consensus, economic incentives, a smart-contract virtual machine,
 and production key management are outside this example's scope.

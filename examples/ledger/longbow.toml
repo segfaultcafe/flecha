@@ -1,0 +1,8 @@
+[package]
+name = "ledger"
+version = "0.1.0"
+kind = "program"
+
+[dependencies]
+std = { path = "../../std" }
+

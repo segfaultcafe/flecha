@@ -1,0 +1,84 @@
+module storage;
+
+@imports
+    :: root::codec
+    :: root::model
+    :: lib::std::containers::collections
+    :: lib::std::encoding::hex
+    :: lib::std::io::file
+    :: lib::std::io::filesystem;
+
+export error create(stringv path) {
+    options := build file::OpenOptions {
+        self.write = true;
+        self.createNew = true;
+    };
+    output, openError := file::File::open(path, options);
+    if openError != none {
+        return openError;
+    }
+
+    error result = output.writeAll(codec::FILE_HEADER.cast<[]const u8>);
+    if result == none {
+        result = output.flush();
+    }
+    closeError := output.close();
+    if result == none {
+        result = closeError;
+    }
+    if result != none {
+        error _ = filesystem::remove_file(path);
+    }
+    return result;
+}
+
+export (collections::Array<model::Block>, error) load(stringv path) {
+    contents, readError := filesystem::read_file(path);
+    if readError != none {
+        return (collections::Array<model::Block>::init(), readError);
+    }
+    return codec::parse(contents.view());
+}
+
+export (u64, string, error) append(stringv path, stringv payload) {
+    blocks, loadError := load(path);
+    if loadError != none {
+        return (none, none, loadError);
+    }
+
+    u64 index = blocks.len().cast<u64>;
+    [32]u8 previous = none;
+    if !blocks.empty() {
+        values := blocks.view();
+        previous = model::copy_digest(values[values.len() - 1].hash());
+    }
+
+    record, digest, encodeError := codec::encode_block(
+        index,
+        previous[:],
+        payload
+    );
+    if encodeError != none {
+        return (none, none, encodeError);
+    }
+
+    output, openError := file::File::open(path, file::OpenOptions::appendOnly());
+    if openError != none {
+        return (none, none, openError);
+    }
+    error result = output.writeAll(record.bytes());
+    if result == none {
+        result = output.flush();
+    }
+    closeError := output.close();
+    if result == none {
+        result = closeError;
+    }
+    if result != none {
+        return (none, none, result);
+    }
+
+    digestText, hexError := hex::encode_bytes(digest[:]);
+    return (index, digestText, hexError);
+}
+
