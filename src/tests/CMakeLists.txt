@@ -188,6 +188,19 @@ set_tests_properties(CliTests.LongbowVersion PROPERTIES
 )
 
 add_test(
+    NAME DocumentationExampleTests.CheckBuildRun
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DPROJECT_ROOT=${PROJECT_SOURCE_DIR}
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/documented_hello${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_documented_example.cmake
+)
+set_tests_properties(DocumentationExampleTests.CheckBuildRun PROPERTIES
+    LABELS "documentation;native"
+    TIMEOUT 60
+)
+
+add_test(
     NAME NativeCompilerTests.EmbeddedForeignSourceFixture
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
