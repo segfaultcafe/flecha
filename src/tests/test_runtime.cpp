@@ -1573,6 +1573,22 @@ TEST(RuntimeStringTests, ConcatenatesIndependentOwnedStorage) {
     flecha_runtime_v1_string_destroy(joined.data);
 }
 
+TEST(RuntimeStringTests, ConcatenatesEmptyNullStorage) {
+    FlechaRuntimeString rightOnly{};
+    flecha_runtime_v1_string_concat(&rightOnly, nullptr, 0, "flecha", 6);
+    ASSERT_NE(rightOnly.data, nullptr);
+    EXPECT_EQ(rightOnly.length, 6);
+    EXPECT_STREQ(rightOnly.data, "flecha");
+    flecha_runtime_v1_string_destroy(rightOnly.data);
+
+    FlechaRuntimeString leftOnly{};
+    flecha_runtime_v1_string_concat(&leftOnly, "flecha", 6, nullptr, 0);
+    ASSERT_NE(leftOnly.data, nullptr);
+    EXPECT_EQ(leftOnly.length, 6);
+    EXPECT_STREQ(leftOnly.data, "flecha");
+    flecha_runtime_v1_string_destroy(leftOnly.data);
+}
+
 TEST(RuntimeFormatBufferTests, AppendsTypedValuesAndTransfersOwnership) {
     FlechaRuntimeFormatBuffer buffer{};
     flecha_runtime_v1_format_buffer_init(&buffer);

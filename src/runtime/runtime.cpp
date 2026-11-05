@@ -630,8 +630,9 @@ void flecha_runtime_v1_string_concat(FlechaRuntimeString* output,
                          stderr);
         std::abort();
     }
-    std::memcpy(data, leftData, leftLength);
-    std::memcpy(data + leftLength, rightData, rightLength);
+    if (leftLength != 0) std::memcpy(data, leftData, leftLength);
+    if (rightLength != 0)
+        std::memcpy(data + leftLength, rightData, rightLength);
     data[length] = '\0';
     *output = {data, length, length};
 }

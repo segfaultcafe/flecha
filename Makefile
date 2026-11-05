@@ -17,7 +17,7 @@ HOST_NVIM_CONFIG ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/nvim,$(HOME)/.con
 .DEFAULT_GOAL := build
 
 .PHONY: help configure build configure-tests build-tests test test-stress \
-	test-stress-campaign \
+	test-stress-campaign test-hardening test-hardening-campaign \
 	test-semantic llvm-poc native-poc native-if-also native-functions \
 	native-callables native-while native-loop-control native-casts native-string-view \
 	native-string-view-operations native-owning-string native-stdout \
@@ -30,6 +30,8 @@ help:
 	@echo "  make test           Configure, build, and run all tests"
 	@echo "  make test-stress    Run the fast deterministic compiler corpus"
 	@echo "  make test-stress-campaign Run release-qualification compiler stress"
+	@echo "  make test-hardening Run fast property and stateful hardening"
+	@echo "  make test-hardening-campaign Run the large property and soak campaign"
 	@echo "  make test-semantic  Run only semantic and scope tests"
 	@echo "  make test-neovim    Test Neovim filetype and syntax support"
 	@echo "  make package-vscode Build and verify the installable VSIX"
@@ -116,6 +118,29 @@ test-stress-campaign: build-tests
 		$(TEST_BUILD_DIR)/flecha std/src \
 		$(TEST_BUILD_DIR)/src/tests/compiler-stress-campaign campaign
 
+test-hardening: build-tests
+	ctest --test-dir $(TEST_BUILD_DIR) --output-on-failure \
+		-R '^HardeningCampaign\.Fast$$'
+	$(CMAKE) \
+		-DFLECHA_TEST_BINARY=$(CURDIR)/$(TEST_BUILD_DIR)/src/tests/test_flecha \
+		-DFLECHA_CTEST=ctest \
+		-DFLECHA_BUILD_DIR=$(CURDIR)/$(TEST_BUILD_DIR) \
+		-DFLECHA_OUTPUT=$(CURDIR)/$(TEST_BUILD_DIR)/src/tests/hardening-soak-fast \
+		-DFLECHA_PROFILE=fast \
+		-P src/tests/run_hardening_soak.cmake
+
+test-hardening-campaign: build-tests
+	$(TEST_BUILD_DIR)/src/tests/hardening_campaign \
+		src/tests/fixtures/community_packages/package \
+		$(TEST_BUILD_DIR)/src/tests/hardening-campaign-release campaign
+	$(CMAKE) \
+		-DFLECHA_TEST_BINARY=$(CURDIR)/$(TEST_BUILD_DIR)/src/tests/test_flecha \
+		-DFLECHA_CTEST=ctest \
+		-DFLECHA_BUILD_DIR=$(CURDIR)/$(TEST_BUILD_DIR) \
+		-DFLECHA_OUTPUT=$(CURDIR)/$(TEST_BUILD_DIR)/src/tests/hardening-soak-release \
+		-DFLECHA_PROFILE=campaign \
+		-P src/tests/run_hardening_soak.cmake
+
 test-semantic: build-tests
 	$(TEST_BUILD_DIR)/src/tests/test_flecha \
 		--gtest_filter='Semantic*:*ScopeTests*'
@@ -152,6 +177,11 @@ test-sanitizers:
 		$(SANITIZER_BUILD_DIR)/src/tests/compiler_stress \
 		$(SANITIZER_BUILD_DIR)/flecha std/src \
 		$(SANITIZER_BUILD_DIR)/src/tests/compiler-stress-sanitizer sanitizer
+	ASAN_OPTIONS=detect_leaks=1 \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+		$(SANITIZER_BUILD_DIR)/src/tests/hardening_campaign \
+		src/tests/fixtures/community_packages/package \
+		$(SANITIZER_BUILD_DIR)/src/tests/hardening-campaign-sanitizer sanitizer
 	ASAN_OPTIONS=detect_leaks=1 \
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 		ctest --test-dir $(SANITIZER_BUILD_DIR) --output-on-failure \

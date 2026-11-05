@@ -30,6 +30,14 @@ target_compile_definitions(compiler_stress PRIVATE
     FLECHA_EXECUTABLE_SUFFIX="${CMAKE_EXECUTABLE_SUFFIX}"
 )
 
+add_executable(hardening_campaign hardening_campaign.cpp)
+target_link_libraries(hardening_campaign
+    PRIVATE
+        flecha_project_options
+        core
+        longbow_model
+)
+
 target_link_libraries(test_flecha
     PRIVATE
         flecha_project_options
@@ -59,6 +67,18 @@ add_test(
 )
 set_tests_properties(CompilerStress.Fast PROPERTIES
     LABELS "stress"
+    TIMEOUT 300
+)
+
+add_test(
+    NAME HardeningCampaign.Fast
+    COMMAND hardening_campaign
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/community_packages/package
+        ${CMAKE_CURRENT_BINARY_DIR}/hardening-campaign-fast
+        fast
+)
+set_tests_properties(HardeningCampaign.Fast PROPERTIES
+    LABELS "hardening;property"
     TIMEOUT 300
 )
 
