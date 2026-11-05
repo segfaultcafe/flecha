@@ -1,0 +1,128 @@
+name: Property and stateful hardening
+
+on:
+  schedule:
+    - cron: "41 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hardening-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  campaign:
+    name: Deterministic property and soak campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 llvm-18-dev ninja-build
+
+      - name: Configure qualification build
+        run: >-
+          cmake -S . -B build-hardening -G Ninja
+          -DBUILD_TESTING=ON
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=/usr/bin/clang-18
+          -DCMAKE_CXX_COMPILER=/usr/bin/clang++-18
+          "-DLLVM_DIR=$(/usr/bin/llvm-config-18 --cmakedir)"
+
+      - name: Build all qualification targets
+        run: cmake --build build-hardening --parallel
+
+      - name: Run deterministic property campaign
+        run: >-
+          build-hardening/src/tests/hardening_campaign
+          src/tests/fixtures/community_packages/package
+          build-hardening/src/tests/hardening-campaign-release
+          campaign
+
+      - name: Run reordered stateful and failure-injection soak
+        run: >-
+          cmake
+          -DFLECHA_TEST_BINARY=$PWD/build-hardening/src/tests/test_flecha
+          -DFLECHA_CTEST=/usr/bin/ctest
+          -DFLECHA_BUILD_DIR=$PWD/build-hardening
+          -DFLECHA_OUTPUT=$PWD/build-hardening/src/tests/hardening-soak-release
+          -DFLECHA_PROFILE=campaign
+          -P src/tests/run_hardening_soak.cmake
+
+      - name: Re-run the human-authored standard-library suite
+        working-directory: std
+        env:
+          FLECHA_COMPILER: ${{ github.workspace }}/build-hardening/flecha
+          FLECHA_STANDARD_LIBRARY: ${{ github.workspace }}/std/src
+        run: ../build-hardening/longbow test --verbose
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardening-campaign-reports
+          path: |
+            build-hardening/src/tests/hardening-campaign-release
+            build-hardening/src/tests/hardening-soak-release
+          if-no-files-found: warn
+
+  sanitizers:
+    name: Sanitized property and soak campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 llvm-18-dev ninja-build
+
+      - name: Configure sanitizer build
+        run: >-
+          cmake -S . -B build-hardening-sanitizers -G Ninja
+          -DBUILD_TESTING=ON
+          -DFLECHA_ENABLE_SANITIZERS=ON
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=/usr/bin/clang-18
+          -DCMAKE_CXX_COMPILER=/usr/bin/clang++-18
+          "-DLLVM_DIR=$(/usr/bin/llvm-config-18 --cmakedir)"
+
+      - name: Build all sanitizer targets
+        run: cmake --build build-hardening-sanitizers --parallel
+
+      - name: Run sanitizer-enabled property campaign
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          build-hardening-sanitizers/src/tests/hardening_campaign
+          src/tests/fixtures/community_packages/package
+          build-hardening-sanitizers/src/tests/hardening-campaign-sanitizer
+          sanitizer
+
+      - name: Run sanitizer-enabled stateful soak
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          cmake
+          -DFLECHA_TEST_BINARY=$PWD/build-hardening-sanitizers/src/tests/test_flecha
+          -DFLECHA_CTEST=/usr/bin/ctest
+          -DFLECHA_BUILD_DIR=$PWD/build-hardening-sanitizers
+          -DFLECHA_OUTPUT=$PWD/build-hardening-sanitizers/src/tests/hardening-soak-sanitizer
+          -DFLECHA_PROFILE=sanitizer
+          -P src/tests/run_hardening_soak.cmake
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardening-sanitizer-reports
+          path: |
+            build-hardening-sanitizers/src/tests/hardening-campaign-sanitizer
+            build-hardening-sanitizers/src/tests/hardening-soak-sanitizer
+          if-no-files-found: warn

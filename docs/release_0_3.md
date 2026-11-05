@@ -543,8 +543,10 @@ their composition, scale, repetition, failure behavior, and performance.
 
 The compiler-stress portion is implemented by the deterministic fast,
 sanitizer, and release-qualification profiles documented in
-[`compiler_stress.md`](compiler_stress.md). Other Stage 9 rows remain separate
-release-gate work.
+[`compiler_stress.md`](compiler_stress.md). Deterministic adversarial/property
+inputs plus reordered failure-injection and stateful soak profiles are
+documented in [`hardening.md`](hardening.md). Performance baselines and final
+installed-package qualification remain separate release-gate work.
 
 ## Milestone discoveries
 

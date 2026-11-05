@@ -131,6 +131,16 @@ jobs:
       - name: Run compiler and runtime tests
         run: ctest --test-dir build-tests --output-on-failure
 
+      - name: Run fast deterministic stateful soak
+        run: >-
+          cmake
+          -DFLECHA_TEST_BINARY=$PWD/build-tests/src/tests/test_flecha
+          -DFLECHA_CTEST=/usr/bin/ctest
+          -DFLECHA_BUILD_DIR=$PWD/build-tests
+          -DFLECHA_OUTPUT=$PWD/build-tests/src/tests/hardening-soak-fast
+          -DFLECHA_PROFILE=fast
+          -P src/tests/run_hardening_soak.cmake
+
       - name: Run Neovim syntax tests
         run: make test-neovim
 
@@ -219,6 +229,16 @@ jobs:
           build-sanitizers/flecha
           std/src
           build-sanitizers/src/tests/compiler-stress-sanitizer
+          sanitizer
+
+      - name: Run sanitized deterministic property campaign
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          build-sanitizers/src/tests/hardening_campaign
+          src/tests/fixtures/community_packages/package
+          build-sanitizers/src/tests/hardening-campaign-sanitizer
           sanitizer
 
       - name: Run sanitized native smoke tests
