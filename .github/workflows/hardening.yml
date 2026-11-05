@@ -48,7 +48,7 @@ jobs:
         run: >-
           cmake
           -DFLECHA_TEST_BINARY=$PWD/build-hardening/src/tests/test_flecha
-          -DFLECHA_CTEST=/usr/bin/ctest
+          -DFLECHA_CTEST=ctest
           -DFLECHA_BUILD_DIR=$PWD/build-hardening
           -DFLECHA_OUTPUT=$PWD/build-hardening/src/tests/hardening-soak-release
           -DFLECHA_PROFILE=campaign
@@ -112,7 +112,7 @@ jobs:
         run: >-
           cmake
           -DFLECHA_TEST_BINARY=$PWD/build-hardening-sanitizers/src/tests/test_flecha
-          -DFLECHA_CTEST=/usr/bin/ctest
+          -DFLECHA_CTEST=ctest
           -DFLECHA_BUILD_DIR=$PWD/build-hardening-sanitizers
           -DFLECHA_OUTPUT=$PWD/build-hardening-sanitizers/src/tests/hardening-soak-sanitizer
           -DFLECHA_PROFILE=sanitizer

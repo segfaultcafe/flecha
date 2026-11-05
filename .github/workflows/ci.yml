@@ -132,7 +132,7 @@ jobs:
         run: >-
           cmake
           -DFLECHA_TEST_BINARY=$PWD/build-tests/src/tests/test_flecha
-          -DFLECHA_CTEST=/usr/bin/ctest
+          -DFLECHA_CTEST=ctest
           -DFLECHA_BUILD_DIR=$PWD/build-tests
           -DFLECHA_OUTPUT=$PWD/build-tests/src/tests/hardening-soak-fast
           -DFLECHA_PROFILE=fast
