@@ -110,15 +110,15 @@ upgrades, uninstalling, and packaging the VS Code extension from a checkout.
 Flecha source files use the `.fl` extension. An executable entry module must define either `i32 main()` or `void main()`.
 
 ```sh
-build/flecha check examples/factorial.fl
-build/flecha build examples/factorial.fl -o build/factorial
-./build/factorial
+build/flecha check examples/hello.fl
+build/flecha build examples/hello.fl -o build/hello
+./build/hello
 ```
 
 The example prints:
 
 ```text
-Factorial: 120
+Flecha v0.3: 42
 ```
 
 The compiler also supports explicit output stages:
@@ -143,22 +143,25 @@ flecha <check|build|test|--emit-llvm|--emit-object> <input.fl> [-o output]
 ## A small Flecha program
 
 ```flecha
-i32 factorial(i32 n) {
-    if n <= 1 {
-        return 1;
+module hello;
+
+i32 main() {
+    [3]i32 values = [7, 11, 24];
+    i32 total = 0;
+    for (_, value) := range values {
+        total = total + value;
     }
 
-    return n * factorial(n - 1);
-}
-
-void main() {
-    result := factorial(5);
-    stdout("Factorial: ");
-    stdoutln(result);
+    stdout("Flecha v0.3: ");
+    stdoutln(total);
+    return 0;
 }
 ```
 
-Functions place the return type before the function name. Local type inference uses `:=`; explicit declarations are also supported. See [`SPEC.md`](SPEC.md) for the current syntax and design goals.
+Source files declare their logical module. Functions place the return type
+before the function name, fixed arrays retain their length in the type, and
+`range` iteration can destructure each index and value. See [`SPEC.md`](SPEC.md)
+for the current syntax and design goals.
 
 Functions may overload by parameter types; return types alone never
 distinguish declarations. The selection, safety, foreign-function, and
@@ -309,6 +312,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/release_0_2_1.md`](docs/release_0_2_1.md) — v0.2.1 module-correctness milestone
 - [`docs/release_0_3.md`](docs/release_0_3.md) — v0.3.0 application-capable standard-library milestone
 - [`docs/release_0_3_0.md`](docs/release_0_3_0.md) — v0.3.0 release notes and upgrade guide
+- [`docs/release_0_3_1.md`](docs/release_0_3_1.md) — v0.3.1 JSON slice bug-fix notes
 - [`docs/standard_library.md`](docs/standard_library.md) — complete v0.3 public module and declaration index
 - [`docs/toolchains.md`](docs/toolchains.md) — supported compiler, LLVM, linker, SDK, and CI versions
 - [`docs/semantic_analysis.md`](docs/semantic_analysis.md) — name binding, types, scopes, and analysis pipeline
