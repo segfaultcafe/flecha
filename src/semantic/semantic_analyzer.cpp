@@ -1,6 +1,7 @@
 #include "semantic/semantic_analyzer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -746,12 +747,12 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
     const auto requireCompilerCounterpart =
         [&](const DecorationApplication& application,
             const DecorationDeclaration* decoration) {
-        if (!decoration || decoration->Name() == "json") return;
-        Report(diagnostics::DiagnosticCode::InvalidDecoration,
-               application.range,
-               "decoration '@" + decoration->Name() +
-                   "' has no compiler implementation in Flecha 0.3");
-    };
+            if (!decoration || decoration->Name() == "json") return;
+            Report(diagnostics::DiagnosticCode::InvalidDecoration,
+                   application.range,
+                   "decoration '@" + decoration->Name() +
+                       "' has no compiler implementation in Flecha 0.3");
+        };
 
     for (const auto& declaration : unit.Declarations()) {
         std::unordered_set<const DecorationDeclaration*> seen;
@@ -1768,6 +1769,14 @@ void SemanticAnalyzer::RegisterBuiltIns() {
             name, SemanticType(SemanticTypeKind::Void),
             std::vector<SemanticType>{}, source::SourceRange{}, intrinsic,
             true);
+        (void)_currentScope->Declare(*function);
+        _model._symbols.push_back(std::move(function));
+    }
+    {
+        auto function = std::make_unique<FunctionSymbol>(
+            "__json_slice_append", SemanticType(SemanticTypeKind::Void),
+            std::vector<SemanticType>{}, source::SourceRange{},
+            BuiltInFunction::JsonSliceAppend);
         (void)_currentScope->Declare(*function);
         _model._symbols.push_back(std::move(function));
     }
@@ -3254,7 +3263,8 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                  function->BuiltIn() == BuiltInFunction::StorageRelocate ||
                  function->BuiltIn() == BuiltInFunction::StorageExtract ||
                  function->BuiltIn() == BuiltInFunction::StorageDestroy ||
-                 function->BuiltIn() == BuiltInFunction::StorageFree)) {
+                 function->BuiltIn() == BuiltInFunction::StorageFree ||
+                 function->BuiltIn() == BuiltInFunction::JsonSliceAppend)) {
                 Report(diagnostics::DiagnosticCode::InvalidDefer,
                        expression->Range(),
                        "compiler intrinsics cannot be deferred");
@@ -5655,6 +5665,61 @@ SemanticType SemanticAnalyzer::AnalyzeHashCall(
     return result;
 }
 
+SemanticType SemanticAnalyzer::AnalyzeJsonSliceAppendCall(
+    const core::CallExpression& expression) {
+    SemanticType element = SemanticType::Error();
+    if (!expression.TypeArgument()) {
+        Report(diagnostics::DiagnosticCode::InvalidAllocation,
+               expression.Range(),
+               "JSON slice append requires an element type argument");
+    } else {
+        element = ResolveType(*expression.TypeArgument());
+        if (!element.IsError() &&
+            (!StorageSize(element) || element.IsImmovable()))
+            Report(diagnostics::DiagnosticCode::InvalidAllocation,
+                   expression.TypeArgument()->Range(),
+                   "JSON slice append requires a sized movable element type");
+    }
+
+    if (expression.Arguments().size() != 2)
+        Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+               expression.Range(),
+               "JSON slice append requires an owning slice and one element");
+
+    const SemanticType slice(SemanticTypeKind::OwnedSlice, element);
+    const std::array expected{slice, element};
+    for (std::size_t index = 0; index < expression.Arguments().size();
+         ++index) {
+        const SemanticType target =
+            index < expected.size() ? expected[index] : SemanticType::Error();
+        const SemanticType actual =
+            AnalyzeExpression(*expression.Arguments()[index], target);
+        if (!target.IsError() && !IsAssignable(target, actual))
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Arguments()[index]->Range(),
+                   TypeMismatch(target, actual));
+        if (!target.IsError())
+            CheckTransfer(*expression.Arguments()[index], target, true);
+    }
+
+    const SemanticType result(std::vector<SemanticType>{
+        slice, SemanticType(SemanticTypeKind::ErrorValue)});
+    const auto& callee =
+        static_cast<const core::NameExpression&>(expression.Callee());
+    auto signature = std::make_shared<CallableSignature>();
+    signature->result = result;
+    signature->parameters = {slice, element};
+    signature->parameterContracts = {core::OwnershipContract::Own,
+                                     core::OwnershipContract::Own};
+    auto specialized = std::make_unique<FunctionSymbol>(
+        callee.Name(), std::move(signature), callee.Range(),
+        BuiltInFunction::JsonSliceAppend);
+    _model._bindings[&callee] = specialized.get();
+    _model._types.insert_or_assign(&callee, specialized->Type());
+    _model._symbols.push_back(std::move(specialized));
+    return result;
+}
+
 void SemanticAnalyzer::ValidateCrashableCall(bool markedCrashable,
                                              const CallableSignature& signature,
                                              const FunctionSymbol* function,
@@ -5995,6 +6060,8 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         return AnalyzeAllocationCall(expression, function->BuiltIn());
     if (function && function->BuiltIn() == BuiltInFunction::Hash)
         return AnalyzeHashCall(expression);
+    if (function && function->BuiltIn() == BuiltInFunction::JsonSliceAppend)
+        return AnalyzeJsonSliceAppendCall(expression);
     if (function &&
         (function->BuiltIn() == BuiltInFunction::StorageInitialize ||
          function->BuiltIn() == BuiltInFunction::StorageRelocate ||
@@ -6809,40 +6876,42 @@ void SemanticAnalyzer::GenerateJsonMethods() {
             writeJsonMethod->second.empty()) {
             std::vector<std::unique_ptr<core::Statement>> statements;
             bool declaredError = false;
-            const auto appendChecked = [&](std::unique_ptr<core::Expression>
-                                               expression) {
-                if (!declaredError) {
-                    statements.push_back(
-                        std::make_unique<core::VariableDeclarationStatement>(
+            const auto appendChecked =
+                [&](std::vector<std::unique_ptr<core::Statement>>& target,
+                    std::unique_ptr<core::Expression> expression) {
+                    if (!declaredError) {
+                        target.push_back(std::make_unique<
+                                         core::VariableDeclarationStatement>(
                             range, nullptr, "err", std::move(expression),
                             range));
-                    declaredError = true;
-                } else {
-                    auto assignment =
-                        std::make_unique<core::AssignmentExpression>(
-                            range, named(range, "err"), std::move(expression));
-                    statements.push_back(
-                        std::make_unique<core::ExpressionStatement>(
-                            range, std::move(assignment)));
-                }
+                        declaredError = true;
+                    } else {
+                        auto assignment =
+                            std::make_unique<core::AssignmentExpression>(
+                                range, named(range, "err"),
+                                std::move(expression));
+                        target.push_back(
+                            std::make_unique<core::ExpressionStatement>(
+                                range, std::move(assignment)));
+                    }
 
-                auto condition = std::make_unique<core::BinaryExpression>(
-                    range, named(range, "err"), TokenType::NotEqual,
-                    std::make_unique<core::LiteralExpression>(
-                        range, TokenType::None, "none"));
-                std::vector<std::unique_ptr<core::Statement>> failure;
-                failure.push_back(std::make_unique<core::ReturnStatement>(
-                    range, named(range, "err")));
-                auto branch = std::make_unique<core::ConditionalBranch>(
-                    range, std::move(condition),
-                    std::make_unique<core::BlockStatement>(range,
-                                                           std::move(failure)),
-                    nullptr);
-                statements.push_back(std::make_unique<core::IfStatement>(
-                    range, std::move(branch),
-                    std::vector<std::unique_ptr<core::ConditionalBranch>>{},
-                    nullptr));
-            };
+                    auto condition = std::make_unique<core::BinaryExpression>(
+                        range, named(range, "err"), TokenType::NotEqual,
+                        std::make_unique<core::LiteralExpression>(
+                            range, TokenType::None, "none"));
+                    std::vector<std::unique_ptr<core::Statement>> failure;
+                    failure.push_back(std::make_unique<core::ReturnStatement>(
+                        range, named(range, "err")));
+                    auto branch = std::make_unique<core::ConditionalBranch>(
+                        range, std::move(condition),
+                        std::make_unique<core::BlockStatement>(
+                            range, std::move(failure)),
+                        nullptr);
+                    target.push_back(std::make_unique<core::IfStatement>(
+                        range, std::move(branch),
+                        std::vector<std::unique_ptr<core::ConditionalBranch>>{},
+                        nullptr));
+                };
             const auto writerCall =
                 [&](std::string method,
                     std::vector<std::unique_ptr<core::Expression>> arguments =
@@ -6852,7 +6921,78 @@ void SemanticAnalyzer::GenerateJsonMethods() {
                         std::move(arguments), TokenType::Arrow);
                 };
 
-            appendChecked(writerCall("beginObject"));
+            std::function<bool(SemanticType)> writerSupports =
+                [&](SemanticType type) {
+                    if (type.IsNumeric() ||
+                        type.Kind() == SemanticTypeKind::Bool ||
+                        type.Kind() == SemanticTypeKind::String ||
+                        type.Kind() == SemanticTypeKind::StringView)
+                        return true;
+                    if (type.Kind() == SemanticTypeKind::OwnedSlice)
+                        return writerSupports(*type.Target());
+                    if (type.Kind() != SemanticTypeKind::Structure)
+                        return false;
+                    const JsonStructureMetadata* nested =
+                        _model.JsonMetadataFor(*type.Structure()->syntax);
+                    return nested && nested->writer == metadata->writer;
+                };
+            using ExpressionFactory =
+                std::function<std::unique_ptr<core::Expression>()>;
+            std::size_t sequenceIndex = 0;
+            std::function<void(std::vector<std::unique_ptr<core::Statement>>&,
+                               SemanticType, const ExpressionFactory&)>
+                appendValue;
+            appendValue = [&](std::vector<std::unique_ptr<core::Statement>>&
+                                  target,
+                              SemanticType type,
+                              const ExpressionFactory& value) {
+                if (type.Kind() == SemanticTypeKind::OwnedSlice) {
+                    appendChecked(target, writerCall("beginArray"));
+                    const std::string indexName =
+                        "jsonIndex" + std::to_string(sequenceIndex++);
+                    target.push_back(
+                        std::make_unique<core::VariableDeclarationStatement>(
+                            range,
+                            std::make_unique<core::TypeNode>(
+                                range, core::PrimitiveType::USize),
+                            indexName,
+                            std::make_unique<core::LiteralExpression>(
+                                range, TokenType::NumberLiteral, "0"),
+                            range));
+                    auto length = memberCall(range, value(), "len");
+                    auto condition = std::make_unique<core::BinaryExpression>(
+                        range, named(range, indexName), TokenType::Less,
+                        std::move(length));
+                    std::vector<std::unique_ptr<core::Statement>> body;
+                    appendValue(body, *type.Target(), [&]() {
+                        return std::make_unique<core::IndexExpression>(
+                            range, value(), named(range, indexName));
+                    });
+                    auto update = std::make_unique<core::UnaryExpression>(
+                        range, TokenType::Increment, named(range, indexName));
+                    target.push_back(std::make_unique<core::WhileStatement>(
+                        range, std::move(condition),
+                        std::make_unique<core::BlockStatement>(range,
+                                                               std::move(body)),
+                        nullptr, std::move(update)));
+                    appendChecked(target, writerCall("endArray"));
+                    return;
+                }
+                if (type.Kind() == SemanticTypeKind::Structure) {
+                    std::vector<std::unique_ptr<core::Expression>> arguments;
+                    arguments.push_back(named(range, "writer"));
+                    appendChecked(target,
+                                  memberCall(range, value(), "writeJson",
+                                             std::move(arguments)));
+                    return;
+                }
+                std::vector<std::unique_ptr<core::Expression>> arguments;
+                arguments.push_back(value());
+                appendChecked(target,
+                              writerCall("write", std::move(arguments)));
+            };
+
+            appendChecked(statements, writerCall("beginObject"));
             for (const JsonFieldMetadata& jsonField : metadata->fields) {
                 const StructureField* field = nullptr;
                 for (const StructureField& candidate : structure->fields)
@@ -6862,19 +7002,7 @@ void SemanticAnalyzer::GenerateJsonMethods() {
                     }
                 if (!field) continue;
 
-                const bool scalar =
-                    field->type.IsNumeric() ||
-                    field->type.Kind() == SemanticTypeKind::Bool ||
-                    field->type.Kind() == SemanticTypeKind::String ||
-                    field->type.Kind() == SemanticTypeKind::StringView;
-                const JsonStructureMetadata* nested =
-                    field->type.Kind() == SemanticTypeKind::Structure
-                        ? _model.JsonMetadataFor(
-                              *field->type.Structure()->syntax)
-                        : nullptr;
-                const bool nestedJson =
-                    nested && nested->writer == metadata->writer;
-                if (!scalar && !nestedJson) {
+                if (!writerSupports(field->type)) {
                     Report(diagnostics::DiagnosticCode::InvalidDecoration,
                            field->syntax->NameRange(),
                            "field '" + field->name + "' of type '" +
@@ -6887,23 +7015,15 @@ void SemanticAnalyzer::GenerateJsonMethods() {
                 keyArguments.push_back(
                     std::make_unique<core::LiteralExpression>(
                         range, TokenType::StringLiteral, jsonField.name));
-                appendChecked(writerCall("key", std::move(keyArguments)));
+                appendChecked(statements,
+                              writerCall("key", std::move(keyArguments)));
 
-                auto fieldValue =
-                    std::make_unique<core::MemberAccessExpression>(
+                const ExpressionFactory fieldValue = [&]() {
+                    return std::make_unique<core::MemberAccessExpression>(
                         range, named(range, "self"), field->name,
                         field->syntax->NameRange(), TokenType::Arrow);
-                std::vector<std::unique_ptr<core::Expression>> valueArguments;
-                if (nestedJson) {
-                    valueArguments.push_back(named(range, "writer"));
-                    appendChecked(memberCall(range, std::move(fieldValue),
-                                             "writeJson",
-                                             std::move(valueArguments)));
-                } else {
-                    valueArguments.push_back(std::move(fieldValue));
-                    appendChecked(
-                        writerCall("write", std::move(valueArguments)));
-                }
+                };
+                appendValue(statements, field->type, fieldValue);
             }
             statements.push_back(std::make_unique<core::ReturnStatement>(
                 range, writerCall("endObject")));
@@ -7091,6 +7211,212 @@ void SemanticAnalyzer::GenerateJsonMethods() {
                 range, std::move(firstNext), readerCall("nextObjectField"),
                 true));
 
+            std::function<bool(SemanticType)> readerSupports =
+                [&](SemanticType type) {
+                    if (type.IsNumeric() ||
+                        type.Kind() == SemanticTypeKind::Bool ||
+                        type.Kind() == SemanticTypeKind::String)
+                        return true;
+                    if (type.Kind() == SemanticTypeKind::OwnedSlice)
+                        return readerSupports(*type.Target());
+                    if (type.Kind() != SemanticTypeKind::Structure)
+                        return false;
+                    const JsonStructureMetadata* nested =
+                        _model.JsonMetadataFor(*type.Structure()->syntax);
+                    return nested && nested->reader == metadata->reader;
+                };
+            const auto containsBorrowedJsonDestination =
+                [&](const auto& self, SemanticType type) -> bool {
+                if (type.Kind() == SemanticTypeKind::Slice ||
+                    type.Kind() == SemanticTypeKind::StringView)
+                    return true;
+                return type.Kind() == SemanticTypeKind::OwnedSlice &&
+                       self(self, *type.Target());
+            };
+            using ExpressionFactory =
+                std::function<std::unique_ptr<core::Expression>()>;
+            std::size_t sequenceIndex = 0;
+            const auto appendWhenNoError =
+                [&](std::vector<std::unique_ptr<core::Statement>>& target,
+                    std::vector<std::unique_ptr<core::Statement>> success) {
+                    auto condition = std::make_unique<core::BinaryExpression>(
+                        range, named(range, "err"), TokenType::Equal,
+                        none(range));
+                    auto branch = std::make_unique<core::ConditionalBranch>(
+                        range, std::move(condition),
+                        std::make_unique<core::BlockStatement>(
+                            range, std::move(success)),
+                        nullptr);
+                    target.push_back(std::make_unique<core::IfStatement>(
+                        range, std::move(branch),
+                        std::vector<std::unique_ptr<core::ConditionalBranch>>{},
+                        nullptr));
+                };
+            std::function<void(std::vector<std::unique_ptr<core::Statement>>&,
+                               SemanticType, const ExpressionFactory&)>
+                appendReadValue;
+            appendReadValue = [&](std::vector<std::unique_ptr<core::Statement>>&
+                                      target,
+                                  SemanticType type,
+                                  const ExpressionFactory& destination) {
+                if (type.Kind() == SemanticTypeKind::OwnedSlice) {
+                    target.push_back(assignmentStatement(
+                        range, named(range, "err"), readerCall("beginArray")));
+                    std::vector<std::unique_ptr<core::Statement>> arrayBody;
+                    const std::size_t id = sequenceIndex++;
+                    const std::string valuesName =
+                        "jsonValues" + std::to_string(id);
+                    const std::string moreName =
+                        "jsonMore" + std::to_string(id);
+                    const std::string elementName =
+                        "jsonElement" + std::to_string(id);
+                    const std::string grownName =
+                        "jsonGrown" + std::to_string(id);
+                    const std::string appendErrorName =
+                        "jsonAppendError" + std::to_string(id);
+
+                    arrayBody.push_back(
+                        std::make_unique<core::VariableDeclarationStatement>(
+                            range, TypeSyntax(type, range), valuesName,
+                            none(range), range));
+
+                    std::vector<std::unique_ptr<core::Statement>> decodeBody;
+                    decodeBody.push_back(
+                        std::make_unique<core::VariableDeclarationStatement>(
+                            range,
+                            std::make_unique<core::TypeNode>(
+                                range, core::PrimitiveType::Bool),
+                            moreName, none(range), range));
+                    std::vector<std::unique_ptr<core::DestructureBinding>>
+                        firstElement;
+                    firstElement.push_back(
+                        std::make_unique<core::DestructureBinding>(
+                            range, moreName, nullptr));
+                    firstElement.push_back(
+                        std::make_unique<core::DestructureBinding>(range, "err",
+                                                                   nullptr));
+                    decodeBody.push_back(
+                        std::make_unique<core::DestructureStatement>(
+                            range, std::move(firstElement),
+                            readerCall("nextArrayElement"), false));
+
+                    std::vector<std::unique_ptr<core::Statement>> loopBody;
+                    loopBody.push_back(
+                        std::make_unique<core::VariableDeclarationStatement>(
+                            range, TypeSyntax(*type.Target(), range),
+                            elementName, none(range), range));
+                    appendReadValue(loopBody, *type.Target(), [&]() {
+                        return named(range, elementName);
+                    });
+
+                    std::vector<std::unique_ptr<core::Statement>> appendBody;
+                    std::vector<std::unique_ptr<core::Expression>> arguments;
+                    arguments.push_back(named(range, valuesName));
+                    arguments.push_back(named(range, elementName));
+                    auto append = std::make_unique<core::CallExpression>(
+                        range, named(range, "__json_slice_append"),
+                        std::move(arguments),
+                        TypeSyntax(*type.Target(), range));
+                    std::vector<std::unique_ptr<core::DestructureBinding>>
+                        appended;
+                    appended.push_back(
+                        std::make_unique<core::DestructureBinding>(
+                            range, grownName, nullptr));
+                    appended.push_back(
+                        std::make_unique<core::DestructureBinding>(
+                            range, appendErrorName, nullptr));
+                    appendBody.push_back(
+                        std::make_unique<core::DestructureStatement>(
+                            range, std::move(appended), std::move(append),
+                            true));
+                    appendBody.push_back(
+                        assignmentStatement(range, named(range, valuesName),
+                                            named(range, grownName)));
+                    appendBody.push_back(
+                        assignmentStatement(range, named(range, "err"),
+                                            named(range, appendErrorName)));
+                    appendWhenNoError(loopBody, std::move(appendBody));
+
+                    std::vector<std::unique_ptr<core::Statement>> advance;
+                    std::vector<std::unique_ptr<core::DestructureBinding>>
+                        nextElement;
+                    nextElement.push_back(
+                        std::make_unique<core::DestructureBinding>(
+                            range, moreName, nullptr));
+                    nextElement.push_back(
+                        std::make_unique<core::DestructureBinding>(range, "err",
+                                                                   nullptr));
+                    advance.push_back(
+                        std::make_unique<core::DestructureStatement>(
+                            range, std::move(nextElement),
+                            readerCall("nextArrayElement"), false));
+                    appendWhenNoError(loopBody, std::move(advance));
+
+                    auto noError = std::make_unique<core::BinaryExpression>(
+                        range, named(range, "err"), TokenType::Equal,
+                        none(range));
+                    auto loopCondition =
+                        std::make_unique<core::BinaryExpression>(
+                            range, std::move(noError), TokenType::And,
+                            named(range, moreName));
+                    decodeBody.push_back(std::make_unique<core::WhileStatement>(
+                        range, std::move(loopCondition),
+                        std::make_unique<core::BlockStatement>(
+                            range, std::move(loopBody)),
+                        nullptr));
+
+                    std::vector<std::unique_ptr<core::Statement>> assign;
+                    assign.push_back(assignmentStatement(
+                        range, destination(), named(range, valuesName)));
+                    appendWhenNoError(decodeBody, std::move(assign));
+                    appendWhenNoError(arrayBody, std::move(decodeBody));
+                    appendWhenNoError(target, std::move(arrayBody));
+                    return;
+                }
+
+                if (type.IsNumeric() || type.Kind() == SemanticTypeKind::Bool) {
+                    std::vector<std::unique_ptr<core::Expression>> arguments;
+                    arguments.push_back(std::make_unique<core::UnaryExpression>(
+                        range, TokenType::Ampersand, destination()));
+                    target.push_back(assignmentStatement(
+                        range, named(range, "err"),
+                        readerCall("read", std::move(arguments))));
+                    return;
+                }
+                if (type.Kind() == SemanticTypeKind::String) {
+                    const std::string decodedName =
+                        "jsonDecoded" + std::to_string(sequenceIndex++);
+                    target.push_back(
+                        std::make_unique<core::VariableDeclarationStatement>(
+                            range, TypeSyntax(type, range), decodedName,
+                            none(range), range));
+                    std::vector<std::unique_ptr<core::DestructureBinding>>
+                        decoded;
+                    decoded.push_back(
+                        std::make_unique<core::DestructureBinding>(
+                            range, decodedName, nullptr));
+                    decoded.push_back(
+                        std::make_unique<core::DestructureBinding>(range, "err",
+                                                                   nullptr));
+                    target.push_back(
+                        std::make_unique<core::DestructureStatement>(
+                            range, std::move(decoded), readerCall("readString"),
+                            false));
+                    std::vector<std::unique_ptr<core::Statement>> assign;
+                    assign.push_back(assignmentStatement(
+                        range, destination(), named(range, decodedName)));
+                    appendWhenNoError(target, std::move(assign));
+                    return;
+                }
+
+                std::vector<std::unique_ptr<core::Expression>> arguments;
+                arguments.push_back(named(range, "reader"));
+                target.push_back(assignmentStatement(
+                    range, named(range, "err"),
+                    memberCall(range, destination(), "readJson",
+                               std::move(arguments))));
+            };
+
             std::vector<std::unique_ptr<core::ConditionalBranch>> branches;
             for (const JsonFieldMetadata& jsonField : metadata->fields) {
                 const StructureField* field = nullptr;
@@ -7101,28 +7427,20 @@ void SemanticAnalyzer::GenerateJsonMethods() {
                     }
                 if (!field) continue;
 
-                const JsonStructureMetadata* nested =
-                    field->type.Kind() == SemanticTypeKind::Structure
-                        ? _model.JsonMetadataFor(
-                              *field->type.Structure()->syntax)
-                        : nullptr;
-                const bool nestedJson =
-                    nested && nested->reader == metadata->reader;
-                const bool direct =
-                    field->type.IsNumeric() ||
-                    field->type.Kind() == SemanticTypeKind::Bool;
-                const bool owningString =
-                    field->type.Kind() == SemanticTypeKind::String;
-                if (field->type.Kind() == SemanticTypeKind::StringView) {
-                    Report(diagnostics::DiagnosticCode::InvalidDecoration,
-                           field->syntax->NameRange(),
-                           "field '" + field->name +
-                               "' of type 'stringv' cannot be JSON "
-                               "deserialized because it does not own its "
-                               "decoded value");
+                if (!readerSupports(field->type)) {
+                    Report(
+                        diagnostics::DiagnosticCode::InvalidDecoration,
+                        field->syntax->NameRange(),
+                        "field '" + field->name + "' of type '" +
+                            field->type.Name() +
+                            "' cannot be JSON deserialized" +
+                            (containsBorrowedJsonDestination(
+                                 containsBorrowedJsonDestination, field->type)
+                                 ? " because it does not own its decoded "
+                                   "value"
+                                 : ""));
                     continue;
                 }
-                if (!direct && !owningString && !nestedJson) continue;
 
                 std::vector<std::unique_ptr<core::Expression>> keyArguments;
                 keyArguments.push_back(
@@ -7131,50 +7449,8 @@ void SemanticAnalyzer::GenerateJsonMethods() {
                 auto keyCondition =
                     readerCall("keyIs", std::move(keyArguments));
                 std::vector<std::unique_ptr<core::Statement>> body;
-                if (direct) {
-                    std::vector<std::unique_ptr<core::Expression>> arguments;
-                    arguments.push_back(std::make_unique<core::UnaryExpression>(
-                        range, TokenType::Ampersand, selfField(*field)));
-                    body.push_back(assignmentStatement(
-                        range, named(range, "err"),
-                        readerCall("read", std::move(arguments))));
-                } else if (owningString) {
-                    std::vector<std::unique_ptr<core::DestructureBinding>>
-                        decoded;
-                    decoded.push_back(
-                        std::make_unique<core::DestructureBinding>(
-                            range, "decoded", nullptr));
-                    decoded.push_back(
-                        std::make_unique<core::DestructureBinding>(range, "err",
-                                                                   nullptr));
-                    body.push_back(std::make_unique<core::DestructureStatement>(
-                        range, std::move(decoded), readerCall("readString"),
-                        true));
-
-                    auto success = std::make_unique<core::BinaryExpression>(
-                        range, named(range, "err"), TokenType::Equal,
-                        none(range));
-                    std::vector<std::unique_ptr<core::Statement>> assign;
-                    assign.push_back(assignmentStatement(
-                        range, selfField(*field), named(range, "decoded")));
-                    auto successBranch =
-                        std::make_unique<core::ConditionalBranch>(
-                            range, std::move(success),
-                            std::make_unique<core::BlockStatement>(
-                                range, std::move(assign)),
-                            nullptr);
-                    body.push_back(std::make_unique<core::IfStatement>(
-                        range, std::move(successBranch),
-                        std::vector<std::unique_ptr<core::ConditionalBranch>>{},
-                        nullptr));
-                } else {
-                    std::vector<std::unique_ptr<core::Expression>> arguments;
-                    arguments.push_back(named(range, "reader"));
-                    body.push_back(assignmentStatement(
-                        range, named(range, "err"),
-                        memberCall(range, selfField(*field), "readJson",
-                                   std::move(arguments))));
-                }
+                appendReadValue(body, field->type,
+                                [&]() { return selfField(*field); });
                 branches.push_back(std::make_unique<core::ConditionalBranch>(
                     range, std::move(keyCondition),
                     std::make_unique<core::BlockStatement>(range,

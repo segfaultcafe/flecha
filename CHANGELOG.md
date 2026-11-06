@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-11-06
+
+Flecha 0.3.1 fixes derived JSON support for slices.
+
+### Fixed
+
+- Generated JSON writers serialize owning slices as arrays, recursively
+  including nested slices and decorated structure elements.
+- Generated JSON readers deserialize arrays into `own []T`, preserving
+  ownership and cleaning up partially decoded elements on parse or allocation
+  failure. Borrowed slice destinations now produce a precise compile-time
+  diagnostic.
+
 ## 0.3.0 - 2026-11-05
 
 Flecha 0.3.0 makes the toolchain application-capable with a substantially

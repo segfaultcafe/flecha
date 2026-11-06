@@ -1,0 +1,69 @@
+decoration json;
+
+structure Writer {};
+Writer Writer::init() override { return build Writer {}; }
+error Writer::beginObject(&self) { return none; }
+error Writer::endObject(&self) { return none; }
+error Writer::key(&self, stringv name) { return none; }
+error Writer::beginArray(&self) { return none; }
+error Writer::endArray(&self) { return none; }
+error Writer::write(&self, i32 value) { return none; }
+(own []u8, error) Writer::finish(&const self) {
+    return new<own []u8>(0);
+}
+
+structure Reader { i32 stage; };
+Reader Reader::init([]const u8 source) override {
+    return build Reader { self.stage = 0; };
+}
+error Reader::beginObject(&self) {
+    if self->stage != 0 { return none; }
+    self->stage = 1;
+    return none;
+}
+(bool, error) Reader::nextObjectField(&self) {
+    if self->stage == 1 {
+        self->stage = 2;
+        return (true, none);
+    }
+    if self->stage == 8 { return (false, none); }
+    return (false, none);
+}
+bool Reader::keyIs(&const self, stringv expected) { return true; }
+error Reader::beginArray(&self) {
+    self->stage = 3;
+    return none;
+}
+(bool, error) Reader::nextArrayElement(&self) {
+    if self->stage == 3 {
+        self->stage = 4;
+        return (true, none);
+    }
+    if self->stage == 5 {
+        self->stage = 6;
+        return (true, none);
+    }
+    self->stage = 8;
+    return (false, none);
+}
+error Reader::read(&self, &i32 output) {
+    if self->stage == 4 {
+        *output = 20;
+        self->stage = 5;
+        return none;
+    }
+    *output = 22;
+    self->stage = 7;
+    return none;
+}
+error Reader::skipValue(&self) { return none; }
+error Reader::finish(&self) { return none; }
+
+@json(structure)
+structure Payload { own []i32 values; };
+
+i32 main() {
+    failed, err := Payload::fromJson("x".cast<[]const u8>);
+    if err == AllocationError.OutOfMemory { return 42; }
+    return 1;
+}

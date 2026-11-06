@@ -1112,6 +1112,21 @@ add_test(NAME NativeSemanticTests.RuntimeArrays
         -DFLECHA_LINK_OPTIONS=-Wl,--wrap=flecha_runtime_v1_alloc_array
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_unsafe_pointers.cmake)
 
+foreach(fail_call RANGE 1 2)
+    add_test(NAME NativeSemanticTests.JsonSliceAllocationFailure.${fail_call}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/json_slice_allocation_failure.fl
+            -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+            -DFLECHA_HARNESS=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/json_slice_allocation_failure_harness.cpp
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/json_slice_allocation_failure_${fail_call}
+            -DFLECHA_RUNTIME=$<TARGET_FILE:runtime>
+            -DFLECHA_LINKER=${CMAKE_CXX_COMPILER}
+            -DFLECHA_SANITIZERS=${FLECHA_ENABLE_SANITIZERS}
+            -DFLECHA_ARRAY_FAIL_CALL=${fail_call}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_dynamic_array.cmake)
+endforeach()
+
 add_test(NAME StandardLibraryTests.RawArray
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
