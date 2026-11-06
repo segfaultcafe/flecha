@@ -120,6 +120,8 @@ class LlvmCodeGenerator final {
         const lowering::BoundPlaceExpression& place);
     llvm::Value* EmitAllocation(
         const lowering::BoundAllocationExpression& expression);
+    llvm::Value* EmitJsonSliceAppend(
+        const lowering::BoundCallExpression& expression);
     llvm::Value* EmitFree(llvm::Value* owner, semantic::SemanticType ownerType);
     llvm::Value* EmitStorageCall(
         const lowering::BoundCallExpression& expression,

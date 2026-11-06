@@ -550,6 +550,52 @@ TEST(SemanticTests, RejectsBorrowedStringViewsForJsonReading) {
               std::string::npos);
 }
 
+TEST(SemanticTests, RejectsBorrowedSlicesForJsonReadingPrecisely) {
+    Analysis analysis = Analyze(R"(
+        decoration json;
+        structure Writer {};
+        Writer Writer::init() override { return build Writer {}; }
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::beginArray(&self) { return none; }
+        error Writer::endArray(&self) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            return new<own []u8>(0);
+        }
+        structure Reader {};
+        Reader Reader::init([]const u8 source) override {
+            return build Reader {};
+        }
+        error Reader::beginObject(&self) { return none; }
+        (bool, error) Reader::nextObjectField(&self) {
+            return (false, none);
+        }
+        bool Reader::keyIs(&const self, stringv expected) { return false; }
+        error Reader::beginArray(&self) { return none; }
+        (bool, error) Reader::nextArrayElement(&self) {
+            return (false, none);
+        }
+        error Reader::skipValue(&self) { return none; }
+        error Reader::finish(&self) { return none; }
+
+        @json(structure)
+        structure Response { []const i32 borrowed; };
+    )");
+
+    const Diagnostic* diagnostic = nullptr;
+    for (const Diagnostic& candidate : analysis.diagnostics.Diagnostics())
+        if (candidate.code == DiagnosticCode::InvalidDecoration &&
+            candidate.message.find("field 'borrowed'") != std::string::npos &&
+            candidate.message.find("does not own its decoded value") !=
+                std::string::npos) {
+            diagnostic = &candidate;
+            break;
+        }
+    ASSERT_NE(diagnostic, nullptr);
+}
+
 TEST(SemanticTests, AcceptsTrailingDefaultArgumentsAtDirectCallsAndMethods) {
     Analysis analysis = Analyze(R"(
         i32 add(i32 value, i32 amount = 2) { return value + amount; }

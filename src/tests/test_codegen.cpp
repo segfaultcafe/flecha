@@ -993,6 +993,492 @@ TEST(NativeCompilerTests, RunsGeneratedJsonReaderMethods) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RoundTripsGeneratedJsonOwningStringSlices) {
+    GeneratedSource result = Generate(R"(
+        decoration json;
+        error TestError { Invalid, }
+
+        structure Writer { i32 stage; };
+        Writer Writer::init() override {
+            return build Writer { self.stage = 0; };
+        }
+        error Writer::beginObject(&self) {
+            if self->stage != 0 { return TestError.Invalid; }
+            self->stage = 1;
+            return none;
+        }
+        error Writer::key(&self, stringv name) {
+            if self->stage != 1 or name != "foo" {
+                return TestError.Invalid;
+            }
+            self->stage = 2;
+            return none;
+        }
+        error Writer::beginArray(&self) {
+            if self->stage != 2 { return TestError.Invalid; }
+            self->stage = 3;
+            return none;
+        }
+        error Writer::write(&self, string value) {
+            if self->stage == 3 and value == "bar" {
+                self->stage = 4;
+                return none;
+            }
+            if self->stage == 4 and value == "top" {
+                self->stage = 5;
+                return none;
+            }
+            return TestError.Invalid;
+        }
+        error Writer::endArray(&self) {
+            if self->stage != 3 and self->stage != 5 {
+                return TestError.Invalid;
+            }
+            self->stage = 6;
+            return none;
+        }
+        error Writer::endObject(&self) {
+            if self->stage != 6 { return TestError.Invalid; }
+            self->stage = 7;
+            return none;
+        }
+        (own []u8, error) Writer::finish(&const self) {
+            output, err := new<own []u8>(1);
+            if err != none { return (none, err); }
+            output[0] = 2;
+            if self->stage == 7 { output[0] = 42; }
+            return (output, none);
+        }
+
+        structure Reader { i32 stage; bool empty; bool fail; };
+        Reader Reader::init([]const u8 source) override {
+            return build Reader {
+                self.stage = 0;
+                self.empty = source.len() == 0;
+                self.fail = source.len() == 2;
+            };
+        }
+        error Reader::beginObject(&self) {
+            if self->stage != 0 { return TestError.Invalid; }
+            self->stage = 1;
+            return none;
+        }
+        (bool, error) Reader::nextObjectField(&self) {
+            if self->stage == 1 {
+                self->stage = 2;
+                return (true, none);
+            }
+            if self->stage == 8 { return (false, none); }
+            return (false, TestError.Invalid);
+        }
+        bool Reader::keyIs(&const self, stringv expected) {
+            return expected == "foo";
+        }
+        error Reader::beginArray(&self) {
+            if self->stage != 2 { return TestError.Invalid; }
+            self->stage = 3;
+            return none;
+        }
+        (bool, error) Reader::nextArrayElement(&self) {
+            if self->stage == 3 and self->empty {
+                self->stage = 8;
+                return (false, none);
+            }
+            if self->stage == 3 {
+                self->stage = 4;
+                return (true, none);
+            }
+            if self->stage == 5 {
+                self->stage = 6;
+                return (true, none);
+            }
+            if self->stage == 7 {
+                self->stage = 8;
+                return (false, none);
+            }
+            return (false, TestError.Invalid);
+        }
+        (string, error) Reader::readString(&self) {
+            if self->stage == 4 {
+                self->stage = 5;
+                return ("bar", none);
+            }
+            if self->stage == 6 {
+                if self->fail { return (none, TestError.Invalid); }
+                self->stage = 7;
+                return ("top", none);
+            }
+            return (none, TestError.Invalid);
+        }
+        error Reader::skipValue(&self) { return TestError.Invalid; }
+        error Reader::finish(&self) {
+            if self->stage == 8 { return none; }
+            return TestError.Invalid;
+        }
+
+        @json(structure)
+        structure Payload { own []string foo; };
+
+        i32 main() {
+            payload, err := Payload::fromJson("x".cast<[]const u8>);
+            if err != none or payload.foo.len() != 2 or
+                payload.foo[0] != "bar" or payload.foo[1] != "top" {
+                return 1;
+            }
+
+            output, writeError := payload.json();
+            if writeError != none or output.len() != 1 or output[0] != 42 {
+                return 2;
+            }
+            roundTrip, roundError := Payload::fromJson(output[:]);
+            if roundError != none or roundTrip.foo.len() != 2 or
+                roundTrip.foo[0] != "bar" or roundTrip.foo[1] != "top" {
+                return 3;
+            }
+
+            empty, emptyError := Payload::fromJson("".cast<[]const u8>);
+            if emptyError != none or empty.foo.len() != 0 { return 4; }
+            emptyOutput, emptyWriteError := empty.json();
+            if emptyWriteError != none or emptyOutput.len() != 1 or
+                emptyOutput[0] != 42 {
+                return 5;
+            }
+            failed, parseError :=
+                Payload::fromJson("xx".cast<[]const u8>);
+            if parseError == none { return 6; }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_generated_json_string_slices_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "generated_json_string_slices_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RoundTripsJsonSlicesOfDecoratedStructures) {
+    GeneratedSource result = Generate(R"(
+        decoration json;
+        error TestError { Invalid, }
+
+        structure Writer {};
+        Writer Writer::init() override { return build Writer {}; }
+        error Writer::beginObject(&self) { return none; }
+        error Writer::endObject(&self) { return none; }
+        error Writer::key(&self, stringv name) { return none; }
+        error Writer::beginArray(&self) { return none; }
+        error Writer::endArray(&self) { return none; }
+        error Writer::write(&self, i32 value) { return none; }
+        (own []u8, error) Writer::finish(&const self) {
+            output, err := new<own []u8>(1);
+            if err != none { return (none, err); }
+            output[0] = 42;
+            return (output, none);
+        }
+
+        structure Reader { i32 stage; };
+        Reader Reader::init([]const u8 source) override {
+            return build Reader { self.stage = 0; };
+        }
+        error Reader::beginObject(&self) {
+            if self->stage == 0 {
+                self->stage = 1;
+                return none;
+            }
+            if self->stage == 4 {
+                self->stage = 5;
+                return none;
+            }
+            if self->stage == 9 {
+                self->stage = 10;
+                return none;
+            }
+            return TestError.Invalid;
+        }
+        (bool, error) Reader::nextObjectField(&self) {
+            if self->stage == 1 {
+                self->stage = 2;
+                return (true, none);
+            }
+            if self->stage == 5 {
+                self->stage = 6;
+                return (true, none);
+            }
+            if self->stage == 7 {
+                self->stage = 8;
+                return (false, none);
+            }
+            if self->stage == 10 {
+                self->stage = 11;
+                return (true, none);
+            }
+            if self->stage == 12 {
+                self->stage = 13;
+                return (false, none);
+            }
+            if self->stage == 14 {
+                self->stage = 15;
+                return (false, none);
+            }
+            return (false, TestError.Invalid);
+        }
+        bool Reader::keyIs(&const self, stringv expected) { return true; }
+        error Reader::beginArray(&self) {
+            if self->stage != 2 { return TestError.Invalid; }
+            self->stage = 3;
+            return none;
+        }
+        (bool, error) Reader::nextArrayElement(&self) {
+            if self->stage == 3 {
+                self->stage = 4;
+                return (true, none);
+            }
+            if self->stage == 8 {
+                self->stage = 9;
+                return (true, none);
+            }
+            if self->stage == 13 {
+                self->stage = 14;
+                return (false, none);
+            }
+            return (false, TestError.Invalid);
+        }
+        error Reader::read(&self, &i32 output) {
+            if self->stage == 6 {
+                *output = 20;
+                self->stage = 7;
+                return none;
+            }
+            if self->stage == 11 {
+                *output = 22;
+                self->stage = 12;
+                return none;
+            }
+            return TestError.Invalid;
+        }
+        error Reader::skipValue(&self) { return TestError.Invalid; }
+        error Reader::finish(&self) {
+            if self->stage == 15 { return none; }
+            return TestError.Invalid;
+        }
+
+        @json(structure)
+        structure Item { i32 value; };
+
+        @json(structure)
+        structure Payload { own []Item items; };
+
+        i32 main() {
+            payload, err := Payload::fromJson("x".cast<[]const u8>);
+            if err != none or payload.items.len() != 2 or
+                payload.items[0].value != 20 or
+                payload.items[1].value != 22 {
+                return 1;
+            }
+            output, writeError := payload.json();
+            if writeError != none or output.len() != 1 { return 2; }
+            return output[0].cast<i32>;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_generated_json_structure_slices_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "generated_json_structure_slices_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, RoundTripsNestedGeneratedJsonOwningSlices) {
+    GeneratedSource result = Generate(R"(
+        decoration json;
+        error TestError { Invalid, }
+
+        structure Writer { i32 stage; };
+        Writer Writer::init() override {
+            return build Writer { self.stage = 0; };
+        }
+        error Writer::beginObject(&self) {
+            if self->stage != 0 { return TestError.Invalid; }
+            self->stage = 1;
+            return none;
+        }
+        error Writer::key(&self, stringv name) {
+            if self->stage != 1 or name != "values" {
+                return TestError.Invalid;
+            }
+            self->stage = 2;
+            return none;
+        }
+        error Writer::beginArray(&self) {
+            if self->stage == 2 {
+                self->stage = 3;
+                return none;
+            }
+            if self->stage == 3 {
+                self->stage = 4;
+                return none;
+            }
+            return TestError.Invalid;
+        }
+        error Writer::write(&self, i32 value) {
+            if self->stage != 4 or value != 42 {
+                return TestError.Invalid;
+            }
+            self->stage = 5;
+            return none;
+        }
+        error Writer::endArray(&self) {
+            if self->stage == 5 {
+                self->stage = 6;
+                return none;
+            }
+            if self->stage == 6 {
+                self->stage = 7;
+                return none;
+            }
+            return TestError.Invalid;
+        }
+        error Writer::endObject(&self) {
+            if self->stage != 7 { return TestError.Invalid; }
+            self->stage = 8;
+            return none;
+        }
+        (own []u8, error) Writer::finish(&const self) {
+            output, err := new<own []u8>(1);
+            if err != none { return (none, err); }
+            output[0] = 1;
+            if self->stage == 8 { output[0] = 42; }
+            return (output, none);
+        }
+
+        structure Reader { i32 stage; };
+        Reader Reader::init([]const u8 source) override {
+            return build Reader { self.stage = 0; };
+        }
+        error Reader::beginObject(&self) {
+            if self->stage != 0 { return TestError.Invalid; }
+            self->stage = 1;
+            return none;
+        }
+        (bool, error) Reader::nextObjectField(&self) {
+            if self->stage == 1 {
+                self->stage = 2;
+                return (true, none);
+            }
+            if self->stage == 9 {
+                self->stage = 10;
+                return (false, none);
+            }
+            return (false, TestError.Invalid);
+        }
+        bool Reader::keyIs(&const self, stringv expected) {
+            return expected == "values";
+        }
+        error Reader::beginArray(&self) {
+            if self->stage == 2 {
+                self->stage = 3;
+                return none;
+            }
+            if self->stage == 4 {
+                self->stage = 5;
+                return none;
+            }
+            return TestError.Invalid;
+        }
+        (bool, error) Reader::nextArrayElement(&self) {
+            if self->stage == 3 {
+                self->stage = 4;
+                return (true, none);
+            }
+            if self->stage == 5 {
+                self->stage = 6;
+                return (true, none);
+            }
+            if self->stage == 7 {
+                self->stage = 8;
+                return (false, none);
+            }
+            if self->stage == 8 {
+                self->stage = 9;
+                return (false, none);
+            }
+            return (false, TestError.Invalid);
+        }
+        error Reader::read(&self, &i32 output) {
+            if self->stage != 6 { return TestError.Invalid; }
+            *output = 42;
+            self->stage = 7;
+            return none;
+        }
+        error Reader::skipValue(&self) { return TestError.Invalid; }
+        error Reader::finish(&self) {
+            if self->stage == 10 { return none; }
+            return TestError.Invalid;
+        }
+
+        @json(structure)
+        structure Payload { own []own []i32 values; };
+
+        i32 main() {
+            payload, err := Payload::fromJson("x".cast<[]const u8>);
+            if err != none or payload.values.len() != 1 or
+                payload.values[0].len() != 1 or
+                payload.values[0][0] != 42 {
+                return 1;
+            }
+            output, writeError := payload.json();
+            if writeError != none or output.len() != 1 { return 2; }
+            return output[0].cast<i32>;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_generated_json_nested_slices_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "generated_json_nested_slices_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(LlvmCodeGeneratorTests, ExtractsCheckedSliceDataPointers) {
     GeneratedSource result = Generate(R"(
         unsafe i32 first([]const i32 values) { return *values.data(); }

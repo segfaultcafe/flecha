@@ -96,9 +96,12 @@ before analyzing method bodies, so `json()` can resolve `writeJson()` and
 `fromJson()` can resolve `readJson()` without body-based declaration inference.
 
 Bidirectional derivation supports booleans, every integer and floating-point
-primitive, owning `string`, and recursively decorated structures using the
-same Reader and Writer. A `stringv` field cannot be derived for reading because
-decoded JSON text requires owned storage.
+primitive, owning `string`, owning slices (`own []T`), and recursively
+decorated structures using the same Reader and Writer. Slice elements are
+derived recursively, so nested owning slices and slices of decorated
+structures are supported. Borrowed slices are outside the v0.3 derived-slice
+contract; use `own []T`. A `stringv` field cannot be derived for reading
+because decoded JSON text requires owned storage.
 
 The following are compile-time errors:
 
@@ -107,7 +110,7 @@ The following are compile-time errors:
 - using any other JSON application argument shape;
 - selecting the same serialized name more than once;
 - selecting a field without a supported JSON representation; and
-- using `stringv` with a Reader-backed decoration.
+- using a borrowed slice, or using `stringv` with a Reader-backed decoration.
 
 ### Temporary compiler coupling
 

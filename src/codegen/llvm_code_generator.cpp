@@ -3852,6 +3852,9 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 }
                 return EmitStorageCall(call, arguments);
             }
+            if (call.Function().BuiltIn() ==
+                semantic::BuiltInFunction::JsonSliceAppend)
+                return EmitJsonSliceAppend(call);
             if (call.Type().ContainsStructure()) {
                 auto* storage = CreateOwnedValueTemporary(
                     call.Type(), "structure.call.result");
@@ -4449,6 +4452,138 @@ llvm::Value* LlvmCodeGenerator::EmitAllocation(
         _builder.CreatePHI(MapType(expression.Type()), 2, "allocation.result");
     result->addIncoming(successful, successEnd);
     result->addIncoming(failed, failure);
+    return result;
+}
+
+llvm::Value* LlvmCodeGenerator::EmitJsonSliceAppend(
+    const lowering::BoundCallExpression& expression) {
+    const semantic::SemanticType ownerType =
+        expression.Function().ParameterTypes()[0];
+    const semantic::SemanticType elementType = *ownerType.Target();
+    llvm::Value* owner = EmitExpression(*expression.Arguments()[0]);
+    llvm::Value* element = EmitExpression(*expression.Arguments()[1]);
+    if (owner == nullptr || element == nullptr) return nullptr;
+    if (elementType.IsCopyable())
+        element = EmitValueCopy(element, elementType, false);
+    if (element == nullptr) return nullptr;
+
+    llvm::Type* sizeType =
+        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
+    llvm::Type* pointerType = llvm::PointerType::getUnqual(_context);
+    llvm::Type* storageType = MapType(elementType);
+    llvm::Value* oldPointer =
+        _builder.CreateExtractValue(owner, 0, "json.slice.old.data");
+    llvm::Value* oldLength =
+        _builder.CreateExtractValue(owner, 1, "json.slice.old.length");
+    llvm::Value* one = llvm::ConstantInt::get(sizeType, 1);
+    llvm::Value* newLength =
+        _builder.CreateAdd(oldLength, one, "json.slice.new.length");
+
+    auto* allocate = llvm::BasicBlock::Create(
+        _context, "json.slice.append.allocate", _currentFunction);
+    auto* success = llvm::BasicBlock::Create(
+        _context, "json.slice.append.success", _currentFunction);
+    auto* failure = llvm::BasicBlock::Create(
+        _context, "json.slice.append.failure", _currentFunction);
+    auto* done = llvm::BasicBlock::Create(_context, "json.slice.append.done",
+                                          _currentFunction);
+    _builder.CreateCondBr(_builder.CreateICmpUGT(newLength, oldLength),
+                          allocate, failure);
+
+    _builder.SetInsertPoint(allocate);
+    const llvm::DataLayout& layout = _module->getDataLayout();
+    llvm::FunctionCallee allocateArray = _module->getOrInsertFunction(
+        "flecha_runtime_v1_alloc_array",
+        llvm::FunctionType::get(pointerType, {sizeType, sizeType, sizeType},
+                                false));
+    llvm::Value* newPointer = _builder.CreateCall(
+        allocateArray,
+        {newLength,
+         llvm::ConstantInt::get(
+             sizeType, layout.getTypeAllocSize(storageType).getFixedValue()),
+         llvm::ConstantInt::get(sizeType,
+                                layout.getABITypeAlign(storageType).value())},
+        "json.slice.allocation");
+    _builder.CreateCondBr(
+        _builder.CreateICmpNE(newPointer,
+                              llvm::Constant::getNullValue(pointerType)),
+        success, failure);
+
+    _builder.SetInsertPoint(success);
+    auto* indexStorage =
+        CreateTemporaryAlloca(sizeType, "json.slice.append.index");
+    _builder.CreateStore(llvm::ConstantInt::get(sizeType, 0), indexStorage);
+    auto* condition = llvm::BasicBlock::Create(
+        _context, "json.slice.append.condition", _currentFunction);
+    auto* body = llvm::BasicBlock::Create(_context, "json.slice.append.body",
+                                          _currentFunction);
+    auto* moved = llvm::BasicBlock::Create(_context, "json.slice.append.moved",
+                                           _currentFunction);
+    _builder.CreateBr(condition);
+    _builder.SetInsertPoint(condition);
+    llvm::Value* index =
+        _builder.CreateLoad(sizeType, indexStorage, "json.slice.append.i");
+    _builder.CreateCondBr(_builder.CreateICmpULT(index, oldLength), body,
+                          moved);
+    _builder.SetInsertPoint(body);
+    llvm::Value* oldSlot = _builder.CreateInBoundsGEP(
+        storageType, oldPointer, index, "json.slice.old.slot");
+    llvm::Value* newSlot = _builder.CreateInBoundsGEP(
+        storageType, newPointer, index, "json.slice.new.slot");
+    _builder.CreateStore(_builder.CreateLoad(storageType, oldSlot), newSlot);
+    _builder.CreateStore(_builder.CreateAdd(index, one), indexStorage);
+    _builder.CreateBr(condition);
+
+    _builder.SetInsertPoint(moved);
+    llvm::Value* finalSlot = _builder.CreateInBoundsGEP(
+        storageType, newPointer, oldLength, "json.slice.new.element");
+    _builder.CreateStore(element, finalSlot);
+    llvm::FunctionCallee release = _module->getOrInsertFunction(
+        "flecha_runtime_v1_free",
+        llvm::FunctionType::get(llvm::Type::getVoidTy(_context), {pointerType},
+                                false));
+    _builder.CreateCall(release, {oldPointer});
+    llvm::Value* appendedOwner =
+        llvm::Constant::getNullValue(MapType(ownerType));
+    appendedOwner = _builder.CreateInsertValue(appendedOwner, newPointer, 0);
+    appendedOwner = _builder.CreateInsertValue(appendedOwner, newLength, 1,
+                                               "json.slice.append.owner");
+    llvm::Value* successful =
+        llvm::Constant::getNullValue(MapType(expression.Type()));
+    successful = _builder.CreateInsertValue(successful, appendedOwner, 0);
+    llvm::BasicBlock* successEnd = _builder.GetInsertBlock();
+    _builder.CreateBr(done);
+
+    _builder.SetInsertPoint(failure);
+    EmitValueDestroy(owner, ownerType);
+    EmitValueDestroy(element, elementType);
+    llvm::GlobalVariable* identity =
+        _module->getNamedGlobal(".flecha.error.AllocationError");
+    if (identity == nullptr) {
+        identity = new llvm::GlobalVariable(
+            *_module, llvm::Type::getInt8Ty(_context), true,
+            llvm::GlobalValue::PrivateLinkage,
+            llvm::ConstantInt::get(llvm::Type::getInt8Ty(_context), 0),
+            ".flecha.error.AllocationError");
+    }
+    const semantic::SemanticType errorType(
+        semantic::SemanticTypeKind::ErrorValue);
+    auto* mappedError = llvm::cast<llvm::StructType>(MapType(errorType));
+    llvm::Value* error = llvm::PoisonValue::get(mappedError);
+    error = _builder.CreateInsertValue(error, identity, 0);
+    error = _builder.CreateInsertValue(
+        error, llvm::ConstantInt::get(mappedError->getElementType(1), 1), 1,
+        "json.slice.append.error");
+    llvm::Value* failed = _builder.CreateInsertValue(
+        llvm::Constant::getNullValue(MapType(expression.Type())), error, 1);
+    llvm::BasicBlock* failureEnd = _builder.GetInsertBlock();
+    _builder.CreateBr(done);
+
+    _builder.SetInsertPoint(done);
+    auto* result = _builder.CreatePHI(MapType(expression.Type()), 2,
+                                      "json.slice.append.result");
+    result->addIncoming(successful, successEnd);
+    result->addIncoming(failed, failureEnd);
     return result;
 }
 
