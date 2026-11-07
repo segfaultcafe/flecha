@@ -5317,6 +5317,15 @@ TEST(SemanticErrorTests, ReportsInvalidFamiliesNamesAndVariantsAtTheirRanges) {
     ASSERT_NE(diagnostic, nullptr);
     EXPECT_EQ(diagnostic->range.start.offset, source.find("Missing"));
     EXPECT_EQ(diagnostic->range.Length(), 7);
+    EXPECT_EQ(diagnostic->message,
+              "error type 'Fault' has no variant 'Missing'");
+    Analysis missingEnum =
+        Analyze("enum Status: u8 { Ready } void f() { Status.Missing; }");
+    const Diagnostic* enumDiagnostic =
+        FindDiagnostic(missingEnum, DiagnosticCode::InvalidMember);
+    ASSERT_NE(enumDiagnostic, nullptr);
+    EXPECT_EQ(enumDiagnostic->message,
+              "enum 'Status' has no variant 'Missing'");
     for (const std::string& body :
          {"Unknown value = none;", "*Unknown value = none;",
           "(error, Unknown) value = none;"}) {
