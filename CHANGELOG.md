@@ -12,6 +12,12 @@
   project with `<leader>rt` or `:LongbowTest`; failed test declarations are
   navigable from quickfix with `<leader>fe`.
 
+### Fixed
+
+- Allocation analysis now summarizes safe resource-helper calls after
+  verifying their bodies once, preventing exponential compile times in code
+  that uses layered parsers and other allocation-backed abstractions.
+
 ## 0.3.1 - 2026-11-06
 
 Flecha 0.3.1 fixes derived JSON support for slices.

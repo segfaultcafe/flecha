@@ -7042,6 +7042,42 @@ TEST(SemanticMemoryTests,
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests, SummarizesSafeResourceHelperChainsOnce) {
+    std::string source = R"(
+        unsafe i32 leaf(bool choose) {
+            value, failure := new<i32>(42);
+            if failure != none { return 0; }
+            defer free(value);
+            if choose { return *value; }
+            return 0;
+        }
+    )";
+    std::string previous = "leaf";
+    for (int level = 0; level < 12; ++level) {
+        const std::string current = "level" + std::to_string(level);
+        source += "unsafe i32 " + current +
+                  "(bool choose) { if choose { return " + previous +
+                  "(choose); } return " + previous + "(choose); }";
+        previous = current;
+    }
+    source += "unsafe i32 use(bool choose) { return " + previous +
+              "(choose); }";
+
+    auto analysis = Analyze(source);
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+
+    auto leaking = Analyze(R"(
+        unsafe i32 leak() {
+            value, failure := new<i32>(42);
+            return 0;
+        }
+        unsafe i32 call() { return leak(); }
+    )");
+    EXPECT_NE(FindDiagnostic(leaking, DiagnosticCode::MemoryLeak), nullptr);
+}
+
 TEST(SemanticMemoryTests, StructuresWithOwningSlicesAreTriviallyZeroable) {
     auto generated = Analyze(R"(
         structure Buffer { own []u8 storage; usize length; };
