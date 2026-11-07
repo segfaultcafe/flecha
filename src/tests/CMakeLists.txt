@@ -1,6 +1,7 @@
 add_executable(test_flecha
     test_analysis_session.cpp
     test_analyzer_protocol.cpp
+    test_analyzer_server_loop.cpp
     test_ast.cpp
     test_codegen.cpp
     test_diagnostics.cpp
@@ -187,6 +188,15 @@ endif()
 add_test(NAME CliTests.FlechaVersion COMMAND $<TARGET_FILE:flecha> --version)
 set_tests_properties(CliTests.FlechaVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^flecha ${PROJECT_VERSION}"
+)
+add_test(
+    NAME CliTests.AnalyzerStdio
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DPROJECT_ROOT=${PROJECT_SOURCE_DIR}
+        -DPROJECT_VERSION=${PROJECT_VERSION}
+        -DANALYZER_INPUT=${CMAKE_CURRENT_BINARY_DIR}/analyzer-stdio-input.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_analyzer_stdio.cmake
 )
 add_test(NAME CliTests.LongbowVersion COMMAND $<TARGET_FILE:longbow> --version)
 set_tests_properties(CliTests.LongbowVersion PROPERTIES

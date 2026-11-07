@@ -3,6 +3,7 @@ add_library(analyzer STATIC
     json.cpp
     overlay_source_provider.cpp
     protocol.cpp
+    server_loop.cpp
     source_overlays.cpp
     transport.cpp
 )

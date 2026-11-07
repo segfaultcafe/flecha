@@ -57,6 +57,7 @@ target_include_directories(flecha PRIVATE ${PROJECT_BINARY_DIR}/generated)
 target_link_libraries(flecha
     PRIVATE
         flecha_project_options
+        analyzer
         diagnostics
         core
         semantic
