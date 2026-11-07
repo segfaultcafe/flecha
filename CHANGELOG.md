@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- The Neovim plugin can run the enclosing Longbow project with `<leader>rr`,
+  including from an empty editor at the project root, display compiler output
+  in quickfix, and open a selected diagnostic at its exact source line with
+  `<leader>fe`.
+
 ## 0.3.1 - 2026-11-06
 
 Flecha 0.3.1 fixes derived JSON support for slices.

@@ -18,6 +18,7 @@ endforeach()
 
 foreach(editorFile IN ITEMS
         share/flecha/editors/neovim/ftdetect/flecha.vim
+        share/flecha/editors/neovim/plugin/longbow.vim
         share/flecha/editors/neovim/indent/flecha.vim
         share/flecha/editors/neovim/syntax/flecha.vim
         share/flecha/editors/vscode/language-configuration.json
