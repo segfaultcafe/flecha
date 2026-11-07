@@ -2058,6 +2058,60 @@ TEST(SemanticCallableTests, PropagatesCaptureOriginsThroughStructures) {
     EXPECT_FALSE(valid.diagnostics.HasErrors());
 }
 
+TEST(SemanticCallableTests, PreservesBorrowOriginsThroughTupleResults) {
+    const std::string declarations = R"(
+        func Reader() => (i32);
+        structure Wrapper { Reader input; };
+    )";
+
+    Analysis missingContract = Analyze(declarations + R"(
+        (Wrapper, error) wrap(Reader source) {
+            return (build Wrapper { self.input = source; }, none);
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(missingContract,
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+
+    Analysis conflict = Analyze(declarations + R"(
+        (Wrapper, error) wrap(Reader source) <- source {
+            return (build Wrapper { self.input = source; }, none);
+        }
+        i32 use() {
+            i32 value = 42;
+            Reader reader = [&const value]() => { return value; };
+            wrapper, failure := wrap(reader);
+            value = 7;
+            return (wrapper.input)();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(conflict, DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    Analysis localEscape = Analyze(declarations + R"(
+        (Wrapper, error) wrap(Reader source) <- source {
+            return (build Wrapper { self.input = source; }, none);
+        }
+        (Wrapper, error) make() {
+            i32 local = 42;
+            Reader reader = [&const local]() => { return local; };
+            return wrap(reader);
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(localEscape, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis nested = Analyze(declarations + R"(
+        ((Wrapper, error), i32) nest(Reader source) {
+            return ((build Wrapper { self.input = source; }, none), 0);
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(nested, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+}
+
 TEST(SemanticCallableTests, EnforcesAnonymousFunctionPointerSafety) {
     Analysis valid = Analyze(R"(
         unsafe func Reader(*const i32) => (i32);
@@ -5263,6 +5317,15 @@ TEST(SemanticErrorTests, ReportsInvalidFamiliesNamesAndVariantsAtTheirRanges) {
     ASSERT_NE(diagnostic, nullptr);
     EXPECT_EQ(diagnostic->range.start.offset, source.find("Missing"));
     EXPECT_EQ(diagnostic->range.Length(), 7);
+    EXPECT_EQ(diagnostic->message,
+              "error type 'Fault' has no variant 'Missing'");
+    Analysis missingEnum =
+        Analyze("enum Status: u8 { Ready } void f() { Status.Missing; }");
+    const Diagnostic* enumDiagnostic =
+        FindDiagnostic(missingEnum, DiagnosticCode::InvalidMember);
+    ASSERT_NE(enumDiagnostic, nullptr);
+    EXPECT_EQ(enumDiagnostic->message,
+              "enum 'Status' has no variant 'Missing'");
     for (const std::string& body :
          {"Unknown value = none;", "*Unknown value = none;",
           "(error, Unknown) value = none;"}) {
@@ -7040,6 +7103,42 @@ TEST(SemanticMemoryTests,
     for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;
     EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, SummarizesSafeResourceHelperChainsOnce) {
+    std::string source = R"(
+        unsafe i32 leaf(bool choose) {
+            value, failure := new<i32>(42);
+            if failure != none { return 0; }
+            defer free(value);
+            if choose { return *value; }
+            return 0;
+        }
+    )";
+    std::string previous = "leaf";
+    for (int level = 0; level < 12; ++level) {
+        const std::string current = "level" + std::to_string(level);
+        source += "unsafe i32 " + current +
+                  "(bool choose) { if choose { return " + previous +
+                  "(choose); } return " + previous + "(choose); }";
+        previous = current;
+    }
+    source += "unsafe i32 use(bool choose) { return " + previous +
+              "(choose); }";
+
+    auto analysis = Analyze(source);
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+
+    auto leaking = Analyze(R"(
+        unsafe i32 leak() {
+            value, failure := new<i32>(42);
+            return 0;
+        }
+        unsafe i32 call() { return leak(); }
+    )");
+    EXPECT_NE(FindDiagnostic(leaking, DiagnosticCode::MemoryLeak), nullptr);
 }
 
 TEST(SemanticMemoryTests, StructuresWithOwningSlicesAreTriviallyZeroable) {

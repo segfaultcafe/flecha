@@ -13,23 +13,6 @@ using Symbols = std::set<const Symbol*>;
 using Code = diagnostics::DiagnosticCode;
 using Kind = core::AstNodeKind;
 
-bool ContainsBorrowed(SemanticType type) {
-    if (type.HasBorrowedLifetime()) return true;
-    if (type.Kind() == SemanticTypeKind::Tuple)
-        return std::any_of(type.Elements().begin(), type.Elements().end(),
-                           ContainsBorrowed);
-    if (type.Kind() == SemanticTypeKind::Array)
-        return ContainsBorrowed(*type.Target());
-    if (type.Kind() == SemanticTypeKind::Structure &&
-        type.Structure()->validLayout)
-        return std::any_of(type.Structure()->fields.begin(),
-                           type.Structure()->fields.end(),
-                           [](const StructureField& field) {
-                               return ContainsBorrowed(field.type);
-                           });
-    return false;
-}
-
 bool CanCarryBorrow(SemanticType type) {
     if (type.HasBorrowedLifetime() || type.Kind() == SemanticTypeKind::Function)
         return true;
@@ -548,7 +531,7 @@ class BorrowChecker final {
 
     void ValidateReturn(const Value& value, source::SourceRange range) {
         if (_function == nullptr) return;
-        if (!ContainsBorrowed(_function->ReturnType()) && value.origins.empty())
+        if (!CanCarryBorrow(_function->ReturnType()) && value.origins.empty())
             return;
         ValidateReturn(value, _function->ReturnType(), range);
     }
@@ -581,7 +564,7 @@ class BorrowChecker final {
                 }
             }
             for (std::size_t index = 0; index < type.Elements().size(); ++index)
-                if (ContainsBorrowed(type.Elements()[index]))
+                if (CanCarryBorrow(type.Elements()[index]))
                     ValidateReturn(value.elements[index],
                                    type.Elements()[index], range);
             return;

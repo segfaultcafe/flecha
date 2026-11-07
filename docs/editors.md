@@ -83,6 +83,13 @@ Neovim configuration:
 filetype plugin indent on
 ```
 
+In a Longbow project, `<leader>rr` runs `longbow run` and opens its output in
+the quickfix window. It is available immediately after starting Neovim at the
+project root, even with no file open. A named buffer is saved first and its
+nearest enclosing `longbow.toml` is used. Diagnostics include their file, line,
+and column. Select an item and press `<leader>fe` to open its exact source line.
+Enter performs the same exact-line jump. The command form is `:LongbowRun`.
+
 To upgrade, replace the existing `flecha.nvim` directory with the directory
 from the new release. To uninstall, remove that `flecha.nvim` directory.
 

@@ -173,6 +173,7 @@ test-semantic: build-tests
 test-neovim:
 	NVIM_LOG_FILE=/dev/null nvim --headless -u NONE -i NONE -n \
 		--cmd 'set runtimepath^=$(CURDIR)/editors/neovim' \
+		--cmd 'runtime plugin/longbow.vim' \
 		-S editors/neovim/tests/syntax_test.vim
 
 package-vscode:
