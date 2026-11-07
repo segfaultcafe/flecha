@@ -3,9 +3,12 @@ if exists('g:loaded_flecha_longbow')
 endif
 let g:loaded_flecha_longbow = 1
 
-let s:errorformat = '%f:FLECHA-%t%n:%l:%c: %m'
+let s:errorformat = join([
+            \ '%f:FLECHA-%t%n:%l:%c: %m',
+            \ '%E%\s%#test: %f:%l:%c',
+            \ ], ',')
 
-function! s:LongbowRun() abort
+function! s:Longbow(command, arguments) abort
     if &buftype ==# '' && !empty(expand('%:p'))
         let start = expand('%:p:h')
     else
@@ -24,9 +27,10 @@ function! s:LongbowRun() abort
     let saved_makeprg = &l:makeprg
     let saved_errorformat = &l:errorformat
     try
-        let &l:makeprg = get(b:, 'flecha_longbow_makeprg', 'longbow run')
+        let &l:makeprg = a:command
         let &l:errorformat = s:errorformat
         execute 'silent make! ' . fnameescape(fnamemodify(manifest, ':p:h'))
+                    \ . a:arguments
     finally
         let &l:makeprg = saved_makeprg
         let &l:errorformat = saved_errorformat
@@ -41,6 +45,16 @@ function! s:LongbowRun() abort
     echomsg printf('Longbow: %d error%s', errors, errors == 1 ? '' : 's')
 endfunction
 
+function! s:LongbowRun() abort
+    call s:Longbow(get(b:, 'flecha_longbow_makeprg', 'longbow run'), '')
+endfunction
+
+function! s:LongbowTest() abort
+    call s:Longbow(
+                \ get(b:, 'flecha_longbow_test_makeprg', 'longbow test'),
+                \ ' --verbose')
+endfunction
+
 function! s:LongbowSelectedError() abort
     let quickfix_index = line('.')
     let items = getqflist()
@@ -51,8 +65,18 @@ function! s:LongbowSelectedError() abort
 
     let item = items[quickfix_index - 1]
     if !item.valid
-        echoerr 'Longbow: the selected result is not a source location'
-        return
+        let quickfix_index = 0
+        for index in range(0, len(items) - 1)
+            if items[index].valid
+                let quickfix_index = index + 1
+                break
+            endif
+        endfor
+        if quickfix_index == 0
+            echoerr 'Longbow: no source location was reported'
+            return
+        endif
+        let item = items[quickfix_index - 1]
     endif
 
     execute quickfix_index . 'cc'
@@ -60,9 +84,15 @@ function! s:LongbowSelectedError() abort
 endfunction
 
 command! LongbowRun call <SID>LongbowRun()
+command! LongbowTest call <SID>LongbowTest()
 
 nnoremap <silent> <Plug>(FlechaLongbowRun) :LongbowRun<CR>
+nnoremap <silent> <Plug>(FlechaLongbowTest) :LongbowTest<CR>
 if !hasmapto('<Plug>(FlechaLongbowRun)', 'n')
             \ && empty(maparg('<leader>rr', 'n'))
     nmap <leader>rr <Plug>(FlechaLongbowRun)
+endif
+if !hasmapto('<Plug>(FlechaLongbowTest)', 'n')
+            \ && empty(maparg('<leader>rt', 'n'))
+    nmap <leader>rt <Plug>(FlechaLongbowTest)
 endif

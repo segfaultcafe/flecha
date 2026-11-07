@@ -89,6 +89,11 @@ project root, even with no file open. A named buffer is saved first and its
 nearest enclosing `longbow.toml` is used. Diagnostics include their file, line,
 and column. Select an item and press `<leader>fe` to open its exact source line.
 Enter performs the same exact-line jump. The command form is `:LongbowRun`.
+Use `<leader>rt` (or `:LongbowTest`) to run
+`longbow test <project-root> --verbose` and place verbose test output in the
+same quickfix workflow. On failure, `<leader>fe` opens the selected failed
+test declaration, or the first navigable failure when a summary line is
+selected.
 
 To upgrade, replace the existing `flecha.nvim` directory with the directory
 from the new release. To uninstall, remove that `flecha.nvim` directory.
