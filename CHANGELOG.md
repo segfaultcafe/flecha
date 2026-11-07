@@ -14,6 +14,13 @@
 - Allocation analysis now summarizes safe resource-helper calls after
   verifying their bodies once, preventing exponential compile times in code
   that uses layered parsers and other allocation-backed abstractions.
+- Borrow origins now propagate recursively through tuple results, preventing
+  checked references captured by aggregate values from escaping their scope.
+- Missing block braces before top-level declarations now produce a focused
+  closing-brace diagnostic instead of reporting the declaration as an invalid
+  expression.
+- Missing enum and error variants now use stable source-level type names in
+  diagnostics instead of internal module-qualified names.
 
 ## 0.3.1 - 2026-11-06
 
