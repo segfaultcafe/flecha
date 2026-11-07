@@ -10,6 +10,8 @@ add_executable(test_flecha
     test_parser.cpp
     test_runtime.cpp
     test_semantic.cpp
+    test_source_overlays.cpp
+    test_source_provider.cpp
     test_tokenizer.cpp
 )
 
