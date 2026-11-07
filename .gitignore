@@ -5,6 +5,11 @@ build/
 build-tests/
 build-sanitizers/
 build-release/
+/build-hardening/
+/build-release-prep/
+/nvim.log
+/output/
+/tmp/
 editors/vscode/node_modules/
 editors/vscode/*.vsix
 

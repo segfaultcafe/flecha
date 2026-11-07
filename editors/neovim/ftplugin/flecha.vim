@@ -6,6 +6,8 @@ let b:did_ftplugin = 1
 setlocal commentstring=//\ %s
 setlocal comments=s1:/*,mb:*,ex:*/,://
 setlocal suffixesadd=.fl
+setlocal makeprg=longbow\ run
+let &l:errorformat = '%f:FLECHA-%t%n:%l:%c: %m'
 
 let b:undo_ftplugin =
-            \ 'setlocal commentstring< comments< suffixesadd<'
+            \ 'setlocal commentstring< comments< suffixesadd< makeprg< errorformat<'

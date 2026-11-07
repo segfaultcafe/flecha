@@ -39,6 +39,24 @@ opening block; indentation width follows your `shiftwidth` setting.
 Plugin managers that support local directories can use `editors/neovim` as a
 local plugin source instead.
 
+## Run projects and navigate errors
+
+Press `<leader>rr` anywhere inside a Longbow project to run `longbow run` and
+open the results in Neovim's quickfix window. This works immediately after
+starting Neovim at the project root, even when no file is open. From a named
+buffer, the nearest enclosing `longbow.toml` is used and the file is saved
+first. Compiler diagnostics are parsed as file, line, and column locations.
+Move the cursor onto a result and press `<leader>fe` to open that exact source
+line. Enter on the result performs the same exact-line jump. You can also run
+the workflow with `:LongbowRun`.
+
+To choose a different run mapping, map `<Plug>(FlechaLongbowRun)` in your
+Neovim configuration before the Flecha runtime plugin loads:
+
+```vim
+nmap <leader>br <Plug>(FlechaLongbowRun)
+```
+
 Windows PowerShell installation and upgrade instructions are available in
 [`docs/editors.md`](../../docs/editors.md).
 
@@ -50,5 +68,6 @@ From the repository root:
 make test-neovim
 ```
 
-The test runs Neovim headlessly and checks filetype detection, buffer settings,
-representative syntax groups, and indentation while typing closing braces.
+The test runs Neovim headlessly and checks running Longbow from an empty editor,
+quickfix navigation, filetype detection, buffer settings, representative syntax
+groups, and indentation while typing closing braces.

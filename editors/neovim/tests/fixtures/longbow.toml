@@ -1,0 +1,6 @@
+[package]
+name = "neovim-fixture"
+version = "0.1.0"
+kind = "program"
+
+[dependencies]
