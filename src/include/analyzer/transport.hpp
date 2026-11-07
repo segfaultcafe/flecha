@@ -1,5 +1,5 @@
-#ifndef FLECHA_LSP_TRANSPORT_HPP
-#define FLECHA_LSP_TRANSPORT_HPP
+#ifndef FLECHA_ANALYZER_TRANSPORT_HPP
+#define FLECHA_ANALYZER_TRANSPORT_HPP
 
 #include <istream>
 #include <optional>
@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace flecha::lsp {
+namespace flecha::analyzer {
 
 class Transport final {
 public:
@@ -24,4 +24,4 @@ private:
 
 }
 
-#endif
+#endif  // FLECHA_ANALYZER_TRANSPORT_HPP

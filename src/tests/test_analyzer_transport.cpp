@@ -4,12 +4,12 @@
 #include <stdexcept>
 #include <string>
 
-#include "lsp/transport.hpp"
+#include "analyzer/transport.hpp"
 
 namespace {
-using flecha::lsp::Transport;
+using flecha::analyzer::Transport;
 
-TEST(LspTransportTests, ReadsFramedMessage) {
+TEST(AnalyzerTransportTests, ReadsFramedMessage) {
     std::istringstream input("Content-Length: 4\r\n\r\ntest");
     std::ostringstream output;
     Transport transport(input, output);
@@ -20,7 +20,7 @@ TEST(LspTransportTests, ReadsFramedMessage) {
     EXPECT_EQ(*message, "test");
 }
 
-TEST(LspTransportTests, ReadsConsecutiveMessages) {
+TEST(AnalyzerTransportTests, ReadsConsecutiveMessages) {
     std::istringstream input("Content-Length: 3\r\n\r\none"
                              "Content-Length: 3\r\n\r\ntwo");
     std::ostringstream output;
@@ -31,7 +31,7 @@ TEST(LspTransportTests, ReadsConsecutiveMessages) {
     EXPECT_FALSE(transport.ReadMessage());
 }
 
-TEST(LspTransportTests, ReturnsEmptyOnCleanEof) {
+TEST(AnalyzerTransportTests, ReturnsEmptyOnCleanEof) {
     std::istringstream input;
     std::ostringstream output;
     Transport transport(input, output);
@@ -39,7 +39,7 @@ TEST(LspTransportTests, ReturnsEmptyOnCleanEof) {
     EXPECT_FALSE(transport.ReadMessage());
 }
 
-TEST(LspTransportTests, RejectsMissingContentLength) {
+TEST(AnalyzerTransportTests, RejectsMissingContentLength) {
     std::istringstream input("Content-Type: application/json\r\n\r\n{}");
     std::ostringstream output;
     Transport transport(input, output);
@@ -47,7 +47,7 @@ TEST(LspTransportTests, RejectsMissingContentLength) {
     EXPECT_THROW(transport.ReadMessage(), std::runtime_error);
 }
 
-TEST(LspTransportTests, RejectsInvalidContentLength) {
+TEST(AnalyzerTransportTests, RejectsInvalidContentLength) {
     std::istringstream input("Content-Length: nope\r\n\r\n");
     std::ostringstream output;
     Transport transport(input, output);
@@ -55,7 +55,7 @@ TEST(LspTransportTests, RejectsInvalidContentLength) {
     EXPECT_THROW(transport.ReadMessage(), std::runtime_error);
 }
 
-TEST(LspTransportTests, RejectsTruncatedBody) {
+TEST(AnalyzerTransportTests, RejectsTruncatedBody) {
     std::istringstream input("Content-Length: 10\r\n\r\nshort");
     std::ostringstream output;
     Transport transport(input, output);
@@ -63,7 +63,7 @@ TEST(LspTransportTests, RejectsTruncatedBody) {
     EXPECT_THROW(transport.ReadMessage(), std::runtime_error);
 }
 
-TEST(LspTransportTests, WritesFramedMessage) {
+TEST(AnalyzerTransportTests, WritesFramedMessage) {
     std::istringstream input;
     std::ostringstream output;
     Transport transport(input, output);

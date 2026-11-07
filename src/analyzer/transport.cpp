@@ -1,4 +1,4 @@
-#include "lsp/transport.hpp"
+#include "analyzer/transport.hpp"
 
 #include <charconv>
 #include <cstddef>
@@ -8,7 +8,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace flecha::lsp {
+namespace flecha::analyzer {
 
 namespace {
 
@@ -120,4 +120,4 @@ bool Transport::WriteMessage(std::string_view message) {
     return static_cast<bool>(_output);
 }
 
-}  // namespace flecha::lsp
+}  // namespace flecha::analyzer
