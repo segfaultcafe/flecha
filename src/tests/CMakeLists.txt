@@ -1,5 +1,6 @@
 add_executable(test_flecha
     test_analysis_session.cpp
+    test_analyzer_protocol.cpp
     test_ast.cpp
     test_codegen.cpp
     test_diagnostics.cpp
