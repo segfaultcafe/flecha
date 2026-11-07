@@ -2058,6 +2058,60 @@ TEST(SemanticCallableTests, PropagatesCaptureOriginsThroughStructures) {
     EXPECT_FALSE(valid.diagnostics.HasErrors());
 }
 
+TEST(SemanticCallableTests, PreservesBorrowOriginsThroughTupleResults) {
+    const std::string declarations = R"(
+        func Reader() => (i32);
+        structure Wrapper { Reader input; };
+    )";
+
+    Analysis missingContract = Analyze(declarations + R"(
+        (Wrapper, error) wrap(Reader source) {
+            return (build Wrapper { self.input = source; }, none);
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(missingContract,
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+
+    Analysis conflict = Analyze(declarations + R"(
+        (Wrapper, error) wrap(Reader source) <- source {
+            return (build Wrapper { self.input = source; }, none);
+        }
+        i32 use() {
+            i32 value = 42;
+            Reader reader = [&const value]() => { return value; };
+            wrapper, failure := wrap(reader);
+            value = 7;
+            return (wrapper.input)();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(conflict, DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    Analysis localEscape = Analyze(declarations + R"(
+        (Wrapper, error) wrap(Reader source) <- source {
+            return (build Wrapper { self.input = source; }, none);
+        }
+        (Wrapper, error) make() {
+            i32 local = 42;
+            Reader reader = [&const local]() => { return local; };
+            return wrap(reader);
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(localEscape, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis nested = Analyze(declarations + R"(
+        ((Wrapper, error), i32) nest(Reader source) {
+            return ((build Wrapper { self.input = source; }, none), 0);
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(nested, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+}
+
 TEST(SemanticCallableTests, EnforcesAnonymousFunctionPointerSafety) {
     Analysis valid = Analyze(R"(
         unsafe func Reader(*const i32) => (i32);
