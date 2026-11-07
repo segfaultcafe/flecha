@@ -8,6 +8,9 @@
   including from an empty editor at the project root, display compiler output
   in quickfix, and open a selected diagnostic at its exact source line with
   `<leader>fe`.
+- The Neovim plugin can run verbose Flecha tests for the enclosing Longbow
+  project with `<leader>rt` or `:LongbowTest`; failed test declarations are
+  navigable from quickfix with `<leader>fe`.
 
 ## 0.3.1 - 2026-11-06
 
