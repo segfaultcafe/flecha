@@ -50,11 +50,18 @@ Move the cursor onto a result and press `<leader>fe` to open that exact source
 line. Enter on the result performs the same exact-line jump. You can also run
 the workflow with `:LongbowRun`.
 
+Press `<leader>rt` to run `longbow test <project-root> --verbose` for the same
+enclosing project and open the test output in quickfix. The command form is
+`:LongbowTest`. On failure, `<leader>fe` opens the selected failed test's
+declaration. If the cursor is on summary output instead, it opens the first
+navigable failure.
+
 To choose a different run mapping, map `<Plug>(FlechaLongbowRun)` in your
 Neovim configuration before the Flecha runtime plugin loads:
 
 ```vim
 nmap <leader>br <Plug>(FlechaLongbowRun)
+nmap <leader>bt <Plug>(FlechaLongbowTest)
 ```
 
 Windows PowerShell installation and upgrade instructions are available in

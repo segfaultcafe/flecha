@@ -4,7 +4,9 @@ syntax enable
 " The run command and mapping must exist before any Flecha file is opened.
 call assert_equal('', expand('%:p'))
 call assert_equal(2, exists(':LongbowRun'))
+call assert_equal(2, exists(':LongbowTest'))
 call assert_notequal('', maparg('<leader>rr', 'n'))
+call assert_notequal('', maparg('<leader>rt', 'n'))
 call assert_equal('', maparg('<leader>lr', 'n'))
 call assert_equal('', maparg('<leader>fr', 'n'))
 
@@ -50,9 +52,41 @@ call assert_equal('flecha', &filetype)
 call assert_equal('flecha', get(b:, 'current_syntax', ''))
 call assert_equal('// %s', &l:commentstring)
 call assert_equal('longbow run', &l:makeprg)
-call assert_equal('%f:FLECHA-%t%n:%l:%c: %m', &l:errorformat)
+call assert_equal(
+            \ '%f:FLECHA-%t%n:%l:%c: %m,%E%\s%#test: %f:%l:%c',
+            \ &l:errorformat)
 call assert_equal(2, exists(':LongbowRun'))
+call assert_equal(2, exists(':LongbowTest'))
 call assert_notequal('', maparg('<leader>rr', 'n'))
+call assert_notequal('', maparg('<leader>rt', 'n'))
+
+let b:flecha_longbow_test_makeprg = 'echo ' . shellescape(s:diagnostic)
+LongbowTest
+call assert_equal('quickfix', &buftype)
+let s:longbow_test_errors = filter(copy(getqflist()), 'v:val.valid')
+call assert_equal(1, len(s:longbow_test_errors))
+call assert_match('--verbose$', s:longbow_test_errors[0].text)
+cclose
+
+" A failed test reports its declaration after non-location output. From that
+" first quickfix line, <leader>fe must find and open the valid test location.
+call setqflist([], 'r', {
+            \ 'lines': [
+            \     'framing_test.fl',
+            \     '  writes_complete_message................................fail',
+            \     '    test: ' . s:jump_target . ':1:1',
+            \     'FAIL [0/1] tests passed, but [1/1] failed',
+            \ ],
+            \ 'efm': &l:errorformat,
+            \ })
+copen
+call cursor(1, 1)
+call feedkeys("\\fe", 'xt')
+call assert_equal(fnamemodify(s:jump_target, ':p'), expand('%:p'))
+call assert_equal(1, line('.'))
+cclose
+execute 'edit ' . fnameescape(
+            \ s:fixture_directory . '/highlighting.fl')
 
 call setqflist([], 'r', {
             \ 'lines': [

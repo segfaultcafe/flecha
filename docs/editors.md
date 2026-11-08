@@ -1,9 +1,9 @@
 # Editor installation
 
 Flecha releases provide a ready-to-install Visual Studio Code extension and a
-Neovim runtime plugin. Both currently provide syntax highlighting, filetype
-detection, comments, brackets, and indentation support; neither is a language
-server.
+Neovim runtime plugin. Both provide syntax highlighting, filetype detection,
+comments, brackets, and indentation support. The Visual Studio Code extension
+also starts `flecha-lsp` for live compiler diagnostics.
 
 Both editors render the `!` in a crashable declaration or call, such as
 `load!()`, in orange. Logical negation such as `!ready` keeps the ordinary
@@ -41,6 +41,20 @@ code --uninstall-extension flecha.flecha-language
 When `code` is not on `PATH`, open the Extensions view, choose **Views and More
 Actions**, select **Install from VSIX**, and select the downloaded file.
 
+The language-server client expects `flecha-lsp` and `flecha` on `PATH`. Custom
+development builds can be selected in user settings:
+
+```json
+{
+  "flecha.server.path": "/path/to/flecha-lsp",
+  "flecha.compiler.path": "/path/to/flecha"
+}
+```
+
+Run **Flecha: Restart Language Server** after changing or rebuilding either
+executable. Set `flecha.trace.server` to `messages` or `verbose` when debugging
+the LSP connection.
+
 ### Package a checkout
 
 Install Node.js 22 or newer, then run this from the repository root:
@@ -53,8 +67,9 @@ This uses `npm ci` and the checked-in lockfile to package the extension with the
 pinned official `@vscode/vsce` release. It writes
 `editors/vscode/flecha-language-VERSION.vsix` and verifies the archive's
 identity, version, installation manifest, grammar, and development-file
-exclusions. CI performs the same steps, and the release workflow checks that
-the extension version matches the release tag before publishing it.
+exclusions, including the bundled language-client entry point. CI performs the
+same steps, and the release workflow checks that the extension version matches
+the release tag before publishing it.
 
 ## Neovim
 
@@ -89,6 +104,11 @@ project root, even with no file open. A named buffer is saved first and its
 nearest enclosing `longbow.toml` is used. Diagnostics include their file, line,
 and column. Select an item and press `<leader>fe` to open its exact source line.
 Enter performs the same exact-line jump. The command form is `:LongbowRun`.
+Use `<leader>rt` (or `:LongbowTest`) to run
+`longbow test <project-root> --verbose` and place verbose test output in the
+same quickfix workflow. On failure, `<leader>fe` opens the selected failed
+test declaration, or the first navigable failure when a summary line is
+selected.
 
 To upgrade, replace the existing `flecha.nvim` directory with the directory
 from the new release. To uninstall, remove that `flecha.nvim` directory.

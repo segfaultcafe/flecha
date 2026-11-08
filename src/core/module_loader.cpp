@@ -1,13 +1,13 @@
 #include "core/module_loader.hpp"
 
 #include <algorithm>
-#include <fstream>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <string_view>
 
 #include "core/parser.hpp"
+#include "core/source_provider.hpp"
 #include "core/tokenizer.hpp"
 
 namespace flecha::core {
@@ -24,16 +24,9 @@ struct ParsedSource final {
     std::unique_ptr<CompilationUnit> unit;
 };
 
-std::optional<std::string> ReadSource(const fs::path& file) {
-    std::ifstream stream(file);
-    if (!stream) return std::nullopt;
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    return buffer.str();
-}
-
-ModuleHeader ReadHeader(const fs::path& file) {
-    const auto source = ReadSource(file);
+ModuleHeader ReadHeader(const fs::path& file,
+                        const SourceProvider& sourceProvider) {
+    const auto source = sourceProvider.Read(file);
     if (!source) return {};
     diagnostics::DiagnosticBag ignored;
     Parser parser(Tokenizer(*source, ignored).Tokenize(), ignored);
@@ -204,7 +197,7 @@ std::unique_ptr<CompilationUnit> ModuleLoader::LoadConfigured(
         return std::make_unique<CompilationUnit>(
             source::SourceRange{}, std::vector<std::unique_ptr<Declaration>>{});
     }
-    const ModuleHeader header = ReadHeader(file);
+    const ModuleHeader header = ReadHeader(file, Sources());
     if (header.name.empty())
         LoadLegacyEntry(file, root, rootIdentity);
     else
@@ -263,9 +256,14 @@ std::string ModuleLoader::SourceName(const std::string& sourceIdentity) const {
     return node->identity + (node->version.empty() ? "" : "@" + node->version);
 }
 
+const SourceProvider& ModuleLoader::Sources() const {
+    static const FilesystemSourceProvider filesystem;
+    return _sourceProvider ? *_sourceProvider : filesystem;
+}
+
 void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root,
                                    const std::string& sourceIdentity) {
-    const auto source = ReadSource(file);
+    const auto source = Sources().Read(file);
     const source::SourceLocation origin{0, 1, 1, file.string()};
     const source::SourceRange fileRange{origin, origin};
     if (!source) {
@@ -355,7 +353,7 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
     std::vector<fs::path> sourceFiles;
     for (const auto& item : fs::directory_iterator(directory)) {
         if (!item.is_regular_file() || item.path().extension() != ".fl" ||
-            ReadHeader(item.path()).name != name)
+            ReadHeader(item.path(), Sources()).name != name)
             continue;
         const fs::path sourceFile = fs::weakly_canonical(item.path());
         const fs::path relative = sourceFile.lexically_relative(root);
@@ -401,7 +399,7 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
             continue;
         }
         _roots.emplace(file, root);
-        const auto source = ReadSource(file);
+        const auto source = Sources().Read(file);
         if (!source) {
             Report(namespaceRange,
                    "cannot open module source '" + file.string() + "'");
@@ -453,7 +451,8 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
             for (const auto& item : fs::directory_iterator(selectedDirectory)) {
                 if (!item.is_regular_file() || item.path().extension() != ".fl")
                     continue;
-                const std::string selected = ReadHeader(item.path()).name;
+                const std::string selected =
+                    ReadHeader(item.path(), Sources()).name;
                 if (!selected.empty() && !IsTestModule(selected))
                     names.insert(selected);
             }

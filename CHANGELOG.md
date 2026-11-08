@@ -4,10 +4,22 @@
 
 ### Added
 
+- The Visual Studio Code extension now starts `flecha-lsp` for live compiler
+  diagnostics, with configurable server/compiler paths, protocol tracing, and
+  a restart command for development builds.
 - The Neovim plugin can run the enclosing Longbow project with `<leader>rr`,
   including from an empty editor at the project root, display compiler output
   in quickfix, and open a selected diagnostic at its exact source line with
   `<leader>fe`.
+- The Neovim plugin can run verbose Flecha tests for the enclosing Longbow
+  project with `<leader>rt` or `:LongbowTest`; failed test declarations are
+  navigable from quickfix with `<leader>fe`.
+
+### Fixed
+
+- Allocation analysis now summarizes safe resource-helper calls after
+  verifying their bodies once, preventing exponential compile times in code
+  that uses layered parsers and other allocation-backed abstractions.
 
 ## 0.3.1 - 2026-11-06
 

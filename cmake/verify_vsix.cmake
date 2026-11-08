@@ -33,6 +33,7 @@ foreach(file IN ITEMS
         "[Content_Types].xml"
         extension.vsixmanifest
         extension/LICENSE.txt
+        extension/dist/extension.js
         extension/readme.md
         extension/language-configuration.json
         extension/package.json

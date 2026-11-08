@@ -14,8 +14,23 @@
   "engines": {
     "vscode": "^1.85.0"
   },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:flecha"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "The extension starts local Flecha language-server and compiler executables."
+    },
+    "virtualWorkspaces": false
+  },
   "scripts": {
-    "package": "vsce package --no-dependencies"
+    "compile": "esbuild extension.js --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js",
+    "package": "npm run compile && vsce package --no-dependencies"
   },
   "categories": [
     "Programming Languages"
@@ -88,9 +103,48 @@
           }
         ]
       }
+    },
+    "commands": [
+      {
+        "command": "flecha.restartLanguageServer",
+        "title": "Restart Language Server",
+        "category": "Flecha"
+      }
+    ],
+    "configuration": {
+      "title": "Flecha",
+      "properties": {
+        "flecha.server.path": {
+          "type": "string",
+          "default": "flecha-lsp",
+          "scope": "machine",
+          "description": "Path to the Flecha language server executable."
+        },
+        "flecha.compiler.path": {
+          "type": "string",
+          "default": "flecha",
+          "scope": "machine",
+          "description": "Path to the Flecha compiler used by the language server."
+        },
+        "flecha.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "scope": "window",
+          "description": "Trace communication between VS Code and the Flecha language server."
+        }
+      }
     }
   },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
   "devDependencies": {
-    "@vscode/vsce": "4.0.0"
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2"
   }
 }
