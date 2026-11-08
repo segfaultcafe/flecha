@@ -31,7 +31,7 @@ The compiler is implemented in modern C++ and currently includes a tokenizer, pa
 - LLVM IR emission and native executable/object generation
 - Human-readable source diagnostics
 - A small package/project workflow through `longbow`
-- Visual Studio Code and Neovim syntax support
+- Visual Studio Code language-server diagnostics and Neovim syntax support
 
 ## Quick start
 
@@ -289,7 +289,7 @@ std/                    Flecha standard-library source packages
 examples/               Small language and package examples
 docs/                   Feature, implementation, and design documentation
 editors/neovim/         Neovim filetype and syntax support
-editors/vscode/         Visual Studio Code syntax extension
+editors/vscode/         Visual Studio Code syntax and language-client extension
 SPEC.md                 Current language specification draft
 CODE_STYLE.md           C++ and repository style guidance
 CMakeLists.txt          CMake build definition
@@ -345,7 +345,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation
 - [`docs/crashable_functions.md`](docs/crashable_functions.md) — explicit unrecoverable effects and crash reports
 - [`docs/enums.md`](docs/enums.md) — nominal enums, defaults, discriminants, and member functions
-- [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting setup
+- [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting and language-server setup
 - [`editors/neovim/README.md`](editors/neovim/README.md) — Neovim installation and usage
 
 The documentation distinguishes implemented behavior from proposals and

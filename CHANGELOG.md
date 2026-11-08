@@ -4,6 +4,9 @@
 
 ### Added
 
+- The Visual Studio Code extension now starts `flecha-lsp` for live compiler
+  diagnostics, with configurable server/compiler paths, protocol tracing, and
+  a restart command for development builds.
 - The Neovim plugin can run the enclosing Longbow project with `<leader>rr`,
   including from an empty editor at the project root, display compiler output
   in quickfix, and open a selected diagnostic at its exact source line with
