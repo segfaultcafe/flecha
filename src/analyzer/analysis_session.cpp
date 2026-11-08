@@ -25,6 +25,12 @@ AnalysisSession::AnalysisSession(
       _libraries(std::move(libraries)),
       _sources(_overlays, _filesystem) {}
 
+AnalysisSession::AnalysisSession(std::filesystem::path workspaceRoot,
+                                 core::PackageGraph packageGraph)
+    : _workspaceRoot(NormalizePath(workspaceRoot)),
+      _packageGraph(std::move(packageGraph)),
+      _sources(_overlays, _filesystem) {}
+
 std::filesystem::path AnalysisSession::Normalize(
     const std::filesystem::path& path) const {
     const std::filesystem::path absolute =
@@ -58,7 +64,8 @@ AnalysisSnapshot AnalysisSession::Analyze(
     diagnostics::DiagnosticBag diagnostics;
     core::ModuleLoader loader(diagnostics, _sources);
     std::unique_ptr<core::CompilationUnit> unit =
-        loader.Load(normalized, _workspaceRoot, _libraries);
+        _packageGraph ? loader.Load(normalized, *_packageGraph)
+                      : loader.Load(normalized, _workspaceRoot, _libraries);
 
     std::optional<semantic::SemanticModel> semanticModel;
     if (unit && !diagnostics.HasErrors()) {

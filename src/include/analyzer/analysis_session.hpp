@@ -11,6 +11,7 @@
 #include "analyzer/overlay_source_provider.hpp"
 #include "analyzer/source_overlays.hpp"
 #include "core/ast.hpp"
+#include "core/package_graph.hpp"
 #include "core/source_provider.hpp"
 #include "diagnostics/diagnostic_bag.hpp"
 #include "semantic/semantic_model.hpp"
@@ -32,6 +33,8 @@ class AnalysisSession final {
     explicit AnalysisSession(
         std::filesystem::path workspaceRoot,
         std::map<std::string, std::filesystem::path> libraries = {});
+    AnalysisSession(std::filesystem::path workspaceRoot,
+                    core::PackageGraph packageGraph);
 
     AnalysisSession(const AnalysisSession&) = delete;
     AnalysisSession& operator=(const AnalysisSession&) = delete;
@@ -59,6 +62,7 @@ class AnalysisSession final {
 
     std::filesystem::path _workspaceRoot;
     std::map<std::string, std::filesystem::path> _libraries;
+    std::optional<core::PackageGraph> _packageGraph;
     SourceOverlays _overlays;
     core::FilesystemSourceProvider _filesystem;
     OverlaySourceProvider _sources;

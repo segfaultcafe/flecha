@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "analyzer/json.hpp"
+#include "core/package_graph.hpp"
 #include "diagnostics/diagnostic.hpp"
 
 namespace flecha::analyzer {
@@ -198,7 +199,28 @@ std::string ProtocolServer::Handle(std::string_view message) {
                 return ErrorResponse(request->id, INCOMPATIBLE_PROTOCOL,
                                      "incompatible analyzer protocol major");
 
-            _session = std::make_unique<AnalysisSession>(std::move(workspace));
+            const json::Value* packageGraphValue =
+                json::Field(*request->params, "packageGraph");
+            if (packageGraphValue) {
+                const std::string* packageGraphPath =
+                    json::AsString(*packageGraphValue);
+                if (!packageGraphPath ||
+                    !std::filesystem::path(*packageGraphPath).is_absolute())
+                    return ErrorResponse(
+                        request->id, INVALID_PARAMS,
+                        "packageGraph must be an absolute path");
+                std::string graphError;
+                std::optional<core::PackageGraph> packageGraph =
+                    core::PackageGraph::Load(*packageGraphPath, graphError);
+                if (!packageGraph)
+                    return ErrorResponse(request->id, INVALID_PARAMS,
+                                         graphError);
+                _session = std::make_unique<AnalysisSession>(
+                    std::move(workspace), std::move(*packageGraph));
+            } else {
+                _session =
+                    std::make_unique<AnalysisSession>(std::move(workspace));
+            }
             _state = ProtocolState::Initialized;
             const std::string result =
                 "{\"protocolMajor\":" + std::to_string(PROTOCOL_MAJOR) +

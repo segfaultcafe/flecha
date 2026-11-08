@@ -58,7 +58,9 @@ class AnalyzerProtocolTests : public ::testing::Test {
     }
 
     void Write(const std::string& name, const std::string& text) const {
-        std::ofstream(_root / name, std::ios::binary) << text;
+        const std::filesystem::path path = _root / name;
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream(path, std::ios::binary) << text;
     }
 
     std::filesystem::path _root;
@@ -97,6 +99,58 @@ TEST_F(AnalyzerProtocolTests, RejectsIncompatibleProtocolMajor) {
         server.Handle(Request("1", "initialize", params));
 
     EXPECT_EQ(ErrorCode(response), -32004);
+    EXPECT_EQ(server.State(), ProtocolState::Starting);
+}
+
+TEST_F(AnalyzerProtocolTests, LoadsPackageGraphForSemanticDiagnostics) {
+    Write("src/main.fl",
+          "module main;\n"
+          "@imports :: lib::dependency::value;\n"
+          "i32 main() { return missing + value::answer(); }\n");
+    Write("dependency/value.fl",
+          "module value;\nexport i32 answer() { return 42; }\n");
+    Write("target/package-graph.json",
+          "{\"schema\":1,\"root\":\"root\",\"packages\":["
+          "{\"id\":\"root\",\"identity\":\"local/root\","
+          "\"source\":\"../src\",\"dependencies\":{"
+          "\"dependency\":\"dependency\"}},"
+          "{\"id\":\"dependency\",\"identity\":\"local/dependency\","
+          "\"source\":\"../dependency\",\"dependencies\":{}}]}");
+    const std::filesystem::path graph =
+        _root / "target/package-graph.json";
+    const std::string params =
+        "{\"protocolMajor\":1,\"protocolMinor\":0,\"workspace\":" +
+        flecha::analyzer::json::Quote(_root.generic_string()) +
+        ",\"packageGraph\":" +
+        flecha::analyzer::json::Quote(graph.generic_string()) + "}";
+    ProtocolServer server("test-compiler");
+    ASSERT_EQ(ErrorCode(server.Handle(Request("1", "initialize", params))), 0);
+
+    const std::string path = (_root / "src/main.fl").generic_string();
+    const std::string diagnostics = server.Handle(Request(
+        "2", "document/diagnostics",
+        "{\"path\":" + flecha::analyzer::json::Quote(path) + "}"));
+
+    EXPECT_NE(diagnostics.find("FLECHA-S0002"), std::string::npos);
+    EXPECT_NE(diagnostics.find("unknown name 'missing'"), std::string::npos);
+    EXPECT_EQ(diagnostics.find("library 'dependency' is not configured"),
+              std::string::npos);
+}
+
+TEST_F(AnalyzerProtocolTests, RejectsInvalidPackageGraph) {
+    const std::filesystem::path graph = _root / "missing-package-graph.json";
+    const std::string params =
+        "{\"protocolMajor\":1,\"protocolMinor\":0,\"workspace\":" +
+        flecha::analyzer::json::Quote(_root.generic_string()) +
+        ",\"packageGraph\":" +
+        flecha::analyzer::json::Quote(graph.generic_string()) + "}";
+    ProtocolServer server("test-compiler");
+
+    const std::string response =
+        server.Handle(Request("1", "initialize", params));
+
+    EXPECT_EQ(ErrorCode(response), -32602);
+    EXPECT_NE(response.find("cannot read package graph"), std::string::npos);
     EXPECT_EQ(server.State(), ProtocolState::Starting);
 }
 
