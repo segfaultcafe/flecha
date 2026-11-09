@@ -9,6 +9,10 @@
 #include "core/ast.hpp"
 #include "scope.hpp"
 
+namespace flecha::analyzer {
+class SemanticQueries;
+}
+
 namespace flecha::semantic {
 
 class SemanticAnalyzer;
@@ -103,6 +107,7 @@ class SemanticModel final {
 
    private:
     friend class SemanticAnalyzer;
+    friend class analyzer::SemanticQueries;
     std::vector<std::unique_ptr<StructureType>> _structures;
     std::vector<std::unique_ptr<EnumType>> _enums;
     std::unordered_map<const core::StructureDeclaration*, JsonStructureMetadata>
@@ -126,6 +131,7 @@ class SemanticModel final {
     std::vector<std::unique_ptr<Symbol>> _symbols;
     std::vector<std::unique_ptr<Scope>> _scopes;
     std::unordered_map<const core::NameExpression*, const Symbol*> _bindings;
+    std::unordered_map<const core::TypeNode*, const Symbol*> _typeBindings;
     std::unordered_map<const core::AstNode*, const Symbol*> _declarations;
     std::unordered_map<const core::Expression*, SemanticType> _types;
     std::unordered_map<const core::Expression*, TransferKind> _transfers;

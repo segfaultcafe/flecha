@@ -18,6 +18,64 @@ std::filesystem::path NormalizePath(const std::filesystem::path& path) {
 
 }  // namespace
 
+std::optional<SemanticHover> AnalysisSnapshot::Hover(
+    const std::filesystem::path& file, std::size_t offset) const {
+    if (!semanticModel) return std::nullopt;
+    const std::filesystem::path absolute =
+        file.is_absolute() ? file : workspaceRoot / file;
+    return SemanticQueries(*semanticModel).Hover(absolute, offset);
+}
+
+std::optional<SemanticOccurrence> AnalysisSnapshot::OccurrenceAt(
+    const std::filesystem::path& file, std::size_t offset) const {
+    if (!semanticModel) return std::nullopt;
+    const std::filesystem::path absolute =
+        file.is_absolute() ? file : workspaceRoot / file;
+    return SemanticQueries(*semanticModel).OccurrenceAt(absolute, offset);
+}
+
+std::vector<SemanticOccurrence> AnalysisSnapshot::Occurrences(
+    const std::filesystem::path& file) const {
+    if (!semanticModel) return {};
+    const std::filesystem::path absolute =
+        file.is_absolute() ? file : workspaceRoot / file;
+    return SemanticQueries(*semanticModel).Occurrences(absolute);
+}
+
+std::optional<source::SourceRange> AnalysisSnapshot::Definition(
+    const std::filesystem::path& file, std::size_t offset) const {
+    if (!semanticModel) return std::nullopt;
+    const std::filesystem::path absolute =
+        file.is_absolute() ? file : workspaceRoot / file;
+    return SemanticQueries(*semanticModel).Definition(absolute, offset);
+}
+
+std::optional<std::vector<source::SourceRange>> AnalysisSnapshot::References(
+    const std::filesystem::path& file, std::size_t offset,
+    bool includeDeclaration) const {
+    if (!semanticModel) return std::nullopt;
+    const std::filesystem::path absolute =
+        file.is_absolute() ? file : workspaceRoot / file;
+    return SemanticQueries(*semanticModel)
+        .References(absolute, offset, includeDeclaration);
+}
+
+std::optional<SemanticRename> AnalysisSnapshot::Rename(
+    const std::filesystem::path& file, std::size_t offset,
+    bool includeDeclaration) const {
+    if (!semanticModel) return std::nullopt;
+    const std::filesystem::path absolute =
+        file.is_absolute() ? file : workspaceRoot / file;
+    return SemanticQueries(*semanticModel)
+        .Rename(absolute, offset, includeDeclaration);
+}
+
+std::vector<SemanticSymbol> AnalysisSnapshot::Symbols(
+    std::string_view query) const {
+    if (!semanticModel) return {};
+    return SemanticQueries(*semanticModel).Symbols(query);
+}
+
 AnalysisSession::AnalysisSession(
     std::filesystem::path workspaceRoot,
     std::map<std::string, std::filesystem::path> libraries)
@@ -64,8 +122,11 @@ AnalysisSnapshot AnalysisSession::Analyze(
     diagnostics::DiagnosticBag diagnostics;
     core::ModuleLoader loader(diagnostics, _sources);
     std::unique_ptr<core::CompilationUnit> unit =
-        _packageGraph ? loader.Load(normalized, *_packageGraph)
-                      : loader.Load(normalized, _workspaceRoot, _libraries);
+        _packageGraph
+            ? loader.Load(normalized, *_packageGraph,
+                          core::ModuleLoadMode::Analysis)
+            : loader.Load(normalized, _workspaceRoot, _libraries,
+                          core::ModuleLoadMode::Analysis);
 
     std::optional<semantic::SemanticModel> semanticModel;
     if (unit && !diagnostics.HasErrors()) {
@@ -73,8 +134,8 @@ AnalysisSnapshot AnalysisSession::Analyze(
         semanticModel.emplace(analyzer.Analyze(*unit));
     }
 
-    return {normalized, std::move(version), std::move(unit),
-            std::move(semanticModel), std::move(diagnostics)};
+    return {normalized,      _workspaceRoot,           std::move(version),
+            std::move(unit), std::move(semanticModel), std::move(diagnostics)};
 }
 
 }  // namespace flecha::analyzer

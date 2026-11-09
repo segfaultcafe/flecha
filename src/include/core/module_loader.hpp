@@ -15,7 +15,11 @@
 namespace flecha::core {
 class SourceProvider;
 
-enum class ModuleLoadMode { Runtime, Test };
+// Analysis accepts either a production or a test module as the entry without
+// generating a test harness. It is intended for editor tooling, where the
+// currently opened source is necessarily analyzed as an entry regardless of
+// the command that will eventually compile it.
+enum class ModuleLoadMode { Runtime, Test, Analysis };
 
 // Loads source units into logical modules. Source units retain independent
 // import scopes while declarations with the same logical module identity share
