@@ -19,8 +19,13 @@ endif()
 
 string(JSON packageCommand GET "${manifest}" scripts package)
 string(JSON vsceVersion GET "${manifest}" devDependencies "@vscode/vsce")
-if(NOT packageCommand STREQUAL "vsce package --no-dependencies" OR
-   NOT vsceVersion STREQUAL "4.0.0")
+if(NOT packageCommand STREQUAL
+       "npm run compile && vsce package --no-dependencies")
+    message(FATAL_ERROR
+        "VS Code packaging must compile the extension before creating the VSIX"
+    )
+endif()
+if(NOT vsceVersion STREQUAL "4.0.0")
     message(FATAL_ERROR
         "VS Code packaging must use the pinned @vscode/vsce 4.0.0"
     )

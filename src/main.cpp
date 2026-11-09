@@ -3,14 +3,24 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
+#include "analyzer/protocol.hpp"
+#include "analyzer/server_loop.hpp"
+#include "analyzer/transport.hpp"
 #include "codegen/llvm_code_generator.hpp"
 #include "codegen/native_compiler.hpp"
 #include "core/module_loader.hpp"
@@ -24,6 +34,20 @@
 #endif
 
 namespace {
+int RunAnalyzerStdio() {
+#ifdef _WIN32
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1 ||
+        _setmode(_fileno(stdout), _O_BINARY) == -1)
+        throw std::runtime_error("cannot configure analyzer stdio");
+#endif
+
+    flecha::analyzer::Transport transport(std::cin, std::cout);
+    flecha::analyzer::ProtocolServer protocol(flecha::VERSION);
+    flecha::analyzer::ServerLoop loop(transport, protocol);
+    loop.Run();
+    return 0;
+}
+
 void PrintDiagnostic(const flecha::diagnostics::Diagnostic& diagnostic) {
     if (!diagnostic.range.start.file.empty())
         std::cerr << diagnostic.range.start.file << ":";
@@ -144,13 +168,26 @@ void PrintUsage(const char* executable) {
                  "output]"
                  " [--root source-directory] [--lib name=source-directory ...]"
                  " [--package-graph graph.json]"
-                 " [--link object-or-library ...] [--verbose]\n";
+                 " [--link object-or-library ...] [--verbose]\n"
+              << "       " << executable << " analyze --stdio\n";
 }
 }  // namespace
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--version") {
         std::cout << "flecha " << flecha::VERSION << "\n";
         return 0;
+    }
+    if (argc >= 2 && std::string(argv[1]) == "analyze") {
+        if (argc != 3 || std::string(argv[2]) != "--stdio") {
+            PrintUsage(argv[0]);
+            return 1;
+        }
+        try {
+            return RunAnalyzerStdio();
+        } catch (const std::exception& error) {
+            std::cerr << "analyzer: " << error.what() << "\n";
+            return 1;
+        }
     }
     if (argc < 3) {
         PrintUsage(argv[0]);

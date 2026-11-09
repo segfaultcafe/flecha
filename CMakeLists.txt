@@ -44,6 +44,7 @@ add_subdirectory(src/diagnostics)
 add_subdirectory(src/core)
 add_subdirectory(src/longbow)
 add_subdirectory(src/semantic)
+add_subdirectory(src/analyzer)
 add_subdirectory(src/lowering)
 add_subdirectory(src/runtime)
 add_subdirectory(src/codegen)
@@ -56,6 +57,7 @@ target_include_directories(flecha PRIVATE ${PROJECT_BINARY_DIR}/generated)
 target_link_libraries(flecha
     PRIVATE
         flecha_project_options
+        analyzer
         diagnostics
         core
         semantic
