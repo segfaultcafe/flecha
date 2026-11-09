@@ -8,6 +8,7 @@ add_executable(test_flecha
     test_analyzer_transport.cpp
     test_lowering.cpp
     test_longbow.cpp
+    test_lsp_protocol.cpp
     test_modules.cpp
     test_main.cpp
     test_parser.cpp
@@ -52,6 +53,7 @@ target_link_libraries(test_flecha
         semantic
         lowering
         longbow_model
+        lsp
         analyzer
         llvm_codegen
         memory
@@ -197,6 +199,14 @@ add_test(
         -DPROJECT_VERSION=${PROJECT_VERSION}
         -DANALYZER_INPUT=${CMAKE_CURRENT_BINARY_DIR}/analyzer-stdio-input.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_analyzer_stdio.cmake
+)
+add_test(
+    NAME CliTests.LspStdio
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_LSP=$<TARGET_FILE:flecha-lsp>
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lsp-stdio
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_lsp_stdio.cmake
 )
 add_test(NAME CliTests.LongbowVersion COMMAND $<TARGET_FILE:longbow> --version)
 set_tests_properties(CliTests.LongbowVersion PROPERTIES

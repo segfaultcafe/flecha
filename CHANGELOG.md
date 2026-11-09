@@ -4,6 +4,9 @@
 
 ### Added
 
+- Flecha now builds and installs `flecha-lsp`, with full-document
+  synchronization, diagnostics, hover information, go to definition,
+  references, completion, rename, and semantic tokens.
 - The Visual Studio Code extension now starts `flecha-lsp` for live compiler
   diagnostics, with configurable server/compiler paths, protocol tracing, and
   a restart command for development builds.
