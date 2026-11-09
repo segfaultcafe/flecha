@@ -21,6 +21,8 @@ stringv Echo(stringv value) {
     return value;
 }
 
+const stringv METHOD = "GET";
+
 void explode!() { crash("boom"); }
 void call_explode!() { explode!(); if !false {} }
 T generic_explode<T>!(T value) { crash("generic boom"); }
@@ -52,6 +54,8 @@ readonly.front();
 fixed.back()++;
 
 void Deferred() { defer stdoutln("done"); }
+void Generator() { yield none; }
+T generic_cast<T>() { return cast<T>(); }
 
 (i32, bool) TupleResult() { return (42, true); }
 void TupleBindings() { (i32 count, bool ready) = TupleResult(); }
@@ -66,6 +70,8 @@ error genericError = MathError.Overflow;
 structure Box { private i32 x; };
 Box Box::init() override { return build Box {}; }
 i32 Box::value(&self) { return self->x; }
+void Server::run() {}
+void StartServer() { Server::run(); }
 &const i32 borrow_all(&const i32 args) <- ...args { return args; }
 args := 0;
 

@@ -4,12 +4,16 @@ endif
 
 syntax case match
 
+syntax match flechaVariable /\<[a-z_][A-Za-z0-9_]*\>/
 syntax match flechaImports /@[A-Za-z_][A-Za-z0-9_]*\%(\s*::\s*[A-Za-z_][A-Za-z0-9_]*\)*\>/
 
 syntax keyword flechaType i8 i16 i32 i64 isize
 syntax keyword flechaType u8 u16 u32 u64 usize
 syntax keyword flechaType f32 f64 bool char void string stringv error AllocationError
 syntax match flechaType /\<[A-Z][A-Za-z0-9_]*\>/
+syntax match flechaNamedConstant /\<[A-Z][A-Z0-9_]\+\>/
+syntax match flechaEnumConstant /\.\zs[A-Z][A-Za-z0-9_]*\>/
+syntax match flechaParameter /\%(\<\%(i8\|i16\|i32\|i64\|isize\|u8\|u16\|u32\|u64\|usize\|f32\|f64\|bool\|char\|void\|string\|stringv\|error\|[A-Z][A-Za-z0-9_]*\)\>\s\+\)\@<=\<[a-z_][A-Za-z0-9_]*\>\ze\s*[,)]/
 syntax match flechaBuiltinTypeSet /\<\%(signed_integer\|unsigned_integer\|integer\|floating_point\|numeric\)\>/
 
 syntax keyword flechaModifier unsafe once export quiver extern foreign inline comptime copy own lend const constptr constref volatile private override
@@ -34,6 +38,8 @@ syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>\|<=\|>
 syntax match flechaCrashableBang /\%([A-Za-z0-9_>]\)\@<=!\ze\s*(/
 syntax match flechaRawAddress /\%(&\s*\)\@<=raw\>/
 syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?!\?\s*(/
+syntax match flechaMethod /\%(::\s*\)\@<=[A-Za-z_][A-Za-z0-9_]*\ze\s*\%(<.\{-}>\s*\)\?!\?\s*(/
+syntax match flechaMethod /\.\zs[A-Za-z_][A-Za-z0-9_]*\ze\s*\%(<.\{-}>\s*\)\?!\?\s*(/
 syntax match flechaCrashBuiltin /\<crash\>\ze\s*(/
 syntax match flechaAllocation /\<new\>\ze\s*</
 syntax match flechaAllocation /\<take\>\ze\s*(/
@@ -57,45 +63,61 @@ syntax keyword flechaTodo TODO FIXME XXX NOTE contained
 syntax match flechaLineComment /\/\/.*$/ contains=flechaTodo
 syntax region flechaBlockComment start=/\/\*/ end=/\*\// contains=flechaTodo
 
-highlight default flechaImports guifg=#87CEFA ctermfg=117
-highlight default flechaSelf guifg=#5F87AF ctermfg=67
-highlight default flechaTest guifg=#D4AF37 ctermfg=178
-highlight default flechaFuncKeyword guifg=#569CD6 ctermfg=68
-highlight default flechaBuiltinTypeSet guifg=#87CEFA ctermfg=117
-highlight default flechaFloatConstant guifg=#C49A00 ctermfg=178
-highlight default flechaIntegerLimit guifg=#C49A00 ctermfg=178
-highlight default flechaCrashableBang guifg=#FF8C00 ctermfg=208
-highlight default flechaCrashBuiltin guifg=#87CEFA ctermfg=117
-highlight default link flechaType Type
-highlight default link flechaTypeSetKeyword Statement
-highlight default link flechaTypeSetName Type
-highlight default link flechaModuleName Identifier
-highlight default link flechaNamespace Identifier
-highlight default link flechaModifier StorageClass
-highlight default link flechaConditional Conditional
-highlight default link flechaRepeat Repeat
-highlight default link flechaStatement Statement
-highlight default link flechaJump Statement
-highlight default link flechaCast Keyword
-highlight default link flechaBoolean Boolean
-highlight default link flechaConstant Constant
-highlight default link flechaWordOperator Operator
-highlight default link flechaOperator Operator
-highlight default link flechaRawAddress Keyword
-highlight default link flechaFunction Function
-highlight default link flechaCastMethod Function
-highlight default link flechaIsOfMethod Function
-highlight default link flechaAllocation Function
-highlight default link flechaLabel Label
-highlight default link flechaJumpTarget Label
-highlight default link flechaNumber Number
-highlight default link flechaFloat Float
-highlight default link flechaString String
-highlight default link flechaCharacter Character
-highlight default link flechaEscape SpecialChar
-highlight default link flechaCharEscape SpecialChar
-highlight default link flechaLineComment Comment
-highlight default link flechaBlockComment Comment
-highlight default link flechaTodo Todo
+" Prefer Neovim's semantic highlight groups when they exist. Traditional Vim
+" groups remain the fallback, so no color is selected by this syntax file.
+function! s:FollowTheme(group, semantic_group, fallback_group) abort
+    let l:target = hlexists(a:semantic_group)
+                \ ? a:semantic_group
+                \ : a:fallback_group
+    execute 'highlight default link ' . a:group . ' ' . l:target
+endfunction
+
+call s:FollowTheme('flechaImports', '@keyword.import', 'Include')
+call s:FollowTheme('flechaSelf', '@variable.builtin', 'Special')
+call s:FollowTheme('flechaTest', '@keyword', 'Keyword')
+call s:FollowTheme('flechaFuncKeyword', '@keyword.function', 'Keyword')
+call s:FollowTheme('flechaFloatConstant', '@constant', 'Constant')
+call s:FollowTheme('flechaIntegerLimit', '@constant', 'Constant')
+call s:FollowTheme('flechaCrashableBang', '@operator', 'Operator')
+call s:FollowTheme('flechaCrashBuiltin', '@function.builtin', 'Function')
+call s:FollowTheme('flechaType', '@type', 'Type')
+call s:FollowTheme('flechaBuiltinTypeSet', '@type.builtin', 'Type')
+call s:FollowTheme('flechaTypeSetName', '@type.definition', 'Type')
+call s:FollowTheme('flechaFunction', '@function', 'Function')
+call s:FollowTheme('flechaMethod', '@function.method', 'Function')
+call s:FollowTheme('flechaParameter', '@variable.parameter', 'Identifier')
+call s:FollowTheme('flechaVariable', '@variable', 'Identifier')
+call s:FollowTheme('flechaNamedConstant', '@constant', 'Constant')
+call s:FollowTheme('flechaEnumConstant', '@constant', 'Constant')
+call s:FollowTheme('flechaTypeSetKeyword', '@keyword.type', 'Keyword')
+call s:FollowTheme('flechaModuleName', '@module', 'Identifier')
+call s:FollowTheme('flechaNamespace', '@module', 'Identifier')
+call s:FollowTheme('flechaModifier', '@keyword.modifier', 'StorageClass')
+call s:FollowTheme('flechaConditional', '@keyword.conditional', 'Conditional')
+call s:FollowTheme('flechaRepeat', '@keyword.repeat', 'Repeat')
+call s:FollowTheme('flechaStatement', '@keyword', 'Statement')
+call s:FollowTheme('flechaJump', '@keyword', 'Statement')
+call s:FollowTheme('flechaCast', '@keyword.operator', 'Keyword')
+call s:FollowTheme('flechaBoolean', '@boolean', 'Boolean')
+call s:FollowTheme('flechaConstant', '@constant.builtin', 'Constant')
+call s:FollowTheme('flechaWordOperator', '@operator', 'Operator')
+call s:FollowTheme('flechaOperator', '@operator', 'Operator')
+call s:FollowTheme('flechaRawAddress', '@keyword', 'Keyword')
+call s:FollowTheme('flechaCastMethod', '@function.method', 'Function')
+call s:FollowTheme('flechaIsOfMethod', '@function.method', 'Function')
+call s:FollowTheme('flechaAllocation', '@function.builtin', 'Function')
+call s:FollowTheme('flechaLabel', '@label', 'Label')
+call s:FollowTheme('flechaJumpTarget', '@label', 'Label')
+call s:FollowTheme('flechaNumber', '@number', 'Number')
+call s:FollowTheme('flechaFloat', '@number.float', 'Float')
+call s:FollowTheme('flechaString', '@string', 'String')
+call s:FollowTheme('flechaCharacter', '@character', 'Character')
+call s:FollowTheme('flechaEscape', '@string.escape', 'SpecialChar')
+call s:FollowTheme('flechaCharEscape', '@string.escape', 'SpecialChar')
+call s:FollowTheme('flechaLineComment', '@comment', 'Comment')
+call s:FollowTheme('flechaBlockComment', '@comment', 'Comment')
+call s:FollowTheme('flechaTodo', '@comment.todo', 'Todo')
+
+delfunction s:FollowTheme
 
 let b:current_syntax = 'flecha'

@@ -8,13 +8,18 @@
     {"include": "#characters"},
     {"include": "#imports"},
     {"include": "#tests"},
+    {"include": "#methodDeclarations"},
+    {"include": "#functionDeclarations"},
     {"include": "#callableDeclarations"},
     {"include": "#typeSetDeclarations"},
     {"include": "#moduleDeclarations"},
+    {"include": "#typeQualifiers"},
     {"include": "#namespaces"},
     {"include": "#typeSets"},
     {"include": "#floatingConstants"},
     {"include": "#integerLimits"},
+    {"include": "#namedConstants"},
+    {"include": "#enumMembers"},
     {"include": "#types"},
     {"include": "#modifiers"},
     {"include": "#control"},
@@ -25,7 +30,8 @@
     {"include": "#crashBuiltin"},
     {"include": "#functions"},
     {"include": "#crashableBangs"},
-    {"include": "#operators"}
+    {"include": "#operators"},
+    {"include": "#variables"}
   ],
   "repository": {
     "comments": {
@@ -76,9 +82,58 @@
       "name": "keyword.other.test.flecha",
       "match": "\\btest\\b"
     },
+    "methodDeclarations": {
+      "begin": "^(\\s*)((?:(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|override)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)(::)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
+      "beginCaptures": {
+        "2": {"name": "storage.modifier.flecha"},
+        "3": {"name": "storage.type.flecha"},
+        "5": {"name": "entity.name.type.flecha"},
+        "6": {"name": "punctuation.accessor.namespace.flecha"},
+        "7": {"name": "entity.name.function.member.flecha"},
+        "9": {"name": "keyword.operator.crashable.flecha"},
+        "11": {"name": "punctuation.section.parameters.begin.flecha"}
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": {"name": "punctuation.section.parameters.end.flecha"}
+      },
+      "patterns": [
+        {"include": "#parameters"},
+        {"include": "#types"},
+        {"include": "#typeSets"},
+        {"include": "#modifiers"},
+        {"include": "#constants"},
+        {"include": "#operators"}
+      ]
+    },
+    "functionDeclarations": {
+      "begin": "^(\\s*)((?:(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
+      "beginCaptures": {
+        "2": {"name": "storage.modifier.flecha"},
+        "3": {"name": "storage.type.flecha"},
+        "5": {"name": "entity.name.function.flecha"},
+        "7": {"name": "keyword.operator.crashable.flecha"},
+        "9": {"name": "punctuation.section.parameters.begin.flecha"}
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": {"name": "punctuation.section.parameters.end.flecha"}
+      },
+      "patterns": [
+        {"include": "#parameters"},
+        {"include": "#types"},
+        {"include": "#typeSets"},
+        {"include": "#modifiers"},
+        {"include": "#constants"},
+        {"include": "#operators"}
+      ]
+    },
     "callableDeclarations": {
-      "name": "storage.type.function.flecha",
-      "match": "\\bfunc\\b"
+      "match": "\\b(func)(\\s+)([A-Za-z_][A-Za-z0-9_]*)\\b",
+      "captures": {
+        "1": {"name": "storage.type.function.flecha"},
+        "3": {"name": "entity.name.type.function.flecha"}
+      }
     },
     "typeSetDeclarations": {
       "match": "\\b(typeset)(\\s+)([A-Za-z_][A-Za-z0-9_]*)\\b",
@@ -94,6 +149,10 @@
         "3": {"name": "entity.name.namespace.flecha"}
       }
     },
+    "typeQualifiers": {
+      "name": "entity.name.type.flecha",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b(?=\\s*::)"
+    },
     "namespaces": {
       "name": "entity.name.namespace.flecha",
       "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b(?=\\s*::)"
@@ -103,12 +162,24 @@
       "match": "\\b(?:signed_integer|unsigned_integer|integer|floating_point|numeric)\\b"
     },
     "integerLimits": {
-      "match": "\\b(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|[A-Z][A-Za-z0-9_]*)(\\s*\\.\\s*)(min_value|max_value)\\b",
-      "captures": {
-        "1": {"name": "storage.type.primitive.flecha"},
-        "2": {"name": "punctuation.accessor.flecha"},
-        "3": {"name": "constant.numeric.integer.bound.flecha"}
-      }
+      "patterns": [
+        {
+          "match": "\\b(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize)(\\s*\\.\\s*)(min_value|max_value)\\b",
+          "captures": {
+            "1": {"name": "storage.type.primitive.flecha"},
+            "2": {"name": "punctuation.accessor.flecha"},
+            "3": {"name": "constant.numeric.integer.bound.flecha"}
+          }
+        },
+        {
+          "match": "\\b([A-Z][A-Za-z0-9_]*)(\\s*\\.\\s*)(min_value|max_value)\\b",
+          "captures": {
+            "1": {"name": "entity.name.type.flecha"},
+            "2": {"name": "punctuation.accessor.flecha"},
+            "3": {"name": "constant.numeric.integer.bound.flecha"}
+          }
+        }
+      ]
     },
     "floatingConstants": {
       "patterns": [
@@ -123,12 +194,20 @@
         {
           "match": "\\b([A-Z][A-Za-z0-9_]*)(\\s*\\.\\s*)(nan|infinity|negative_infinity|min_positive|epsilon)\\b",
           "captures": {
-            "1": {"name": "storage.type.primitive.flecha"},
+            "1": {"name": "entity.name.type.flecha"},
             "2": {"name": "punctuation.accessor.flecha"},
             "3": {"name": "constant.numeric.float.property.flecha"}
           }
         }
       ]
+    },
+    "namedConstants": {
+      "name": "constant.other.named.flecha",
+      "match": "\\b(?:[A-Z][A-Z0-9]*_[A-Z0-9_]*|[A-Z]{2,}[A-Z0-9_]*)\\b"
+    },
+    "enumMembers": {
+      "name": "constant.other.enum.member.flecha",
+      "match": "(?<=\\.)[A-Z][A-Za-z0-9_]*\\b"
     },
     "types": {
       "patterns": [
@@ -176,8 +255,26 @@
       ]
     },
     "crashBuiltin": {
-      "name": "support.function.crash.flecha",
+      "name": "support.function.builtin.flecha",
       "match": "\\bcrash(?=\\s*\\()"
+    },
+    "parameters": {
+      "patterns": [
+        {
+          "match": "\\b(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error)(\\s+)([a-z_][A-Za-z0-9_]*)(?=\\s*[,\\)])",
+          "captures": {
+            "1": {"name": "storage.type.primitive.flecha"},
+            "3": {"name": "variable.parameter.flecha"}
+          }
+        },
+        {
+          "match": "\\b([A-Z][A-Za-z0-9_]*(?:<[^>\\n]+>)?)(\\s+)([a-z_][A-Za-z0-9_]*)(?=\\s*[,\\)])",
+          "captures": {
+            "1": {"name": "entity.name.type.flecha"},
+            "3": {"name": "variable.parameter.flecha"}
+          }
+        }
+      ]
     },
     "functions": {
       "patterns": [
@@ -190,21 +287,30 @@
           "match": "\\bisof(?=\\s*<)"
         },
         {
-          "name": "entity.name.function.flecha",
-          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+          "name": "variable.function.member.flecha",
+          "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*(?=\\s*(?:<[^>\\n]*>\\s*)?\\()"
+        },
+        {
+          "name": "variable.function.member.flecha",
+          "match": "(?<=::)[A-Za-z_][A-Za-z0-9_]*(?=\\s*(?:<[^>\\n]*>\\s*)?\\()"
+        },
+        {
+          "name": "variable.function.flecha",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*(?:<[^>\\n]*>\\s*)?\\()"
         }
       ]
     },
     "crashableBangs": {
-      "match": "\\b([A-Za-z_][A-Za-z0-9_]*(?:\\s*<[^>\\n]*>)?)(\\s*)(!)(?=\\s*\\()",
-      "captures": {
-        "1": {"name": "entity.name.function.flecha"},
-        "3": {"name": "keyword.operator.crashable.flecha"}
-      }
+      "name": "keyword.operator.crashable.flecha",
+      "match": "(?<=[A-Za-z0-9_>])!(?=\\s*\\()"
     },
     "operators": {
       "name": "keyword.operator.flecha",
       "match": "::|<-|->|=>|:=|===|!==|==|!=|<<|>>|<=|>=|&&|\\|\\||\\b(?:and|or|raw)\\b|[&|~=+*/%^!<>-]"
+    },
+    "variables": {
+      "name": "variable.other.readwrite.flecha",
+      "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
     }
   }
 }

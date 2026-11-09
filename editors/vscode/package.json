@@ -56,54 +56,6 @@
         "path": "./syntaxes/flecha.tmLanguage.json"
       }
     ],
-    "configurationDefaults": {
-      "editor.tokenColorCustomizations": {
-        "textMateRules": [
-          {
-            "scope": "keyword.other.test.flecha",
-            "settings": {
-              "foreground": "#FFD700"
-            }
-          },
-          {
-            "scope": "storage.type.function.flecha",
-            "settings": {
-              "foreground": "#569CD6"
-            }
-          },
-          {
-            "scope": "support.function.crash.flecha",
-            "settings": {
-              "foreground": "#87CEFA"
-            }
-          },
-          {
-            "scope": "support.type.typeset.builtin.flecha",
-            "settings": {
-              "foreground": "#87CEFA"
-            }
-          },
-          {
-            "scope": "constant.numeric.integer.bound.flecha",
-            "settings": {
-              "foreground": "#C49A00"
-            }
-          },
-          {
-            "scope": "constant.numeric.float.property.flecha",
-            "settings": {
-              "foreground": "#C49A00"
-            }
-          },
-          {
-            "scope": "keyword.operator.crashable.flecha",
-            "settings": {
-              "foreground": "#FF8C00"
-            }
-          }
-        ]
-      }
-    },
     "commands": [
       {
         "command": "flecha.restartLanguageServer",
