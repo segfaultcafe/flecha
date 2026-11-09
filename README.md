@@ -31,7 +31,7 @@ The compiler is implemented in modern C++ and currently includes a tokenizer, pa
 - LLVM IR emission and native executable/object generation
 - Human-readable source diagnostics
 - A small package/project workflow through `longbow`
-- Visual Studio Code and Neovim syntax support
+- Visual Studio Code language-server diagnostics and Neovim syntax support
 
 ## Quick start
 
@@ -289,7 +289,7 @@ std/                    Flecha standard-library source packages
 examples/               Small language and package examples
 docs/                   Feature, implementation, and design documentation
 editors/neovim/         Neovim filetype and syntax support
-editors/vscode/         Visual Studio Code syntax extension
+editors/vscode/         Visual Studio Code syntax and language-client extension
 SPEC.md                 Current language specification draft
 CODE_STYLE.md           C++ and repository style guidance
 CMakeLists.txt          CMake build definition
@@ -313,6 +313,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/release_0_3.md`](docs/release_0_3.md) — v0.3.0 application-capable standard-library milestone
 - [`docs/release_0_3_0.md`](docs/release_0_3_0.md) — v0.3.0 release notes and upgrade guide
 - [`docs/release_0_3_1.md`](docs/release_0_3_1.md) — v0.3.1 JSON slice bug-fix notes
+- [`docs/release_0_3_2.md`](docs/release_0_3_2.md) — v0.3.2 analyzer protocol and correctness fixes
 - [`docs/standard_library.md`](docs/standard_library.md) — complete v0.3 public module and declaration index
 - [`docs/toolchains.md`](docs/toolchains.md) — supported compiler, LLVM, linker, SDK, and CI versions
 - [`docs/semantic_analysis.md`](docs/semantic_analysis.md) — name binding, types, scopes, and analysis pipeline
@@ -345,7 +346,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/error_values.md`](docs/error_values.md) — error declarations and propagation
 - [`docs/crashable_functions.md`](docs/crashable_functions.md) — explicit unrecoverable effects and crash reports
 - [`docs/enums.md`](docs/enums.md) — nominal enums, defaults, discriminants, and member functions
-- [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting setup
+- [`editors/vscode/README.md`](editors/vscode/README.md) — Visual Studio Code highlighting and language-server setup
 - [`editors/neovim/README.md`](editors/neovim/README.md) — Neovim installation and usage
 
 The documentation distinguishes implemented behavior from proposals and

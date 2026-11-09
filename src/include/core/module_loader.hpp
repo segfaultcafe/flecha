@@ -13,6 +13,8 @@
 #include "diagnostics/diagnostic_bag.hpp"
 
 namespace flecha::core {
+class SourceProvider;
+
 enum class ModuleLoadMode { Runtime, Test };
 
 // Loads source units into logical modules. Source units retain independent
@@ -22,6 +24,9 @@ class ModuleLoader final {
    public:
     explicit ModuleLoader(diagnostics::DiagnosticBag& diagnostics)
         : _diagnostics(diagnostics) {}
+    ModuleLoader(diagnostics::DiagnosticBag& diagnostics,
+                 const SourceProvider& sourceProvider)
+        : _diagnostics(diagnostics), _sourceProvider(&sourceProvider) {}
     std::unique_ptr<CompilationUnit> Load(
         const std::filesystem::path& entry, std::filesystem::path root = {},
         std::map<std::string, std::filesystem::path> libraries = {},
@@ -56,8 +61,10 @@ class ModuleLoader final {
     void LoadLegacyEntry(const std::filesystem::path& file,
                          const std::filesystem::path& root,
                          const std::string& sourceIdentity);
+    [[nodiscard]] const SourceProvider& Sources() const;
     void Report(source::SourceRange range, const std::string& message);
     diagnostics::DiagnosticBag& _diagnostics;
+    const SourceProvider* _sourceProvider = nullptr;
     std::map<std::string, std::string> _loaded;
     std::map<std::string, bool> _privateModules;
     std::map<std::filesystem::path, std::filesystem::path> _roots;

@@ -2,6 +2,7 @@ add_library(core STATIC
     module_loader.cpp
     package_graph.cpp
     parser.cpp
+    source_provider.cpp
     tokenizer.cpp
     core.cpp
 )

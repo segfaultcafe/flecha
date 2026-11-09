@@ -1,8 +1,40 @@
 filetype plugin indent on
 syntax enable
 
+" The run command and mapping must exist before any Flecha file is opened.
+call assert_equal('', expand('%:p'))
+call assert_equal(2, exists(':LongbowRun'))
+call assert_equal(2, exists(':LongbowTest'))
+call assert_notequal('', maparg('<leader>rr', 'n'))
+call assert_notequal('', maparg('<leader>rt', 'n'))
+call assert_equal('', maparg('<leader>lr', 'n'))
+call assert_equal('', maparg('<leader>fr', 'n'))
+
+" Exercise running from an empty Neovim at a project root, followed by a jump
+" into a previously unopened Flecha buffer. An intentionally out-of-range
+" end-of-line column must remain on the diagnostic's recorded source line.
+let s:test_directory = expand('<sfile>:p:h')
+let s:fixture_directory = s:test_directory . '/fixtures'
+let s:jump_target = s:fixture_directory . '/jump_target.fl'
+let s:diagnostic = s:jump_target
+            \ . ':FLECHA-S0002:1:999: error at the end of the line'
+let s:original_directory = getcwd()
+execute 'lcd ' . fnameescape(s:fixture_directory)
+let b:flecha_longbow_makeprg = 'echo ' . shellescape(s:diagnostic)
+LongbowRun
+call assert_equal('quickfix', &buftype)
+call assert_notequal('', maparg('<leader>fe', 'n'))
+call assert_notequal('', maparg('<CR>', 'n'))
+call cursor(1, 1)
+call feedkeys("\\fe", 'xt')
+call assert_equal(1, line('.'))
+call assert_equal(fnamemodify(s:jump_target, ':p'), expand('%:p'))
+call assert_equal('flecha', &filetype)
+cclose
+execute 'lcd ' . fnameescape(s:original_directory)
+
 execute 'edit ' . fnameescape(
-            \ expand('<sfile>:p:h') . '/fixtures/highlighting.fl')
+            \ s:fixture_directory . '/highlighting.fl')
 
 function! s:HighlightAt(text, offset) abort
     call cursor(1, 1)
@@ -19,6 +51,57 @@ endfunction
 call assert_equal('flecha', &filetype)
 call assert_equal('flecha', get(b:, 'current_syntax', ''))
 call assert_equal('// %s', &l:commentstring)
+call assert_equal('longbow run', &l:makeprg)
+call assert_equal(
+            \ '%f:FLECHA-%t%n:%l:%c: %m,%E%\s%#test: %f:%l:%c',
+            \ &l:errorformat)
+call assert_equal(2, exists(':LongbowRun'))
+call assert_equal(2, exists(':LongbowTest'))
+call assert_notequal('', maparg('<leader>rr', 'n'))
+call assert_notequal('', maparg('<leader>rt', 'n'))
+
+let b:flecha_longbow_test_makeprg = 'echo ' . shellescape(s:diagnostic)
+LongbowTest
+call assert_equal('quickfix', &buftype)
+let s:longbow_test_errors = filter(copy(getqflist()), 'v:val.valid')
+call assert_equal(1, len(s:longbow_test_errors))
+call assert_match('--verbose$', s:longbow_test_errors[0].text)
+cclose
+
+" A failed test reports its declaration after non-location output. From that
+" first quickfix line, <leader>fe must find and open the valid test location.
+call setqflist([], 'r', {
+            \ 'lines': [
+            \     'framing_test.fl',
+            \     '  writes_complete_message................................fail',
+            \     '    test: ' . s:jump_target . ':1:1',
+            \     'FAIL [0/1] tests passed, but [1/1] failed',
+            \ ],
+            \ 'efm': &l:errorformat,
+            \ })
+copen
+call cursor(1, 1)
+call feedkeys("\\fe", 'xt')
+call assert_equal(fnamemodify(s:jump_target, ':p'), expand('%:p'))
+call assert_equal(1, line('.'))
+cclose
+execute 'edit ' . fnameescape(
+            \ s:fixture_directory . '/highlighting.fl')
+
+call setqflist([], 'r', {
+            \ 'lines': [
+            \     expand('%:p') . ':FLECHA-S0002:17:9: unknown name ''end''',
+            \     expand('%:p') . ':FLECHA-S0008:21:4: bad index',
+            \ ],
+            \ 'efm': &l:errorformat,
+            \ })
+let s:longbow_errors = getqflist()
+call assert_equal(2, len(s:longbow_errors))
+call assert_equal(17, s:longbow_errors[0].lnum)
+call assert_equal(9, s:longbow_errors[0].col)
+call assert_equal('S', s:longbow_errors[0].type)
+call assert_equal(2, s:longbow_errors[0].nr)
+
 call assert_equal('flechaType', s:HighlightAt('stringv', 0))
 call assert_equal('flechaFunction', s:HighlightAt('Echo', 0))
 call assert_equal('flechaFunction', s:HighlightAt('generic_identity<T>', 0))

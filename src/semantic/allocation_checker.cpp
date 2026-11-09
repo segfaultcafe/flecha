@@ -819,9 +819,9 @@ class AllocationChecker final {
         return _resourceFunctions.contains(found->second);
     }
 
-    bool CanSummarizeRecursiveCall(const core::FunctionDeclaration& syntax,
-                                   const FunctionSymbol& function,
-                                   const std::vector<Value>& arguments) const {
+    bool CanSummarizeOpaqueCall(const core::FunctionDeclaration& syntax,
+                                const FunctionSymbol& function,
+                                const std::vector<Value>& arguments) const {
         if (HasResourceCaptures(syntax)) return false;
         if (ExposesHeapHandle(function.ReturnType())) return false;
         for (const SemanticType& type : function.ParameterTypes())
@@ -1045,10 +1045,23 @@ class AllocationChecker final {
             }
             return outcomes;
         }
+        // A call that cannot expose a raw allocation handle does not need to
+        // be reinterpreted in every caller state. Verify its body once, then
+        // use an opaque result with the same aggregate shape. This keeps
+        // allocation analysis linear across safe helper chains while calls
+        // with pointer inputs, pointer results, or resource captures retain
+        // the context-sensitive path below.
+        if (function &&
+            CanSummarizeOpaqueCall(*found->second, *function, arguments)) {
+            Verify(*found->second);
+            Value result = ContractResult(state, expression,
+                                          found->second->ReturnType());
+            return {{std::move(state), std::move(result)}};
+        }
         if (std::find(_active.begin(), _active.end(), found->second) !=
             _active.end()) {
-            if (!function || !CanSummarizeRecursiveCall(*found->second,
-                                                        *function, arguments)) {
+            if (!function || !CanSummarizeOpaqueCall(*found->second, *function,
+                                                     arguments)) {
                 Report(DiagnosticCode::UnverifiedOwnership, expression,
                        "recursive pointer ownership requires a contract and "
                        "cannot yet be verified");

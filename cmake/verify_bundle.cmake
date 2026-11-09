@@ -18,10 +18,12 @@ endforeach()
 
 foreach(editorFile IN ITEMS
         share/flecha/editors/neovim/ftdetect/flecha.vim
+        share/flecha/editors/neovim/plugin/longbow.vim
         share/flecha/editors/neovim/indent/flecha.vim
         share/flecha/editors/neovim/syntax/flecha.vim
         share/flecha/editors/vscode/language-configuration.json
         share/flecha/editors/vscode/package.json
+        share/flecha/editors/vscode/dist/extension.js
         share/flecha/editors/vscode/syntaxes/flecha.tmLanguage.json)
     if(NOT EXISTS "${INSTALL_ROOT}/${editorFile}")
         message(FATAL_ERROR

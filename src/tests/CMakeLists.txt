@@ -1,7 +1,11 @@
 add_executable(test_flecha
+    test_analysis_session.cpp
+    test_analyzer_protocol.cpp
+    test_analyzer_server_loop.cpp
     test_ast.cpp
     test_codegen.cpp
     test_diagnostics.cpp
+    test_analyzer_transport.cpp
     test_lowering.cpp
     test_longbow.cpp
     test_modules.cpp
@@ -9,6 +13,8 @@ add_executable(test_flecha
     test_parser.cpp
     test_runtime.cpp
     test_semantic.cpp
+    test_source_overlays.cpp
+    test_source_provider.cpp
     test_tokenizer.cpp
 )
 
@@ -46,6 +52,7 @@ target_link_libraries(test_flecha
         semantic
         lowering
         longbow_model
+        analyzer
         llvm_codegen
         memory
         runtime
@@ -181,6 +188,15 @@ endif()
 add_test(NAME CliTests.FlechaVersion COMMAND $<TARGET_FILE:flecha> --version)
 set_tests_properties(CliTests.FlechaVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^flecha ${PROJECT_VERSION}"
+)
+add_test(
+    NAME CliTests.AnalyzerStdio
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DPROJECT_ROOT=${PROJECT_SOURCE_DIR}
+        -DPROJECT_VERSION=${PROJECT_VERSION}
+        -DANALYZER_INPUT=${CMAKE_CURRENT_BINARY_DIR}/analyzer-stdio-input.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_analyzer_stdio.cmake
 )
 add_test(NAME CliTests.LongbowVersion COMMAND $<TARGET_FILE:longbow> --version)
 set_tests_properties(CliTests.LongbowVersion PROPERTIES
