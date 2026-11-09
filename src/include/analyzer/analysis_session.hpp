@@ -9,6 +9,7 @@
 #include <string>
 
 #include "analyzer/overlay_source_provider.hpp"
+#include "analyzer/semantic_queries.hpp"
 #include "analyzer/source_overlays.hpp"
 #include "core/ast.hpp"
 #include "core/package_graph.hpp"
@@ -20,12 +21,29 @@ namespace flecha::analyzer {
 
 struct AnalysisSnapshot final {
     std::filesystem::path entry;
+    std::filesystem::path workspaceRoot;
     std::optional<std::int64_t> version;
     std::unique_ptr<core::CompilationUnit> unit;
     std::optional<semantic::SemanticModel> semanticModel;
     diagnostics::DiagnosticBag diagnostics;
 
     [[nodiscard]] bool HasErrors() const { return diagnostics.HasErrors(); }
+    [[nodiscard]] std::optional<SemanticHover> Hover(
+        const std::filesystem::path& file, std::size_t offset) const;
+    [[nodiscard]] std::optional<SemanticOccurrence> OccurrenceAt(
+        const std::filesystem::path& file, std::size_t offset) const;
+    [[nodiscard]] std::vector<SemanticOccurrence> Occurrences(
+        const std::filesystem::path& file) const;
+    [[nodiscard]] std::optional<source::SourceRange> Definition(
+        const std::filesystem::path& file, std::size_t offset) const;
+    [[nodiscard]] std::optional<std::vector<source::SourceRange>> References(
+        const std::filesystem::path& file, std::size_t offset,
+        bool includeDeclaration = true) const;
+    [[nodiscard]] std::optional<SemanticRename> Rename(
+        const std::filesystem::path& file, std::size_t offset,
+        bool includeDeclaration = true) const;
+    [[nodiscard]] std::vector<SemanticSymbol> Symbols(
+        std::string_view query = {}) const;
 };
 
 class AnalysisSession final {

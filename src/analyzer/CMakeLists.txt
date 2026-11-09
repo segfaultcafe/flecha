@@ -4,6 +4,7 @@ add_library(analyzer STATIC
     overlay_source_provider.cpp
     protocol.cpp
     server_loop.cpp
+    semantic_queries.cpp
     source_overlays.cpp
     transport.cpp
 )

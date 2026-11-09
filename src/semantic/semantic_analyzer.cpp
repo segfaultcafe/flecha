@@ -1172,6 +1172,12 @@ SemanticType SemanticAnalyzer::ResolveTypeSyntax(const core::TypeNode& type) {
                        "unknown type '" + type.Name() + "'");
             return SemanticType::Error();
         }
+        const std::size_t textualLength =
+            type.Name().size() + (type.IsConst() ? 6 : 0);
+        // Compiler-generated type syntax reuses the enclosing source range.
+        // Only index ranges that can represent the actual written type name.
+        if (type.Range().Length() == textualLength)
+            _model._typeBindings.emplace(&type, symbol);
         return type.IsConst() ? symbol->Type().WithConst() : symbol->Type();
     }
     if (type.TypeForm() == core::TypeKind::Primitive)

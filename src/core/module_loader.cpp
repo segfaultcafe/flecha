@@ -374,7 +374,9 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
     const bool testModule = IsTestModule(name);
     const source::SourceLocation namespaceOrigin{0, 1, 1, directory.string()};
     const source::SourceRange namespaceRange{namespaceOrigin, namespaceOrigin};
-    if (testModule && (_mode != ModuleLoadMode::Test || !entry))
+    const bool acceptsTestEntry =
+        _mode == ModuleLoadMode::Test || _mode == ModuleLoadMode::Analysis;
+    if (testModule && (!acceptsTestEntry || !entry))
         Report(
             namespaceRange,
             "test modules can only be compiled as the entry of 'flecha test'");
