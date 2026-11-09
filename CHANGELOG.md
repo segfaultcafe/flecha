@@ -2,8 +2,17 @@
 
 ## Unreleased
 
+## 0.3.2 - 2026-11-09
+
+Flecha 0.3.2 introduces the compiler-side analyzer protocol used by language
+servers and fixes several parser, semantic-analysis, and diagnostic issues.
+See the [0.3.2 release notes](docs/release_0_3_2.md) for integration and
+upgrade details.
+
 ### Added
 
+- The compiler now exposes `flecha analyze --stdio`, a framed JSON protocol
+  for versioned document overlays and project-aware diagnostics.
 - The Visual Studio Code extension now starts `flecha-lsp` for live compiler
   diagnostics, with configurable server/compiler paths, protocol tracing, and
   a restart command for development builds.
@@ -14,12 +23,6 @@
 - The Neovim plugin can run verbose Flecha tests for the enclosing Longbow
   project with `<leader>rt` or `:LongbowTest`; failed test declarations are
   navigable from quickfix with `<leader>fe`.
-
-### Fixed
-
-- Allocation analysis now summarizes safe resource-helper calls after
-  verifying their bodies once, preventing exponential compile times in code
-  that uses layered parsers and other allocation-backed abstractions.
 
 ### Fixed
 
