@@ -41,6 +41,7 @@ class Parser {
     [[nodiscard]] const Token& Peek(std::size_t offset) const;
     [[nodiscard]] bool IsAtEnd() const;
     [[nodiscard]] bool Check(TokenType type) const;
+    [[nodiscard]] bool StartsTopLevelOnlyDeclaration() const;
     [[nodiscard]] bool IsInferredVariableDeclaration() const;
     const Token& Advance();
     bool Match(TokenType type);
