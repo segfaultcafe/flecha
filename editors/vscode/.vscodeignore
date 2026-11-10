@@ -2,3 +2,5 @@
 node_modules/**
 package-lock.json
 extension.js
+tool-paths.js
+tests/**
