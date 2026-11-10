@@ -69,6 +69,28 @@ bool Parser::IsAtEnd() const { return Current().type == TokenType::EOF_TOKEN; }
 
 bool Parser::Check(TokenType type) const { return Current().type == type; }
 
+bool Parser::StartsTopLevelOnlyDeclaration() const {
+    switch (Current().type) {
+        case TokenType::Module:
+        case TokenType::Test:
+        case TokenType::Enum:
+        case TokenType::TypeSet:
+        case TokenType::Decoration:
+        case TokenType::Structure:
+        case TokenType::Private:
+        case TokenType::Export:
+        case TokenType::Quiver:
+        case TokenType::Extern:
+        case TokenType::Func:
+        case TokenType::Once:
+        case TokenType::ForeignBlock:
+        case TokenType::At:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool Parser::IsInferredVariableDeclaration() const {
     return Check(TokenType::Identifier) &&
            Peek(1).type == TokenType::DeclareAssign;
@@ -1248,7 +1270,15 @@ std::unique_ptr<BlockStatement> Parser::ParseBlockStatement(bool isUnsafe) {
     }
 
     std::vector<std::unique_ptr<Statement>> statements;
+    bool recoveredAtDeclaration = false;
     while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+        if (StartsTopLevelOnlyDeclaration()) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+                "expected '}' to close block before top-level declaration");
+            recoveredAtDeclaration = true;
+            break;
+        }
         if ((StartsType() || IsInferredVariableDeclaration()) &&
             !IsDestructureStatement()) {
             auto declarations = ParseVariableDeclarationStatements();
@@ -1268,9 +1298,14 @@ std::unique_ptr<BlockStatement> Parser::ParseBlockStatement(bool isUnsafe) {
         }
     }
 
-    const Token* closeBrace = Consume(TokenType::RCurly, "'}' after block");
+    const Token* closeBrace =
+        recoveredAtDeclaration ? nullptr
+                               : Consume(TokenType::RCurly, "'}' after block");
     const source::SourceLocation end =
-        closeBrace == nullptr ? Current().range.end : closeBrace->range.end;
+        recoveredAtDeclaration
+            ? Current().range.start
+            : (closeBrace == nullptr ? Current().range.end
+                                     : closeBrace->range.end);
     return std::make_unique<BlockStatement>(source::SourceRange{start, end},
                                             std::move(statements), isUnsafe);
 }

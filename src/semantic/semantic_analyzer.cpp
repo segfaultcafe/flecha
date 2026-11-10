@@ -4634,7 +4634,7 @@ SemanticType SemanticAnalyzer::AnalyzeMemberAccess(
         if (variant == enumeration.variants.end()) {
             Report(diagnostics::DiagnosticCode::InvalidMember,
                    expression.MemberRange(),
-                   "enum '" + symbol->Name() + "' has no variant '" +
+                   "enum '" + symbol->Type().Name() + "' has no variant '" +
                        expression.Member() + "'");
             return SemanticType::Error();
         }
@@ -4705,7 +4705,7 @@ SemanticType SemanticAnalyzer::AnalyzeMemberAccess(
         variants.end()) {
         Report(diagnostics::DiagnosticCode::InvalidMember,
                expression.MemberRange(),
-               "error type '" + symbol->Name() + "' has no variant '" +
+               "error type '" + symbol->Type().Name() + "' has no variant '" +
                    expression.Member() + "'");
         return SemanticType::Error();
     }

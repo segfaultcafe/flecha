@@ -159,6 +159,34 @@ TEST(ParserTests, ParsesCompleteFunctionWithReturnStatement) {
     EXPECT_EQ(unit->Range().end.offset, 24);
 }
 
+TEST(ParserTests, ReportsMissingBlockBraceBeforeTopLevelDeclaration) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+        void first() {
+            if true {
+                return;
+            if false {
+                return;
+            }
+            return;
+        }
+
+        private void second() {}
+        void main() {}
+    )",
+                            diagnostics);
+
+    ASSERT_NE(unit, nullptr);
+    ASSERT_EQ(diagnostics.Diagnostics().size(), 1u);
+    EXPECT_EQ(diagnostics.Diagnostics()[0].code, DiagnosticCode::ExpectedToken);
+    EXPECT_EQ(diagnostics.Diagnostics()[0].message,
+              "expected '}' to close block before top-level declaration");
+    ASSERT_EQ(unit->Declarations().size(), 3u);
+    EXPECT_EQ(static_cast<const FunctionDeclaration&>(*unit->Declarations()[1])
+                  .Name(),
+              "second");
+}
+
 TEST(ParserTests, ParsesCAndAssemblyForeignUnits) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(R"(
