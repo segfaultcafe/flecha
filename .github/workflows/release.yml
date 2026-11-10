@@ -280,7 +280,9 @@ jobs:
             cmake/release_smoke.cmake
             cmake/toolchain_policy.cmake
             cmake/verify_bundle.cmake
+            cmake/verify_lsp_stdio.cmake
             cmake/verify_toolchain.cmake
+            cmake/verify_vscode.cmake
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
@@ -459,6 +461,15 @@ jobs:
           "-DINSTALL_ROOT=$FLECHA_BUNDLE"
           "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
           -P test-support/verify_bundle.cmake
+
+      - name: Exercise the bundled language server
+        shell: bash
+        run: >-
+          cmake
+          "-DFLECHA_COMPILER=$FLECHA_BUNDLE/bin/flecha${{ matrix.suffix }}"
+          "-DFLECHA_LSP=$FLECHA_BUNDLE/bin/flecha-lsp${{ matrix.suffix }}"
+          "-DTEST_ROOT=$PWD/clean-install-lsp"
+          -P test-support/verify_lsp_stdio.cmake
 
       - name: Exercise the relocated installation
         shell: bash

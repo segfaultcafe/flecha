@@ -102,7 +102,8 @@ code --install-extension flecha-language-VERSION.vsix
 ```
 
 Compiler archives contain the Neovim plugin under
-`share/flecha/editors/neovim`. See the
+`share/flecha/editors/neovim`; it starts the bundled language server
+automatically when the tools remain discoverable. See the
 [`editor installation guide`](docs/editors.md) for Neovim commands, checksums,
 upgrades, uninstalling, and packaging the VS Code extension from a checkout.
 
