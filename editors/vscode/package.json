@@ -1,7 +1,7 @@
 {
   "name": "flecha-language",
   "displayName": "Flecha Language Support",
-  "description": "Syntax highlighting and editing support for Flecha source files.",
+  "description": "Syntax highlighting, compiler diagnostics, and semantic editing support for Flecha source files.",
   "version": "0.3.2",
   "publisher": "flecha",
   "license": "MIT",
@@ -30,7 +30,8 @@
   },
   "scripts": {
     "compile": "esbuild extension.js --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js",
-    "package": "npm run compile && vsce package --no-dependencies"
+    "test": "node --test tests/*.test.js",
+    "package": "npm test && npm run compile && vsce package --no-dependencies"
   },
   "categories": [
     "Programming Languages"
@@ -68,15 +69,15 @@
       "properties": {
         "flecha.server.path": {
           "type": "string",
-          "default": "flecha-lsp",
+          "default": "",
           "scope": "machine",
-          "description": "Path to the Flecha language server executable."
+          "description": "Path to the Flecha language server executable. Empty uses the matching release bundle, then PATH."
         },
         "flecha.compiler.path": {
           "type": "string",
-          "default": "flecha",
+          "default": "",
           "scope": "machine",
-          "description": "Path to the Flecha compiler used by the language server."
+          "description": "Path to the Flecha compiler used by the language server. Empty uses the matching release bundle, then PATH."
         },
         "flecha.trace.server": {
           "type": "string",
