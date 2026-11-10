@@ -196,7 +196,7 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DPROJECT_ROOT=${PROJECT_SOURCE_DIR}
-        -DPROJECT_VERSION=${PROJECT_VERSION}
+        -DFLECHA_BUILD_VERSION=${FLECHA_BUILD_VERSION}
         -DANALYZER_INPUT=${CMAKE_CURRENT_BINARY_DIR}/analyzer-stdio-input.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_analyzer_stdio.cmake
 )
