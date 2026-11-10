@@ -35,7 +35,7 @@ help:
 	@echo "  make test-hardening Run fast property and stateful hardening"
 	@echo "  make test-hardening-campaign Run the large property and soak campaign"
 	@echo "  make test-semantic  Run only semantic and scope tests"
-	@echo "  make test-neovim    Test Neovim filetype and syntax support"
+	@echo "  make test-neovim    Test Neovim LSP, filetype, and syntax support"
 	@echo "  make package-vscode Build and verify the installable VSIX"
 	@echo "  make test-sanitizers Run unit tests with ASan and UBSan"
 	@echo "  make performance-self-test Validate performance scoring and baselines"
@@ -173,6 +173,7 @@ test-semantic: build-tests
 test-neovim:
 	NVIM_LOG_FILE=/dev/null nvim --headless -u NONE -i NONE -n \
 		--cmd 'set runtimepath^=$(CURDIR)/editors/neovim' \
+		--cmd 'let g:flecha_lsp_autostart=0' \
 		--cmd 'runtime plugin/longbow.vim' \
 		-S editors/neovim/tests/syntax_test.vim
 
