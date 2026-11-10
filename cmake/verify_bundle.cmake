@@ -9,8 +9,9 @@ endif()
 set(bundleBin "${INSTALL_ROOT}/bin")
 set(compiler "${bundleBin}/flecha${EXECUTABLE_SUFFIX}")
 set(longbow "${bundleBin}/longbow${EXECUTABLE_SUFFIX}")
+set(languageServer "${bundleBin}/flecha-lsp${EXECUTABLE_SUFFIX}")
 
-foreach(executable IN ITEMS "${compiler}" "${longbow}")
+foreach(executable IN ITEMS "${compiler}" "${longbow}" "${languageServer}")
     if(NOT EXISTS "${executable}")
         message(FATAL_ERROR "Missing installed executable: ${executable}")
     endif()
@@ -53,7 +54,7 @@ if(WIN32)
 endif()
 
 file(GET_RUNTIME_DEPENDENCIES
-    EXECUTABLES "${compiler}" "${longbow}"
+    EXECUTABLES "${compiler}" "${longbow}" "${languageServer}"
     RESOLVED_DEPENDENCIES_VAR resolvedDependencies
     UNRESOLVED_DEPENDENCIES_VAR unresolvedDependencies
     CONFLICTING_DEPENDENCIES_PREFIX dependencyConflicts
