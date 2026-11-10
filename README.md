@@ -56,7 +56,8 @@ in [`docs/toolchains.md`](docs/toolchains.md).
 make build
 ```
 
-The main compiler is written to `build/flecha`; the project tool is written to `build/longbow`.
+The main compiler is written to `build/flecha`, the project tool to
+`build/longbow`, and the language server to `build/src/lsp/flecha-lsp`.
 
 To configure and build directly with CMake:
 
@@ -71,9 +72,9 @@ Create relocatable `.tar.gz` and `.zip` release archives with:
 cmake --build build --target package
 ```
 
-The archives contain the Flecha compiler, Longbow, their required shared
-runtime dependencies, the Flecha runtime and standard library, reference
-documentation, and Visual Studio Code and Neovim support.
+The archives contain the Flecha compiler, Longbow, `flecha-lsp`, their required
+shared runtime dependencies, the Flecha runtime and standard library,
+reference documentation, and Visual Studio Code and Neovim support.
 See [`docs/release_0_3.md`](docs/release_0_3.md) for the current Linux,
 Windows, and macOS release gates.
 

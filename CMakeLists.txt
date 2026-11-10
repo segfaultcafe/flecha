@@ -47,6 +47,7 @@ add_subdirectory(src/semantic)
 add_subdirectory(src/analyzer)
 add_subdirectory(src/lowering)
 add_subdirectory(src/runtime)
+add_subdirectory(src/lsp)
 add_subdirectory(src/codegen)
 add_subdirectory(src/memory)
 add_subdirectory(src/utils)
@@ -96,7 +97,7 @@ if(UNIX AND NOT APPLE)
     target_link_options(longbow PRIVATE -Wl,--disable-new-dtags)
 endif()
 
-install(TARGETS flecha longbow
+install(TARGETS flecha longbow flecha-lsp
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
