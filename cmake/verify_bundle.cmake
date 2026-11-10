@@ -17,8 +17,12 @@ foreach(executable IN ITEMS "${compiler}" "${longbow}" "${languageServer}")
     endif()
 endforeach()
 
+include("${CMAKE_CURRENT_LIST_DIR}/verify_vscode.cmake")
+
 foreach(editorFile IN ITEMS
         share/flecha/editors/neovim/ftdetect/flecha.vim
+        share/flecha/editors/neovim/lua/flecha/lsp.lua
+        share/flecha/editors/neovim/plugin/flecha_lsp.lua
         share/flecha/editors/neovim/plugin/longbow.vim
         share/flecha/editors/neovim/indent/flecha.vim
         share/flecha/editors/neovim/syntax/flecha.vim
@@ -33,11 +37,18 @@ foreach(editorFile IN ITEMS
     endif()
 endforeach()
 
-if(EXISTS "${INSTALL_ROOT}/share/flecha/editors/vscode/node_modules")
-    message(FATAL_ERROR
-        "Installed VS Code support contains development dependencies"
-    )
-endif()
+foreach(developmentPath IN ITEMS
+        node_modules
+        extension.js
+        tool-paths.js
+        tests)
+    if(EXISTS
+       "${INSTALL_ROOT}/share/flecha/editors/vscode/${developmentPath}")
+        message(FATAL_ERROR
+            "Installed VS Code support contains development-only path "
+            "${developmentPath}")
+    endif()
+endforeach()
 
 set(runtimeDependencyFilters)
 if(WIN32)

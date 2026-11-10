@@ -4,9 +4,18 @@
 
 ### Added
 
-- Flecha now builds and installs `flecha-lsp`, with full-document
-  synchronization, diagnostics, hover information, go to definition,
-  references, completion, rename, and semantic tokens.
+- Flecha now builds and installs `flecha-lsp`. The Visual Studio Code extension
+  starts it for compiler diagnostics, hover information, go to definition,
+  references, completion, rename, and semantic tokens, with configurable
+  server/compiler paths, protocol tracing, and a restart command for
+  development builds.
+- Compiler bundles include the matching `flecha-lsp` and VS Code client. The
+  extension discovers both compiler tools relative to a relocated bundle and
+  otherwise selects a colocated pair from `PATH`, preventing an obsolete
+  standalone server from shadowing the current compiler.
+- The Neovim plugin now starts `flecha-lsp` automatically for Flecha buffers,
+  discovers Longbow workspace roots, reuses an existing compatible client, and
+  supports explicit server/compiler overrides for development checkouts.
 
 ## 0.3.2 - 2026-11-09
 

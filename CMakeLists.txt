@@ -154,6 +154,9 @@ install(DIRECTORY editors/vscode/
     PATTERN ".vscodeignore" EXCLUDE
     PATTERN "node_modules" EXCLUDE
     PATTERN "package-lock.json" EXCLUDE
+    PATTERN "vscode/extension.js" EXCLUDE
+    PATTERN "vscode/tool-paths.js" EXCLUDE
+    PATTERN "tests" EXCLUDE
     PATTERN "*.vsix" EXCLUDE
 )
 install(FILES README.md CHANGELOG.md CONTRIBUTING.md CODE_STYLE.md SPEC.md LICENSE

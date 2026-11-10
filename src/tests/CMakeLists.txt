@@ -206,7 +206,7 @@ add_test(
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_LSP=$<TARGET_FILE:flecha-lsp>
         -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lsp-stdio
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_lsp_stdio.cmake
+        -P ${CMAKE_SOURCE_DIR}/cmake/verify_lsp_stdio.cmake
 )
 add_test(NAME CliTests.LongbowVersion COMMAND $<TARGET_FILE:longbow> --version)
 set_tests_properties(CliTests.LongbowVersion PROPERTIES
