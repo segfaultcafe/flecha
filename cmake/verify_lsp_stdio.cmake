@@ -28,12 +28,18 @@ set(shutdown
 set(exit "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}")
 
 set(input "${TEST_ROOT}/lsp-input.txt")
-file(WRITE "${input}" "")
+set(inputContent "")
 foreach(message initialize initialized openDocument shutdown exit)
     string(LENGTH "${${message}}" messageLength)
-    file(APPEND "${input}"
-        "Content-Length: ${messageLength}\r\n\r\n${${message}}")
+    string(APPEND inputContent
+        "Content-Length: ${messageLength}\n\n${${message}}")
 endforeach()
+file(CONFIGURE
+    OUTPUT "${input}"
+    CONTENT "${inputContent}"
+    @ONLY
+    NEWLINE_STYLE CRLF
+)
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env
