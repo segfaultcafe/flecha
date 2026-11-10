@@ -1,10 +1,13 @@
 filetype plugin indent on
 syntax enable
+let g:flecha_lsp_autostart = 0
+runtime plugin/flecha_lsp.lua
 
 " The run command and mapping must exist before any Flecha file is opened.
 call assert_equal('', expand('%:p'))
 call assert_equal(2, exists(':LongbowRun'))
 call assert_equal(2, exists(':LongbowTest'))
+call assert_equal(2, exists(':FlechaLspInfo'))
 call assert_notequal('', maparg('<leader>rr', 'n'))
 call assert_notequal('', maparg('<leader>rt', 'n'))
 call assert_equal('', maparg('<leader>lr', 'n'))
@@ -315,6 +318,9 @@ call assert_equal('    value:', getline(2))
 call feedkeys("A= 42;\<CR>math::run();\<CR>part := values[0:2];\<CR>}\<Esc>", 'xt')
 call assert_equal(['void test() {', '    value:= 42;', '    math::run();', '    part := values[0:2];', '}'], getline(1, '$'))
 bwipeout!
+
+execute 'edit ' . fnameescape(s:fixture_directory . '/highlighting.fl')
+execute 'luafile ' . fnameescape(s:test_directory . '/lsp_test.lua')
 
 if !empty(v:errors)
     for error in v:errors
