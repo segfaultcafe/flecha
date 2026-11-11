@@ -9,6 +9,7 @@ add_executable(test_flecha
     test_lowering.cpp
     test_longbow.cpp
     test_lsp_protocol.cpp
+    test_method_key.cpp
     test_modules.cpp
     test_main.cpp
     test_parser.cpp
