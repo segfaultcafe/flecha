@@ -72,7 +72,11 @@ foreach(required IN ITEMS
         nan infinity negative_infinity min_positive epsilon
         signed_integer unsigned_integer integer floating_point numeric
         borrowAllArguments
+        nominalDeclarations
         "keyword.operator.crashable.flecha"
+        "keyword.declaration.type.flecha"
+        "keyword.operator.inheritance.flecha"
+        "entity.other.inherited-class.flecha"
         "support.function.builtin.flecha"
         "storage.type.function.flecha"
         "storage.type.typeset.flecha"
