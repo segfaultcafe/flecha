@@ -131,123 +131,58 @@ The coupling is intentional and temporary. It lets v0.3 ship and exercise the
 JSON API without treating JSON's structure-and-field reflection needs as the
 design for every decoration.
 
-## Proposed restricted derived defaults
+## Proposed v0.4 replacement
 
-For post-v0.3 library-owned behaviors, a small general decoration contract can
-target exactly one kind and derive complete default methods without member
-reflection or application arguments. The syntax below is design material, not
-accepted v0.3 source:
-
-```flecha
-export decoration cloneable {
-    target structure;
-
-    derive<T> {
-        T clone(&const self) default {
-            // Complete implementation.
-        }
-    }
-};
-```
-
-`T` is bound to the decorated target. Within a derived method, `self` is the
-runtime receiver of that target: `&const self` has type `&const T`. A static
-derived method omits the receiver. The decoration itself has no instance and
-no `self`.
-
-The `default` modifier appears immediately before the method body. The method
-is added unless the target provides an exact `override`. Signatures without
-bodies are not default implementations.
-
-Expansion is declaration-based rather than a textual preprocessing step:
-
-1. resolve the decoration and bind `T`;
-2. instantiate every derived method signature;
-3. select exact user overrides and diagnose conflicts;
-4. register the complete method set; and
-5. type-check every derived and user body normally.
-
-No capability is granted merely because a type is bound as `T`. Calling
-`T::zero()` requires a zeroable target, copying `T` requires a copyable target,
-and building, moving, and destroying it follow the ordinary ownership and
-lifecycle rules. A failure is reported at the decoration application with
-context pointing into the derived body.
-
-## Post-v0.3 meta behavior direction
-
-The intended 0.4 direction is to remove every JSON-specific compiler branch
-while preserving the stable public declaration and application syntax. The
-decoration identity and its implementation can be separated conceptually:
+The proposed v0.4 design separates decoration metadata, callable contracts,
+and derivation. A decoration declares typed application forms, an interface
+declares receiver methods, and a behavior derives conformance plus
+implementations from the decorated structure's fields.
 
 ```flecha
-export decoration json;
-
-behavior json<T> {
-    // Provisional syntax, not a v0.3 language contract.
+export decoration json {
     application(structure) target structure;
-    application(string name) target field;
+    application(stringv name) target field;
+};
 
-    derive {
-        error writeJson(&const self, &Writer writer) default {
-            // Restricted meta iteration over selected fields.
+behavior json<T> << JsonWritable, JsonReadable {
+    error T::writeJson(&const self, &Writer writer) override {
+        for<F> Field<T, F> field = fields<T> {
+            // Ordinary, statically typed Flecha.
         }
+    }
 
-        (own []u8, error) json(&const self) default {
-            // Ordinary Flecha body calling self.writeJson(...).
-        }
-
-        error readJson(&self, &Reader reader) default {
-            // Restricted meta dispatch over selected fields.
-        }
-
-        (T, error) fromJson([]const u8 source) default {
-            // Ordinary Flecha body calling value.readJson(...).
+    error T::readJson(&self, &Reader reader) override {
+        for<F> Field<T, F> field = fields<T> {
+            // Ordinary, statically typed Flecha.
         }
     }
 };
 ```
 
-The exact `behavior` and meta syntax remains to be designed. The required
-capabilities are deliberately narrow:
+`T` is the decorated structure and `F` is the concrete type of one field-loop
+expansion. Behaviors do not introduce a dynamically typed meta sublanguage.
+They may implement only receiver methods declared by interfaces in their `<<`
+list. Static factories such as the v0.3 `Response::fromJson` do not become
+static interface requirements; the v0.4 form is an ordinary constrained
+generic helper such as `json::from<Response>(source)`.
 
-- associate a behavior with a declared decoration;
-- bind `T` to one target kind;
-- match declared application forms and their literal argument types;
-- inspect target fields, types, visibility, and attached decoration metadata
-  read-only;
-- iterate a selected field set deterministically;
-- splice hygienic field accesses, names, and literals into ordinary methods;
-- register all derived signatures before checking their bodies; and
-- enforce exact overrides, expansion limits, and normal semantic rules.
+Behaviors are limited to structure and enum targets. Decorations may also
+target interfaces, but those applications are non-propagating metadata and do
+not activate behavior.
 
-The engine must not know the names `json`, `Writer`, `Reader`, `writeJson`, or
-`readJson`. Those belong to Flecha source. It must also provide no filesystem,
-environment, network, clock, process, FFI, arbitrary compiler-memory, or
-unrestricted AST access. Generated methods pass through the ordinary semantic
-pipeline and retain source context for useful diagnostics.
+The complete proposal, including activation, field access, handwritten
+override precedence, allowed operations, allocation, and diagnostics, is in
+[behaviors-v0.4.md](behaviors-v0.4.md). Its callable and dispatch rules come
+from [interfaces-v0.4.md](interfaces-v0.4.md), rather than defining a second
+interface model inside the behavior engine.
 
-Once this restricted engine can express and test the complete JSON behavior,
-the compiler-owned v0.3 implementation can be removed without changing
-`export decoration json;` or any application source.
+Once the restricted behavior system can express and test JSON, the
+compiler-owned v0.3 implementation can be removed. The existing decoration
+applications remain expressible, while v0.4 may replace generated convenience
+methods with ordinary generic library functions.
 
-## Later interfaces and virtual requirements
-
-The same default-method machinery may participate in a future interface
-system. A decoration could declare interface conformance on behalf of its
-target and satisfy members with derived defaults. A virtual method without a
-default body would instead declare a requirement:
-
-```flecha
-(own []u8, error) foo() virtual = none;
-```
-
-Every decorated target would have to provide an exact override. A decoration
-would not itself become a runtime interface; the interface system would define
-the callable contract and dispatch model, while the decoration would declare
-conformance and supply defaults.
-
-When `default` and `virtual` become active syntax, editor integrations should
-classify both as method-contract modifiers and render them in the same
-dark-blue family used for virtual declarations, not the orange style used for
-crashable operators. Neovim and Visual Studio Code highlighting should land
-with the parser feature rather than reserving unsupported keywords early.
+When `virtual`, `default`, and `final` become active syntax, editor integrations
+should classify them as method-contract modifiers and render them in the same
+dark-blue family, not the orange style used for crashable operators. Neovim and
+Visual Studio Code highlighting should land with the parser feature rather
+than reserving unsupported keywords early.
