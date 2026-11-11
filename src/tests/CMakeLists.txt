@@ -342,6 +342,21 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_hierarchy.cmake
 )
 
+add_test(
+    NAME InterfaceFixtureTests.ValidMethodContracts
+    COMMAND $<TARGET_FILE:flecha>
+        check
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_method_contracts.fl
+)
+
+add_test(
+    NAME InterfaceFixtureTests.InvalidMethodContractDiagnostics
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/invalid_method_contracts.fl
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_method_contracts.cmake
+)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(
         NAME StandardLibraryTests.AssertionAllocationFailure

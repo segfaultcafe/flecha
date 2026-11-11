@@ -1,0 +1,65 @@
+interface MissingRequirement {
+    error bar(&self) virtual;
+};
+
+structure MissingImplementation << MissingRequirement {};
+
+interface ChangedResultRoot {
+    error convert(&self) virtual;
+};
+
+interface ChangedResultChild << ChangedResultRoot {
+    i32 convert(&self) virtual;
+};
+
+interface DefaultRoot {
+    error reset(&self) default;
+};
+
+error DefaultRoot::reset(&self) {
+    return none;
+}
+
+interface VirtualAgain << DefaultRoot {
+    error reset(&self) virtual;
+};
+
+interface FinalRoot {
+    error close(&self) final;
+};
+
+interface FinalChild << FinalRoot {
+    error close(&self) final;
+};
+
+error FinalChild::close(&self) override {
+    return none;
+}
+
+interface CollisionLeft {
+    error collide(&self) virtual;
+};
+
+interface CollisionRight {
+    error collide(&self) virtual;
+};
+
+structure HorizontalCollision << CollisionLeft, CollisionRight {};
+
+interface MissingDefaultBody {
+    error supplied(&self) default;
+};
+
+interface ConcreteFinal {
+    error fixed(&self) final;
+};
+
+error ConcreteFinal::fixed(&self) {
+    return none;
+}
+
+structure IllegalOverride << ConcreteFinal {};
+
+error IllegalOverride::fixed(&self) override {
+    return none;
+}
