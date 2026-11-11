@@ -1,0 +1,16 @@
+interface Root {};
+
+interface Displayable << Root {};
+
+interface Serializable {};
+
+structure Box<T> << Displayable, Serializable {
+    T value;
+};
+
+enum State << Root {
+    default Unknown,
+    Ready,
+}
+
+void consume(Box<i32> value) {}

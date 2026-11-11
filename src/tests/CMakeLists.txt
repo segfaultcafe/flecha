@@ -326,6 +326,21 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_golden_failure.cmake
 )
 
+add_test(
+    NAME InterfaceFixtureTests.ValidHierarchy
+    COMMAND $<TARGET_FILE:flecha>
+        check
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_hierarchy.fl
+)
+
+add_test(
+    NAME InterfaceFixtureTests.InvalidHierarchyDiagnostics
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/invalid_hierarchy.fl
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_hierarchy.cmake
+)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(
         NAME StandardLibraryTests.AssertionAllocationFailure
