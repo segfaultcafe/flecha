@@ -30,7 +30,8 @@ JSON decoration needs a structure marker and a field-name override:
 ```flecha
 export decoration json {
     application(structure) target structure;
-    application(stringv name) target field;
+    application(stringv name) target structure::field;
+    application(stringv name) target enum;
 };
 ```
 
@@ -55,8 +56,11 @@ argument count or type, an unsupported target kind, duplicate applications
 where the decoration does not permit them, and inaccessible decoration names
 before expanding a behavior.
 
-The initial contract permits at most one application signature for each
-decoration target kind. This keeps typed metadata lookup unambiguous. Tagged
+The initial target categories are `structure`, `structure::field`, `enum`, and
+`interface`. The qualified `structure::field` spelling makes the field's owner
+explicit and avoids confusing a compile-time field descriptor with runtime
+member access. The initial contract permits at most one application signature
+for each target category. This keeps typed metadata lookup unambiguous. Tagged
 application alternatives can be designed later if a concrete use requires
 them.
 
@@ -145,24 +149,42 @@ interface reference.
 
 ## Behavior declaration
 
-The JSON behavior names its decoration, binds `T` to the affected structure,
-and lists the interfaces it derives:
+The JSON behavior names its decoration, declares its concrete target kind,
+binds `T` to the affected type, and lists the interfaces it derives:
 
 ```flecha
-behavior json<T> << JsonWritable, JsonReadable {
+behavior json<T> => structure << JsonWritable, JsonReadable {
     error T::writeJson(&const self, &Writer writer) override {
-        for<F> Field<T, F> field = fields<T> {
+        for<F> Field<T, F> field = T::fields() {
             // Ordinary Flecha using this typed field projection.
         }
     }
 
     error T::readJson(&self, &Reader reader) override {
-        for<F> Field<T, F> field = fields<T> {
+        for<F> Field<T, F> field = T::fields() {
             // Ordinary Flecha using this typed field projection.
         }
     }
 };
 ```
+
+An enum behavior is declared separately:
+
+```flecha
+behavior json<T> => enum << JsonWritable {
+    error T::writeJson(&const self, &Writer writer) override {
+        // No enum-variant reflection in v0.4.
+        return none;
+    }
+};
+```
+
+`T` is the behavior's one unconstrained target-type parameter. It cannot have
+a constraint, annotation, default, or second type parameter. It is unknown
+when the behavior is declared and is bound by the compiler to one concrete
+decorated target during expansion. Users cannot explicitly instantiate a
+behavior. `=> structure` and `=> enum` select the declaration kind; they are
+not generic constraints.
 
 For a decorated `Response`, `T` is `Response`. In one field-loop expansion,
 `F` is the exact type of the current field. Given:
@@ -183,8 +205,9 @@ Field<Response, i32>
 Field<Response, bool>
 ```
 
-`T` remains `Response`; `F` changes for each field. Both are ordinary generic
-type parameters, not runtime type objects or dynamically typed meta values.
+`T` remains `Response`; `F` changes for each field. They participate in normal
+compile-time type checking but are not runtime type objects or dynamically
+typed meta values.
 
 The `<<` list is the complete public capability a behavior may add. Every
 method declared in the behavior must exactly implement or override a receiver
@@ -230,34 +253,72 @@ A behavior must be declared in the same logical module as its decoration. A
 decoration has at most one behavior for each supported concrete target kind.
 Importing another module cannot add or replace behavior for a decoration it
 does not own. This makes conformance coherent and prevents imports from
-retroactively changing a type's API. If one decoration supports both structure
-and enum behavior, its declarations must distinguish which target kind binds
-`T`; the exact surface spelling for that distinction remains to be selected.
+retroactively changing a type's API. A decoration that supports both kinds
+uses distinct `=> structure` and `=> enum` behavior declarations.
 
 ## Typed field iteration
 
-For a structure behavior, `fields<T>` is a compile-time field pack, not a
-runtime collection.
+For a structure behavior, `T::fields()` is a contextual compiler intrinsic
+that produces a compile-time field pack, not a runtime collection.
 
 ```flecha
-for<F> Field<T, F> field = fields<T> {
+for<F> Field<T, F> field = T::fields() {
     // body
 }
 ```
 
 The compiler expands it in source declaration order and then type-checks each
 specialized body normally. An empty structure produces zero expansions. The
-loop cannot use runtime `break` or `continue`, and neither `Field<T, F>` nor a
-field pack has a runtime representation.
+loop cannot use runtime `break` or `proceed`, and neither `Field<T, F>` nor a
+field pack has a runtime representation. This exact loop form is valid only
+inside a `behavior ... => structure` method. It is not general compile-time
+iteration and is invalid in ordinary functions, interface bodies, and enum
+behaviors.
 
-A field descriptor provides only bounded, typed information:
+The loop variable is a unique compile-time descriptor type, not a runtime
+value and not the field's value type. `F` is the value type. Two fields with
+the same `F` remain distinct through a hidden declaration identity,
+conceptually `Field<T, F, FieldIdentity>`, while source spells only
+`Field<T, F>`.
+
+A field descriptor provides only bounded, typed information through type-level
+`::` operations:
 
 - its owning type is `T`;
 - its field type is `F`;
-- its declaration name is a compile-time `stringv`;
-- its visibility and decoration presence are compile-time values;
-- arguments for a present decoration retain their declared Flecha types; and
-- `field.get(receiver)` is a hygienic projection of that exact field.
+- `field::name()` is its source declaration name as a compile-time `stringv`;
+- `field::decorated()` reports direct presence of the behavior's decoration;
+- `field::decorator()` exposes that application's typed argument record; and
+- `field::get(receiver)` is a hygienic projection of that exact field.
+
+The target type has corresponding direct-decoration operations:
+
+```flecha
+T::decorated()
+T::decorator()
+```
+
+These operations refer implicitly to the decoration that owns the current
+behavior. They cannot query an arbitrary other decoration. Because structure
+behavior may be activated by a field application alone, `T::decorator()` must
+be guarded by `T::decorated()`. The field form must likewise be guarded when
+field decoration is optional:
+
+```flecha
+for<F> Field<T, F> field = T::fields() {
+    stringv name = field::name();
+    if field::decorated() {
+        name = field::decorator().name;
+    }
+
+    writer->write(name, field::get(self));
+}
+```
+
+Calling `::decorator()` without compile-time proof of presence is a compile-time
+error. Metadata branches fold before ordinary body analysis. For an enum
+behavior, activation requires a direct enum application, so the corresponding
+`T::decorator()` record is present.
 
 The projection behaves like writing the concrete member access in source. A
 mutable receiver produces an assignable place; a const receiver produces a
@@ -265,11 +326,10 @@ const place. Copying, moving, borrowing, assigning, or passing the result is
 then governed by the ordinary rules for `F`. Merely projecting a field does
 not copy or allocate it.
 
-The exact surface spelling for retrieving a present decoration's typed
-argument record is still open. It must not return an untyped map, `any` value,
-raw syntax tree, or stringly typed argument. Whichever spelling is selected,
-the field form above must expose JSON's `name` as a `stringv` known during that
-field expansion.
+The typed record is not an untyped map, `any` value, raw syntax tree, or
+stringly typed argument. For JSON, `field::decorator().name` retains the
+declared `stringv` type. `field::name()` still reports the source field name;
+the decoration argument is a separate policy override.
 
 Field iteration is available only inside structure-behavior implementations
 for their bound target. It does not provide module enumeration, base-address
@@ -301,12 +361,13 @@ The handwritten method must still be a valid `override` of the derived
 interface contract. A same-named method with a different signature is an
 overload and does not suppress behavior expansion.
 
-If several active behaviors add the same canonical interface requirement, the
-normal interface merge rules apply. One handwritten exact implementation may
-satisfy all matching requirements. Two behavior-provided bodies for the same
-slot are ambiguous and rejected; source order and decoration order never pick
-a winner. Final-method and unrelated-default conflicts remain interface
-errors, not behavior precedence rules.
+All explicit and behavior-derived root conformances are combined before body
+selection and must satisfy the interface contract's antichain, unique-path,
+and disjoint-`MethodKey` rules. Two active behaviors cannot merge the same
+canonical requirement, and a handwritten implementation cannot repair an
+invalid composition. Duplicate roots, related roots, shared ancestors, and
+horizontal slot collisions are rejected before behavior bodies are selected.
+Source order and decoration order never pick a winner.
 
 ## Allowed operations
 
@@ -372,11 +433,14 @@ The compiler processes a behavior application in this order:
 2. identify the concrete structure or enum target and bind `T`;
 3. add the behavior's declared interface conformance edges;
 4. instantiate and register all candidate receiver signatures;
-5. select exact handwritten implementations and diagnose body conflicts;
-6. expand bounded field packs, binding a concrete `F` for each field;
-7. validate the complete interface graph and remaining virtual requirements;
-8. type-check every surviving body through the normal semantic pipeline; and
-9. lower only the resulting ordinary Flecha declarations.
+5. validate the combined conformance roots, unique paths, and disjoint method
+   sets before selecting any provider;
+6. select exact handwritten implementations and diagnose body conflicts;
+7. expand bounded field packs, binding a concrete `F` and field identity for
+   each field;
+8. validate vertical method states and remaining virtual requirements;
+9. type-check every surviving body through the normal semantic pipeline; and
+10. lower only the resulting ordinary Flecha declarations.
 
 An error in a specialized field body is reported at the decoration application
 with related context for the behavior source, field declaration, concrete `T`
