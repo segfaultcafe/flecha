@@ -141,18 +141,18 @@ implementations from the decorated structure's fields.
 ```flecha
 export decoration json {
     application(structure) target structure;
-    application(stringv name) target field;
+    application(stringv name) target structure::field;
 };
 
-behavior json<T> << JsonWritable, JsonReadable {
+behavior json<T> => structure << JsonWritable, JsonReadable {
     error T::writeJson(&const self, &Writer writer) override {
-        for<F> Field<T, F> field = fields<T> {
+        for<F> Field<T, F> field = T::fields() {
             // Ordinary, statically typed Flecha.
         }
     }
 
     error T::readJson(&self, &Reader reader) override {
-        for<F> Field<T, F> field = fields<T> {
+        for<F> Field<T, F> field = T::fields() {
             // Ordinary, statically typed Flecha.
         }
     }

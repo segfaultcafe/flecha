@@ -2264,3 +2264,189 @@ TEST(ParserTests, ParsesTrailingDefaultParameterValues) {
     EXPECT_EQ(function.Parameters()[1]->Range().end.offset,
               function.Parameters()[1]->DefaultValue()->Range().end.offset);
 }
+
+TEST(ParserInterfaceTests, ParsesStructuralDeclarationsAndPreservesOrder) {
+    const std::string source = R"(
+export interface Foo {
+    error run(&self) virtual;
+    protected error status(&const self) default;
+    error stop(&self) final;
+};
+interface Bar << Foo, Serializable {
+    error run(&self) default;
+};
+structure Worker << Bar, Serializable {
+    i32 identifier;
+};
+enum Plain << Displayable {
+    Off,
+    On,
+}
+enum State: u8 << Displayable, Serializable {
+    Off,
+    On,
+}
+)";
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(source, diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 5);
+
+    const auto& foo =
+        static_cast<const InterfaceDeclaration&>(*unit->Declarations()[0]);
+    EXPECT_TRUE(foo.exported);
+    EXPECT_EQ(foo.Name(), "Foo");
+    EXPECT_TRUE(foo.Parents().empty());
+    ASSERT_EQ(foo.Methods().size(), 3);
+    EXPECT_EQ(foo.Methods()[0]->Category(), MethodCategory::Virtual);
+    EXPECT_EQ(foo.Methods()[1]->Category(), MethodCategory::Default);
+    EXPECT_EQ(foo.Methods()[2]->Category(), MethodCategory::Final);
+    EXPECT_TRUE(
+        foo.Methods()[1]->Signature().HasModifier(FunctionModifier::Protected));
+    EXPECT_EQ(foo.Methods()[0]->Signature().Owner(), "Foo");
+    ASSERT_EQ(foo.Methods()[0]->Signature().Parameters().size(), 1);
+    EXPECT_EQ(foo.Methods()[0]->Signature().Parameters()[0]->Type().TypeForm(),
+              TypeKind::Reference);
+    EXPECT_EQ(
+        foo.Methods()[0]->Signature().Parameters()[0]->Type().Target()->Name(),
+        "Foo");
+    EXPECT_EQ(foo.Methods()[0]->CategoryRange().start.offset,
+              source.find("virtual"));
+    EXPECT_EQ(foo.NameRange().start.offset, source.find("Foo"));
+
+    const auto& bar =
+        static_cast<const InterfaceDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(bar.Parents().size(), 2);
+    EXPECT_EQ(bar.Parents()[0].name, "Foo");
+    EXPECT_EQ(bar.Parents()[1].name, "Serializable");
+    const std::size_t barParents = source.find("Foo, Serializable");
+    EXPECT_EQ(bar.Parents()[0].range.start.offset, barParents);
+    EXPECT_EQ(bar.Parents()[1].range.start.offset,
+              barParents + std::string("Foo, ").size());
+
+    const auto& worker =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[2]);
+    ASSERT_EQ(worker.Conformances().size(), 2);
+    EXPECT_EQ(worker.Conformances()[0].name, "Bar");
+    EXPECT_EQ(worker.Conformances()[1].name, "Serializable");
+    ASSERT_EQ(worker.Fields().size(), 1);
+
+    const auto& plain =
+        static_cast<const EnumDeclaration&>(*unit->Declarations()[3]);
+    EXPECT_EQ(plain.BackingType(), nullptr);
+    ASSERT_EQ(plain.Conformances().size(), 1);
+    EXPECT_EQ(plain.Conformances()[0].name, "Displayable");
+
+    const auto& state =
+        static_cast<const EnumDeclaration&>(*unit->Declarations()[4]);
+    ASSERT_NE(state.BackingType(), nullptr);
+    EXPECT_EQ(state.BackingType()->Type(), PrimitiveType::U8);
+    ASSERT_EQ(state.Conformances().size(), 2);
+    EXPECT_EQ(state.Conformances()[0].name, "Displayable");
+    EXPECT_EQ(state.Conformances()[1].name, "Serializable");
+}
+
+TEST(ParserInterfaceTests, RetainsMissingAndInvalidMethodCategories) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+interface Broken {
+    error missing(&self);
+    error invalid(&self) abstract;
+    error valid(&self) virtual;
+};
+)",
+                            diagnostics);
+
+    ASSERT_TRUE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    const auto& declaration =
+        static_cast<const InterfaceDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(declaration.Methods().size(), 3);
+    EXPECT_EQ(declaration.Methods()[0]->Category(), MethodCategory::Missing);
+    EXPECT_TRUE(declaration.Methods()[0]->CategoryRange().Empty());
+    EXPECT_EQ(declaration.Methods()[1]->Category(), MethodCategory::Invalid);
+    EXPECT_FALSE(declaration.Methods()[1]->CategoryRange().Empty());
+    EXPECT_EQ(declaration.Methods()[2]->Category(), MethodCategory::Virtual);
+}
+
+TEST(ParserInterfaceTests, RejectsMalformedHeadersAndRecovers) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+structure Empty << {
+};
+structure Chained << A << B {
+};
+enum Trailing << Displayable, {
+    Off,
+}
+interface Missing << {
+    error run(&self) virtual;
+};
+structure Good {
+    i32 value;
+};
+)",
+                            diagnostics);
+
+    ASSERT_TRUE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 5);
+    const auto& chained =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[1]);
+    ASSERT_EQ(chained.Conformances().size(), 1);
+    EXPECT_EQ(chained.Conformances()[0].name, "A");
+    EXPECT_TRUE(std::any_of(
+        diagnostics.Diagnostics().begin(), diagnostics.Diagnostics().end(),
+        [](const Diagnostic& diagnostic) {
+            return diagnostic.message.find("chaining is invalid") !=
+                   std::string::npos;
+        }));
+    EXPECT_EQ(unit->Declarations().back()->Kind(),
+              AstNodeKind::StructureDeclaration);
+    EXPECT_EQ(
+        static_cast<const StructureDeclaration&>(*unit->Declarations().back())
+            .Name(),
+        "Good");
+}
+
+TEST(ParserInterfaceTests, RecoversAfterIncompleteHeader) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "structure Incomplete << structure Good { i32 value; };", diagnostics);
+
+    ASSERT_TRUE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1);
+    EXPECT_EQ(
+        static_cast<const StructureDeclaration&>(*unit->Declarations().front())
+            .Name(),
+        "Good");
+}
+
+TEST(ParserInterfaceTests, KeepsShiftLeftInsideInitializersAndBodies) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+structure Bits {
+    i32 mask = left << right;
+};
+i32 shift(i32 left, i32 right) {
+    value := left << right;
+    return value;
+}
+)",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& structure =
+        static_cast<const StructureDeclaration&>(*unit->Declarations()[0]);
+    const auto& fieldShift = static_cast<const BinaryExpression&>(
+        *structure.Fields()[0]->Initializer());
+    EXPECT_EQ(fieldShift.OperatorType(), TokenType::ShiftLeft);
+
+    const auto& function =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const auto& variable = static_cast<const VariableDeclarationStatement&>(
+        *function.Body().Statements()[0]);
+    const auto& bodyShift =
+        static_cast<const BinaryExpression&>(*variable.Initializer());
+    EXPECT_EQ(bodyShift.OperatorType(), TokenType::ShiftLeft);
+}

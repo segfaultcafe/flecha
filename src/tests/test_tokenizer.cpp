@@ -77,6 +77,21 @@ TEST(TokenizerTests, RecognizesFunctionModifiersAndReservedWords) {
     }
 }
 
+TEST(TokenizerTests, RecognizesInterfaceStructuralKeywordsOnly) {
+    const std::vector<Token> tokens = Tokenize(
+        "interface virtual default final protected behavior application "
+        "target");
+    const std::vector<TokenType> expected = {
+        TokenType::Interface,  TokenType::Virtual,    TokenType::Default,
+        TokenType::Final,      TokenType::Protected,  TokenType::Identifier,
+        TokenType::Identifier, TokenType::Identifier, TokenType::EOF_TOKEN,
+    };
+
+    ASSERT_EQ(tokens.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        EXPECT_EQ(tokens[index].type, expected[index]);
+}
+
 TEST(TokenizerTests, RecognizesMultiCharacterOperators) {
     std::vector<Token> tokens = Tokenize("= := == != === !== <= >= && ||");
     ASSERT_EQ(tokens.size(), 11);
@@ -330,8 +345,7 @@ TEST(TokenizerTests, RecognizesStringLiterals) {
 
 TEST(TokenizerTests, RecognizesDecorationKeyword) {
     DiagnosticBag diagnostics;
-    const auto tokens =
-        Tokenizer("decoration json;", diagnostics).Tokenize();
+    const auto tokens = Tokenizer("decoration json;", diagnostics).Tokenize();
 
     ASSERT_FALSE(diagnostics.HasErrors());
     ASSERT_GE(tokens.size(), 2u);
