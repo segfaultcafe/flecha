@@ -12,6 +12,8 @@
 
 namespace flecha::semantic {
 
+struct InterfaceType;
+
 enum class SymbolKind {
     Function,
     Parameter,
@@ -87,6 +89,22 @@ class VariableSymbol final : public Symbol {
     VariableSymbol(SymbolKind kind, std::string name, SemanticType type,
                    source::SourceRange declarationRange, bool writable)
         : Symbol(kind, std::move(name), type, declarationRange, writable) {}
+};
+
+class InterfaceSymbol final : public Symbol {
+   public:
+    InterfaceSymbol(std::string name, const InterfaceType* interfaceType,
+                    source::SourceRange declarationRange)
+        : Symbol(SymbolKind::InterfaceType, std::move(name),
+                 SemanticType(interfaceType), declarationRange, false),
+          _interface(interfaceType) {}
+
+    [[nodiscard]] const InterfaceType* Interface() const {
+        return _interface;
+    }
+
+   private:
+    const InterfaceType* _interface;
 };
 
 class FunctionSymbol final : public Symbol {
@@ -199,8 +217,6 @@ struct EnumVariant final {
     source::SourceRange range;
 };
 
-struct InterfaceType;
-
 struct InterfaceReference final {
     const InterfaceType* type = nullptr;
     source::SourceRange range;
@@ -211,6 +227,9 @@ struct InterfaceType final {
     std::string displayName;
     const core::InterfaceDeclaration* syntax = nullptr;
     std::vector<InterfaceReference> parents;
+    // Deterministic declared-parent pre-order. This excludes the interface
+    // itself and de-duplicates invalid graphs for diagnostic recovery.
+    std::vector<const InterfaceType*> ancestors;
 };
 
 struct EnumType final {
@@ -221,6 +240,7 @@ struct EnumType final {
     std::vector<EnumVariant> variants;
     std::optional<std::uint64_t> defaultValue;
     std::vector<InterfaceReference> conformances;
+    std::vector<const InterfaceType*> conformanceClosure;
     std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
         methods;
 };
@@ -237,6 +257,7 @@ struct StructureType final {
     const core::StructureDeclaration* syntax = nullptr;
     std::vector<StructureField> fields;
     std::vector<InterfaceReference> conformances;
+    std::vector<const InterfaceType*> conformanceClosure;
     std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
         methods;
     const FunctionSymbol* init = nullptr;
