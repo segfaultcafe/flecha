@@ -738,12 +738,14 @@ and Writer protocol used by generated code is tightly coupled to the compiler
 throughout the 0.3.x line and must change only with a coordinated compiler
 update.
 
-The intended 0.4.0 migration replaces this JSON-specific path with a
-restricted decoration behavior and meta-expansion engine. The stable
-`export decoration json;`, `@json(structure)`, `@json("name")`, and generated
-method APIs should survive that migration unchanged. The provisional design,
-safety boundary, and derived-default rules are documented in
-[decorations.md](decorations.md#post-v03-meta-behavior-direction).
+The proposed 0.4.0 migration replaces this JSON-specific path with typed
+decoration applications and restricted behaviors that derive receiver
+interfaces through bounded field iteration. The decoration applications remain
+expressible. The generated v0.3 method API is stable for the 0.3.x line, while
+the v0.4 proposal moves type-level factories to ordinary generic functions.
+The current direction and safety boundary are documented in
+[behaviors-v0.4.md](behaviors-v0.4.md), with the shipped contract retained in
+[decorations.md](decorations.md).
 
 ## Explicit non-goals
 

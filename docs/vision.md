@@ -99,15 +99,15 @@ combination should be judged by the programs they enable and the clarity of
 their generated code.
 
 Flecha 0.3.x intentionally keeps JSON derivation coupled to a compiler-known
-decoration contract. The intended 0.4 direction is a restricted behavior and
-meta-expansion engine that lets the JSON library own field selection,
-renaming, traversal, and complete default methods without granting packages
-unrestricted compiler execution or arbitrary AST access. Derived signatures
-are registered before bodies are checked, and exact target overrides replace
-defaults. The same foundation may later declare interface conformance and
-virtual requirements. The versioned contract, provisional syntax, and safety
-boundary are recorded in
-[decorations.md](decorations.md#post-v03-meta-behavior-direction).
+decoration contract. The proposed 0.4 replacement uses typed decoration
+applications, receiver-only interfaces, and restricted structure or enum
+behaviors that derive interface conformance. Structure behaviors additionally
+receive bounded field iteration. Behavior bodies remain ordinary Flecha;
+packages receive neither unrestricted compiler execution nor arbitrary AST
+access. Derived signatures are registered before bodies are checked, and exact
+target overrides replace derived bodies. The versioned v0.3 contract remains
+in [decorations.md](decorations.md), while the proposed replacement is
+specified in [behaviors-v0.4.md](behaviors-v0.4.md).
 
 More generally, every decoration usable in 0.3.x requires a compiler
 counterpart: a source declaration only exposes its name and cannot define new
