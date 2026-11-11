@@ -12,20 +12,44 @@ error ProvidedRunnable::run(&self) override {
 
 interface Validated {
     protected error validate(&const self) virtual;
+    error ensure(&const self) default;
 };
 
-interface Named {
-    stringv name(&const self) final;
-};
-
-stringv Named::name(&const self) {
-    return "fixture";
+error Validated::ensure(&const self) {
+    return self->validate();
 }
 
-structure Record << ProvidedRunnable, Validated, Named {};
+interface Named {
+    &const i32 rawName(&const self) virtual <-self;
+    &const i32 name(&const self) final <-self;
+};
+
+&const i32 Named::name(&const self) <-self {
+    return self->rawName();
+}
+
+structure Record << ProvidedRunnable, Validated, Named {
+    i32 label;
+};
 
 protected error Record::validate(&const self) override {
     return none;
+}
+
+error Record::check(&const self) {
+    return self->validate();
+}
+
+&const i32 Record::rawName(&const self) override <-self {
+    return &self->label;
+}
+
+error execute(&Runnable runnable) {
+    return runnable->run();
+}
+
+&const i32 interfaceName(&const Named value) <-value {
+    return value->name();
 }
 
 interface WritableI32 {

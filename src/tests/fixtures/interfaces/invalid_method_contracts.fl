@@ -63,3 +63,11 @@ structure IllegalOverride << ConcreteFinal {};
 error IllegalOverride::fixed(&self) override {
     return none;
 }
+
+interface Secret {
+    protected error reveal(&const self) virtual;
+};
+
+error expose(&const Secret value) {
+    return value->reveal();
+}

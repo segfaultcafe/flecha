@@ -24,7 +24,8 @@ foreach(expected IN ITEMS
         "final method 'close' cannot be redeclared"
         "interface composition has conflicting method 'collide' in structure"
         "default interface method 'supplied' requires exactly one out-of-line body"
-        "final interface method 'fixed' cannot be overridden")
+        "final interface method 'fixed' cannot be overridden"
+        "method 'reveal' is protected")
     string(FIND "${diagnostics}" "${expected}" position)
     if(position EQUAL -1)
         message(FATAL_ERROR
