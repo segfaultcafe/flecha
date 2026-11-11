@@ -22,6 +22,8 @@ enum class AstNodeKind {
     CallableTypeDeclaration,
     ErrorDeclaration,
     EnumDeclaration,
+    InterfaceDeclaration,
+    InterfaceMethod,
     TypeSetDeclaration,
     DecorationDeclaration,
     ModuleConstantDeclaration,
@@ -345,17 +347,24 @@ struct EnumVariant final {
     source::SourceRange discriminantRange;
 };
 
+struct NominalParent final {
+    std::string name;
+    source::SourceRange range;
+};
+
 class EnumDeclaration final : public Declaration {
    public:
     EnumDeclaration(source::SourceRange range, std::string name,
                     source::SourceRange nameRange,
                     std::unique_ptr<TypeNode> backingType,
-                    std::vector<EnumVariant> variants)
+                    std::vector<EnumVariant> variants,
+                    std::vector<NominalParent> conformances = {})
         : Declaration(range),
           _name(std::move(name)),
           _nameRange(nameRange),
           _backingType(std::move(backingType)),
-          _variants(std::move(variants)) {}
+          _variants(std::move(variants)),
+          _conformances(std::move(conformances)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::EnumDeclaration;
@@ -368,12 +377,16 @@ class EnumDeclaration final : public Declaration {
     [[nodiscard]] const std::vector<EnumVariant>& Variants() const {
         return _variants;
     }
+    [[nodiscard]] const std::vector<NominalParent>& Conformances() const {
+        return _conformances;
+    }
 
    private:
     std::string _name;
     source::SourceRange _nameRange;
     std::unique_ptr<TypeNode> _backingType;
     std::vector<EnumVariant> _variants;
+    std::vector<NominalParent> _conformances;
 };
 
 class TypeSetDeclaration final : public Declaration {
@@ -455,22 +468,28 @@ class StructureDeclaration final : public Declaration {
    public:
     StructureDeclaration(source::SourceRange range, std::string name,
                          source::SourceRange nameRange,
-                         std::vector<std::unique_ptr<StructureField>> fields)
+                         std::vector<std::unique_ptr<StructureField>> fields,
+                         std::vector<NominalParent> conformances = {})
         : Declaration(range),
           _name(std::move(name)),
           _nameRange(nameRange),
-          _fields(std::move(fields)) {}
+          _fields(std::move(fields)),
+          _conformances(std::move(conformances)) {}
     AstNodeKind Kind() const override {
         return AstNodeKind::StructureDeclaration;
     }
     const std::string& Name() const { return _name; }
     source::SourceRange NameRange() const { return _nameRange; }
     const auto& Fields() const { return _fields; }
+    [[nodiscard]] const std::vector<NominalParent>& Conformances() const {
+        return _conformances;
+    }
 
    private:
     std::string _name;
     source::SourceRange _nameRange;
     std::vector<std::unique_ptr<StructureField>> _fields;
+    std::vector<NominalParent> _conformances;
 };
 
 class Parameter final : public AstNode {
@@ -506,6 +525,7 @@ class Parameter final : public AstNode {
 
 enum class FunctionModifier : std::uint8_t {
     Private,
+    Protected,
     Override,
     Unsafe,
     Once,
@@ -666,6 +686,76 @@ class FunctionDeclaration final : public Declaration {
     bool _isCrashable;
     bool _isTest = false;
     bool _isTestHarness = false;
+};
+
+enum class MethodCategory : std::uint8_t {
+    Missing,
+    Virtual,
+    Default,
+    Final,
+    Invalid,
+};
+
+class InterfaceMethod final : public AstNode {
+   public:
+    InterfaceMethod(source::SourceRange range,
+                    std::unique_ptr<FunctionDeclaration> signature,
+                    MethodCategory category,
+                    source::SourceRange categoryRange = {})
+        : AstNode(range),
+          _signature(std::move(signature)),
+          _category(category),
+          _categoryRange(categoryRange) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::InterfaceMethod;
+    }
+    [[nodiscard]] const FunctionDeclaration& Signature() const {
+        return *_signature;
+    }
+    [[nodiscard]] MethodCategory Category() const { return _category; }
+    [[nodiscard]] const source::SourceRange& CategoryRange() const {
+        return _categoryRange;
+    }
+
+   private:
+    std::unique_ptr<FunctionDeclaration> _signature;
+    MethodCategory _category;
+    source::SourceRange _categoryRange;
+};
+
+class InterfaceDeclaration final : public Declaration {
+   public:
+    InterfaceDeclaration(source::SourceRange range, std::string name,
+                         source::SourceRange nameRange,
+                         std::vector<NominalParent> parents,
+                         std::vector<std::unique_ptr<InterfaceMethod>> methods)
+        : Declaration(range),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _parents(std::move(parents)),
+          _methods(std::move(methods)) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::InterfaceDeclaration;
+    }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] const source::SourceRange& NameRange() const {
+        return _nameRange;
+    }
+    [[nodiscard]] const std::vector<NominalParent>& Parents() const {
+        return _parents;
+    }
+    [[nodiscard]] const std::vector<std::unique_ptr<InterfaceMethod>>& Methods()
+        const {
+        return _methods;
+    }
+
+   private:
+    std::string _name;
+    source::SourceRange _nameRange;
+    std::vector<NominalParent> _parents;
+    std::vector<std::unique_ptr<InterfaceMethod>> _methods;
 };
 
 class AnonymousFunctionExpression final : public Expression {
