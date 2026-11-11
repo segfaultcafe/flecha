@@ -37,6 +37,7 @@ std::string MangleType(SemanticType type) {
     result += std::to_string(static_cast<int>(type.Kind()));
     if (type.Kind() == SemanticTypeKind::Structure ||
         type.Kind() == SemanticTypeKind::Enum ||
+        type.Kind() == SemanticTypeKind::Interface ||
         type.Kind() == SemanticTypeKind::NamedError) {
         const std::string name(type.Name());
         result += "_" + std::to_string(name.size()) + name;
@@ -602,6 +603,11 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                                *declaration)
                                .Name();
                 else if (declaration->Kind() ==
+                         core::AstNodeKind::InterfaceDeclaration)
+                    name = static_cast<const core::InterfaceDeclaration&>(
+                               *declaration)
+                               .Name();
+                else if (declaration->Kind() ==
                          core::AstNodeKind::EnumDeclaration)
                     name =
                         static_cast<const core::EnumDeclaration&>(*declaration)
@@ -1048,6 +1054,9 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
     if (declaration.Kind() == core::AstNodeKind::StructureDeclaration)
         localName =
             static_cast<const core::StructureDeclaration&>(declaration).Name();
+    else if (declaration.Kind() == core::AstNodeKind::InterfaceDeclaration)
+        localName =
+            static_cast<const core::InterfaceDeclaration&>(declaration).Name();
     else if (declaration.Kind() == core::AstNodeKind::EnumDeclaration)
         localName =
             static_cast<const core::EnumDeclaration&>(declaration).Name();
@@ -1072,6 +1081,7 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
     const bool topLevel =
         declaration.Kind() == core::AstNodeKind::FunctionDeclaration ||
         declaration.Kind() == core::AstNodeKind::StructureDeclaration ||
+        declaration.Kind() == core::AstNodeKind::InterfaceDeclaration ||
         declaration.Kind() == core::AstNodeKind::EnumDeclaration ||
         declaration.Kind() == core::AstNodeKind::ErrorDeclaration ||
         declaration.Kind() == core::AstNodeKind::CallableTypeDeclaration ||
@@ -1850,6 +1860,29 @@ void SemanticAnalyzer::RegisterErrorTypes(const core::CompilationUnit& unit) {
     }
 }
 
+void SemanticAnalyzer::RegisterInterfaces(const core::CompilationUnit& unit) {
+    for (const auto& declaration : unit.Declarations()) {
+        if (declaration->Kind() != core::AstNodeKind::InterfaceDeclaration)
+            continue;
+        const auto& syntax =
+            static_cast<const core::InterfaceDeclaration&>(*declaration);
+        SetSource(syntax.sourceId);
+        auto interfaceType = std::make_unique<InterfaceType>();
+        interfaceType->name = TopName(syntax, syntax.Name());
+        interfaceType->displayName = syntax.specializationName.empty()
+                                         ? syntax.Name()
+                                         : syntax.specializationName;
+        interfaceType->syntax = &syntax;
+        AddSymbol(std::make_unique<Symbol>(
+                      SymbolKind::InterfaceType,
+                      TopName(syntax, syntax.Name()),
+                      SemanticType(interfaceType.get()), syntax.NameRange(),
+                      false),
+                  syntax);
+        _model._interfaces.push_back(std::move(interfaceType));
+    }
+}
+
 void SemanticAnalyzer::RegisterEnums(const core::CompilationUnit& unit) {
     const auto width = [](SemanticType type) -> unsigned {
         switch (type.Kind()) {
@@ -2517,6 +2550,11 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                     name = static_cast<const core::StructureDeclaration&>(
                                *declaration)
                                .Name();
+                if (declaration->Kind() ==
+                    core::AstNodeKind::InterfaceDeclaration)
+                    name = static_cast<const core::InterfaceDeclaration&>(
+                               *declaration)
+                               .Name();
                 if (declaration->Kind() == core::AstNodeKind::EnumDeclaration)
                     name =
                         static_cast<const core::EnumDeclaration&>(*declaration)
@@ -2560,12 +2598,14 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
             }
     };
     RegisterErrorTypes(unit);
+    RegisterInterfaces(unit);
     RegisterEnums(unit);
     RegisterStructures(unit);
     DeclareCallableTypes(unit);
     RegisterModuleConstants(unit);
     bindGenericAliases();
     BindImports(unit);
+    ResolveNominalRelations();
     ResolveStructureFields();
     ValidateDecorations(unit);
     ResolveCallableTypes(unit);
@@ -3701,6 +3741,10 @@ std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
         case SemanticTypeKind::Structure:
             result = std::make_unique<core::TypeNode>(
                 range, visibleName(SymbolKind::StructureType), type.IsConst());
+            break;
+        case SemanticTypeKind::Interface:
+            result = std::make_unique<core::TypeNode>(
+                range, visibleName(SymbolKind::InterfaceType), type.IsConst());
             break;
         case SemanticTypeKind::Function:
             result = std::make_unique<core::TypeNode>(
@@ -6669,6 +6713,78 @@ void SemanticAnalyzer::RegisterStructures(const core::CompilationUnit& unit) {
                   syntax);
         _model._structures.push_back(std::move(structure));
     }
+}
+
+void SemanticAnalyzer::ResolveNominalRelations() {
+    const auto resolve = [&](const std::vector<core::NominalParent>& syntax,
+                             std::vector<InterfaceReference>& result,
+                             std::string_view relation) {
+        std::unordered_set<const InterfaceType*> seen;
+        for (const auto& parent : syntax) {
+            if (ReportAmbiguousImport(parent.name, parent.range)) continue;
+            const Symbol* symbol = _currentScope->Lookup(parent.name);
+            if (!symbol) {
+                if (!ReportInaccessibleImport(parent.name, parent.range))
+                    Report(diagnostics::DiagnosticCode::UnknownType,
+                           parent.range,
+                           "unknown interface '" + parent.name + "'");
+                continue;
+            }
+            if (symbol->Kind() != SymbolKind::InterfaceType) {
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       parent.range,
+                       "'" + parent.name + "' is not an interface");
+                continue;
+            }
+            const InterfaceType* interfaceType = symbol->Type().Interface();
+            if (!seen.insert(interfaceType).second) {
+                Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                       parent.range,
+                       "duplicate interface " + std::string(relation) +
+                           " '" + parent.name + "'");
+                continue;
+            }
+            result.push_back({interfaceType, parent.range});
+        }
+    };
+
+    for (const auto& interfaceType : _model._interfaces) {
+        SetSource(interfaceType->syntax->sourceId);
+        resolve(interfaceType->syntax->Parents(), interfaceType->parents,
+                "parent");
+    }
+    for (const auto& structure : _model._structures) {
+        SetSource(structure->syntax->sourceId);
+        resolve(structure->syntax->Conformances(), structure->conformances,
+                "conformance");
+    }
+    for (const auto& enumeration : _model._enums) {
+        SetSource(enumeration->syntax->sourceId);
+        resolve(enumeration->syntax->Conformances(),
+                enumeration->conformances, "conformance");
+    }
+
+    enum class VisitState { Unvisited, Visiting, Visited };
+    std::unordered_map<const InterfaceType*, VisitState> states;
+    std::function<void(const InterfaceType&)> visit =
+        [&](const InterfaceType& interfaceType) {
+            states[&interfaceType] = VisitState::Visiting;
+            for (const auto& parent : interfaceType.parents) {
+                const VisitState state = states[parent.type];
+                if (state == VisitState::Visiting) {
+                    Report(diagnostics::DiagnosticCode::InvalidInterface,
+                           parent.range,
+                           "interface inheritance cycle involving '" +
+                               parent.type->displayName + "'");
+                    continue;
+                }
+                if (state == VisitState::Unvisited) visit(*parent.type);
+            }
+            states[&interfaceType] = VisitState::Visited;
+        };
+    for (const auto& interfaceType : _model._interfaces)
+        if (states[interfaceType.get()] == VisitState::Unvisited)
+            visit(*interfaceType);
 }
 
 void SemanticAnalyzer::ResolveStructureFields() {

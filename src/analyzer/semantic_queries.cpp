@@ -45,6 +45,8 @@ SemanticItemKind ItemKind(semantic::SymbolKind kind) {
             return SemanticItemKind::EnumType;
         case SymbolKind::StructureType:
             return SemanticItemKind::StructureType;
+        case SymbolKind::InterfaceType:
+            return SemanticItemKind::InterfaceType;
         case SymbolKind::CallableType:
             return SemanticItemKind::CallableType;
     }

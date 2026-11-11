@@ -25,6 +25,7 @@ enum class SemanticItemKind {
     ErrorType,
     EnumType,
     StructureType,
+    InterfaceType,
     CallableType,
     Field,
     Expression,

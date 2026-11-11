@@ -20,6 +20,7 @@ enum class SymbolKind {
     ErrorType,
     EnumType,
     StructureType,
+    InterfaceType,
     CallableType
 };
 
@@ -198,6 +199,20 @@ struct EnumVariant final {
     source::SourceRange range;
 };
 
+struct InterfaceType;
+
+struct InterfaceReference final {
+    const InterfaceType* type = nullptr;
+    source::SourceRange range;
+};
+
+struct InterfaceType final {
+    std::string name;
+    std::string displayName;
+    const core::InterfaceDeclaration* syntax = nullptr;
+    std::vector<InterfaceReference> parents;
+};
+
 struct EnumType final {
     std::string name;
     std::string displayName;
@@ -205,6 +220,7 @@ struct EnumType final {
     SemanticType backing = SemanticType(SemanticTypeKind::U32);
     std::vector<EnumVariant> variants;
     std::optional<std::uint64_t> defaultValue;
+    std::vector<InterfaceReference> conformances;
     std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
         methods;
 };
@@ -220,6 +236,7 @@ struct StructureType final {
     std::string displayName;
     const core::StructureDeclaration* syntax = nullptr;
     std::vector<StructureField> fields;
+    std::vector<InterfaceReference> conformances;
     std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
         methods;
     const FunctionSymbol* init = nullptr;
