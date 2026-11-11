@@ -82,6 +82,52 @@ TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
     EXPECT_EQ(Check(), "");
 }
 
+TEST_F(ModuleTests, ResolvesExportedInterfacesInNominalRelations) {
+    Write("contracts.fl", R"(module contracts;
+        export interface Readable {};
+        export interface Closeable {};
+        interface Hidden {};
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::contracts;
+        interface Displayable << contracts::Readable {};
+        structure Worker << Displayable, contracts::Closeable {};
+        enum State << contracts::Readable { Off, }
+        void main() {}
+    )");
+
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main;
+        @imports :: root::contracts;
+        interface Invalid << contracts::Hidden {};
+        void main() {}
+    )");
+    EXPECT_NE(Check().find("unknown interface 'contracts::Hidden'"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, InterfaceRelationsRespectApiVisibility) {
+    Write("main.fl", R"(module main;
+        interface Hidden {};
+        export interface PublicContract << Hidden {};
+        export structure PublicStructure << Hidden {};
+        export enum PublicEnum << Hidden { Value, }
+        void main() {}
+    )");
+
+    const std::string errors = Check();
+    std::size_t visibilityErrors = 0;
+    std::size_t position = 0;
+    const std::string message =
+        "exported APIs cannot expose non-exported types";
+    while ((position = errors.find(message, position)) != std::string::npos) {
+        ++visibilityErrors;
+        position += message.size();
+    }
+    EXPECT_EQ(visibilityErrors, 3);
+}
+
 TEST_F(ModuleTests, ResolvesExportedDecorationsThroughModuleAliases) {
     Write("json.fl", R"(module json;
         export decoration json;

@@ -95,6 +95,237 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::U8)));
 }
 
+TEST(SemanticInterfaceTests, RegistersInterfacesAndResolvesNominalRelations) {
+    Analysis analysis = Analyze(R"(
+        interface Readable {};
+        interface Displayable << Readable {};
+        interface Serializable {};
+        structure Worker << Displayable, Serializable {};
+        enum State << Readable { Off, On, }
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    ASSERT_EQ(analysis.model.Interfaces().size(), 3);
+    ASSERT_EQ(analysis.model.Structures().size(), 1);
+    ASSERT_EQ(analysis.model.Enums().size(), 1);
+
+    const auto& readable = *analysis.model.Interfaces()[0];
+    const auto& displayable = *analysis.model.Interfaces()[1];
+    const auto& serializable = *analysis.model.Interfaces()[2];
+    EXPECT_EQ(readable.displayName, "Readable");
+    EXPECT_EQ(displayable.displayName, "Displayable");
+    ASSERT_EQ(displayable.parents.size(), 1);
+    EXPECT_EQ(displayable.parents[0].type, &readable);
+    EXPECT_EQ(displayable.parents[0].range.Length(),
+              std::string("Readable").size());
+    ASSERT_EQ(displayable.ancestors.size(), 1);
+    EXPECT_EQ(displayable.ancestors[0], &readable);
+
+    const auto& structure = *analysis.model.Structures().front();
+    ASSERT_EQ(structure.conformances.size(), 2);
+    EXPECT_EQ(structure.conformances[0].type, &displayable);
+    EXPECT_EQ(structure.conformances[1].type, &serializable);
+    EXPECT_LT(structure.conformances[0].range.start.offset,
+              structure.conformances[1].range.start.offset);
+    ASSERT_EQ(structure.conformanceClosure.size(), 3);
+    EXPECT_EQ(structure.conformanceClosure[0], &displayable);
+    EXPECT_EQ(structure.conformanceClosure[1], &readable);
+    EXPECT_EQ(structure.conformanceClosure[2], &serializable);
+
+    const auto& enumeration = *analysis.model.Enums().front();
+    ASSERT_EQ(enumeration.conformances.size(), 1);
+    EXPECT_EQ(enumeration.conformances[0].type, &readable);
+
+    const auto& syntax = static_cast<const InterfaceDeclaration&>(
+        *analysis.unit->Declarations()[1]);
+    const Symbol* symbol = analysis.model.DeclaredSymbol(syntax);
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->Kind(), SymbolKind::InterfaceType);
+    const auto* interfaceSymbol = dynamic_cast<const InterfaceSymbol*>(symbol);
+    ASSERT_NE(interfaceSymbol, nullptr);
+    EXPECT_EQ(interfaceSymbol->Interface(), &displayable);
+    EXPECT_EQ(symbol->Type().Kind(), SemanticTypeKind::Interface);
+    EXPECT_EQ(symbol->Type().Interface(), &displayable);
+    EXPECT_EQ(symbol->Type().Name(), "Displayable");
+    EXPECT_FALSE(IsAssignable(symbol->Type(),
+                              SemanticType(SemanticTypeKind::None)));
+}
+
+TEST(SemanticInterfaceTests, DiagnosesUnknownAndNonInterfaceParents) {
+    const std::string source = R"(
+        structure Concrete {};
+        interface UnknownParent << Missing {};
+        interface WrongParent << Concrete {};
+        structure WrongConformance << Concrete {};
+    )";
+    Analysis analysis = Analyze(source);
+
+    const Diagnostic* unknown =
+        FindDiagnostic(analysis, DiagnosticCode::UnknownType);
+    ASSERT_NE(unknown, nullptr);
+    EXPECT_EQ(unknown->message, "unknown interface 'Missing'");
+    EXPECT_EQ(unknown->range.Length(), std::string("Missing").size());
+    EXPECT_EQ(unknown->range.start.offset, source.find("Missing"));
+
+    std::size_t invalidInterfaces = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::InvalidInterface)
+            ++invalidInterfaces;
+    EXPECT_EQ(invalidInterfaces, 2);
+}
+
+TEST(SemanticInterfaceTests, DiagnosesDuplicateNominalRelations) {
+    Analysis analysis = Analyze(R"(
+        interface Parent {};
+        interface Child << Parent, Parent {};
+        structure Worker << Parent, Parent {};
+        enum State << Parent, Parent { Off, }
+    )");
+
+    std::size_t duplicates = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::DuplicateDeclaration &&
+            diagnostic.message.starts_with("duplicate interface"))
+            ++duplicates;
+    EXPECT_EQ(duplicates, 3);
+    ASSERT_EQ(analysis.model.Interfaces()[1]->parents.size(), 1);
+    ASSERT_EQ(analysis.model.Structures()[0]->conformances.size(), 1);
+    ASSERT_EQ(analysis.model.Enums()[0]->conformances.size(), 1);
+}
+
+TEST(SemanticInterfaceTests, DiagnosesDuplicateInterfaceDeclarations) {
+    const std::string source = R"(
+        interface Contract {};
+        interface Contract {};
+    )";
+    Analysis analysis = Analyze(source);
+
+    const Diagnostic* duplicate =
+        FindDiagnostic(analysis, DiagnosticCode::DuplicateDeclaration);
+    ASSERT_NE(duplicate, nullptr);
+    EXPECT_EQ(duplicate->message, "duplicate declaration of 'Contract'");
+    EXPECT_EQ(duplicate->range.start.offset, source.rfind("Contract"));
+    EXPECT_EQ(duplicate->range.Length(), std::string("Contract").size());
+}
+
+TEST(SemanticInterfaceTests, DiagnosesInterfaceInheritanceCycles) {
+    Analysis analysis = Analyze(R"(
+        interface First << Second {};
+        interface Second << Third {};
+        interface Third << First {};
+    )");
+
+    const Diagnostic* cycle =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidInterface);
+    ASSERT_NE(cycle, nullptr);
+    EXPECT_NE(cycle->message.find("interface inheritance cycle"),
+              std::string::npos);
+    EXPECT_EQ(cycle->range.Length(), std::string("First").size());
+}
+
+TEST(SemanticInterfaceTests, DiagnosesSelfParentAtTheParentName) {
+    const std::string source = "interface Recursive << Recursive {};";
+    Analysis analysis = Analyze(source);
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidInterface);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message,
+              "interface 'Recursive' cannot inherit from itself");
+    EXPECT_EQ(diagnostic->range.start.offset, source.rfind("Recursive"));
+    EXPECT_EQ(diagnostic->range.Length(), std::string("Recursive").size());
+    ASSERT_EQ(analysis.model.Interfaces().size(), 1);
+    EXPECT_TRUE(analysis.model.Interfaces()[0]->parents.empty());
+}
+
+TEST(SemanticInterfaceTests, RejectsRelatedDirectInterfaces) {
+    Analysis analysis = Analyze(R"(
+        interface Root {};
+        interface Child << Root {};
+        interface InvalidInterface << Root, Child {};
+        structure InvalidStructure << Root, Child {};
+        enum InvalidEnum << Child, Root { Value, }
+    )");
+
+    std::vector<const Diagnostic*> diagnostics;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::InvalidInterface &&
+            diagnostic.message.find("already extends") != std::string::npos)
+            diagnostics.push_back(&diagnostic);
+    ASSERT_EQ(diagnostics.size(), 3);
+    EXPECT_EQ(diagnostics[0]->message,
+              "interface 'Child' already extends 'Root' in interface "
+              "composition");
+    EXPECT_EQ(diagnostics[1]->message,
+              "interface 'Child' already extends 'Root' in structure "
+              "composition");
+    EXPECT_EQ(diagnostics[2]->message,
+              "interface 'Child' already extends 'Root' in enum composition");
+    EXPECT_EQ(diagnostics[0]->range.Length(), std::string("Child").size());
+    EXPECT_EQ(diagnostics[1]->range.Length(), std::string("Child").size());
+    EXPECT_EQ(diagnostics[2]->range.Length(), std::string("Root").size());
+}
+
+TEST(SemanticInterfaceTests, RejectsDiamondInterfaceComposition) {
+    Analysis analysis = Analyze(R"(
+        interface Root {};
+        interface Left << Root {};
+        interface Right << Root {};
+        interface Combined << Left, Right {};
+    )");
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidInterface);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message,
+              "interface composition has a diamond through 'Root'");
+    EXPECT_EQ(diagnostic->range.Length(), std::string("Right").size());
+}
+
+TEST(SemanticInterfaceTests, PreservesDeterministicAncestorOrder) {
+    Analysis analysis = Analyze(R"(
+        interface Root {};
+        interface Left << Root {};
+        interface Independent {};
+        interface Combined << Left, Independent {};
+        structure Worker << Combined {};
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    const auto& root = *analysis.model.Interfaces()[0];
+    const auto& left = *analysis.model.Interfaces()[1];
+    const auto& independent = *analysis.model.Interfaces()[2];
+    const auto& combined = *analysis.model.Interfaces()[3];
+    ASSERT_EQ(combined.ancestors.size(), 3);
+    EXPECT_EQ(combined.ancestors[0], &left);
+    EXPECT_EQ(combined.ancestors[1], &root);
+    EXPECT_EQ(combined.ancestors[2], &independent);
+    const auto& closure = analysis.model.Structures()[0]->conformanceClosure;
+    ASSERT_EQ(closure.size(), 4);
+    EXPECT_EQ(closure[0], &combined);
+    EXPECT_EQ(closure[1], &left);
+    EXPECT_EQ(closure[2], &root);
+    EXPECT_EQ(closure[3], &independent);
+}
+
+TEST(SemanticInterfaceTests, GenericStructuresMayConform) {
+    Analysis analysis = Analyze(R"(
+        interface Inspectable {};
+        structure Box<T> << Inspectable { T value; };
+        void consume(Box<i32> value) {}
+    )");
+
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    ASSERT_EQ(analysis.model.Interfaces().size(), 1);
+    ASSERT_EQ(analysis.model.Structures().size(), 1);
+    const auto& box = *analysis.model.Structures()[0];
+    EXPECT_EQ(box.displayName, "Box<i32>");
+    ASSERT_EQ(box.conformances.size(), 1);
+    EXPECT_EQ(box.conformances[0].type, analysis.model.Interfaces()[0].get());
+    ASSERT_EQ(box.conformanceClosure.size(), 1);
+    EXPECT_EQ(box.conformanceClosure[0], analysis.model.Interfaces()[0].get());
+}
+
 TEST(SemanticTests, DerivesDeterministicJsonFieldMetadata) {
     Analysis analysis = Analyze(R"(
         decoration json;

@@ -182,6 +182,8 @@ std::string_view SemanticKindName(SemanticItemKind kind) {
             return "enumType";
         case SemanticItemKind::StructureType:
             return "structureType";
+        case SemanticItemKind::InterfaceType:
+            return "interfaceType";
         case SemanticItemKind::CallableType:
             return "callableType";
         case SemanticItemKind::Field:

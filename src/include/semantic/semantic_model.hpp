@@ -92,6 +92,7 @@ class SemanticModel final {
         const Symbol& variable) const;
     const auto& Structures() const { return _structures; }
     const auto& Enums() const { return _enums; }
+    const auto& Interfaces() const { return _interfaces; }
     [[nodiscard]] const JsonStructureMetadata* JsonMetadataFor(
         const core::StructureDeclaration& structure) const {
         const auto found = _jsonMetadata.find(&structure);
@@ -110,6 +111,7 @@ class SemanticModel final {
     friend class analyzer::SemanticQueries;
     std::vector<std::unique_ptr<StructureType>> _structures;
     std::vector<std::unique_ptr<EnumType>> _enums;
+    std::vector<std::unique_ptr<InterfaceType>> _interfaces;
     std::unordered_map<const core::StructureDeclaration*, JsonStructureMetadata>
         _jsonMetadata;
     std::vector<std::unique_ptr<core::FunctionDeclaration>> _generatedFunctions;

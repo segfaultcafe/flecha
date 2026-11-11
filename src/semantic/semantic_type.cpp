@@ -150,7 +150,9 @@ bool SemanticType::IsTriviallyZeroable() const {
 }
 
 bool SemanticType::IsCopyable() const {
-    if (_kind == SemanticTypeKind::Function) return false;
+    if (_kind == SemanticTypeKind::Function ||
+        _kind == SemanticTypeKind::Interface)
+        return false;
     if (_kind == SemanticTypeKind::OwnedBuffer ||
         _kind == SemanticTypeKind::OwnedSlice)
         return false;
@@ -196,7 +198,8 @@ bool SemanticType::OwnsStorage() const {
 bool SemanticType::operator==(const SemanticType& other) const {
     return _kind == other._kind && _isConst == other._isConst &&
            _family == other._family && _structure == other._structure &&
-           _enum == other._enum && _length == other._length &&
+           _enum == other._enum && _interface == other._interface &&
+           _length == other._length &&
            ((_signature == nullptr && other._signature == nullptr) ||
             (_signature != nullptr && other._signature != nullptr &&
              *_signature == *other._signature)) &&
@@ -259,6 +262,9 @@ std::string SemanticType::Name() const {
         case SemanticTypeKind::Structure:
             return _structure->displayName.empty() ? _structure->name
                                                    : _structure->displayName;
+        case SemanticTypeKind::Interface:
+            return _interface->displayName.empty() ? _interface->name
+                                                   : _interface->displayName;
         case SemanticTypeKind::ErrorValue:
             return "error";
         case SemanticTypeKind::NamedError:
@@ -509,6 +515,7 @@ bool IsAssignable(SemanticType destination, SemanticType source) {
     return source.Kind() == SemanticTypeKind::None &&
            destination.Kind() != SemanticTypeKind::Void &&
            destination.Kind() != SemanticTypeKind::Function &&
+           destination.Kind() != SemanticTypeKind::Interface &&
            !destination.IsBorrowed();
 }
 

@@ -66,7 +66,8 @@ endif()
 
 file(READ "${EDITOR_ROOT}/syntaxes/flecha.tmLanguage.json" grammar)
 foreach(required IN ITEMS
-        enum match test func once copy own lend quiver typeset isof
+        enum interface match test func once copy own lend quiver typeset isof
+        protected virtual default final
         min_value max_value
         nan infinity negative_infinity min_positive epsilon
         signed_integer unsigned_integer integer floating_point numeric

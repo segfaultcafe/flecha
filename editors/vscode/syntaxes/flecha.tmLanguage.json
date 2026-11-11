@@ -83,7 +83,7 @@
       "match": "\\btest\\b"
     },
     "methodDeclarations": {
-      "begin": "^(\\s*)((?:(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|override)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)(::)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
+      "begin": "^(\\s*)((?:(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected|override)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)(::)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
       "beginCaptures": {
         "2": {"name": "storage.modifier.flecha"},
         "3": {"name": "storage.type.flecha"},
@@ -107,7 +107,7 @@
       ]
     },
     "functionDeclarations": {
-      "begin": "^(\\s*)((?:(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
+      "begin": "^(\\s*)((?:(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
       "beginCaptures": {
         "2": {"name": "storage.modifier.flecha"},
         "3": {"name": "storage.type.flecha"},
@@ -223,11 +223,11 @@
     },
     "modifiers": {
       "name": "storage.modifier.flecha",
-      "match": "\\b(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|override)\\b"
+      "match": "\\b(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected|override|virtual|default|final)\\b"
     },
     "control": {
       "name": "keyword.control.flecha",
-      "match": "\\b(?:module|enum|structure|decoration|build|return|defer|yield|if|match|else|also|while|for|loop|range|proceed|break|jumpto|as)\\b"
+      "match": "\\b(?:module|enum|structure|interface|decoration|build|return|defer|yield|if|match|else|also|while|for|loop|range|proceed|break|jumpto|as)\\b"
     },
     "borrowAllArguments": {
       "match": "(<-)(\\s*)(\\.\\.\\.)(\\s*)(args)\\b",

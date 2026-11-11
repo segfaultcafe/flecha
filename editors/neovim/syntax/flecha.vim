@@ -16,14 +16,14 @@ syntax match flechaEnumConstant /\.\zs[A-Z][A-Za-z0-9_]*\>/
 syntax match flechaParameter /\%(\<\%(i8\|i16\|i32\|i64\|isize\|u8\|u16\|u32\|u64\|usize\|f32\|f64\|bool\|char\|void\|string\|stringv\|error\|[A-Z][A-Za-z0-9_]*\)\>\s\+\)\@<=\<[a-z_][A-Za-z0-9_]*\>\ze\s*[,)]/
 syntax match flechaBuiltinTypeSet /\<\%(signed_integer\|unsigned_integer\|integer\|floating_point\|numeric\)\>/
 
-syntax keyword flechaModifier unsafe once export quiver extern foreign inline comptime copy own lend const constptr constref volatile private override
+syntax keyword flechaModifier unsafe once export quiver extern foreign inline comptime copy own lend const constptr constref volatile private protected override virtual default final
 syntax keyword flechaFuncKeyword func
 syntax keyword flechaTypeSetKeyword typeset nextgroup=flechaTypeSetName skipwhite
 syntax match flechaTypeSetName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaTest test
 syntax keyword flechaConditional if else also match
 syntax keyword flechaRepeat while for loop range
-syntax keyword flechaStatement return yield proceed break defer enum structure decoration build
+syntax keyword flechaStatement return yield proceed break defer enum structure interface decoration build
 syntax keyword flechaStatement module nextgroup=flechaModuleName skipwhite
 syntax match flechaModuleName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaJump jumpto nextgroup=flechaJumpTarget skipwhite

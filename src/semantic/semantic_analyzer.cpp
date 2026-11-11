@@ -37,6 +37,7 @@ std::string MangleType(SemanticType type) {
     result += std::to_string(static_cast<int>(type.Kind()));
     if (type.Kind() == SemanticTypeKind::Structure ||
         type.Kind() == SemanticTypeKind::Enum ||
+        type.Kind() == SemanticTypeKind::Interface ||
         type.Kind() == SemanticTypeKind::NamedError) {
         const std::string name(type.Name());
         result += "_" + std::to_string(name.size()) + name;
@@ -602,6 +603,11 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                                *declaration)
                                .Name();
                 else if (declaration->Kind() ==
+                         core::AstNodeKind::InterfaceDeclaration)
+                    name = static_cast<const core::InterfaceDeclaration&>(
+                               *declaration)
+                               .Name();
+                else if (declaration->Kind() ==
                          core::AstNodeKind::EnumDeclaration)
                     name =
                         static_cast<const core::EnumDeclaration&>(*declaration)
@@ -941,6 +947,8 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
         [&](SemanticType type, const core::Declaration& api) {
             if (type.Kind() == SemanticTypeKind::Structure)
                 return declarationVisible(api, *type.Structure()->syntax);
+            if (type.Kind() == SemanticTypeKind::Interface)
+                return declarationVisible(api, *type.Interface()->syntax);
             if (type.Kind() == SemanticTypeKind::NamedError) {
                 const auto found = errors.find(&type.Family());
                 return found == errors.end() ||
@@ -975,9 +983,20 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
             Report(diagnostics::DiagnosticCode::PrivateAccess, range, message);
         }
     };
+    for (const auto& interfaceType : _model._interfaces) {
+        if (!interfaceType->syntax->exported &&
+            !interfaceType->syntax->quiverVisible)
+            continue;
+        for (const auto& parent : interfaceType->parents)
+            check(SemanticType(parent.type), parent.range,
+                  *interfaceType->syntax);
+    }
     for (const auto& structure : _model._structures) {
         if (!structure->syntax->exported && !structure->syntax->quiverVisible)
             continue;
+        for (const auto& conformance : structure->conformances)
+            check(SemanticType(conformance.type), conformance.range,
+                  *structure->syntax);
         for (const auto& field : structure->fields)
             if (!field.syntax->IsPrivate())
                 check(field.type, field.syntax->Range(), *structure->syntax);
@@ -997,6 +1016,9 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
         if (!enumeration->syntax->exported &&
             !enumeration->syntax->quiverVisible)
             continue;
+        for (const auto& conformance : enumeration->conformances)
+            check(SemanticType(conformance.type), conformance.range,
+                  *enumeration->syntax);
         for (const auto& [name, methods] : enumeration->methods)
             for (const FunctionSymbol* method : methods) {
                 if (method->IsPrivate()) continue;
@@ -1048,6 +1070,9 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
     if (declaration.Kind() == core::AstNodeKind::StructureDeclaration)
         localName =
             static_cast<const core::StructureDeclaration&>(declaration).Name();
+    else if (declaration.Kind() == core::AstNodeKind::InterfaceDeclaration)
+        localName =
+            static_cast<const core::InterfaceDeclaration&>(declaration).Name();
     else if (declaration.Kind() == core::AstNodeKind::EnumDeclaration)
         localName =
             static_cast<const core::EnumDeclaration&>(declaration).Name();
@@ -1072,6 +1097,7 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
     const bool topLevel =
         declaration.Kind() == core::AstNodeKind::FunctionDeclaration ||
         declaration.Kind() == core::AstNodeKind::StructureDeclaration ||
+        declaration.Kind() == core::AstNodeKind::InterfaceDeclaration ||
         declaration.Kind() == core::AstNodeKind::EnumDeclaration ||
         declaration.Kind() == core::AstNodeKind::ErrorDeclaration ||
         declaration.Kind() == core::AstNodeKind::CallableTypeDeclaration ||
@@ -1850,6 +1876,27 @@ void SemanticAnalyzer::RegisterErrorTypes(const core::CompilationUnit& unit) {
     }
 }
 
+void SemanticAnalyzer::RegisterInterfaces(const core::CompilationUnit& unit) {
+    for (const auto& declaration : unit.Declarations()) {
+        if (declaration->Kind() != core::AstNodeKind::InterfaceDeclaration)
+            continue;
+        const auto& syntax =
+            static_cast<const core::InterfaceDeclaration&>(*declaration);
+        SetSource(syntax.sourceId);
+        auto interfaceType = std::make_unique<InterfaceType>();
+        interfaceType->name = TopName(syntax, syntax.Name());
+        interfaceType->displayName = syntax.specializationName.empty()
+                                         ? syntax.Name()
+                                         : syntax.specializationName;
+        interfaceType->syntax = &syntax;
+        AddSymbol(std::make_unique<InterfaceSymbol>(
+                      TopName(syntax, syntax.Name()), interfaceType.get(),
+                      syntax.NameRange()),
+                  syntax);
+        _model._interfaces.push_back(std::move(interfaceType));
+    }
+}
+
 void SemanticAnalyzer::RegisterEnums(const core::CompilationUnit& unit) {
     const auto width = [](SemanticType type) -> unsigned {
         switch (type.Kind()) {
@@ -2517,6 +2564,11 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                     name = static_cast<const core::StructureDeclaration&>(
                                *declaration)
                                .Name();
+                if (declaration->Kind() ==
+                    core::AstNodeKind::InterfaceDeclaration)
+                    name = static_cast<const core::InterfaceDeclaration&>(
+                               *declaration)
+                               .Name();
                 if (declaration->Kind() == core::AstNodeKind::EnumDeclaration)
                     name =
                         static_cast<const core::EnumDeclaration&>(*declaration)
@@ -2560,12 +2612,14 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
             }
     };
     RegisterErrorTypes(unit);
+    RegisterInterfaces(unit);
     RegisterEnums(unit);
     RegisterStructures(unit);
     DeclareCallableTypes(unit);
     RegisterModuleConstants(unit);
     bindGenericAliases();
     BindImports(unit);
+    ResolveNominalRelations();
     ResolveStructureFields();
     ValidateDecorations(unit);
     ResolveCallableTypes(unit);
@@ -3701,6 +3755,10 @@ std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
         case SemanticTypeKind::Structure:
             result = std::make_unique<core::TypeNode>(
                 range, visibleName(SymbolKind::StructureType), type.IsConst());
+            break;
+        case SemanticTypeKind::Interface:
+            result = std::make_unique<core::TypeNode>(
+                range, visibleName(SymbolKind::InterfaceType), type.IsConst());
             break;
         case SemanticTypeKind::Function:
             result = std::make_unique<core::TypeNode>(
@@ -6669,6 +6727,190 @@ void SemanticAnalyzer::RegisterStructures(const core::CompilationUnit& unit) {
                   syntax);
         _model._structures.push_back(std::move(structure));
     }
+}
+
+void SemanticAnalyzer::ResolveNominalRelations() {
+    const auto resolve = [&](const std::vector<core::NominalParent>& syntax,
+                             std::vector<InterfaceReference>& result,
+                             std::string_view relation,
+                             const InterfaceType* owner = nullptr) {
+        std::unordered_set<const InterfaceType*> seen;
+        for (const auto& parent : syntax) {
+            if (ReportAmbiguousImport(parent.name, parent.range)) continue;
+            const Symbol* symbol = _currentScope->Lookup(parent.name);
+            if (!symbol) {
+                if (!ReportInaccessibleImport(parent.name, parent.range))
+                    Report(diagnostics::DiagnosticCode::UnknownType,
+                           parent.range,
+                           "unknown interface '" + parent.name + "'");
+                continue;
+            }
+            if (symbol->Kind() != SymbolKind::InterfaceType) {
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       parent.range,
+                       "'" + parent.name + "' is not an interface");
+                continue;
+            }
+            const InterfaceType* interfaceType = symbol->Type().Interface();
+            if (interfaceType == owner) {
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       parent.range,
+                       "interface '" + owner->displayName +
+                           "' cannot inherit from itself");
+                continue;
+            }
+            if (!seen.insert(interfaceType).second) {
+                Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                       parent.range,
+                       "duplicate interface " + std::string(relation) +
+                           " '" + parent.name + "'");
+                continue;
+            }
+            result.push_back({interfaceType, parent.range});
+        }
+    };
+
+    for (const auto& interfaceType : _model._interfaces) {
+        SetSource(interfaceType->syntax->sourceId);
+        resolve(interfaceType->syntax->Parents(), interfaceType->parents,
+                "parent", interfaceType.get());
+    }
+    for (const auto& structure : _model._structures) {
+        SetSource(structure->syntax->sourceId);
+        resolve(structure->syntax->Conformances(), structure->conformances,
+                "conformance");
+    }
+    for (const auto& enumeration : _model._enums) {
+        SetSource(enumeration->syntax->sourceId);
+        resolve(enumeration->syntax->Conformances(),
+                enumeration->conformances, "conformance");
+    }
+
+    enum class VisitState { Unvisited, Visiting, Visited };
+    std::unordered_map<const InterfaceType*, VisitState> states;
+    std::vector<const InterfaceType*> stack;
+    std::unordered_set<const InterfaceType*> cyclic;
+    std::function<void(const InterfaceType&)> visit =
+        [&](const InterfaceType& interfaceType) {
+            states[&interfaceType] = VisitState::Visiting;
+            stack.push_back(&interfaceType);
+            for (const auto& parent : interfaceType.parents) {
+                const VisitState state = states[parent.type];
+                if (state == VisitState::Visiting) {
+                    Report(diagnostics::DiagnosticCode::InvalidInterface,
+                           parent.range,
+                           "interface inheritance cycle involving '" +
+                               parent.type->displayName + "'");
+                    const auto first =
+                        std::find(stack.begin(), stack.end(), parent.type);
+                    cyclic.insert(first, stack.end());
+                    continue;
+                }
+                if (state == VisitState::Unvisited) visit(*parent.type);
+            }
+            stack.pop_back();
+            states[&interfaceType] = VisitState::Visited;
+        };
+    for (const auto& interfaceType : _model._interfaces)
+        if (states[interfaceType.get()] == VisitState::Unvisited)
+            visit(*interfaceType);
+
+    const auto closure = [](const InterfaceType& root) {
+        std::vector<const InterfaceType*> result;
+        std::unordered_set<const InterfaceType*> seen;
+        std::unordered_set<const InterfaceType*> active{&root};
+        const auto append = [&](const auto& self,
+                                const InterfaceType& current) -> void {
+            for (const auto& parent : current.parents) {
+                if (active.contains(parent.type)) continue;
+                if (seen.insert(parent.type).second)
+                    result.push_back(parent.type);
+                active.insert(parent.type);
+                self(self, *parent.type);
+                active.erase(parent.type);
+            }
+        };
+        append(append, root);
+        return result;
+    };
+    for (const auto& interfaceType : _model._interfaces)
+        interfaceType->ancestors = closure(*interfaceType);
+
+    const auto extends = [](const InterfaceType& type,
+                            const InterfaceType& candidate) {
+        return std::find(type.ancestors.begin(), type.ancestors.end(),
+                         &candidate) != type.ancestors.end();
+    };
+    const auto validateComposition =
+        [&](const std::vector<InterfaceReference>& direct,
+            std::string_view declarationKind) {
+            for (std::size_t rightIndex = 1; rightIndex < direct.size();
+                 ++rightIndex) {
+                const auto& right = direct[rightIndex];
+                for (std::size_t leftIndex = 0; leftIndex < rightIndex;
+                     ++leftIndex) {
+                    const auto& left = direct[leftIndex];
+                    if (cyclic.contains(left.type) ||
+                        cyclic.contains(right.type))
+                        continue;
+                    if (extends(*left.type, *right.type) ||
+                        extends(*right.type, *left.type)) {
+                        const auto* derived = extends(*left.type, *right.type)
+                                                  ? left.type
+                                                  : right.type;
+                        const auto* base = derived == left.type ? right.type
+                                                                : left.type;
+                        Report(diagnostics::DiagnosticCode::InvalidInterface,
+                               right.range,
+                               "interface '" + derived->displayName +
+                                   "' already extends '" + base->displayName +
+                                   "' in " + std::string(declarationKind) +
+                                   " composition");
+                        continue;
+                    }
+                    const InterfaceType* shared = nullptr;
+                    for (const InterfaceType* ancestor : left.type->ancestors)
+                        if (ancestor == right.type ||
+                            std::find(right.type->ancestors.begin(),
+                                      right.type->ancestors.end(), ancestor) !=
+                                right.type->ancestors.end()) {
+                            shared = ancestor;
+                            break;
+                        }
+                    if (shared)
+                        Report(
+                            diagnostics::DiagnosticCode::InvalidInterface,
+                            right.range,
+                            "interface composition has a diamond through '" +
+                                shared->displayName + "'");
+                }
+            }
+        };
+
+    for (const auto& interfaceType : _model._interfaces)
+        validateComposition(interfaceType->parents, "interface");
+    for (const auto& structure : _model._structures)
+        validateComposition(structure->conformances, "structure");
+    for (const auto& enumeration : _model._enums)
+        validateComposition(enumeration->conformances, "enum");
+
+    const auto conformanceClosure = [](const auto& direct) {
+        std::vector<const InterfaceType*> result;
+        std::unordered_set<const InterfaceType*> seen;
+        for (const auto& reference : direct) {
+            if (seen.insert(reference.type).second)
+                result.push_back(reference.type);
+            for (const InterfaceType* ancestor : reference.type->ancestors)
+                if (seen.insert(ancestor).second) result.push_back(ancestor);
+        }
+        return result;
+    };
+    for (const auto& structure : _model._structures)
+        structure->conformanceClosure =
+            conformanceClosure(structure->conformances);
+    for (const auto& enumeration : _model._enums)
+        enumeration->conformanceClosure =
+            conformanceClosure(enumeration->conformances);
 }
 
 void SemanticAnalyzer::ResolveStructureFields() {

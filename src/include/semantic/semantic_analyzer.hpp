@@ -69,6 +69,7 @@ class SemanticAnalyzer final {
                              bool allowBorrowedTuple = false);
     SemanticType ResolveTypeSyntax(const core::TypeNode& type);
     void RegisterErrorTypes(const core::CompilationUnit& unit);
+    void RegisterInterfaces(const core::CompilationUnit& unit);
     void RegisterEnums(const core::CompilationUnit& unit);
     void DeclareCallableTypes(const core::CompilationUnit& unit);
     void ResolveCallableTypes(const core::CompilationUnit& unit);
@@ -80,6 +81,7 @@ class SemanticAnalyzer final {
     SemanticType AnalyzeMemberAccess(
         const core::MemberAccessExpression& expression);
     void RegisterStructures(const core::CompilationUnit& unit);
+    void ResolveNominalRelations();
     void ResolveStructureFields();
     void RegisterFunction(const core::FunctionDeclaration& function,
                           bool generated = false);

@@ -64,6 +64,13 @@ void BareTupleBindings() { i32 quotient, remainder = (3, 2); }
 
 error MathError { DivisionByZero, Overflow }
 enum State: u8 { default Unknown, On, Off }
+
+interface Highlightable {
+    protected error inspect(&const self) virtual;
+    error render(&self) default;
+    error close(&self) final;
+};
+structure Highlighted << Highlightable {};
 bool IsOn(State state) { return match state { State.On => true, _ => false, }; }
 error genericError = MathError.Overflow;
 
