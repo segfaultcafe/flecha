@@ -29,13 +29,6 @@ MethodReceiverKind ReceiverKind(SemanticType receiver) {
                               : MethodReceiverKind::Value;
 }
 
-std::size_t ResultArity(SemanticType result) {
-    if (result.Kind() == SemanticTypeKind::Void) return 0;
-    if (result.Kind() == SemanticTypeKind::Tuple)
-        return result.Elements().size();
-    return 1;
-}
-
 std::string LocalName(const FunctionSymbol& function) {
     if (function.Declaration() != nullptr)
         return function.Declaration()->Name();
@@ -51,51 +44,22 @@ std::string LocalName(const FunctionSymbol& function) {
 
 bool MethodKey::operator==(const MethodKey& other) const {
     return name == other.name && receiver == other.receiver &&
-           signature == other.signature &&
-           borrowsReceiver == other.borrowsReceiver &&
-           hasVariadicPack == other.hasVariadicPack &&
-           borrowsVariadicPack == other.borrowsVariadicPack;
+           parameters == other.parameters &&
+           hasVariadicPack == other.hasVariadicPack;
 }
 
 MethodKey NormalizeMethodKey(std::string name, CallableSignature signature,
-                             bool hasReceiver, bool hasVariadicPack,
-                             bool borrowsVariadicPack) {
+                             bool hasReceiver, bool hasVariadicPack) {
     MethodKey result;
     result.name = std::move(name);
     result.hasVariadicPack = hasVariadicPack;
-    result.borrowsVariadicPack = borrowsVariadicPack;
-
-    const std::size_t parameterCount = signature.parameters.size();
-    signature.parameterContracts.resize(parameterCount,
-                                        core::OwnershipContract::None);
-    signature.resultContracts.resize(ResultArity(signature.result),
-                                     core::OwnershipContract::None);
-
-    std::vector<std::size_t> borrowSources =
-        std::move(signature.borrowSourceIndices);
-    signature.borrowSourceIndices.clear();
 
     if (hasReceiver) {
         assert(!signature.parameters.empty());
         result.receiver = ReceiverKind(signature.parameters.front());
         signature.parameters.erase(signature.parameters.begin());
-        signature.parameterContracts.erase(
-            signature.parameterContracts.begin());
     }
-
-    for (const std::size_t source : borrowSources) {
-        assert(source < parameterCount);
-        if (hasReceiver && source == 0) {
-            result.borrowsReceiver = true;
-            continue;
-        }
-        signature.borrowSourceIndices.push_back(source - (hasReceiver ? 1 : 0));
-    }
-    std::ranges::sort(signature.borrowSourceIndices);
-    const auto duplicate = std::ranges::unique(signature.borrowSourceIndices);
-    signature.borrowSourceIndices.erase(duplicate.begin(), duplicate.end());
-
-    result.signature = std::move(signature);
+    result.parameters = std::move(signature.parameters);
     return result;
 }
 
@@ -103,8 +67,7 @@ MethodKey MethodKeyOf(const FunctionSymbol& function) {
     const bool hasVariadicPack = function.Declaration() != nullptr &&
                                  function.Declaration()->HasVariadicPack();
     return NormalizeMethodKey(LocalName(function), function.Signature(),
-                              function.HasReceiver(), hasVariadicPack,
-                              function.BorrowsVariadicPack());
+                              function.HasReceiver(), hasVariadicPack);
 }
 
 }  // namespace flecha::semantic

@@ -3,6 +3,7 @@
 #include <memory>
 #include <utility>
 
+#include "semantic/method_contract.hpp"
 #include "semantic/method_key.hpp"
 #include "semantic/symbol.hpp"
 
@@ -47,7 +48,7 @@ FunctionSymbol Method(const StructureType& owner, CallableSignature signature) {
 
 }  // namespace
 
-TEST(MethodKeyTests, ErasesNominalOwnerAndNormalizesBorrowSources) {
+TEST(MethodKeyTests, ErasesNominalOwnerAndKeepsOverloadShape) {
     InterfaceType interfaceOwner;
     interfaceOwner.name = "contracts::Readable";
     StructureType implementationOwner;
@@ -63,15 +64,11 @@ TEST(MethodKeyTests, ErasesNominalOwnerAndNormalizesBorrowSources) {
     EXPECT_EQ(expected, actual);
     EXPECT_EQ(actual.name, "inspect");
     EXPECT_EQ(actual.receiver, MethodReceiverKind::ConstReference);
-    ASSERT_EQ(actual.signature.parameters.size(), 2);
-    EXPECT_EQ(actual.signature.parameters[0].Kind(),
-              SemanticTypeKind::StringView);
-    EXPECT_TRUE(actual.borrowsReceiver);
-    EXPECT_EQ(actual.signature.borrowSourceIndices,
-              std::vector<std::size_t>({1}));
+    ASSERT_EQ(actual.parameters.size(), 2);
+    EXPECT_EQ(actual.parameters[0].Kind(), SemanticTypeKind::StringView);
 }
 
-TEST(MethodKeyTests, DistinguishesReceiverParametersResultAndBorrowContract) {
+TEST(MethodKeyTests, DistinguishesOnlyReceiverParametersAndVariadicShape) {
     StructureType owner;
     owner.name = "Box";
     const MethodKey baseline =
@@ -88,34 +85,97 @@ TEST(MethodKeyTests, DistinguishesReceiverParametersResultAndBorrowContract) {
     CallableSignature differentResult = SignatureFor(Receiver(owner, true));
     differentResult.result = SemanticType(SemanticTypeKind::I32);
     differentResult.resultContracts = {OwnershipContract::None};
-    EXPECT_NE(baseline, MethodKeyOf(Method(owner, differentResult)));
+    EXPECT_EQ(baseline, MethodKeyOf(Method(owner, differentResult)));
 
     CallableSignature differentBorrow = SignatureFor(Receiver(owner, true));
     differentBorrow.borrowSourceIndices = {2};
-    EXPECT_NE(baseline, MethodKeyOf(Method(owner, differentBorrow)));
+    EXPECT_EQ(baseline, MethodKeyOf(Method(owner, differentBorrow)));
 
     CallableSignature differentOwnership = SignatureFor(Receiver(owner, true));
     differentOwnership.parameterContracts[2] = OwnershipContract::None;
-    EXPECT_NE(baseline, MethodKeyOf(Method(owner, differentOwnership)));
+    EXPECT_EQ(baseline, MethodKeyOf(Method(owner, differentOwnership)));
+
+    CallableSignature differentEffect = SignatureFor(Receiver(owner, true));
+    differentEffect.isCrashable = true;
+    EXPECT_EQ(baseline, MethodKeyOf(Method(owner, differentEffect)));
 }
 
-TEST(MethodKeyTests, KeepsStaticVariadicAndEffectShapesInTheKey) {
+TEST(MethodKeyTests, KeepsStaticAndVariadicShapesInTheKey) {
     CallableSignature signature;
     signature.result = SemanticType(SemanticTypeKind::Void);
     signature.parameters = {SemanticType(SemanticTypeKind::I32)};
 
-    const MethodKey ordinary =
-        NormalizeMethodKey("send", signature, false, false, false);
+    const MethodKey ordinary = NormalizeMethodKey("send", signature, false);
     const MethodKey variadic =
-        NormalizeMethodKey("send", signature, false, true, false);
-    const MethodKey borrowedPack =
-        NormalizeMethodKey("send", signature, false, true, true);
+        NormalizeMethodKey("send", signature, false, true);
 
     EXPECT_EQ(ordinary.receiver, MethodReceiverKind::None);
     EXPECT_NE(ordinary, variadic);
-    EXPECT_NE(variadic, borrowedPack);
 
     signature.isCrashable = true;
-    EXPECT_NE(ordinary,
-              NormalizeMethodKey("send", signature, false, false, false));
+    EXPECT_EQ(ordinary, NormalizeMethodKey("send", signature, false));
+}
+
+TEST(MethodContractTests, ComparesCompleteContractsWithoutCategory) {
+    StructureType owner;
+    owner.name = "Box";
+    const CallableSignature signature = SignatureFor(Receiver(owner, true));
+    const MethodContract baseline = NormalizeMethodContract(
+        "inspect", signature, true, false, false, MethodVisibility::Protected,
+        MethodCategory::Virtual);
+
+    CallableSignature reordered = signature;
+    reordered.borrowSourceIndices = {2, 0, 2};
+    const MethodContract equivalent = NormalizeMethodContract(
+        "inspect", reordered, true, false, false, MethodVisibility::Protected,
+        MethodCategory::Final);
+    EXPECT_TRUE(baseline.SameContract(equivalent));
+
+    CallableSignature differentResult = signature;
+    differentResult.result = SemanticType(SemanticTypeKind::I32);
+    EXPECT_FALSE(baseline.SameContract(
+        NormalizeMethodContract("inspect", differentResult, true, false, false,
+                                MethodVisibility::Protected)));
+
+    CallableSignature differentBorrow = signature;
+    differentBorrow.borrowSourceIndices = {2};
+    EXPECT_FALSE(baseline.SameContract(
+        NormalizeMethodContract("inspect", differentBorrow, true, false, false,
+                                MethodVisibility::Protected)));
+
+    CallableSignature differentParameterOwnership = signature;
+    differentParameterOwnership.parameterContracts[2] = OwnershipContract::None;
+    EXPECT_FALSE(baseline.SameContract(
+        NormalizeMethodContract("inspect", differentParameterOwnership, true,
+                                false, false, MethodVisibility::Protected)));
+
+    CallableSignature differentResultOwnership = signature;
+    differentResultOwnership.resultContracts[0] = OwnershipContract::Own;
+    EXPECT_FALSE(baseline.SameContract(
+        NormalizeMethodContract("inspect", differentResultOwnership, true,
+                                false, false, MethodVisibility::Protected)));
+
+    EXPECT_FALSE(baseline.SameContract(NormalizeMethodContract(
+        "inspect", signature, true, false, false, MethodVisibility::Public)));
+
+    EXPECT_FALSE(baseline.SameContract(NormalizeMethodContract(
+        "inspect", signature, true, false, true, MethodVisibility::Protected)));
+
+    CallableSignature differentEffect = signature;
+    differentEffect.isUnsafe = false;
+    EXPECT_FALSE(baseline.SameContract(
+        NormalizeMethodContract("inspect", differentEffect, true, false, false,
+                                MethodVisibility::Protected)));
+
+    differentEffect = signature;
+    differentEffect.isOnce = true;
+    EXPECT_FALSE(baseline.SameContract(
+        NormalizeMethodContract("inspect", differentEffect, true, false, false,
+                                MethodVisibility::Protected)));
+
+    differentEffect = signature;
+    differentEffect.isCrashable = true;
+    EXPECT_FALSE(baseline.SameContract(
+        NormalizeMethodContract("inspect", differentEffect, true, false, false,
+                                MethodVisibility::Protected)));
 }

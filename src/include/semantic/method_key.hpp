@@ -19,17 +19,14 @@ enum class MethodReceiverKind {
     ConstPointer,
 };
 
-// Canonical semantic identity for a method contract. The receiver's nominal
-// owner is intentionally erased: an interface '&self' and a conforming
-// structure '&self' have the same receiver kind even though their target
-// types differ. All non-receiver parts of the callable signature remain exact.
+// Canonical overload identity. Results, ownership, borrows, visibility, and
+// call effects belong to MethodContract and deliberately do not create
+// overloads.
 struct MethodKey final {
     std::string name;
     MethodReceiverKind receiver = MethodReceiverKind::None;
-    CallableSignature signature;
-    bool borrowsReceiver = false;
+    std::vector<SemanticType> parameters;
     bool hasVariadicPack = false;
-    bool borrowsVariadicPack = false;
 
     bool operator==(const MethodKey& other) const;
 };
@@ -37,8 +34,7 @@ struct MethodKey final {
 [[nodiscard]] MethodKey NormalizeMethodKey(std::string name,
                                            CallableSignature signature,
                                            bool hasReceiver,
-                                           bool hasVariadicPack = false,
-                                           bool borrowsVariadicPack = false);
+                                           bool hasVariadicPack = false);
 
 [[nodiscard]] MethodKey MethodKeyOf(const FunctionSymbol& function);
 

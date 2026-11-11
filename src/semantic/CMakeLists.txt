@@ -4,6 +4,7 @@ add_library(semantic STATIC
     control_flow_graph.cpp
     definite_assignment.cpp
     generic_expander.cpp
+    method_contract.cpp
     method_key.cpp
     scope.cpp
     semantic_analyzer.cpp
