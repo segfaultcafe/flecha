@@ -26,6 +26,7 @@ struct MethodContract final {
     const InterfaceType* declaredBy = nullptr;
     const core::InterfaceMethod* syntax = nullptr;
     const MethodContract* inherited = nullptr;
+    const FunctionSymbol* callable = nullptr;
     const FunctionSymbol* provider = nullptr;
 
     [[nodiscard]] bool SameContract(const MethodContract& other) const;

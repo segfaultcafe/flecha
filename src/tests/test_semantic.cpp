@@ -457,6 +457,100 @@ TEST(SemanticInterfaceMethodTests, RejectsHorizontalAndFinalOverrides) {
     EXPECT_TRUE(finalOverride);
 }
 
+TEST(SemanticInterfaceCallTests,
+     ResolvesInterfaceOverloadsAndPrefersExactReceiverConstness) {
+    Analysis analysis = Analyze(R"(
+        interface Value {
+            i32 get(&self) virtual;
+            i32 get(&const self) virtual;
+        };
+
+        i32 readMutable(&Value value) { return value->get(); }
+        i32 readConst(&const Value value) { return value->get(); }
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    const auto resolvedCall = [&](std::size_t declaration) {
+        const auto& function = FunctionAt(analysis, declaration);
+        const auto& returned = static_cast<const ReturnStatement&>(
+            *function.Body().Statements().front());
+        const auto& call =
+            static_cast<const MemberCallExpression&>(*returned.Value());
+        return analysis.model.InterfaceMethodFor(call);
+    };
+
+    const MethodContract* mutableCall = resolvedCall(1);
+    const MethodContract* constCall = resolvedCall(2);
+    ASSERT_NE(mutableCall, nullptr);
+    ASSERT_NE(constCall, nullptr);
+    EXPECT_EQ(mutableCall->key.receiver, MethodReceiverKind::Reference);
+    EXPECT_EQ(constCall->key.receiver, MethodReceiverKind::ConstReference);
+}
+
+TEST(SemanticInterfaceCallTests, EnforcesProtectedInterfaceLineages) {
+    Analysis analysis = Analyze(R"(
+        interface Validated {
+            protected error validate(&const self) virtual;
+            error run(&const self) default;
+        };
+        error Validated::run(&const self) {
+            return self->validate();
+        }
+
+        interface Child << Validated {
+            error child(&const self) default;
+        };
+        error Child::child(&const self) {
+            return self->validate();
+        }
+
+        structure Record << Child {};
+        protected error Record::validate(&const self) override {
+            return none;
+        }
+        error Record::internal(&const self) {
+            return self->validate();
+        }
+
+        error outsider(&const Validated value) {
+            return value->validate();
+        }
+
+        error concreteOutsider(&const Record value) {
+            return value->validate();
+        }
+
+        enum State << Validated { default Unknown, }
+        protected error State::validate(&const self) override {
+            return none;
+        }
+        error State::internal(&const self) {
+            return self->validate();
+        }
+        error enumOutsider(&const State value) {
+            return value->validate();
+        }
+
+        structure Stranger {};
+        error Stranger::probe(&const self, &const Validated value) {
+            return value->validate();
+        }
+    )");
+
+    std::size_t protectedErrors = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics()) {
+        if (diagnostic.code == DiagnosticCode::PrivateAccess &&
+            diagnostic.message == "method 'validate' is protected") {
+            ++protectedErrors;
+            continue;
+        }
+        ADD_FAILURE() << diagnostic.message;
+    }
+    EXPECT_EQ(protectedErrors, 4);
+}
+
 TEST(SemanticTests, DerivesDeterministicJsonFieldMetadata) {
     Analysis analysis = Analyze(R"(
         decoration json;

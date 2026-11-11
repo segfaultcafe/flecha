@@ -5953,6 +5953,7 @@ void SemanticAnalyzer::WarnForCrashlessFunctions() {
         const auto* function = static_cast<const FunctionSymbol*>(symbol.get());
         if (!function->IsCrashable() || function->Declaration() == nullptr ||
             !function->Declaration()->IsCrashable() ||
+            function->InterfaceOwner() != nullptr ||
             canCrash.contains(function))
             continue;
         _diagnostics.Report(
@@ -6037,6 +6038,18 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
 
         std::size_t score = 0;
         bool viable = true;
+        if (candidate->HasReceiver()) {
+            const SemanticType expected = parameters.front();
+            const SemanticType expectedTarget =
+                expected.Target() ? *expected.Target() : expected;
+            const SemanticType actualTarget =
+                receiver.Target() ? *receiver.Target() : receiver;
+            if (actualTarget.IsConst() && !expectedTarget.IsConst())
+                viable = false;
+            else if (!actualTarget.IsConst() && expectedTarget.IsConst())
+                ++score;
+        }
+        if (!viable) continue;
         for (std::size_t index = 0; index < actualTypes.size(); ++index) {
             const SemanticType expected = parameters[index + offset];
             const SemanticType actual = actualTypes[index];
@@ -6534,7 +6547,7 @@ bool IsOverflowingArithmeticMember(const std::string& member) {
 SemanticType SemanticAnalyzer::AnalyzeMemberCall(
     const core::MemberCallExpression& expression) {
     if (expression.Access() == TokenType::Scope)
-        return AnalyzeStructureCall(expression, SemanticType::Error());
+        return AnalyzeMethodCall(expression, SemanticType::Error());
     const SemanticType receiver = AnalyzeExpression(expression.Receiver());
     if (expression.Member() == "$range_index") {
         if (expression.Arguments().size() != 1) {
@@ -6560,11 +6573,13 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
     }
     if (receiver.Kind() == SemanticTypeKind::Structure ||
         receiver.Kind() == SemanticTypeKind::Enum ||
+        receiver.Kind() == SemanticTypeKind::Interface ||
         ((receiver.Kind() == SemanticTypeKind::Pointer ||
           receiver.Kind() == SemanticTypeKind::Reference) &&
          (receiver.Target()->Kind() == SemanticTypeKind::Structure ||
-          receiver.Target()->Kind() == SemanticTypeKind::Enum)))
-        return AnalyzeStructureCall(expression, receiver);
+          receiver.Target()->Kind() == SemanticTypeKind::Enum ||
+          receiver.Target()->Kind() == SemanticTypeKind::Interface)))
+        return AnalyzeMethodCall(expression, receiver);
     if (expression.Access() != TokenType::Dot)
         Report(diagnostics::DiagnosticCode::InvalidMember, expression.Range(),
                "this member requires '.'");
@@ -6813,6 +6828,10 @@ const StructureType* SemanticAnalyzer::CurrentOwner() const {
 
 const EnumType* SemanticAnalyzer::CurrentEnumOwner() const {
     return _currentFunction ? _currentFunction->EnumOwner() : nullptr;
+}
+
+const InterfaceType* SemanticAnalyzer::CurrentInterfaceOwner() const {
+    return _currentFunction ? _currentFunction->InterfaceOwner() : nullptr;
 }
 
 void SemanticAnalyzer::RegisterStructures(const core::CompilationUnit& unit) {
@@ -7132,6 +7151,8 @@ void SemanticAnalyzer::ResolveInterfaceMethods() {
             function.IsUnsafe(),
             function.HasModifier(core::FunctionModifier::Once),
             function.IsCrashable()};
+        auto callableSignature =
+            std::make_shared<const CallableSignature>(signature);
         MethodContract contract = NormalizeMethodContract(
             function.Name(), std::move(signature), receiver,
             function.HasVariadicPack(), function.BorrowsVariadicPack(),
@@ -7141,6 +7162,16 @@ void SemanticAnalyzer::ResolveInterfaceMethods() {
             method.Category());
         contract.declaredBy = &owner;
         contract.syntax = &method;
+        auto callable = std::make_unique<FunctionSymbol>(
+            owner.name +
+                "::" + EffectName(function.Name(), function.IsCrashable()),
+            std::move(callableSignature), function.NameRange(),
+            BuiltInFunction::None, nullptr, false, true, false, "", nullptr,
+            &function, function.BorrowsVariadicPack(), &owner,
+            function.HasModifier(core::FunctionModifier::Protected));
+        contract.callable = callable.get();
+        _model._declarations.emplace(&function, contract.callable);
+        _model._symbols.push_back(std::move(callable));
         return contract;
     };
 
@@ -8289,6 +8320,47 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
          (function.EnumOwner() && CurrentEnumOwner() != function.EnumOwner())))
         Report(diagnostics::DiagnosticCode::PrivateAccess, range,
                "method '" + function.Name() + "' is private");
+    if (function.IsProtected()) {
+        const InterfaceType* declaringInterface = function.InterfaceOwner();
+        const MethodKey key = MethodKeyOf(function);
+        const auto findDeclaration = [&](const auto& conformances) {
+            for (const auto& conformance : conformances)
+                for (const MethodContract* contract : conformance.type->methods)
+                    if (contract->key == key &&
+                        contract->visibility == MethodVisibility::Protected)
+                        return contract->declaredBy;
+            return static_cast<const InterfaceType*>(nullptr);
+        };
+        if (declaringInterface == nullptr && function.Owner())
+            declaringInterface =
+                findDeclaration(function.Owner()->conformances);
+        if (declaringInterface == nullptr && function.EnumOwner())
+            declaringInterface =
+                findDeclaration(function.EnumOwner()->conformances);
+
+        bool accessible = false;
+        if (const InterfaceType* caller = CurrentInterfaceOwner())
+            accessible =
+                caller == declaringInterface ||
+                std::ranges::find(caller->ancestors, declaringInterface) !=
+                    caller->ancestors.end();
+        if (CurrentOwner())
+            accessible = std::ranges::find(CurrentOwner()->conformanceClosure,
+                                           declaringInterface) !=
+                         CurrentOwner()->conformanceClosure.end();
+        if (CurrentEnumOwner())
+            accessible =
+                std::ranges::find(CurrentEnumOwner()->conformanceClosure,
+                                  declaringInterface) !=
+                CurrentEnumOwner()->conformanceClosure.end();
+        if (!accessible) {
+            const std::string name = function.Declaration()
+                                         ? function.Declaration()->Name()
+                                         : function.Name();
+            Report(diagnostics::DiagnosticCode::PrivateAccess, range,
+                   "method '" + name + "' is protected");
+        }
+    }
     if (function.IsUnsafe() ||
         (function.ReturnType().IsImmovable() && !_inZero))
         RequireUnsafe(range);
@@ -8590,11 +8662,12 @@ SemanticType SemanticAnalyzer::AnalyzeBuild(
     return type;
 }
 
-SemanticType SemanticAnalyzer::AnalyzeStructureCall(
+SemanticType SemanticAnalyzer::AnalyzeMethodCall(
     const core::MemberCallExpression& expression, SemanticType receiver) {
     const bool isStatic = expression.Access() == TokenType::Scope;
     const StructureType* owner = nullptr;
     const EnumType* enumOwner = nullptr;
+    const InterfaceType* interfaceOwner = nullptr;
     if (isStatic) {
         if (expression.Receiver().Kind() == core::AstNodeKind::NameExpression) {
             const Symbol* type = _currentScope->Lookup(
@@ -8604,17 +8677,27 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                 owner = type->Type().Structure();
             if (type && type->Kind() == SymbolKind::EnumType)
                 enumOwner = type->Type().Enum();
+            if (type && type->Kind() == SymbolKind::InterfaceType)
+                interfaceOwner = type->Type().Interface();
         }
     } else {
         if (receiver.Kind() == SemanticTypeKind::Structure ||
-            receiver.Kind() == SemanticTypeKind::Enum) {
+            receiver.Kind() == SemanticTypeKind::Enum ||
+            receiver.Kind() == SemanticTypeKind::Interface) {
             if (expression.Access() != TokenType::Dot)
                 Report(diagnostics::DiagnosticCode::InvalidMember,
                        expression.Range(), "value receivers use '.'");
             if (receiver.Kind() == SemanticTypeKind::Structure)
                 owner = receiver.Structure();
-            else
+            else if (receiver.Kind() == SemanticTypeKind::Enum)
                 enumOwner = receiver.Enum();
+            else {
+                interfaceOwner = receiver.Interface();
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       expression.Receiver().Range(),
+                       "interface methods require a checked-reference "
+                       "receiver");
+            }
         } else if (receiver.Kind() == SemanticTypeKind::Pointer ||
                    receiver.Kind() == SemanticTypeKind::Reference) {
             if (expression.Access() != TokenType::Arrow)
@@ -8625,6 +8708,8 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                 owner = receiver.Target()->Structure();
             else if (receiver.Target()->Kind() == SemanticTypeKind::Enum)
                 enumOwner = receiver.Target()->Enum();
+            else if (receiver.Target()->Kind() == SemanticTypeKind::Interface)
+                interfaceOwner = receiver.Target()->Interface();
             if (receiver.Kind() == SemanticTypeKind::Pointer)
                 RequireUnsafe(expression.Range());
         }
@@ -8634,7 +8719,15 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                                       : nullptr;
     const std::string methodName =
         EffectName(expression.Member(), expression.IsCrashable());
-    if (!methods || !methods->contains(methodName)) {
+    std::vector<const FunctionSymbol*> interfaceOverloads;
+    if (interfaceOwner)
+        for (const MethodContract* contract : interfaceOwner->methods)
+            if (contract->key.name == expression.Member() &&
+                contract->isCrashable == expression.IsCrashable() &&
+                contract->callable)
+                interfaceOverloads.push_back(contract->callable);
+    if ((!methods || !methods->contains(methodName)) &&
+        interfaceOverloads.empty()) {
         if (owner && expression.Member() == "tear") {
             Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                    expression.MemberRange(),
@@ -8645,7 +8738,8 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                expression.MemberRange(), "unknown method '" + methodName + "'");
         return SemanticType::Error();
     }
-    const auto& overloads = methods->at(methodName);
+    const auto& overloads =
+        interfaceOwner ? interfaceOverloads : methods->at(methodName);
     const FunctionSymbol* function =
         overloads.size() == 1
             ? overloads.front()
@@ -8653,6 +8747,12 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                               expression.Range(), isStatic, receiver);
     if (!function) return SemanticType::Error();
     _model._methods[&expression] = function;
+    if (interfaceOwner)
+        for (const MethodContract* contract : interfaceOwner->methods)
+            if (contract->callable == function) {
+                _model._interfaceMethods[&expression] = contract;
+                break;
+            }
     ValidateCrashableCall(expression.IsCrashable(), function->Signature(),
                           function, expression.Range());
     if (_currentFunction) _functionCalls[_currentFunction].insert(function);

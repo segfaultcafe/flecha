@@ -82,6 +82,11 @@ class SemanticModel final {
         const auto found = _methods.find(&expression);
         return found == _methods.end() ? nullptr : found->second;
     }
+    const MethodContract* InterfaceMethodFor(
+        const core::MemberCallExpression& expression) const {
+        const auto found = _interfaceMethods.find(&expression);
+        return found == _interfaceMethods.end() ? nullptr : found->second;
+    }
     const auto& GeneratedFunctions() const { return _generatedFunctions; }
     const auto& AnonymousFunctions() const { return _anonymousFunctions; }
     [[nodiscard]] const std::vector<ClosureCapture>& Captures(
@@ -130,6 +135,8 @@ class SemanticModel final {
         _fields;
     std::unordered_map<const core::MemberCallExpression*, const FunctionSymbol*>
         _methods;
+    std::unordered_map<const core::MemberCallExpression*, const MethodContract*>
+        _interfaceMethods;
     std::vector<std::unique_ptr<Symbol>> _symbols;
     std::vector<std::unique_ptr<Scope>> _scopes;
     std::unordered_map<const core::NameExpression*, const Symbol*> _bindings;
