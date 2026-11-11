@@ -986,6 +986,8 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration(
         }
         if (category != nullptr && categoryRange != nullptr)
             *categoryRange = category->range;
+    } else if (Match(TokenType::Override)) {
+        modifiers.push_back(FunctionModifier::Override);
     }
 
     std::vector<std::string> borrowSources;
@@ -997,8 +999,13 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration(
                             packName, &borrowsVariadicPack))
         return nullptr;
 
-    if (interfaceCategory == nullptr && Match(TokenType::Override))
-        modifiers.push_back(FunctionModifier::Override);
+    if (interfaceCategory == nullptr && Match(TokenType::Override)) {
+        if (std::find(modifiers.begin(), modifiers.end(),
+                      FunctionModifier::Override) != modifiers.end())
+            ReportUnexpectedToken("after duplicate override modifier");
+        else
+            modifiers.push_back(FunctionModifier::Override);
+    }
     std::unique_ptr<BlockStatement> body;
     source::SourceLocation end;
     if (interfaceCategory != nullptr) {

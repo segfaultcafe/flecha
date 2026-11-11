@@ -82,6 +82,8 @@ class SemanticAnalyzer final {
         const core::MemberAccessExpression& expression);
     void RegisterStructures(const core::CompilationUnit& unit);
     void ResolveNominalRelations();
+    void ResolveInterfaceMethods();
+    void ValidateInterfaceConformance();
     void ResolveStructureFields();
     void RegisterFunction(const core::FunctionDeclaration& function,
                           bool generated = false);
