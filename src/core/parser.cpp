@@ -77,7 +77,9 @@ bool Parser::StartsTopLevelOnlyDeclaration() const {
         case TokenType::TypeSet:
         case TokenType::Decoration:
         case TokenType::Structure:
+        case TokenType::Interface:
         case TokenType::Private:
+        case TokenType::Protected:
         case TokenType::Export:
         case TokenType::Quiver:
         case TokenType::Extern:
@@ -316,6 +318,89 @@ std::vector<std::string> Parser::ParseGenericParameters(
     } while (Match(TokenType::Comma));
     ConsumeTypeArgumentClose("'>' after type parameters");
     return parameters;
+}
+
+std::vector<NominalParent> Parser::ParseNominalParents(
+    std::string_view declarationKind) {
+    std::vector<NominalParent> parents;
+    if (!Match(TokenType::ShiftLeft)) return parents;
+
+    bool keepParents = true;
+    bool expectParent = true;
+    bool diagnosed = false;
+    while (!Check(TokenType::LCurly) && !IsAtEnd()) {
+        if (Check(TokenType::ShiftLeft)) {
+            const Token& chained = Advance();
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::UnexpectedToken, chained.range,
+                std::string(declarationKind) +
+                    " headers may contain '<<' only once; chaining is invalid");
+            diagnosed = true;
+            keepParents = false;
+            expectParent = true;
+            continue;
+        }
+
+        if (!Check(TokenType::Identifier)) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+                "expected an interface name in the parent list");
+            diagnosed = true;
+            if (Check(TokenType::Comma)) {
+                Advance();
+                expectParent = true;
+                continue;
+            }
+            break;
+        }
+
+        const Token& first = Advance();
+        std::string name = first.value;
+        source::SourceLocation end = first.range.end;
+        if (Match(TokenType::Scope)) {
+            const Token* member = Consume(
+                TokenType::Identifier, "interface name after module qualifier");
+            if (member != nullptr) {
+                name += "::" + member->value;
+                end = member->range.end;
+            }
+        }
+        if (keepParents)
+            parents.push_back(
+                {std::move(name), source::SourceRange{first.range.start, end}});
+        expectParent = false;
+
+        if (Match(TokenType::Comma)) {
+            expectParent = true;
+            if (Check(TokenType::LCurly)) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+                    "expected an interface name after ',' in the parent list");
+                diagnosed = true;
+                break;
+            }
+            continue;
+        }
+        if (Check(TokenType::ShiftLeft)) continue;
+        if (Check(TokenType::LCurly) || IsAtEnd()) break;
+
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+            "expected ',' or '{' after interface name in the parent list");
+        diagnosed = true;
+        expectParent = true;
+    }
+
+    if (!diagnosed && parents.empty() && keepParents && expectParent &&
+        !Check(TokenType::Comma)) {
+        // The specific diagnostic above already covers malformed tokens. An
+        // immediate body needs its own non-empty-list diagnostic.
+        if (Check(TokenType::LCurly))
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+                "expected at least one interface name after '<<'");
+    }
+    return parents;
 }
 
 const Token* Parser::Consume(TokenType type, std::string_view expectation) {
@@ -748,7 +833,9 @@ bool Parser::ParseBorrowSources(
     return true;
 }
 
-std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
+std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration(
+    const std::string& implicitOwner, MethodCategory* interfaceCategory,
+    source::SourceRange* categoryRange) {
     const auto tokenStart = _position;
     std::vector<std::pair<std::size_t, std::size_t>> erased;
     auto parametersAtName =
@@ -762,12 +849,14 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     const source::SourceLocation start = Current().range.start;
     std::vector<FunctionModifier> modifiers;
     while (Check(TokenType::Unsafe) || Check(TokenType::Private) ||
-           Check(TokenType::Extern)) {
+           Check(TokenType::Protected) || Check(TokenType::Extern)) {
         const TokenType modifierToken = Advance().type;
         const auto modifier =
             modifierToken == TokenType::Unsafe    ? FunctionModifier::Unsafe
             : modifierToken == TokenType::Private ? FunctionModifier::Private
-                                                  : FunctionModifier::Extern;
+            : modifierToken == TokenType::Protected
+                ? FunctionModifier::Protected
+                : FunctionModifier::Extern;
         if (std::find(modifiers.begin(), modifiers.end(), modifier) !=
             modifiers.end())
             ReportUnexpectedToken("after duplicate function modifier");
@@ -787,7 +876,7 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     std::map<std::string, std::string> genericConstraints;
     auto genericParameters = parametersAtName(*this, genericConstraints);
     std::vector<std::string> ownerParameters;
-    std::string owner;
+    std::string owner = implicitOwner;
     if (Match(TokenType::Scope)) {
         ownerParameters = std::move(genericParameters);
         if (!genericConstraints.empty())
@@ -872,6 +961,33 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         return nullptr;
     }
 
+    if (interfaceCategory != nullptr) {
+        *interfaceCategory = MethodCategory::Missing;
+        if (categoryRange != nullptr) *categoryRange = {};
+        const Token* category = nullptr;
+        if (Check(TokenType::Virtual) || Check(TokenType::Default) ||
+            Check(TokenType::Final)) {
+            category = &Advance();
+            *interfaceCategory =
+                category->type == TokenType::Virtual   ? MethodCategory::Virtual
+                : category->type == TokenType::Default ? MethodCategory::Default
+                                                       : MethodCategory::Final;
+        } else {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+                "expected 'virtual', 'default', or 'final' after interface "
+                "method parameters");
+            if (!Check(TokenType::LeftArrow) && !Check(TokenType::SemiColon) &&
+                !Check(TokenType::RCurly) && !Check(TokenType::LCurly) &&
+                !IsAtEnd()) {
+                category = &Advance();
+                *interfaceCategory = MethodCategory::Invalid;
+            }
+        }
+        if (category != nullptr && categoryRange != nullptr)
+            *categoryRange = category->range;
+    }
+
     std::vector<std::string> borrowSources;
     std::vector<source::SourceRange> borrowSourceRanges;
     bool borrowsVariadicPack = false;
@@ -881,12 +997,19 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
                             packName, &borrowsVariadicPack))
         return nullptr;
 
-    if (Match(TokenType::Override))
+    if (interfaceCategory == nullptr && Match(TokenType::Override))
         modifiers.push_back(FunctionModifier::Override);
     std::unique_ptr<BlockStatement> body;
     source::SourceLocation end;
-    if (std::find(modifiers.begin(), modifiers.end(),
-                  FunctionModifier::Extern) != modifiers.end()) {
+    if (interfaceCategory != nullptr) {
+        const Token* semicolon =
+            Consume(TokenType::SemiColon, "';' after interface method");
+        if (semicolon == nullptr) return nullptr;
+        end = semicolon->range.end;
+        body = std::make_unique<BlockStatement>(
+            semicolon->range, std::vector<std::unique_ptr<Statement>>{});
+    } else if (std::find(modifiers.begin(), modifiers.end(),
+                         FunctionModifier::Extern) != modifiers.end()) {
         const Token* semicolon =
             Consume(TokenType::SemiColon, "';' after extern declaration");
         if (semicolon == nullptr) return nullptr;
@@ -940,6 +1063,61 @@ std::unique_ptr<ErrorDeclaration> Parser::ParseErrorDeclaration() {
         std::move(variants));
 }
 
+std::unique_ptr<InterfaceMethod> Parser::ParseInterfaceMethod(
+    const std::string& owner) {
+    MethodCategory category = MethodCategory::Missing;
+    source::SourceRange categoryRange;
+    auto signature = ParseFunctionDeclaration(owner, &category, &categoryRange);
+    if (signature == nullptr) return nullptr;
+    const source::SourceRange range = signature->Range();
+    return std::make_unique<InterfaceMethod>(range, std::move(signature),
+                                             category, categoryRange);
+}
+
+std::unique_ptr<InterfaceDeclaration> Parser::ParseInterfaceDeclaration() {
+    const auto tokenStart = _position;
+    const source::SourceLocation start = Advance().range.start;
+    const Token* name = Consume(TokenType::Identifier, "interface name");
+    if (name == nullptr) return nullptr;
+
+    auto parents = ParseNominalParents("interface");
+    if (Consume(TokenType::LCurly, "'{' after interface header") == nullptr)
+        return nullptr;
+
+    std::vector<std::unique_ptr<InterfaceMethod>> methods;
+    while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+        const std::size_t methodStart = _position;
+        auto method = ParseInterfaceMethod(name->value);
+        if (method != nullptr) {
+            methods.push_back(std::move(method));
+            continue;
+        }
+
+        while (!IsAtEnd() && !Check(TokenType::SemiColon) &&
+               !Check(TokenType::RCurly))
+            Advance();
+        Match(TokenType::SemiColon);
+        if (_position == methodStart && !IsAtEnd() && !Check(TokenType::RCurly))
+            Advance();
+    }
+
+    const Token* close = Consume(TokenType::RCurly, "'}' after interface body");
+    const Token* end =
+        close == nullptr
+            ? nullptr
+            : Consume(TokenType::SemiColon, "';' after interface declaration");
+    if (close == nullptr || end == nullptr) return nullptr;
+
+    auto declaration = std::make_unique<InterfaceDeclaration>(
+        source::SourceRange{start, end->range.end}, name->value, name->range,
+        std::move(parents), std::move(methods));
+    declaration->nameTokenIndex =
+        static_cast<std::size_t>(name - _tokens.data()) - tokenStart;
+    declaration->templateTokens.assign(_tokens.begin() + tokenStart,
+                                       _tokens.begin() + _position);
+    return declaration;
+}
+
 std::unique_ptr<EnumDeclaration> Parser::ParseEnumDeclaration() {
     const source::SourceLocation start = Advance().range.start;
     const Token* name = Consume(TokenType::Identifier, "enum type name");
@@ -950,13 +1128,14 @@ std::unique_ptr<EnumDeclaration> Parser::ParseEnumDeclaration() {
         backingType = ParseType();
         if (backingType == nullptr) return nullptr;
     }
+    auto conformances = ParseNominalParents("enum");
     if (Consume(TokenType::LCurly, "'{' after enum type name") == nullptr)
         return nullptr;
 
     std::vector<EnumVariant> variants;
     while (!Check(TokenType::RCurly) && !IsAtEnd()) {
         bool isDefault = false;
-        if (Check(TokenType::Identifier) && Current().value == "default" &&
+        if (Check(TokenType::Default) &&
             Peek(1).type == TokenType::Identifier) {
             Advance();
             isDefault = true;
@@ -986,7 +1165,7 @@ std::unique_ptr<EnumDeclaration> Parser::ParseEnumDeclaration() {
     if (close == nullptr) return nullptr;
     return std::make_unique<EnumDeclaration>(
         source::SourceRange{start, close->range.end}, name->value, name->range,
-        std::move(backingType), std::move(variants));
+        std::move(backingType), std::move(variants), std::move(conformances));
 }
 
 std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
@@ -997,6 +1176,7 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
     std::map<std::string, std::string> genericConstraints;
     auto genericParameters = ParseGenericParameters(&genericConstraints);
     const auto parameterEnd = _position;
+    auto conformances = ParseNominalParents("structure");
     if (!name || !Consume(TokenType::LCurly, "'{' after structure name"))
         return nullptr;
     std::vector<std::unique_ptr<StructureField>> fields;
@@ -1012,7 +1192,7 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
             if (!end) return nullptr;
             auto declaration = std::make_unique<StructureDeclaration>(
                 source::SourceRange{start, end->range.end}, name->value,
-                name->range, std::move(fields));
+                name->range, std::move(fields), std::move(conformances));
             declaration->genericParameters = std::move(genericParameters);
             declaration->genericConstraints = std::move(genericConstraints);
             if (parameterStart != parameterEnd)
@@ -1105,7 +1285,8 @@ std::vector<DecorationApplication> Parser::ParseDecorations() {
                     DecorationArgumentKind kind =
                         DecorationArgumentKind::Identifier;
                     if (Check(TokenType::Identifier) ||
-                        Check(TokenType::Structure)) {
+                        Check(TokenType::Structure) ||
+                        Check(TokenType::Default)) {
                         argument = &Advance();
                     } else if (Check(TokenType::StringLiteral)) {
                         argument = &Advance();
@@ -1213,6 +1394,7 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
     if (Check(TokenType::TypeSet)) return ParseTypeSetDeclaration();
     if (Check(TokenType::Decoration)) return ParseDecorationDeclaration();
     if (Check(TokenType::Structure)) return ParseStructureDeclaration();
+    if (Check(TokenType::Interface)) return ParseInterfaceDeclaration();
     if (Check(TokenType::Enum)) return ParseEnumDeclaration();
     if (Check(TokenType::Error) && Peek(1).type == TokenType::Identifier &&
         Peek(2).type == TokenType::LCurly)
@@ -1226,7 +1408,7 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
            Peek(2).type == TokenType::Func)));
     if (callableType) return ParseCallableTypeDeclaration();
     if (StartsType() || Check(TokenType::Unsafe) || Check(TokenType::Private) ||
-        Check(TokenType::Extern)) {
+        Check(TokenType::Protected) || Check(TokenType::Extern)) {
         return ParseFunctionDeclaration();
     }
 
@@ -2620,10 +2802,7 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpression() {
 void Parser::SynchronizeTopLevel() {
     // Parse() guarantees progress if a failed declaration consumed nothing.
     // Keep a following declaration's first token after a partially parsed one.
-    while (!IsAtEnd() && !StartsType() && !Check(TokenType::Func) &&
-           !Check(TokenType::Once) && !Check(TokenType::Unsafe) &&
-           !Check(TokenType::Structure) && !Check(TokenType::Private) &&
-           !Check(TokenType::TypeSet) && !Check(TokenType::Test) &&
+    while (!IsAtEnd() && !StartsType() && !StartsTopLevelOnlyDeclaration() &&
            !Check(TokenType::Const)) {
         Advance();
     }

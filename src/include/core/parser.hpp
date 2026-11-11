@@ -59,7 +59,12 @@ class Parser {
     std::vector<std::unique_ptr<TypeNode>> ParseTypeArguments();
     std::vector<std::string> ParseGenericParameters(
         std::map<std::string, std::string>* constraints = nullptr);
+    std::vector<NominalParent> ParseNominalParents(
+        std::string_view declarationKind);
     std::unique_ptr<StructureDeclaration> ParseStructureDeclaration();
+    std::unique_ptr<InterfaceDeclaration> ParseInterfaceDeclaration();
+    std::unique_ptr<InterfaceMethod> ParseInterfaceMethod(
+        const std::string& owner);
     std::unique_ptr<TypeSetDeclaration> ParseTypeSetDeclaration();
     std::unique_ptr<DecorationDeclaration> ParseDecorationDeclaration();
     std::vector<DecorationApplication> ParseDecorations();
@@ -70,7 +75,10 @@ class Parser {
     [[nodiscard]] bool IsModuleConstantDeclaration() const;
     std::unique_ptr<FunctionDeclaration> ParseTestDeclaration();
     std::unique_ptr<CallableTypeDeclaration> ParseCallableTypeDeclaration();
-    std::unique_ptr<FunctionDeclaration> ParseFunctionDeclaration();
+    std::unique_ptr<FunctionDeclaration> ParseFunctionDeclaration(
+        const std::string& implicitOwner = {},
+        MethodCategory* interfaceCategory = nullptr,
+        source::SourceRange* categoryRange = nullptr);
     bool ParseBorrowSources(
         const std::vector<std::unique_ptr<Parameter>>& parameters,
         std::vector<std::string>& sources,

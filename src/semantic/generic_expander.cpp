@@ -73,6 +73,16 @@ void Walk(const AstNode& input, const Callback& callback) {
             optional(n.BackingType());
             break;
         }
+        case AstNodeKind::InterfaceDeclaration: {
+            NODE(InterfaceDeclaration);
+            list(n.Methods());
+            break;
+        }
+        case AstNodeKind::InterfaceMethod: {
+            NODE(InterfaceMethod);
+            visit(n.Signature());
+            break;
+        }
         case AstNodeKind::TypeSetDeclaration: {
             NODE(TypeSetDeclaration);
             list(n.Members());
@@ -288,6 +298,8 @@ std::string Name(const Declaration& declaration) {
         return static_cast<const StructureDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::EnumDeclaration)
         return static_cast<const EnumDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::InterfaceDeclaration)
+        return static_cast<const InterfaceDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::CallableTypeDeclaration)
         return static_cast<const CallableTypeDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::TypeSetDeclaration)
