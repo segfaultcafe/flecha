@@ -101,6 +101,12 @@ The target cannot contain `.` or `..`, name an imported library, use a
 source-local alias, or escape the current package source root. Symbolic paths
 are validated after the compiler's normal source-root canonicalization.
 
+Attaching to `root` is semantically valid whenever `root` is a strict ancestor.
+The language does not assign it a warning or a different form of visibility.
+Whether a module conceptually belongs at package root is an architectural
+decision governed by the [Idiomatic Flecha Guideline](idiomatic_flecha.md), not
+by module correctness.
+
 ## Submodule folders and multifile modules
 
 Consider this source tree:

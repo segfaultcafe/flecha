@@ -133,6 +133,7 @@ Libraries should follow these rules:
 
 - use a submodule folder when a context has several implementation concerns
   that no longer scan well in one directory;
+- attach a module to the nearest ancestor namespace that conceptually owns it;
 - keep a conventional anchor source at the expected direct path when it gives
   readers an obvious starting point;
 - attach only modules whose logical home is genuinely the ancestor namespace;
@@ -146,6 +147,30 @@ Libraries should follow these rules:
 
 An import should reveal the conceptual dependency, not the current file-tree
 location of its implementation.
+
+### Root attachment is package architecture
+
+`under namespace root;` is valid, but it should not be the mechanical default.
+The root namespace is the package's broadest module surface. Attaching a module
+there states that the module belongs to the package as a whole rather than to
+one of its subsystems.
+
+Use a root attachment when at least one of these is true:
+
+- the module is a package-level facade or primary entry point;
+- the module is genuinely shared across otherwise independent subsystems; or
+- a root-level anchor module is being implemented by sources organized in a
+  deeper submodule folder.
+
+Do not attach to `root` merely to shorten an import, avoid choosing a subsystem,
+or make unrelated modules appear side by side. For example, sources that
+implement stream I/O should normally attach to `root::io`, not `root`, even
+when both targets are legal ancestors.
+
+When several files from deeper folders contribute to a root-level module, a
+conventional anchor source at the source-root level is strongly recommended.
+The anchor gives humans and tools an obvious starting point without changing
+the module's multifile identity.
 
 ## IFG 003 Name APIs by role
 
