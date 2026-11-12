@@ -25,6 +25,7 @@ add_executable(process_fixture fixtures/process_fixture.cpp)
 target_link_libraries(process_fixture PRIVATE flecha_project_options)
 target_compile_definitions(test_flecha PRIVATE
     FLECHA_PROCESS_FIXTURE="$<TARGET_FILE:process_fixture>"
+    FLECHA_INTERFACE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces"
 )
 add_dependencies(test_flecha process_fixture)
 
@@ -356,6 +357,22 @@ add_test(
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/invalid_method_contracts.fl
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_method_contracts.cmake
+)
+
+add_test(
+    NAME InterfaceFixtureTests.ValidLoweringLayouts
+    COMMAND $<TARGET_FILE:flecha>
+        check
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_lowering_layouts.fl
+)
+
+add_test(
+    NAME InterfaceFixtureTests.InvalidLoweringProviderDiagnostics
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/invalid_lowering_provider.fl
+        -DEXPECTED_DIAGNOSTIC=structure\ 'MissingProvider'\ does\ not\ implement\ 'provide'\ required\ by\ interface\ 'RequiredProvider'
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

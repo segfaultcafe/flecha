@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -35,6 +38,17 @@ AnalyzedFixture AnalyzeFixture(const std::string& source) {
     return result;
 }
 
+AnalyzedFixture AnalyzeFixtureFile(std::string_view name) {
+    const std::filesystem::path path =
+        std::filesystem::path(FLECHA_INTERFACE_FIXTURE_DIR) / name;
+    std::ifstream stream(path);
+    if (!stream)
+        throw std::runtime_error("could not open interface fixture '" +
+                                 path.string() + "'");
+    return AnalyzeFixture(
+        std::string(std::istreambuf_iterator<char>(stream), {}));
+}
+
 std::unique_ptr<BoundProgram> LowerFixture(AnalyzedFixture& fixture) {
     Lowerer lowerer;
     return lowerer.Lower(*fixture.unit, fixture.model, fixture.diagnostics);
@@ -48,6 +62,13 @@ const InterfaceTablePlan& FindPlan(const BoundProgram& program,
             plan.providerMap.root->displayName == root)
             return plan;
     throw std::logic_error("interface table plan not found");
+}
+
+std::size_t CountPlans(const BoundProgram& program, std::string_view concrete) {
+    std::size_t result = 0;
+    for (const InterfaceTablePlan& plan : program.InterfaceTables())
+        if (plan.providerMap.concrete.DisplayName() == concrete) ++result;
+    return result;
 }
 
 const InterfaceType& FindInterface(const SemanticModel& model,
@@ -68,26 +89,7 @@ void CollectSlots(const InterfaceTableLayout& layout,
 }  // namespace
 
 TEST(InterfaceLayoutTests, PlacesParentsBeforeLocalSlotsInDeclarationOrder) {
-    AnalyzedFixture fixture = AnalyzeFixture(R"(
-        interface FirstParent {
-            error first(&self) default;
-        };
-        error FirstParent::first(&self) { return none; }
-
-        interface SecondParent {
-            error second(&self) default;
-        };
-        error SecondParent::second(&self) { return none; }
-
-        interface Root << FirstParent, SecondParent {
-            error localFirst(&self) default;
-            error localSecond(&self) final;
-        };
-        error Root::localFirst(&self) { return none; }
-        error Root::localSecond(&self) { return none; }
-
-        structure Concrete << Root {};
-    )");
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
 
     ASSERT_FALSE(fixture.diagnostics.HasErrors());
     InterfaceLoweringPlanner planner({4, 4});
@@ -109,16 +111,13 @@ TEST(InterfaceLayoutTests, PlacesParentsBeforeLocalSlotsInDeclarationOrder) {
 }
 
 TEST(InterfaceLayoutTests, KeepsAReallyEmptyInterfaceAtZeroSize) {
-    AnalyzedFixture fixture = AnalyzeFixture(R"(
-        interface Empty {};
-        structure Concrete << Empty {};
-    )");
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
 
     ASSERT_FALSE(fixture.diagnostics.HasErrors());
     std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
     ASSERT_NE(program, nullptr);
     const InterfaceTableLayout& layout =
-        FindPlan(*program, "Concrete", "Empty").layout;
+        FindPlan(*program, "EmptyConcrete", "Empty").layout;
     EXPECT_EQ(layout.size, 0);
     EXPECT_EQ(layout.alignment, 1);
     EXPECT_TRUE(layout.parents.empty());
@@ -126,25 +125,13 @@ TEST(InterfaceLayoutTests, KeepsAReallyEmptyInterfaceAtZeroSize) {
 }
 
 TEST(InterfaceLayoutTests, ReusesOneSlotAcrossVirtualDefaultAndFinal) {
-    AnalyzedFixture fixture = AnalyzeFixture(R"(
-        interface Requirement {
-            error run(&self) virtual;
-        };
-        interface Defaulted << Requirement {
-            error run(&self) default;
-        };
-        error Defaulted::run(&self) override { return none; }
-        interface Sealed << Defaulted {
-            error run(&self) final;
-        };
-        error Sealed::run(&self) override { return none; }
-        structure Concrete << Sealed {};
-    )");
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
 
     ASSERT_FALSE(fixture.diagnostics.HasErrors());
     std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
     ASSERT_NE(program, nullptr);
-    const InterfaceTablePlan& plan = FindPlan(*program, "Concrete", "Sealed");
+    const InterfaceTablePlan& plan =
+        FindPlan(*program, "VerticalConcrete", "Sealed");
     std::vector<const SlotLayout*> slots;
     CollectSlots(plan.layout, slots);
     ASSERT_EQ(slots.size(), 1);
@@ -157,30 +144,18 @@ TEST(InterfaceLayoutTests, ReusesOneSlotAcrossVirtualDefaultAndFinal) {
 }
 
 TEST(InterfaceProviderTests, RecordsAdjustmentForADeeperDefaultProvider) {
-    AnalyzedFixture fixture = AnalyzeFixture(R"(
-        interface Prefix {
-            error prefix(&self) default;
-        };
-        error Prefix::prefix(&self) { return none; }
-        interface Requirement {
-            error run(&self) virtual;
-        };
-        interface Provided << Prefix, Requirement {
-            error run(&self) default;
-        };
-        error Provided::run(&self) override { return none; }
-        structure Concrete << Provided {};
-    )");
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
 
     ASSERT_FALSE(fixture.diagnostics.HasErrors());
     std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
     ASSERT_NE(program, nullptr);
-    const InterfaceTablePlan& plan = FindPlan(*program, "Concrete", "Provided");
+    const InterfaceTablePlan& plan =
+        FindPlan(*program, "AdjustedConcrete", "Provided");
     std::vector<const SlotLayout*> slots;
     CollectSlots(plan.layout, slots);
     ASSERT_EQ(slots.size(), 2);
     const SlotLayout* run =
-        slots[0]->slot.origin->key.name == "run" ? slots[0] : slots[1];
+        slots[0]->slot.origin->key.name == "adjusted" ? slots[0] : slots[1];
     const EffectiveInterfaceProvider* provider =
         plan.providerMap.Find(*run->slot.origin);
     ASSERT_NE(provider, nullptr);
@@ -191,48 +166,31 @@ TEST(InterfaceProviderTests, RecordsAdjustmentForADeeperDefaultProvider) {
 }
 
 TEST(InterfaceProviderTests, PrefersAnExactConcreteProvider) {
-    AnalyzedFixture fixture = AnalyzeFixture(R"(
-        interface Runnable {
-            error run(&self) default;
-        };
-        error Runnable::run(&self) { return none; }
-        structure Concrete << Runnable {};
-        error Concrete::run(&self) override { return none; }
-    )");
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
 
     ASSERT_FALSE(fixture.diagnostics.HasErrors());
     std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
     ASSERT_NE(program, nullptr);
     const InterfaceProviderMap& providers =
-        FindPlan(*program, "Concrete", "Runnable").providerMap;
+        FindPlan(*program, "ConcreteOverride", "Runnable").providerMap;
     ASSERT_EQ(providers.providers.size(), 1);
     EXPECT_EQ(providers.providers[0].kind,
               InterfaceProviderKind::ConcreteThunk);
     EXPECT_EQ(providers.providers[0].function->Owner()->displayName,
-              "Concrete");
+              "ConcreteOverride");
 }
 
 TEST(InterfaceProviderTests, BuildsIndependentPlansForMultipleRoots) {
-    AnalyzedFixture fixture = AnalyzeFixture(R"(
-        interface Supplied {
-            error supplied(&self) default;
-        };
-        error Supplied::supplied(&self) { return none; }
-        interface Required {
-            error required(&self) virtual;
-        };
-        structure Concrete << Supplied, Required {};
-        error Concrete::required(&self) override { return none; }
-    )");
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
 
     ASSERT_FALSE(fixture.diagnostics.HasErrors());
     std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
     ASSERT_NE(program, nullptr);
-    ASSERT_EQ(program->InterfaceTables().size(), 2);
+    ASSERT_EQ(CountPlans(*program, "MultiRootConcrete"), 2);
     const InterfaceTablePlan& supplied =
-        FindPlan(*program, "Concrete", "Supplied");
+        FindPlan(*program, "MultiRootConcrete", "Supplied");
     const InterfaceTablePlan& required =
-        FindPlan(*program, "Concrete", "Required");
+        FindPlan(*program, "MultiRootConcrete", "Required");
     EXPECT_EQ(supplied.layout.size, sizeof(void*));
     EXPECT_EQ(required.layout.size, sizeof(void*));
     EXPECT_EQ(supplied.providerMap.providers[0].kind,
@@ -242,16 +200,13 @@ TEST(InterfaceProviderTests, BuildsIndependentPlansForMultipleRoots) {
 }
 
 TEST(InterfaceProviderTests, TreatsUnresolvedVirtualAsASemanticInvariant) {
-    AnalyzedFixture fixture = AnalyzeFixture(R"(
-        interface Required {
-            error run(&self) virtual;
-        };
-        structure Missing << Required {};
-    )");
+    AnalyzedFixture fixture =
+        AnalyzeFixtureFile("invalid_lowering_provider.fl");
 
     ASSERT_TRUE(fixture.diagnostics.HasErrors());
     ASSERT_EQ(fixture.model.Structures().size(), 1);
-    const InterfaceType& required = FindInterface(fixture.model, "Required");
+    const InterfaceType& required =
+        FindInterface(fixture.model, "RequiredProvider");
     InterfaceLoweringPlanner planner;
     EXPECT_THROW(
         {
@@ -260,7 +215,7 @@ TEST(InterfaceProviderTests, TreatsUnresolvedVirtualAsASemanticInvariant) {
                                         required);
             } catch (const std::logic_error& error) {
                 EXPECT_NE(std::string(error.what())
-                              .find("unresolved virtual method 'run'"),
+                              .find("unresolved virtual method 'provide'"),
                           std::string::npos);
                 throw;
             }
@@ -269,12 +224,7 @@ TEST(InterfaceProviderTests, TreatsUnresolvedVirtualAsASemanticInvariant) {
 }
 
 TEST(InterfaceLayoutTests, RejectsInvalidCompositionAsAnInternalInvariant) {
-    AnalyzedFixture fixture = AnalyzeFixture(R"(
-        interface Root {};
-        interface Left << Root {};
-        interface Right << Root {};
-        interface Diamond << Left, Right {};
-    )");
+    AnalyzedFixture fixture = AnalyzeFixtureFile("invalid_hierarchy.fl");
 
     ASSERT_TRUE(fixture.diagnostics.HasErrors());
     InterfaceLoweringPlanner planner;
@@ -284,16 +234,7 @@ TEST(InterfaceLayoutTests, RejectsInvalidCompositionAsAnInternalInvariant) {
 }
 
 TEST(InterfaceProviderTests, PlansEachClosedGenericSpecialization) {
-    AnalyzedFixture fixture = AnalyzeFixture(R"(
-        interface Inspectable {
-            error inspect(&const self) virtual;
-        };
-        structure Box<T> << Inspectable {
-            T value;
-        };
-        error Box<T>::inspect(&const self) override { return none; }
-        void instantiate(Box<i32> value) {}
-    )");
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
 
     ASSERT_FALSE(fixture.diagnostics.HasErrors());
     std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
@@ -305,4 +246,20 @@ TEST(InterfaceProviderTests, PlansEachClosedGenericSpecialization) {
               InterfaceProviderKind::ConcreteThunk);
     EXPECT_EQ(plan.providerMap.providers[0].function->Owner()->displayName,
               "Box<i32>");
+}
+
+TEST(InterfaceProviderTests, PlansEnumProviders) {
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
+
+    ASSERT_FALSE(fixture.diagnostics.HasErrors());
+    std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
+    ASSERT_NE(program, nullptr);
+    const InterfaceTablePlan& plan = FindPlan(*program, "Mode", "Resettable");
+    EXPECT_EQ(plan.providerMap.concrete.kind, ConcreteTypeKind::Enum);
+    ASSERT_EQ(plan.providerMap.providers.size(), 1);
+    EXPECT_EQ(plan.providerMap.providers[0].kind,
+              InterfaceProviderKind::ConcreteThunk);
+    ASSERT_NE(plan.providerMap.providers[0].function->EnumOwner(), nullptr);
+    EXPECT_EQ(plan.providerMap.providers[0].function->EnumOwner()->displayName,
+              "Mode");
 }

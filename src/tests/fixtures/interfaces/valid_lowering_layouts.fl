@@ -1,0 +1,137 @@
+interface FirstParent {
+    error first(&self) default;
+};
+
+error FirstParent::first(&self) {
+    return none;
+}
+
+interface SecondParent {
+    error second(&self) default;
+};
+
+error SecondParent::second(&self) {
+    return none;
+}
+
+interface Root << FirstParent, SecondParent {
+    error localFirst(&self) default;
+    error localSecond(&self) final;
+};
+
+error Root::localFirst(&self) {
+    return none;
+}
+
+error Root::localSecond(&self) {
+    return none;
+}
+
+structure OrderedConcrete << Root {};
+
+interface Empty {};
+
+structure EmptyConcrete << Empty {};
+
+interface Requirement {
+    error run(&self) virtual;
+};
+
+interface Defaulted << Requirement {
+    error run(&self) default;
+};
+
+error Defaulted::run(&self) override {
+    return none;
+}
+
+interface Sealed << Defaulted {
+    error run(&self) final;
+};
+
+error Sealed::run(&self) override {
+    return none;
+}
+
+structure VerticalConcrete << Sealed {};
+
+interface Prefix {
+    error prefix(&self) default;
+};
+
+error Prefix::prefix(&self) {
+    return none;
+}
+
+interface AdjustedRequirement {
+    error adjusted(&self) virtual;
+};
+
+interface Provided << Prefix, AdjustedRequirement {
+    error adjusted(&self) default;
+};
+
+error Provided::adjusted(&self) override {
+    return none;
+}
+
+structure AdjustedConcrete << Provided {};
+
+interface Runnable {
+    error execute(&self) default;
+};
+
+error Runnable::execute(&self) {
+    return none;
+}
+
+structure ConcreteOverride << Runnable {};
+
+error ConcreteOverride::execute(&self) override {
+    return none;
+}
+
+interface Supplied {
+    error supplied(&self) default;
+};
+
+error Supplied::supplied(&self) {
+    return none;
+}
+
+interface Required {
+    error required(&self) virtual;
+};
+
+structure MultiRootConcrete << Supplied, Required {};
+
+error MultiRootConcrete::required(&self) override {
+    return none;
+}
+
+interface Inspectable {
+    error inspect(&const self) virtual;
+};
+
+structure Box<T> << Inspectable {
+    T value;
+};
+
+error Box<T>::inspect(&const self) override {
+    return none;
+}
+
+void instantiate(Box<i32> value) {}
+
+interface Resettable {
+    error reset(&self) virtual;
+};
+
+enum Mode << Resettable {
+    default Off,
+    On,
+}
+
+error Mode::reset(&self) override {
+    return none;
+}
