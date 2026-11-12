@@ -133,7 +133,8 @@ Libraries should follow these rules:
 
 - use a submodule folder when a context has several implementation concerns
   that no longer scan well in one directory;
-- attach a module to the nearest ancestor namespace that conceptually owns it;
+- consider which ancestor namespace best communicates the module's conceptual
+  ownership;
 - keep a conventional anchor source at the expected direct path when it gives
   readers an obvious starting point;
 - attach only modules whose logical home is genuinely the ancestor namespace;
@@ -150,27 +151,32 @@ location of its implementation.
 
 ### Root attachment is package architecture
 
-`under namespace root;` is valid, but it should not be the mechanical default.
-The root namespace is the package's broadest module surface. Attaching a module
-there states that the module belongs to the package as a whole rather than to
-one of its subsystems.
+`under namespace root;` is an ordinary valid attachment. The root namespace is
+the package's broadest module surface, so choosing it makes a module available
+alongside the package's other root modules rather than under one subsystem.
+That tradeoff is architectural information, not a correctness rule.
 
-Use a root attachment when at least one of these is true:
+A root attachment is often useful when:
 
 - the module is a package-level facade or primary entry point;
 - the module is genuinely shared across otherwise independent subsystems; or
 - a root-level anchor module is being implemented by sources organized in a
   deeper submodule folder.
 
-Do not attach to `root` merely to shorten an import, avoid choosing a subsystem,
-or make unrelated modules appear side by side. For example, sources that
-implement stream I/O should normally attach to `root::io`, not `root`, even
-when both targets are legal ancestors.
+Libraries may also choose root attachment to keep imports flat or present a
+compact package surface. The IFG does not prohibit that choice. Authors should
+only account for the resulting discoverability and collision tradeoffs as the
+package grows. For example, stream I/O can attach to either `root` or
+`root::io`; the better choice depends on the package's intended public shape.
 
 When several files from deeper folders contribute to a root-level module, a
-conventional anchor source at the source-root level is strongly recommended.
-The anchor gives humans and tools an obvious starting point without changing
-the module's multifile identity.
+conventional anchor source at the source-root level can give humans and tools
+an obvious starting point without changing the module's multifile identity.
+
+Neither the compiler nor a conforming formatter or linter should require the
+nearest ancestor, require an anchor source, or warn merely because the target
+is `root`. Tooling may visualize physical contributors and effective
+namespaces, but namespace architecture remains the library author's choice.
 
 ## IFG 003 Name APIs by role
 

@@ -103,9 +103,12 @@ are validated after the compiler's normal source-root canonicalization.
 
 Attaching to `root` is semantically valid whenever `root` is a strict ancestor.
 The language does not assign it a warning or a different form of visibility.
-Whether a module conceptually belongs at package root is an architectural
-decision governed by the [Idiomatic Flecha Guideline](idiomatic_flecha.md), not
-by module correctness.
+Choosing among valid ancestor namespaces is an architectural decision, not a
+correctness rule. The compiler, formatter, and mandatory linting must not
+require the nearest ancestor, require an anchor source, or warn merely because
+the attachment target is `root`. The
+[Idiomatic Flecha Guideline](idiomatic_flecha.md) describes the discoverability
+tradeoffs without prohibiting root attachment.
 
 ## Submodule folders and multifile modules
 
