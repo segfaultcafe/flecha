@@ -395,6 +395,13 @@ add_test(
 )
 
 add_test(
+    NAME InterfaceFixtureTests.ValidQualifiedProviderOverloads
+    COMMAND $<TARGET_FILE:flecha>
+        check
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_qualified_provider_overloads.fl
+)
+
+add_test(
     NAME NativeRuntimeTests.InterfaceDynamicDispatch
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
@@ -418,6 +425,15 @@ add_test(
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_variadic_ownership.fl
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/interface_variadic_ownership_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_variadic_dispatch.cmake
+)
+
+add_test(
+    NAME NativeRuntimeTests.InterfaceQualifiedProviderOverloads
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_qualified_provider_overloads.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/interface_qualified_provider_overloads_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_variadic_dispatch.cmake
 )
 
