@@ -308,6 +308,12 @@ std::unique_ptr<BoundPlaceExpression> Lowerer::LowerPlace(
 std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
     const core::Expression& expression, semantic::SemanticType expected) {
     const semantic::SemanticType type = _semanticModel->TypeOf(expression);
+    if (!expected.IsError() && type != expected &&
+        semantic::CanImplicitlyConvertInterfaceReference(type, expected)) {
+        return std::make_unique<BoundCastExpression>(
+            expression.Range(), expected,
+            LowerExpression(expression, semantic::SemanticType::Error()));
+    }
     if (_semanticModel->TransferOf(expression) == semantic::TransferKind::Move)
         return std::make_unique<BoundMoveExpression>(expression.Range(),
                                                      LowerPlace(expression));
@@ -688,6 +694,19 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 return cursor;
             }
             if (const auto* method = _semanticModel->MethodFor(member)) {
+                if (_semanticModel->IsQualifiedInterfaceProviderCall(member)) {
+                    std::vector<std::unique_ptr<BoundExpression>> arguments;
+                    const auto sourceArguments =
+                        _semanticModel->ArgumentsFor(member);
+                    arguments.reserve(sourceArguments.size());
+                    for (std::size_t index = 0; index < sourceArguments.size();
+                         ++index)
+                        arguments.push_back(
+                            LowerExpression(*sourceArguments[index],
+                                            method->ParameterTypes()[index]));
+                    return std::make_unique<BoundCallExpression>(
+                        expression.Range(), *method, std::move(arguments));
+                }
                 if (const auto* contract =
                         _semanticModel->InterfaceMethodFor(member)) {
                     std::vector<std::unique_ptr<BoundExpression>> arguments;
@@ -702,8 +721,7 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     }
                     return std::make_unique<BoundInterfaceCallExpression>(
                         expression.Range(), *contract,
-                        LowerExpression(member.Receiver(),
-                                        method->ParameterTypes()[0]),
+                        LowerExpression(member.Receiver()),
                         std::move(arguments));
                 }
                 std::vector<std::unique_ptr<BoundExpression>> arguments;

@@ -537,6 +537,55 @@ class Expander {
             tokens.erase(tokens.begin());
         return tokens;
     }
+    const Declaration* NominalDeclaration(const Tokens& tokens) const {
+        std::size_t index = 0;
+        while (index < tokens.size() &&
+               (tokens[index].type == TokenType::Const ||
+                tokens[index].type == TokenType::Own ||
+                tokens[index].type == TokenType::Lend))
+            ++index;
+        if (index + 1 != tokens.size() ||
+            tokens[index].type != TokenType::Identifier)
+            return nullptr;
+        const auto found = unit.genericAliases.find(tokens[index].value);
+        return found == unit.genericAliases.end() ? nullptr : found->second;
+    }
+    bool ImplementsInterface(const Declaration& declaration,
+                             const Declaration& target,
+                             std::set<const Declaration*>& visiting) {
+        if (&declaration == &target) return true;
+        if (!visiting.insert(&declaration).second) return false;
+        const std::vector<NominalParent>* relations = nullptr;
+        if (declaration.Kind() == AstNodeKind::InterfaceDeclaration)
+            relations = &static_cast<const InterfaceDeclaration&>(declaration)
+                             .Parents();
+        else if (declaration.Kind() == AstNodeKind::StructureDeclaration)
+            relations = &static_cast<const StructureDeclaration&>(declaration)
+                             .Conformances();
+        else if (declaration.Kind() == AstNodeKind::EnumDeclaration)
+            relations = &static_cast<const EnumDeclaration&>(declaration)
+                             .Conformances();
+        if (relations != nullptr)
+            for (const NominalParent& relation : *relations) {
+                const Declaration* parent = LookupFrom(
+                    relation.name, declaration, relation.range, false);
+                if (parent != nullptr &&
+                    parent->Kind() == AstNodeKind::InterfaceDeclaration &&
+                    ImplementsInterface(*parent, target, visiting)) {
+                    visiting.erase(&declaration);
+                    return true;
+                }
+            }
+        visiting.erase(&declaration);
+        return false;
+    }
+    bool ImplementsInterface(const Tokens& argument,
+                             const Declaration& target) {
+        const Declaration* concrete = NominalDeclaration(argument);
+        if (concrete == nullptr) return false;
+        std::set<const Declaration*> visiting;
+        return ImplementsInterface(*concrete, target, visiting);
+    }
     const Declaration* LookupFrom(const std::string& name,
                                   const Declaration& context,
                                   source::SourceRange range,
@@ -558,8 +607,10 @@ class Expander {
             Error(range, "unknown type set '" + setName + "'");
             return false;
         }
+        if (declaration->Kind() == AstNodeKind::InterfaceDeclaration)
+            return ImplementsInterface(argument, *declaration);
         if (declaration->Kind() != AstNodeKind::TypeSetDeclaration) {
-            Error(range, "'" + setName + "' is not a type set");
+            Error(range, "'" + setName + "' is not a type set or interface");
             return false;
         }
         if (!visiting.insert(declaration).second) {
@@ -898,9 +949,10 @@ class Expander {
             if (!set)
                 Error(declaration.Range(),
                       "unknown type set '" + constraint + "'");
-            else if (set->Kind() != AstNodeKind::TypeSetDeclaration)
+            else if (set->Kind() != AstNodeKind::TypeSetDeclaration &&
+                     set->Kind() != AstNodeKind::InterfaceDeclaration)
                 Error(declaration.Range(),
-                      "'" + constraint + "' is not a type set");
+                      "'" + constraint + "' is not a type set or interface");
             else if (constraintApi->exported && !set->exported)
                 Error(declaration.Range(),
                       "exported generics cannot use non-exported type sets");
@@ -1429,6 +1481,8 @@ class Expander {
             if (set && set->Kind() == AstNodeKind::TypeSetDeclaration)
                 return Satisfies(argument, target.Name(), origin,
                                  target.Range());
+            if (set && set->Kind() == AstNodeKind::InterfaceDeclaration)
+                return ImplementsInterface(argument, *set);
         }
         auto concrete = CopyType(target);
         Declaration* saved = current;

@@ -3407,7 +3407,10 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                            "defer requires a structure method call");
                     break;
                 }
-                const std::size_t offset = function->HasReceiver() ? 1 : 0;
+                const bool qualified =
+                    _model.IsQualifiedInterfaceProviderCall(call);
+                const std::size_t offset =
+                    function->HasReceiver() && !qualified ? 1 : 0;
                 if (offset != 0 && !function->ParameterTypes().empty())
                     operands.emplace_back(&call.Receiver(),
                                           function->ParameterTypes()[0]);
@@ -3752,6 +3755,10 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
             break;
     }
     _model._types.insert_or_assign(&expression, type);
+    if (!expected.IsError() &&
+        CanImplicitlyConvertInterfaceReference(type, expected))
+        _model._implicitInterfaceConversions.insert_or_assign(&expression,
+                                                              expected);
     if (!_directConstructions.contains(&expression) && type.OwnsStorage() &&
         (expression.Kind() == core::AstNodeKind::CallExpression ||
          expression.Kind() == core::AstNodeKind::MemberCallExpression ||
@@ -3770,7 +3777,26 @@ SemanticType SemanticAnalyzer::AnalyzeIsOf(
             value = value.WithoutConst();
             candidate = candidate.WithoutConst();
         }
-        if (value == candidate) {
+        SemanticType staticValue = value;
+        if (staticValue.Kind() == SemanticTypeKind::Reference)
+            staticValue = *staticValue.Target();
+        bool conforms = false;
+        if (candidate.Kind() == SemanticTypeKind::Interface) {
+            const InterfaceType* target = candidate.Interface();
+            const auto contains = [target](const auto& interfaces) {
+                return std::find(interfaces.begin(), interfaces.end(),
+                                 target) != interfaces.end();
+            };
+            if (staticValue.Kind() == SemanticTypeKind::Structure)
+                conforms =
+                    contains(staticValue.Structure()->conformanceClosure);
+            else if (staticValue.Kind() == SemanticTypeKind::Enum)
+                conforms = contains(staticValue.Enum()->conformanceClosure);
+            else if (staticValue.Kind() == SemanticTypeKind::Interface)
+                conforms = staticValue.Interface() == target ||
+                           contains(staticValue.Interface()->ancestors);
+        }
+        if (value == candidate || conforms) {
             result = true;
             break;
         }
@@ -6066,6 +6092,10 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
             if (actual == expected ||
                 actual.WithoutConst() == expected.WithoutConst())
                 continue;
+            if (CanImplicitlyConvertInterfaceReference(actual, expected)) {
+                score += 2;
+                continue;
+            }
             if (IsAssignable(expected, actual) ||
                 CanReborrow(expected, actual)) {
                 ++score;
@@ -7052,7 +7082,10 @@ void SemanticAnalyzer::ResolveInterfaceMethods() {
     const auto resolveContract = [&](const InterfaceType& owner,
                                      const core::InterfaceMethod& method) {
         const core::FunctionDeclaration& function = method.Signature();
-        SetSource(function.sourceId);
+        // Interface signatures are nested AST nodes, so module loading stamps
+        // their owning declaration rather than the embedded function. Resolve
+        // names in the interface declaration's source/module scope.
+        SetSource(owner.syntax->sourceId);
 
         if (!function.genericParameters.empty())
             Report(diagnostics::DiagnosticCode::InvalidInterface,
@@ -8385,6 +8418,8 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
             &static_cast<const core::ParenthesizedExpression&>(*source).Inner();
     const bool semanticDefault = IsNoneLiteral(*source);
     const SemanticType sourceType = _model.TypeOf(expression);
+    if (CanImplicitlyConvertInterfaceReference(sourceType, type))
+        type = sourceType;
     if (sourceType.ContainsOwnedBuffer()) type = sourceType;
     const Symbol* sourceSymbol =
         source->Kind() == core::AstNodeKind::NameExpression
@@ -8724,6 +8759,132 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
                 RequireUnsafe(expression.Range());
         }
     }
+
+    if (isStatic && interfaceOwner) {
+        std::vector<const MethodContract*> contracts;
+        std::vector<const FunctionSymbol*> providers;
+        for (const MethodContract* contract : interfaceOwner->methods)
+            if (contract->key.name == expression.Member() &&
+                contract->isCrashable == expression.IsCrashable() &&
+                contract->provider != nullptr) {
+                contracts.push_back(contract);
+                providers.push_back(contract->provider);
+            }
+        if (providers.empty()) {
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   expression.MemberRange(),
+                   "interface provider '" + interfaceOwner->displayName +
+                       "::" + expression.Member() + "' does not exist");
+            for (const auto& argument : expression.Arguments())
+                AnalyzeExpression(*argument);
+            return SemanticType::Error();
+        }
+        if (expression.Arguments().empty()) {
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "a qualified interface provider call requires an explicit "
+                   "receiver");
+            return SemanticType::Error();
+        }
+
+        const SemanticType explicitReceiver =
+            AnalyzeExpression(*expression.Arguments().front());
+        std::vector<const core::Expression*> trailing;
+        trailing.reserve(expression.Arguments().size() - 1);
+        for (std::size_t index = 1; index < expression.Arguments().size();
+             ++index)
+            trailing.push_back(expression.Arguments()[index].get());
+
+        const FunctionSymbol* provider = nullptr;
+        std::size_t selected = 0;
+        for (std::size_t index = 0; index < providers.size(); ++index) {
+            const FunctionSymbol* candidate = providers[index];
+            if (candidate->ParameterTypes().size() !=
+                expression.Arguments().size())
+                continue;
+            const SemanticType expectedReceiver =
+                candidate->ParameterTypes().front();
+            if (!IsAssignable(expectedReceiver, explicitReceiver) &&
+                !CanReborrow(expectedReceiver, explicitReceiver))
+                continue;
+            bool matches = true;
+            for (std::size_t argument = 0; argument < trailing.size();
+                 ++argument) {
+                const SemanticType actual = AnalyzeExpression(
+                    *trailing[argument],
+                    candidate->ParameterTypes()[argument + 1]);
+                if (!IsAssignable(candidate->ParameterTypes()[argument + 1],
+                                  actual) &&
+                    !CanReborrow(candidate->ParameterTypes()[argument + 1],
+                                 actual))
+                    matches = false;
+            }
+            if (!matches) continue;
+            if (provider != nullptr) {
+                Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                       expression.Range(),
+                       "ambiguous qualified interface provider call '" +
+                           interfaceOwner->displayName +
+                           "::" + expression.Member() + "'");
+                return SemanticType::Error();
+            }
+            provider = candidate;
+            selected = index;
+        }
+        if (provider == nullptr) {
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Range(),
+                   "no provider overload of '" + interfaceOwner->displayName +
+                       "::" + expression.Member() +
+                       "' accepts the supplied arguments");
+            return SemanticType::Error();
+        }
+
+        const MethodContract* qualified = contracts[selected];
+        const auto origin = [](const MethodContract* contract) {
+            while (contract != nullptr && contract->inherited != nullptr)
+                contract = contract->inherited;
+            return contract;
+        };
+        const MethodContract* callerContract = nullptr;
+        const MethodKey callerKey =
+            _currentFunction ? MethodKeyOf(*_currentFunction) : MethodKey{};
+        if (const InterfaceType* caller = CurrentInterfaceOwner())
+            for (const MethodContract* method : caller->methods)
+                if (method->key == callerKey) callerContract = method;
+        const auto findConcreteContract = [&](const auto* concrete) {
+            if (concrete == nullptr) return;
+            for (const auto& conformance : concrete->conformances)
+                for (const MethodContract* method : conformance.type->methods)
+                    if (method->key == callerKey && callerContract == nullptr)
+                        callerContract = method;
+        };
+        findConcreteContract(CurrentOwner());
+        findConcreteContract(CurrentEnumOwner());
+        if (_currentFunction == nullptr || callerContract == nullptr ||
+            origin(callerContract) != origin(qualified)) {
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   expression.Range(),
+                   "qualified interface providers may only be called from an "
+                   "override in the same method lineage");
+            return SemanticType::Error();
+        }
+
+        for (std::size_t index = 0; index < expression.Arguments().size();
+             ++index)
+            CheckTransfer(*expression.Arguments()[index],
+                          provider->ParameterTypes()[index],
+                          provider->ParameterContract(index) ==
+                              core::OwnershipContract::Own);
+        ValidateCrashableCall(expression.IsCrashable(), provider->Signature(),
+                              provider, expression.Range());
+        CheckMethodAccess(*provider, expression.MemberRange());
+        if (_currentFunction) _functionCalls[_currentFunction].insert(provider);
+        _model._methods[&expression] = provider;
+        _model._qualifiedInterfaceProviderCalls.insert(&expression);
+        return provider->ReturnType().WithoutConst();
+    }
+
     const auto* methods = owner       ? &owner->methods
                           : enumOwner ? &enumOwner->methods
                                       : nullptr;

@@ -492,7 +492,8 @@ class BorrowChecker final {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(deferred);
                 const FunctionSymbol* method = _model.MethodFor(call);
-                if (method != nullptr && method->HasReceiver())
+                if (method != nullptr && method->HasReceiver() &&
+                    !_model.IsQualifiedInterfaceProviderCall(call))
                     operands.push_back(&call.Receiver());
                 for (const core::Expression* argument :
                      _model.ArgumentsFor(call))
@@ -937,7 +938,13 @@ class BorrowChecker final {
         return result;
     }
 
-    Value Evaluate(const core::Expression& expression) {
+    Value Evaluate(const core::Expression& expression,
+                   bool applyImplicitConversion = true) {
+        const SemanticType implicit =
+            _model.ImplicitInterfaceConversionFor(expression);
+        if (applyImplicitConversion && !implicit.IsError())
+            return Borrow(Evaluate(expression, false),
+                          !implicit.Target()->IsConst(), expression.Range());
         switch (expression.Kind()) {
             case Kind::BuildExpression:
                 return EvaluateBuild(
@@ -1307,7 +1314,9 @@ class BorrowChecker final {
                     Value borrowSource;
                     Value mutableReceiver;
                     bool hasMutableReceiver = false;
-                    if (method->HasReceiver()) {
+                    const bool qualified =
+                        _model.IsQualifiedInterfaceProviderCall(call);
+                    if (method->HasReceiver() && !qualified) {
                         const auto receiverType = method->ParameterTypes()[0];
                         const bool owningReceiver =
                             receiverType.Kind() ==
@@ -1340,7 +1349,8 @@ class BorrowChecker final {
                             }
                         }
                     }
-                    const std::size_t offset = method->HasReceiver() ? 1 : 0;
+                    const std::size_t offset =
+                        method->HasReceiver() && !qualified ? 1 : 0;
                     const auto arguments = _model.ArgumentsFor(call);
                     for (std::size_t i = 0; i < arguments.size(); ++i) {
                         Value value = Evaluate(*arguments[i]);

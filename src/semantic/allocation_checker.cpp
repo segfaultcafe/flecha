@@ -794,7 +794,8 @@ class AllocationChecker final {
             const auto& call =
                 static_cast<const core::MemberCallExpression&>(expression);
             const FunctionSymbol* method = _model.MethodFor(call);
-            if (method && method->HasReceiver())
+            if (method && method->HasReceiver() &&
+                !_model.IsQualifiedInterfaceProviderCall(call))
                 result.push_back(Get(state, call.Receiver()));
             for (const core::Expression* argument : _model.ArgumentsFor(call))
                 result.push_back(Get(state, *argument));
@@ -1054,14 +1055,14 @@ class AllocationChecker final {
         if (function &&
             CanSummarizeOpaqueCall(*found->second, *function, arguments)) {
             Verify(*found->second);
-            Value result = ContractResult(state, expression,
-                                          found->second->ReturnType());
+            Value result =
+                ContractResult(state, expression, found->second->ReturnType());
             return {{std::move(state), std::move(result)}};
         }
         if (std::find(_active.begin(), _active.end(), found->second) !=
             _active.end()) {
-            if (!function || !CanSummarizeOpaqueCall(*found->second, *function,
-                                                     arguments)) {
+            if (!function ||
+                !CanSummarizeOpaqueCall(*found->second, *function, arguments)) {
                 Report(DiagnosticCode::UnverifiedOwnership, expression,
                        "recursive pointer ownership requires a contract and "
                        "cannot yet be verified");
