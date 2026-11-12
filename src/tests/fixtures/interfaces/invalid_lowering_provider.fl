@@ -1,0 +1,5 @@
+interface RequiredProvider {
+    error provide(&self) virtual;
+};
+
+structure MissingProvider << RequiredProvider {};

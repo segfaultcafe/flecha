@@ -40,9 +40,13 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
                                   source.source, source.range,
                                   source.bodyLine});
     }
+    InterfaceLoweringPlanner interfacePlanner;
+    std::vector<InterfaceTablePlan> interfaceTables =
+        interfacePlanner.BuildPlans(semanticModel);
     _semanticModel = nullptr;
     return std::make_unique<BoundProgram>(std::move(functions),
-                                          std::move(foreignSources));
+                                          std::move(foreignSources),
+                                          std::move(interfaceTables));
 }
 
 std::unique_ptr<BoundFunction> Lowerer::LowerFunction(
