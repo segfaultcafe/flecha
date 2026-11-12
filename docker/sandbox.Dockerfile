@@ -82,16 +82,22 @@ RUN case "${TARGETARCH}" in \
 
 COPY --from=builder /opt/flecha /opt/flecha
 COPY docker/sandbox/init.vim /etc/flecha-sandbox/init.vim
+COPY docker/sandbox/flecha_lsp.lua /etc/flecha-sandbox/flecha_lsp.lua
 
 ENV PATH=/opt/flecha/bin:${PATH}
+ENV FLECHA_COMPILER=/opt/flecha/bin/flecha
+ENV FLECHA_LSP=/opt/flecha/bin/flecha-lsp
 ENV FLECHA_LINKER=/usr/bin/clang++-18
 
 RUN useradd --create-home --shell /bin/bash flecha \
     && install -d -o flecha -g flecha \
         /home/flecha/.config/nvim \
+        /home/flecha/.config/nvim/after/plugin \
         /home/flecha/.local/share/nvim/site/pack/flecha/start \
         /workspace \
     && cp /etc/flecha-sandbox/init.vim /home/flecha/.config/nvim/init.vim \
+    && cp /etc/flecha-sandbox/flecha_lsp.lua \
+        /home/flecha/.config/nvim/after/plugin/flecha_sandbox.lua \
     && ln -s /opt/flecha/share/flecha/editors/neovim \
         /home/flecha/.local/share/nvim/site/pack/flecha/start/flecha.nvim \
     && chown -R flecha:flecha /home/flecha/.config /home/flecha/.local

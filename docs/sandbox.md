@@ -33,7 +33,9 @@ container, so plugin managers can maintain their lockfiles without changing
 the host configuration. Neovim's data, cache, and downloaded plugins also
 remain inside the container. When the host directory does not exist, the
 sandbox uses a minimal configuration that enables Flecha filetype detection
-and syntax highlighting.
+and syntax highlighting. In either case, a sandbox-only override keeps the
+Flecha client on the compiler and language server installed together under
+`/opt/flecha`; host paths to incompatible local builds are not reused.
 
 The repository is mounted read-only at its original absolute path. This lets a
 host configuration that points directly at `editors/neovim` keep using the
