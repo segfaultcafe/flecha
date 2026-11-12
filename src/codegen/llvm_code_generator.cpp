@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -48,6 +49,12 @@ llvm::Instruction* TerminatorOrNull(llvm::BasicBlock* block) {
 #endif
 }
 
+void ApplyOdrComdat(llvm::Module& module, llvm::GlobalObject& object) {
+    const llvm::Triple triple(module.getTargetTriple());
+    if (!triple.isOSBinFormatELF() && !triple.isOSBinFormatCOFF()) return;
+    object.setComdat(module.getOrInsertComdat(object.getName()));
+}
+
 bool CaptureStoredByValue(core::AnonymousFunctionExpression::CaptureMode mode) {
     using CaptureMode = core::AnonymousFunctionExpression::CaptureMode;
     return mode == CaptureMode::Copy || mode == CaptureMode::Lend ||
@@ -71,6 +78,99 @@ bool RequiresTypedDestruction(semantic::SemanticType type) {
         for (const auto& element : type.Elements())
             if (RequiresTypedDestruction(element)) return true;
     return false;
+}
+
+const void* ConcreteInterfaceIdentity(
+    const lowering::ConcreteInterfaceType& concrete) {
+    if (concrete.kind == lowering::ConcreteTypeKind::Structure)
+        return concrete.structure;
+    return concrete.enumeration;
+}
+
+std::string EncodeInterfaceSymbolComponent(std::string_view value) {
+    constexpr std::string_view digits = "0123456789abcdef";
+    std::string result = std::to_string(value.size()) + "_";
+    result.reserve(result.size() + value.size() * 2);
+    for (const unsigned char character : value) {
+        result.push_back(digits[character >> 4]);
+        result.push_back(digits[character & 0xf]);
+    }
+    return result;
+}
+
+std::string InterfaceTableName(
+    const lowering::ConcreteInterfaceType& concrete) {
+    const std::string* identity = nullptr;
+    std::string_view kind;
+    if (concrete.kind == lowering::ConcreteTypeKind::Structure &&
+        concrete.structure != nullptr) {
+        kind = "structure";
+        identity =
+            concrete.structure->syntax != nullptr &&
+                    !concrete.structure->syntax->specializationIdentity.empty()
+                ? &concrete.structure->syntax->specializationIdentity
+                : &concrete.structure->name;
+    }
+    if (concrete.kind == lowering::ConcreteTypeKind::Enum &&
+        concrete.enumeration != nullptr) {
+        kind = "enum";
+        identity = concrete.enumeration->syntax != nullptr &&
+                           !concrete.enumeration->syntax->specializationIdentity
+                                .empty()
+                       ? &concrete.enumeration->syntax->specializationIdentity
+                       : &concrete.enumeration->name;
+    }
+    if (identity == nullptr)
+        throw std::logic_error("incomplete interface table plan");
+    return "__flecha_interface_tables." + std::string(kind) + "." +
+           EncodeInterfaceSymbolComponent(*identity);
+}
+
+std::string InterfaceProviderThunkName(
+    const lowering::EffectiveInterfaceProvider& provider) {
+    if (provider.slot.origin == nullptr ||
+        provider.slot.origin->declaredBy == nullptr ||
+        provider.slot.origin->callable == nullptr ||
+        provider.function == nullptr)
+        throw std::logic_error("incomplete interface provider");
+    const char* kind =
+        provider.kind == lowering::InterfaceProviderKind::ConcreteThunk
+            ? "concrete"
+        : provider.kind == lowering::InterfaceProviderKind::AdjustmentThunk
+            ? "adjustment"
+            : "body";
+    std::string result =
+        "__flecha_interface_adapter." + std::string(kind) + "." +
+        EncodeInterfaceSymbolComponent(provider.slot.origin->declaredBy->name) +
+        "." +
+        EncodeInterfaceSymbolComponent(
+            provider.slot.origin->callable->LinkName());
+    if (provider.kind == lowering::InterfaceProviderKind::ConcreteThunk) {
+        const semantic::StructureType* structure = provider.function->Owner();
+        const semantic::EnumType* enumeration = provider.function->EnumOwner();
+        const std::string* identity = nullptr;
+        if (structure != nullptr)
+            identity =
+                structure->syntax != nullptr &&
+                        !structure->syntax->specializationIdentity.empty()
+                    ? &structure->syntax->specializationIdentity
+                    : &structure->name;
+        else if (enumeration != nullptr)
+            identity =
+                enumeration->syntax != nullptr &&
+                        !enumeration->syntax->specializationIdentity.empty()
+                    ? &enumeration->syntax->specializationIdentity
+                    : &enumeration->name;
+        if (identity == nullptr)
+            throw std::logic_error(
+                "concrete interface provider has no concrete owner");
+        result += "." + EncodeInterfaceSymbolComponent(*identity);
+    } else
+        result +=
+            "." + EncodeInterfaceSymbolComponent(provider.function->LinkName());
+    if (provider.kind == lowering::InterfaceProviderKind::AdjustmentThunk)
+        result += "." + std::to_string(provider.tableAdjustment);
+    return result;
 }
 
 }  // namespace
@@ -240,6 +340,7 @@ llvm::GlobalVariable* LlvmCodeGenerator::EmptyInterfaceTable() {
         *_module, storage, true, llvm::GlobalValue::LinkOnceODRLinkage,
         llvm::ConstantInt::get(storage, 0), name);
     sentinel->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    ApplyOdrComdat(*_module, *sentinel);
     const llvm::Align alignment = _dataLayout.has_value()
                                       ? _dataLayout->getPointerABIAlignment(0)
                                       : llvm::Align(alignof(void*));
@@ -247,13 +348,327 @@ llvm::GlobalVariable* LlvmCodeGenerator::EmptyInterfaceTable() {
     return sentinel;
 }
 
-void LlvmCodeGenerator::DeclareInterfaceInfrastructure(
-    const lowering::BoundProgram& program) {
-    for (const lowering::InterfaceTablePlan& plan : program.InterfaceTables()) {
-        if (plan.layout.size != 0) continue;
-        (void)EmptyInterfaceTable();
-        return;
+llvm::StructType* LlvmCodeGenerator::InterfaceTableType(
+    const lowering::InterfaceTableLayout& layout) {
+    std::vector<llvm::Type*> fields;
+    fields.reserve(layout.parents.size() + layout.slots.size());
+    for (const lowering::ParentLayout& parent : layout.parents) {
+        if (parent.table == nullptr) {
+            Fail("interface table parent has no layout");
+            return nullptr;
+        }
+        llvm::StructType* parentType = InterfaceTableType(*parent.table);
+        if (parentType == nullptr) return nullptr;
+        fields.push_back(parentType);
     }
+    llvm::Type* pointer = llvm::PointerType::getUnqual(_context);
+    fields.insert(fields.end(), layout.slots.size(), pointer);
+    return llvm::StructType::get(_context, fields);
+}
+
+bool LlvmCodeGenerator::ValidateInterfaceTableType(
+    const lowering::InterfaceTableLayout& layout, llvm::StructType* type) {
+    if (type == nullptr ||
+        type->getNumElements() != layout.parents.size() + layout.slots.size())
+        return Fail("interface table type does not match its lowering plan");
+
+    const llvm::DataLayout& dataLayout = _module->getDataLayout();
+    const llvm::StructLayout* structLayout = dataLayout.getStructLayout(type);
+    if (structLayout->getSizeInBytes() != layout.size ||
+        structLayout->getAlignment().value() != layout.alignment)
+        return Fail(
+            "interface table LLVM layout does not match its lowering "
+            "plan");
+
+    std::size_t index = 0;
+    for (const lowering::ParentLayout& parent : layout.parents) {
+        if (structLayout->getElementOffset(index) != parent.offset ||
+            parent.table == nullptr)
+            return Fail(
+                "interface parent subtable offset does not match its "
+                "lowering plan");
+        auto* parentType =
+            llvm::dyn_cast<llvm::StructType>(type->getElementType(index));
+        if (!ValidateInterfaceTableType(*parent.table, parentType))
+            return false;
+        ++index;
+    }
+    for (const lowering::SlotLayout& slot : layout.slots) {
+        if (structLayout->getElementOffset(index) != slot.offset ||
+            !type->getElementType(index)->isPointerTy())
+            return Fail(
+                "interface method slot offset does not match its "
+                "lowering plan");
+        ++index;
+    }
+    return true;
+}
+
+llvm::FunctionType* LlvmCodeGenerator::InterfaceSlotType(
+    const semantic::MethodContract& origin) {
+    if (origin.callable == nullptr || !origin.callable->HasReceiver() ||
+        origin.callable->ParameterTypes().empty()) {
+        Fail("interface slot has no receiver callable");
+        return nullptr;
+    }
+    llvm::Type* returnType = origin.callable->ReturnType().ContainsStructure()
+                                 ? llvm::Type::getVoidTy(_context)
+                                 : MapType(origin.callable->ReturnType());
+    if (returnType == nullptr) return nullptr;
+    std::vector<llvm::Type*> parameters;
+    parameters.reserve(origin.callable->ParameterTypes().size() + 2);
+    if (origin.callable->ReturnType().ContainsStructure())
+        parameters.push_back(llvm::PointerType::getUnqual(_context));
+    llvm::Type* pointer = llvm::PointerType::getUnqual(_context);
+    parameters.push_back(pointer);
+    parameters.push_back(pointer);
+    for (std::size_t index = 1;
+         index < origin.callable->ParameterTypes().size(); ++index) {
+        llvm::Type* parameter =
+            MapType(origin.callable->ParameterTypes()[index]);
+        if (parameter == nullptr) return nullptr;
+        parameters.push_back(parameter);
+    }
+    return llvm::FunctionType::get(returnType, parameters, false);
+}
+
+llvm::Function* LlvmCodeGenerator::InterfaceProviderThunk(
+    const lowering::EffectiveInterfaceProvider& provider) {
+    if (provider.slot.origin == nullptr ||
+        provider.slot.origin->callable == nullptr ||
+        provider.function == nullptr)
+        return Fail("interface provider is incomplete"), nullptr;
+
+    std::string name;
+    try {
+        name = InterfaceProviderThunkName(provider);
+    } catch (const std::logic_error& error) {
+        return Fail(error.what()), nullptr;
+    }
+    llvm::FunctionType* type = InterfaceSlotType(*provider.slot.origin);
+    if (type == nullptr) return nullptr;
+    llvm::Function* thunk = _module->getFunction(name);
+    if (thunk != nullptr) {
+        if (thunk->getFunctionType() != type)
+            return Fail("conflicting interface provider thunk type"), nullptr;
+        return thunk;
+    }
+
+    const auto target = _functions.find(provider.function);
+    if (target == _functions.end())
+        return Fail("interface provider function was not declared"), nullptr;
+    llvm::Function* function = target->second;
+    thunk = llvm::Function::Create(type, llvm::GlobalValue::LinkOnceODRLinkage,
+                                   name, *_module);
+    thunk->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    thunk->addFnAttr(llvm::Attribute::AlwaysInline);
+    ApplyOdrComdat(*_module, *thunk);
+
+    const bool hasReturnStorage =
+        provider.slot.origin->callable->ReturnType().ContainsStructure();
+    const std::size_t dataIndex = hasReturnStorage ? 1 : 0;
+    const std::size_t tableIndex = dataIndex + 1;
+    if (tableIndex >= thunk->arg_size() ||
+        !thunk->getArg(dataIndex)->getType()->isPointerTy() ||
+        !thunk->getArg(tableIndex)->getType()->isPointerTy() ||
+        function->arg_size() + 1 != thunk->arg_size())
+        return Fail("interface provider thunk has an invalid receiver ABI"),
+               nullptr;
+
+    llvm::BasicBlock* entry =
+        llvm::BasicBlock::Create(_context, "entry", thunk);
+    _builder.SetInsertPoint(entry);
+    std::vector<llvm::Value*> arguments;
+    arguments.reserve(function->arg_size());
+    if (hasReturnStorage) arguments.push_back(thunk->getArg(0));
+    llvm::Value* data = thunk->getArg(dataIndex);
+    llvm::Value* table = thunk->getArg(tableIndex);
+    if (provider.kind == lowering::InterfaceProviderKind::ConcreteThunk) {
+        arguments.push_back(data);
+    } else {
+        llvm::Value* adjustedTable = table;
+        if (provider.kind == lowering::InterfaceProviderKind::AdjustmentThunk) {
+            if (provider.tableAdjustment == 0)
+                return Fail("interface adjustment thunk has a zero adjustment"),
+                       nullptr;
+            auto* indexType = llvm::IntegerType::get(
+                _context, _module->getDataLayout().getIndexSizeInBits(0));
+            llvm::Value* adjustment = llvm::ConstantInt::get(
+                indexType, provider.tableAdjustment, true);
+            adjustedTable = _builder.CreateInBoundsGEP(
+                llvm::Type::getInt8Ty(_context), table, adjustment,
+                "interface.table.adjusted");
+        } else if (provider.kind !=
+                   lowering::InterfaceProviderKind::InterfaceBody) {
+            return Fail("unknown interface provider adapter kind"), nullptr;
+        }
+        arguments.push_back(CreateInterfaceReference(data, adjustedTable));
+    }
+    if (arguments.back() == nullptr) return nullptr;
+    for (std::size_t index = tableIndex + 1; index < thunk->arg_size(); ++index)
+        arguments.push_back(thunk->getArg(index));
+
+    for (std::size_t index = 0; index < arguments.size(); ++index)
+        if (arguments[index]->getType() != function->getArg(index)->getType())
+            return Fail("interface provider thunk argument ABI mismatch"),
+                   nullptr;
+    if (function->getReturnType() != thunk->getReturnType())
+        return Fail("interface provider thunk result ABI mismatch"), nullptr;
+
+    llvm::CallInst* call = _builder.CreateCall(function, arguments);
+    call->setTailCallKind(llvm::CallInst::TCK_Tail);
+    if (call->getType()->isVoidTy())
+        _builder.CreateRetVoid();
+    else
+        _builder.CreateRet(call);
+    return thunk;
+}
+
+llvm::Function* LlvmCodeGenerator::InterfaceProviderEntry(
+    const lowering::EffectiveInterfaceProvider& provider) {
+    if (provider.function == nullptr)
+        return Fail("interface table slot has no provider"), nullptr;
+    return InterfaceProviderThunk(provider);
+}
+
+llvm::Constant* LlvmCodeGenerator::InterfaceTableInitializer(
+    const lowering::InterfaceTablePlan& plan,
+    const lowering::InterfaceTableLayout& layout) {
+    llvm::StructType* type = InterfaceTableType(layout);
+    if (type == nullptr) return nullptr;
+    std::vector<llvm::Constant*> fields;
+    fields.reserve(layout.parents.size() + layout.slots.size());
+    for (const lowering::ParentLayout& parent : layout.parents) {
+        if (parent.table == nullptr)
+            return Fail("interface table parent has no layout"), nullptr;
+        llvm::Constant* initializer =
+            InterfaceTableInitializer(plan, *parent.table);
+        if (initializer == nullptr) return nullptr;
+        fields.push_back(initializer);
+    }
+    for (const lowering::SlotLayout& slot : layout.slots) {
+        if (slot.slot.origin == nullptr)
+            return Fail("interface table slot has no canonical origin"),
+                   nullptr;
+        const lowering::EffectiveInterfaceProvider* provider =
+            plan.providerMap.Find(*slot.slot.origin);
+        if (provider == nullptr)
+            return Fail("interface table slot has no provider mapping"),
+                   nullptr;
+        llvm::Function* entry = InterfaceProviderEntry(*provider);
+        if (entry == nullptr) return nullptr;
+        fields.push_back(entry);
+    }
+    return llvm::ConstantStruct::get(type, fields);
+}
+
+bool LlvmCodeGenerator::DeclareInterfaceInfrastructure(
+    const lowering::BoundProgram& program) {
+    const llvm::DataLayout& dataLayout = _module->getDataLayout();
+    lowering::InterfaceLoweringPlanner planner(
+        {dataLayout.getPointerSize(0),
+         dataLayout.getPointerABIAlignment(0).value()});
+    std::unordered_set<const void*> emittedConcreteTypes;
+    const auto& sourcePlans = program.InterfaceTables();
+    std::size_t sourceIndex = 0;
+    while (sourceIndex < sourcePlans.size()) {
+        const lowering::ConcreteInterfaceType& concrete =
+            sourcePlans[sourceIndex].providerMap.concrete;
+        const void* concreteIdentity = ConcreteInterfaceIdentity(concrete);
+        if (concreteIdentity == nullptr)
+            return Fail("interface table plan has no concrete type");
+        if (!emittedConcreteTypes.insert(concreteIdentity).second)
+            return Fail(
+                "interface table plans for a concrete type are not "
+                "contiguous");
+
+        std::vector<lowering::InterfaceTablePlan> plans;
+        while (sourceIndex < sourcePlans.size() &&
+               ConcreteInterfaceIdentity(
+                   sourcePlans[sourceIndex].providerMap.concrete) ==
+                   concreteIdentity) {
+            const lowering::InterfaceTablePlan& sourcePlan =
+                sourcePlans[sourceIndex++];
+            if (sourcePlan.providerMap.root == nullptr)
+                return Fail("interface table plan has no root interface");
+            try {
+                if (concrete.kind == lowering::ConcreteTypeKind::Structure &&
+                    concrete.structure != nullptr)
+                    plans.push_back(planner.BuildPlan(
+                        *concrete.structure, *sourcePlan.providerMap.root));
+                else if (concrete.kind == lowering::ConcreteTypeKind::Enum &&
+                         concrete.enumeration != nullptr)
+                    plans.push_back(planner.BuildPlan(
+                        *concrete.enumeration, *sourcePlan.providerMap.root));
+                else
+                    return Fail("interface table plan has no concrete type");
+            } catch (const std::logic_error& error) {
+                return Fail(error.what());
+            }
+        }
+
+        std::vector<const lowering::InterfaceTablePlan*> storedPlans;
+        std::vector<llvm::Type*> rootTypes;
+        for (const lowering::InterfaceTablePlan& plan : plans) {
+            if (plan.layout.size == 0) {
+                llvm::GlobalVariable* sentinel = EmptyInterfaceTable();
+                const bool inserted =
+                    _interfaceTables[concreteIdentity]
+                        .emplace(plan.providerMap.root,
+                                 InterfaceTableLocation{sentinel, nullptr, 0, 0,
+                                                        true})
+                        .second;
+                if (!inserted)
+                    return Fail("duplicate empty interface root table");
+                continue;
+            }
+            llvm::StructType* rootType = InterfaceTableType(plan.layout);
+            if (!ValidateInterfaceTableType(plan.layout, rootType))
+                return false;
+            storedPlans.push_back(&plan);
+            rootTypes.push_back(rootType);
+        }
+        if (storedPlans.empty()) continue;
+
+        const std::string name = InterfaceTableName(concrete);
+        if (_module->getNamedGlobal(name) != nullptr)
+            return Fail("duplicate interface table global '" + name + "'");
+        llvm::StructType* aggregateType =
+            llvm::StructType::get(_context, rootTypes);
+        const llvm::StructLayout* aggregateLayout =
+            dataLayout.getStructLayout(aggregateType);
+        std::vector<llvm::Constant*> initializers;
+        initializers.reserve(storedPlans.size());
+        for (std::size_t rootIndex = 0; rootIndex < storedPlans.size();
+             ++rootIndex) {
+            llvm::Constant* initializer = InterfaceTableInitializer(
+                *storedPlans[rootIndex], storedPlans[rootIndex]->layout);
+            if (initializer == nullptr) return false;
+            initializers.push_back(initializer);
+        }
+
+        auto* table = new llvm::GlobalVariable(
+            *_module, aggregateType, true,
+            llvm::GlobalValue::LinkOnceODRLinkage,
+            llvm::ConstantStruct::get(aggregateType, initializers), name);
+        table->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        table->setAlignment(aggregateLayout->getAlignment());
+        ApplyOdrComdat(*_module, *table);
+        for (std::size_t rootIndex = 0; rootIndex < storedPlans.size();
+             ++rootIndex) {
+            const bool inserted =
+                _interfaceTables[concreteIdentity]
+                    .emplace(storedPlans[rootIndex]->providerMap.root,
+                             InterfaceTableLocation{
+                                 table, aggregateType, rootIndex,
+                                 aggregateLayout->getElementOffset(rootIndex),
+                                 false})
+                    .second;
+            if (!inserted)
+                return Fail("duplicate non-empty interface root table");
+        }
+    }
+    return true;
 }
 
 llvm::StructType* LlvmCodeGenerator::StringViewType() {
@@ -1676,8 +2091,7 @@ llvm::Value* LlvmCodeGenerator::EmitStringViewOperation(
 }
 
 llvm::FunctionType* LlvmCodeGenerator::MapFunctionType(
-    const lowering::BoundFunction& boundFunction) {
-    const semantic::FunctionSymbol& function = boundFunction.Symbol();
+    const semantic::FunctionSymbol& function, bool hasCaptures) {
     llvm::Type* returnType = function.ReturnType().ContainsStructure()
                                  ? llvm::Type::getVoidTy(_context)
                                  : MapType(function.ReturnType());
@@ -1686,7 +2100,7 @@ llvm::FunctionType* LlvmCodeGenerator::MapFunctionType(
     parameters.reserve(function.ParameterTypes().size() + 1);
     if (function.ReturnType().ContainsStructure())
         parameters.push_back(llvm::PointerType::getUnqual(_context));
-    if (!boundFunction.Captures().empty())
+    if (hasCaptures)
         parameters.push_back(llvm::PointerType::getUnqual(_context));
     for (semantic::SemanticType parameter : function.ParameterTypes()) {
         llvm::Type* parameterType = MapType(parameter);
@@ -1694,6 +2108,12 @@ llvm::FunctionType* LlvmCodeGenerator::MapFunctionType(
         parameters.push_back(parameterType);
     }
     return llvm::FunctionType::get(returnType, parameters, false);
+}
+
+llvm::FunctionType* LlvmCodeGenerator::MapFunctionType(
+    const lowering::BoundFunction& boundFunction) {
+    return MapFunctionType(boundFunction.Symbol(),
+                           !boundFunction.Captures().empty());
 }
 
 llvm::FunctionType* LlvmCodeGenerator::MapCallableInvokeType(
@@ -4806,6 +5226,7 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
     _boundFunctions.clear();
     _closureEnvironmentTypes.clear();
     _closureDestroyers.clear();
+    _interfaceTables.clear();
     _structureTypes.clear();
     _variables.clear();
     _module = std::make_unique<llvm::Module>(moduleName, _context);
@@ -4817,8 +5238,8 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
 #endif
     }
     if (_dataLayout.has_value()) _module->setDataLayout(*_dataLayout);
-    DeclareInterfaceInfrastructure(program);
     if (!DeclareFunctions(program)) return nullptr;
+    if (!DeclareInterfaceInfrastructure(program)) return nullptr;
     for (const std::unique_ptr<lowering::BoundFunction>& function :
          program.Functions()) {
         if (function->IsExtern()) continue;
