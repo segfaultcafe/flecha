@@ -367,6 +367,13 @@ add_test(
 )
 
 add_test(
+    NAME InterfaceFixtureTests.ValidInterfaceReferences
+    COMMAND $<TARGET_FILE:flecha>
+        check
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_interface_references.fl
+)
+
+add_test(
     NAME InterfaceFixtureTests.InvalidLoweringProviderDiagnostics
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>

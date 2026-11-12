@@ -12,6 +12,7 @@
 #include "core/parser.hpp"
 #include "core/tokenizer.hpp"
 #include "lowering/interface_layout.hpp"
+#include "lowering/interface_reference.hpp"
 #include "lowering/lowerer.hpp"
 #include "semantic/semantic_analyzer.hpp"
 
@@ -262,4 +263,55 @@ TEST(InterfaceProviderTests, PlansEnumProviders) {
     ASSERT_NE(plan.providerMap.providers[0].function->EnumOwner(), nullptr);
     EXPECT_EQ(plan.providerMap.providers[0].function->EnumOwner()->displayName,
               "Mode");
+}
+
+TEST(InterfaceReferenceTests, PreservesBorrowTypesInBoundFunctionsAndFields) {
+    AnalyzedFixture fixture =
+        AnalyzeFixtureFile("valid_interface_references.fl");
+
+    ASSERT_FALSE(fixture.diagnostics.HasErrors());
+    std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
+    ASSERT_NE(program, nullptr);
+
+    const BoundFunction* mutableRelay = nullptr;
+    const BoundFunction* constRelay = nullptr;
+    for (const std::unique_ptr<BoundFunction>& function :
+         program->Functions()) {
+        if (function->Symbol().Name() == "relayMutableReference")
+            mutableRelay = function.get();
+        if (function->Symbol().Name() == "relayConstReference")
+            constRelay = function.get();
+    }
+    ASSERT_NE(mutableRelay, nullptr);
+    ASSERT_NE(constRelay, nullptr);
+    ASSERT_EQ(mutableRelay->Symbol().ParameterTypes().size(), 1);
+    ASSERT_EQ(constRelay->Symbol().ParameterTypes().size(), 1);
+
+    const SemanticType mutableType = mutableRelay->Symbol().ReturnType();
+    const SemanticType constType = constRelay->Symbol().ReturnType();
+    EXPECT_TRUE(IsInterfaceReference(mutableType));
+    EXPECT_TRUE(IsInterfaceReference(constType));
+    EXPECT_FALSE(mutableType.Target()->IsConst());
+    EXPECT_TRUE(constType.Target()->IsConst());
+    EXPECT_EQ(mutableRelay->Symbol().ParameterTypes()[0], mutableType);
+    EXPECT_EQ(constRelay->Symbol().ParameterTypes()[0], constType);
+    EXPECT_TRUE(mutableType.HasBorrowedLifetime());
+    EXPECT_TRUE(constType.HasBorrowedLifetime());
+    EXPECT_FALSE(mutableType.OwnsStorage());
+    EXPECT_FALSE(constType.OwnsStorage());
+
+    const StructureType* fields = nullptr;
+    for (const std::unique_ptr<StructureType>& structure :
+         fixture.model.Structures())
+        if (structure->displayName == "InterfaceReferenceFields")
+            fields = structure.get();
+    ASSERT_NE(fields, nullptr);
+    ASSERT_EQ(fields->fields.size(), 2);
+    EXPECT_TRUE(IsInterfaceReference(fields->fields[0].type));
+    EXPECT_TRUE(IsInterfaceReference(fields->fields[1].type));
+
+    EXPECT_EQ(CountPlans(*program, "EmptyReferenceStructure"), 1);
+    EXPECT_EQ(CountPlans(*program, "EmptyReferenceEnum"), 1);
+    EXPECT_EQ(CountPlans(*program, "ReadableStructure"), 1);
+    EXPECT_EQ(CountPlans(*program, "ReadableEnum"), 1);
 }
