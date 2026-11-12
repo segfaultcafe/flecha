@@ -1,6 +1,7 @@
 #ifndef FLECHA_SEMANTIC_METHOD_CONTRACT_HPP
 #define FLECHA_SEMANTIC_METHOD_CONTRACT_HPP
 
+#include <string>
 #include <vector>
 
 #include "semantic/method_key.hpp"
@@ -10,6 +11,25 @@ namespace flecha::semantic {
 struct InterfaceType;
 
 enum class MethodVisibility { Public, Protected };
+
+// A variadic interface family is materialized once for every closed argument
+// vector reached by the whole source graph. The key is canonical and stable:
+// display aliases and discovery order never participate in slot identity.
+struct VariadicShape final {
+    std::vector<SemanticType> parameters;
+    std::vector<core::OwnershipContract> parameterContracts;
+    std::string key;
+
+    [[nodiscard]] bool operator==(const VariadicShape& other) const {
+        return key == other.key && parameters == other.parameters &&
+               parameterContracts == other.parameterContracts;
+    }
+};
+
+[[nodiscard]] std::string CanonicalTypeIdentity(SemanticType type);
+[[nodiscard]] VariadicShape NormalizeVariadicShape(
+    std::vector<SemanticType> parameters,
+    std::vector<core::OwnershipContract> parameterContracts);
 
 struct MethodContract final {
     MethodKey key;

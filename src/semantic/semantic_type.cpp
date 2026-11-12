@@ -440,6 +440,8 @@ SemanticType SemanticType::FromSyntax(core::PrimitiveType type) {
 bool IsAssignable(SemanticType destination, SemanticType source) {
     if (destination.IsError() || source.IsError()) return true;
     if (destination.WithoutConst() == source.WithoutConst()) return true;
+    if (CanImplicitlyConvertInterfaceReference(source, destination))
+        return true;
     if (destination.Kind() == SemanticTypeKind::Function &&
         source.Kind() == SemanticTypeKind::Function &&
         destination.Signature().isOnce && !source.Signature().isOnce) {
@@ -538,6 +540,29 @@ bool CanReborrow(SemanticType destination, SemanticType source) {
            destination.Target()->WithoutConst() ==
                source.Target()->WithoutConst() &&
            (destination.Target()->IsConst() || !source.Target()->IsConst());
+}
+
+bool CanImplicitlyConvertInterfaceReference(SemanticType source,
+                                            SemanticType destination) {
+    if (source.Kind() != SemanticTypeKind::Reference ||
+        destination.Kind() != SemanticTypeKind::Reference ||
+        destination.Target()->Kind() != SemanticTypeKind::Interface ||
+        (!destination.Target()->IsConst() && source.Target()->IsConst()))
+        return false;
+
+    const InterfaceType* target = destination.Target()->Interface();
+    const auto contains = [target](const auto& interfaces) {
+        return std::find(interfaces.begin(), interfaces.end(), target) !=
+               interfaces.end();
+    };
+    const SemanticType origin = *source.Target();
+    if (origin.Kind() == SemanticTypeKind::Structure)
+        return contains(origin.Structure()->conformanceClosure);
+    if (origin.Kind() == SemanticTypeKind::Enum)
+        return contains(origin.Enum()->conformanceClosure);
+    if (origin.Kind() != SemanticTypeKind::Interface) return false;
+    const InterfaceType* sourceInterface = origin.Interface();
+    return sourceInterface == target || contains(sourceInterface->ancestors);
 }
 
 bool CanExplicitlyCast(SemanticType source, SemanticType destination) {

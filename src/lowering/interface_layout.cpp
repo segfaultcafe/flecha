@@ -56,6 +56,9 @@ const semantic::MethodContract& EffectiveContract(
 InterfaceTableLayout BuildLayout(
     const semantic::InterfaceType& current, const semantic::InterfaceType& root,
     const InterfaceLayoutAbi& abi,
+    const std::unordered_map<const semantic::MethodContract*,
+                             std::vector<semantic::VariadicShape>>*
+        variadicShapes,
     std::unordered_set<const semantic::InterfaceType*>& active,
     std::unordered_set<const semantic::InterfaceType*>& seen) {
     if (active.contains(&current))
@@ -73,7 +76,7 @@ InterfaceTableLayout BuildLayout(
         if (parent.type == nullptr)
             InvariantFailure("interface has a null parent");
         InterfaceTableLayout parentTable =
-            BuildLayout(*parent.type, root, abi, active, seen);
+            BuildLayout(*parent.type, root, abi, variadicShapes, active, seen);
         cursor = AlignUp(cursor, parentTable.alignment);
         result.alignment = std::max(result.alignment, parentTable.alignment);
         const std::size_t offset = cursor;
@@ -94,12 +97,27 @@ InterfaceTableLayout BuildLayout(
         const semantic::MethodContract& origin = CanonicalOrigin(declared);
         const semantic::MethodContract& effective =
             EffectiveContract(root, origin);
-        cursor = AlignUp(cursor, abi.pointerAlignment);
-        result.alignment = std::max(result.alignment, abi.pointerAlignment);
-        result.slots.push_back({{&origin, &effective}, cursor});
-        if (cursor > std::numeric_limits<std::size_t>::max() - abi.pointerSize)
-            InvariantFailure("table layout size overflow");
-        cursor += abi.pointerSize;
+        const auto appendSlot =
+            [&](std::optional<semantic::VariadicShape> shape) {
+                cursor = AlignUp(cursor, abi.pointerAlignment);
+                result.alignment =
+                    std::max(result.alignment, abi.pointerAlignment);
+                result.slots.push_back(
+                    {{&origin, &effective, std::move(shape)}, cursor});
+                if (cursor >
+                    std::numeric_limits<std::size_t>::max() - abi.pointerSize)
+                    InvariantFailure("table layout size overflow");
+                cursor += abi.pointerSize;
+            };
+        if (!origin.key.hasVariadicPack) {
+            appendSlot(std::nullopt);
+            continue;
+        }
+        if (variadicShapes == nullptr) continue;
+        const auto shapes = variadicShapes->find(&origin);
+        if (shapes == variadicShapes->end()) continue;
+        for (const semantic::VariadicShape& shape : shapes->second)
+            appendSlot(shape);
     }
 
     result.size = AlignUp(cursor, result.alignment);
@@ -117,10 +135,14 @@ void FlattenSlots(const InterfaceTableLayout& layout,
     for (const SlotLayout& slot : layout.slots) {
         if (slot.slot.origin == nullptr || slot.slot.effective == nullptr)
             InvariantFailure("layout contains an incomplete canonical slot");
-        if (std::ranges::any_of(result,
-                                [&](const CanonicalInterfaceSlot& seen) {
-                                    return seen.origin == slot.slot.origin;
-                                }))
+        if (std::ranges::any_of(
+                result, [&](const CanonicalInterfaceSlot& seen) {
+                    return seen.origin == slot.slot.origin &&
+                           (!seen.shape.has_value()
+                                ? !slot.slot.shape.has_value()
+                                : slot.slot.shape.has_value() &&
+                                      seen.shape->key == slot.slot.shape->key);
+                }))
             InvariantFailure("canonical slot occurs more than once");
         result.push_back(slot.slot);
     }
@@ -164,21 +186,59 @@ const semantic::FunctionSymbol* ConcreteProvider(
 }
 
 template <typename Concrete>
-InterfaceProviderMap BuildProviderMap(ConcreteInterfaceType concreteType,
-                                      const Concrete& concrete,
-                                      const semantic::InterfaceType& root,
-                                      const InterfaceTableLayout& layout) {
+InterfaceProviderMap BuildProviderMap(
+    ConcreteInterfaceType concreteType, const Concrete& concrete,
+    const semantic::InterfaceType& root, const InterfaceTableLayout& layout,
+    const std::unordered_map<const semantic::FunctionSymbol*,
+                             const semantic::FunctionSymbol*>* variadicTargets,
+    const std::unordered_map<
+        const semantic::FunctionSymbol*,
+        std::unordered_map<std::string, const semantic::FunctionSymbol*>>*
+        variadicShapeTargets) {
     InterfaceProviderMap result{concreteType, &root, {}};
     std::vector<CanonicalInterfaceSlot> slots;
     FlattenSlots(layout, slots);
     result.providers.reserve(slots.size());
+
+    const auto dispatchTarget = [&](const semantic::FunctionSymbol* provider,
+                                    const CanonicalInterfaceSlot& slot) {
+        if (provider == nullptr) return provider;
+        if (slot.shape.has_value()) {
+            if (variadicShapeTargets == nullptr)
+                InvariantFailure(
+                    "variadic provider has no shape-target registry");
+            const auto family = variadicShapeTargets->find(provider);
+            if (family == variadicShapeTargets->end())
+                InvariantFailure(
+                    "variadic provider has no closed shape targets");
+            const auto target = family->second.find(slot.shape->key);
+            if (target == family->second.end())
+                InvariantFailure(
+                    "variadic provider has no target for closed shape");
+            return target->second;
+        }
+        std::unordered_set<const semantic::FunctionSymbol*> seen;
+        while (provider->Declaration() != nullptr &&
+               provider->Declaration()->HasVariadicPack()) {
+            if (!seen.insert(provider).second)
+                InvariantFailure("variadic provider forwarding cycle");
+            if (variadicTargets == nullptr)
+                InvariantFailure("variadic provider has no target registry");
+            const auto next = variadicTargets->find(provider);
+            if (next == variadicTargets->end())
+                InvariantFailure("variadic provider has no forwarding target");
+            provider = next->second;
+        }
+        return provider;
+    };
 
     for (const CanonicalInterfaceSlot& slot : slots) {
         const semantic::MethodContract& effective = *slot.effective;
         if (const semantic::FunctionSymbol* provider =
                 ConcreteProvider(concrete, effective)) {
             result.providers.push_back(
-                {slot, provider, InterfaceProviderKind::ConcreteThunk, 0});
+                {slot, provider, dispatchTarget(provider, slot),
+                 InterfaceProviderKind::ConcreteThunk, 0});
             continue;
         }
 
@@ -203,7 +263,7 @@ InterfaceProviderMap BuildProviderMap(ConcreteInterfaceType concreteType,
             static_cast<std::ptrdiff_t>(*providerOffset) -
             static_cast<std::ptrdiff_t>(*originOffset);
         result.providers.push_back(
-            {slot, effective.provider,
+            {slot, effective.provider, dispatchTarget(effective.provider, slot),
              adjustment == 0 ? InterfaceProviderKind::InterfaceBody
                              : InterfaceProviderKind::AdjustmentThunk,
              adjustment});
@@ -222,16 +282,33 @@ std::string ConcreteInterfaceType::DisplayName() const {
 }
 
 const EffectiveInterfaceProvider* InterfaceProviderMap::Find(
-    const semantic::MethodContract& canonicalOrigin) const {
+    const semantic::MethodContract& canonicalOrigin,
+    const semantic::VariadicShape* shape) const {
     const auto found = std::ranges::find_if(
         providers, [&](const EffectiveInterfaceProvider& provider) {
-            return provider.slot.origin == &canonicalOrigin;
+            if (provider.slot.origin != &canonicalOrigin) return false;
+            if (shape == nullptr) return !provider.slot.shape.has_value();
+            return provider.slot.shape.has_value() &&
+                   provider.slot.shape->key == shape->key;
         });
     return found == providers.end() ? nullptr : &*found;
 }
 
-InterfaceLoweringPlanner::InterfaceLoweringPlanner(InterfaceLayoutAbi abi)
-    : _abi(abi) {
+InterfaceLoweringPlanner::InterfaceLoweringPlanner(
+    InterfaceLayoutAbi abi,
+    const std::unordered_map<const semantic::MethodContract*,
+                             std::vector<semantic::VariadicShape>>*
+        variadicShapes,
+    const std::unordered_map<const semantic::FunctionSymbol*,
+                             const semantic::FunctionSymbol*>* variadicTargets,
+    const std::unordered_map<
+        const semantic::FunctionSymbol*,
+        std::unordered_map<std::string, const semantic::FunctionSymbol*>>*
+        variadicShapeTargets)
+    : _abi(abi),
+      _variadicShapes(variadicShapes),
+      _variadicTargets(variadicTargets),
+      _variadicShapeTargets(variadicShapeTargets) {
     if (_abi.pointerSize == 0 || _abi.pointerAlignment == 0)
         throw std::invalid_argument(
             "interface layout pointer size and alignment must be non-zero");
@@ -241,16 +318,17 @@ InterfaceTableLayout InterfaceLoweringPlanner::BuildLayout(
     const semantic::InterfaceType& root) const {
     std::unordered_set<const semantic::InterfaceType*> active;
     std::unordered_set<const semantic::InterfaceType*> seen;
-    return lowering::BuildLayout(root, root, _abi, active, seen);
+    return lowering::BuildLayout(root, root, _abi, _variadicShapes, active,
+                                 seen);
 }
 
 InterfaceTablePlan InterfaceLoweringPlanner::BuildPlan(
     const semantic::StructureType& concrete,
     const semantic::InterfaceType& root) const {
     InterfaceTableLayout layout = BuildLayout(root);
-    InterfaceProviderMap providers =
-        BuildProviderMap({ConcreteTypeKind::Structure, &concrete, nullptr},
-                         concrete, root, layout);
+    InterfaceProviderMap providers = BuildProviderMap(
+        {ConcreteTypeKind::Structure, &concrete, nullptr}, concrete, root,
+        layout, _variadicTargets, _variadicShapeTargets);
     return {std::move(layout), std::move(providers)};
 }
 
@@ -258,8 +336,9 @@ InterfaceTablePlan InterfaceLoweringPlanner::BuildPlan(
     const semantic::EnumType& concrete,
     const semantic::InterfaceType& root) const {
     InterfaceTableLayout layout = BuildLayout(root);
-    InterfaceProviderMap providers = BuildProviderMap(
-        {ConcreteTypeKind::Enum, nullptr, &concrete}, concrete, root, layout);
+    InterfaceProviderMap providers =
+        BuildProviderMap({ConcreteTypeKind::Enum, nullptr, &concrete}, concrete,
+                         root, layout, _variadicTargets, _variadicShapeTargets);
     return {std::move(layout), std::move(providers)};
 }
 

@@ -33,37 +33,10 @@ std::string TypeMismatch(SemanticType expected, SemanticType actual) {
            std::string(actual.Name()) + "'";
 }
 
-std::string MangleType(SemanticType type) {
-    std::string result = type.IsConst() ? "K" : "N";
-    result += std::to_string(static_cast<int>(type.Kind()));
-    if (type.Kind() == SemanticTypeKind::Structure ||
-        type.Kind() == SemanticTypeKind::Enum ||
-        type.Kind() == SemanticTypeKind::Interface ||
-        type.Kind() == SemanticTypeKind::NamedError) {
-        const std::string name(type.Name());
-        result += "_" + std::to_string(name.size()) + name;
-    }
-    if (type.Target()) result += "T" + MangleType(*type.Target());
-    if (type.Kind() == SemanticTypeKind::Array)
-        result += "L" + std::to_string(type.Length());
-    if (type.Kind() == SemanticTypeKind::Tuple) {
-        result += "E" + std::to_string(type.Elements().size());
-        for (const SemanticType element : type.Elements())
-            result += MangleType(element);
-    }
-    if (type.Kind() == SemanticTypeKind::Function) {
-        result += "R" + MangleType(type.Signature().result);
-        result += "P" + std::to_string(type.Signature().parameters.size());
-        for (const SemanticType parameter : type.Signature().parameters)
-            result += MangleType(parameter);
-    }
-    return result;
-}
-
 std::string OverloadLinkName(const FunctionSymbol& function) {
     std::string result = function.Name() + "$overload$";
     for (const SemanticType parameter : function.ParameterTypes())
-        result += MangleType(parameter);
+        result += CanonicalTypeIdentity(parameter);
     return result;
 }
 
@@ -2827,6 +2800,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     for (std::size_t index = 0; index < _model._anonymousFunctions.size();
          ++index)
         AnalyzeFunction(*_model._anonymousFunctions[index]);
+    ResolveInterfaceVariadicShapeTargets();
     ClassifyTrivialZeros(unit);
     _zeroTrivialityKnown = true;
     for (const auto& [declaration, type] : _implicitDefaults) {
@@ -3050,14 +3024,16 @@ void SemanticAnalyzer::AnalyzeVariadicFunction(
 
     const auto& callee =
         static_cast<const core::NameExpression&>(call.Callee());
-    const Symbol* targetBase =
-        _currentScope->Lookup(EffectName(callee.Name(), call.IsCrashable()));
-    if (targetBase == nullptr || targetBase->Kind() != SymbolKind::Function) {
+    const std::vector<const FunctionSymbol*> targets =
+        LookupFunctions(EffectName(callee.Name(), call.IsCrashable()));
+    if (targets.empty()) {
         invalid(callee.Range(), "variadic forwarding target '" + callee.Name() +
                                     "' is not a function");
         return;
     }
-    const auto* target = static_cast<const FunctionSymbol*>(targetBase);
+    _model._variadicTargetCandidates.insert_or_assign(_currentFunction,
+                                                      targets);
+    const FunctionSymbol* target = targets.front();
     ValidateCrashableCall(call.IsCrashable(), target->Signature(), target,
                           call.Range());
     if (target == _currentFunction) {
@@ -3132,6 +3108,177 @@ void SemanticAnalyzer::AnalyzeVariadicFunction(
     _model._types.insert_or_assign(&call, target->ReturnType().WithoutConst());
     _model._variadicTargets.insert_or_assign(_currentFunction, target);
     _functionCalls[_currentFunction].insert(target);
+}
+
+void SemanticAnalyzer::ResolveInterfaceVariadicShapeTargets() {
+    if (_model._interfaceVariadicShapes.empty()) return;
+
+    const auto canonicalOrigin = [](const MethodContract* contract) {
+        while (contract != nullptr && contract->inherited != nullptr)
+            contract = contract->inherited;
+        return contract;
+    };
+    const auto compatible = [](SemanticType expected, SemanticType actual,
+                               std::size_t& score) {
+        if (expected == actual ||
+            expected.WithoutConst() == actual.WithoutConst())
+            return true;
+        if (CanImplicitlyConvertInterfaceReference(actual, expected)) {
+            score += 2;
+            return true;
+        }
+        if (IsAssignable(expected, actual) || CanReborrow(expected, actual)) {
+            ++score;
+            return true;
+        }
+        return false;
+    };
+
+    using Active = std::unordered_set<const FunctionSymbol*>;
+    std::function<const FunctionSymbol*(
+        const FunctionSymbol&, const std::vector<SemanticType>&,
+        const std::vector<core::OwnershipContract>&, Active&)>
+        resolve;
+    resolve = [&](const FunctionSymbol& forwarding,
+                  const std::vector<SemanticType>& actualTypes,
+                  const std::vector<core::OwnershipContract>& actualContracts,
+                  Active& active) -> const FunctionSymbol* {
+        if (!active.insert(&forwarding).second) return nullptr;
+        const auto family = _model._variadicTargetCandidates.find(&forwarding);
+        if (family == _model._variadicTargetCandidates.end()) {
+            active.erase(&forwarding);
+            return nullptr;
+        }
+
+        struct Match final {
+            const FunctionSymbol* function;
+            std::size_t score;
+        };
+        std::vector<Match> matches;
+        for (const FunctionSymbol* candidate : family->second) {
+            if (candidate == &forwarding) continue;
+            const bool variadic = candidate->Declaration() != nullptr &&
+                                  candidate->Declaration()->HasVariadicPack();
+            const std::size_t fixed = candidate->ParameterTypes().size();
+            if (actualTypes.size() < fixed ||
+                (!variadic && actualTypes.size() != fixed))
+                continue;
+            if (candidate->IsUnsafe() && !forwarding.IsUnsafe()) continue;
+            if (!IsAssignable(forwarding.ReturnType(),
+                              candidate->ReturnType()) ||
+                !IsAssignable(candidate->ReturnType(), forwarding.ReturnType()))
+                continue;
+
+            std::size_t score = variadic ? 1 : 0;
+            bool viable = true;
+            for (std::size_t index = 0; index < fixed; ++index) {
+                if (!compatible(candidate->ParameterTypes()[index],
+                                actualTypes[index], score) ||
+                    candidate->ParameterContract(index) !=
+                        actualContracts[index]) {
+                    viable = false;
+                    break;
+                }
+            }
+            if (viable) matches.push_back({candidate, score});
+        }
+        if (matches.empty()) {
+            active.erase(&forwarding);
+            return nullptr;
+        }
+        const auto best = std::ranges::min_element(
+            matches, {}, [](const Match& match) { return match.score; });
+        if (std::ranges::count_if(matches, [&](const Match& match) {
+                return match.score == best->score;
+            }) != 1) {
+            active.erase(&forwarding);
+            return nullptr;
+        }
+        const FunctionSymbol* target = best->function;
+        if (target->Declaration() != nullptr &&
+            target->Declaration()->HasVariadicPack())
+            target = resolve(*target, actualTypes, actualContracts, active);
+        active.erase(&forwarding);
+        return target;
+    };
+
+    std::set<std::pair<const FunctionSymbol*, std::string>> seen;
+    const auto registerProvider = [&](const FunctionSymbol* provider,
+                                      const MethodContract* origin) {
+        if (provider == nullptr || origin == nullptr ||
+            provider->Declaration() == nullptr ||
+            !provider->Declaration()->HasVariadicPack())
+            return;
+        const auto family = _model._interfaceVariadicShapes.find(origin);
+        if (family == _model._interfaceVariadicShapes.end()) return;
+        for (const VariadicShape& shape : family->second) {
+            if (!seen.emplace(provider, shape.key).second) continue;
+            std::vector<SemanticType> actualTypes;
+            actualTypes.reserve(shape.parameters.size() + 1);
+            actualTypes.push_back(provider->ParameterTypes().front());
+            actualTypes.insert(actualTypes.end(), shape.parameters.begin(),
+                               shape.parameters.end());
+            std::vector<core::OwnershipContract> actualContracts;
+            actualContracts.reserve(actualTypes.size());
+            actualContracts.push_back(provider->ParameterContract(0));
+            actualContracts.insert(actualContracts.end(),
+                                   shape.parameterContracts.begin(),
+                                   shape.parameterContracts.end());
+            Active active;
+            const FunctionSymbol* target =
+                resolve(*provider, actualTypes, actualContracts, active);
+            if (target == nullptr) {
+                std::string arguments;
+                for (std::size_t index = 0; index < shape.parameters.size();
+                     ++index) {
+                    if (index != 0) arguments += ", ";
+                    arguments += shape.parameters[index].Name();
+                }
+                Report(diagnostics::DiagnosticCode::InvalidVariadic,
+                       provider->Declaration()->VariadicPackRange(),
+                       "variadic interface provider '" + provider->Name() +
+                           "' has no unique forwarding target for closed "
+                           "shape (" +
+                           arguments + ")");
+                continue;
+            }
+            _model._interfaceVariadicShapeTargets[provider].insert_or_assign(
+                shape.key, target);
+        }
+    };
+
+    for (const std::unique_ptr<InterfaceType>& interfaceType :
+         _model._interfaces)
+        for (const MethodContract& contract : interfaceType->declaredMethods)
+            if (contract.provider != nullptr)
+                registerProvider(contract.provider, canonicalOrigin(&contract));
+
+    const auto registerConcrete = [&](const auto& concrete) {
+        for (const InterfaceReference& conformance : concrete.conformances) {
+            for (const MethodContract* effective : conformance.type->methods) {
+                const MethodContract* origin = canonicalOrigin(effective);
+                if (!_model._interfaceVariadicShapes.contains(origin)) continue;
+                const std::string name =
+                    effective->key.name + (effective->isCrashable ? "!" : "");
+                const auto methods = concrete.methods.find(name);
+                if (methods == concrete.methods.end()) continue;
+                for (const FunctionSymbol* candidate : methods->second) {
+                    const MethodContract contract = MethodContractOf(
+                        *candidate, candidate->IsProtected()
+                                        ? MethodVisibility::Protected
+                                        : MethodVisibility::Public);
+                    if (contract.key == effective->key &&
+                        !candidate->IsPrivate() &&
+                        contract.SameContract(*effective))
+                        registerProvider(candidate, origin);
+                }
+            }
+        }
+    };
+    for (const std::unique_ptr<StructureType>& concrete : _model._structures)
+        registerConcrete(*concrete);
+    for (const std::unique_ptr<EnumType>& concrete : _model._enums)
+        registerConcrete(*concrete);
 }
 
 void SemanticAnalyzer::CollectPositions(const core::BlockStatement& block,
@@ -3407,7 +3554,10 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                            "defer requires a structure method call");
                     break;
                 }
-                const std::size_t offset = function->HasReceiver() ? 1 : 0;
+                const bool qualified =
+                    _model.IsQualifiedInterfaceProviderCall(call);
+                const std::size_t offset =
+                    function->HasReceiver() && !qualified ? 1 : 0;
                 if (offset != 0 && !function->ParameterTypes().empty())
                     operands.emplace_back(&call.Receiver(),
                                           function->ParameterTypes()[0]);
@@ -3752,6 +3902,10 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
             break;
     }
     _model._types.insert_or_assign(&expression, type);
+    if (!expected.IsError() &&
+        CanImplicitlyConvertInterfaceReference(type, expected))
+        _model._implicitInterfaceConversions.insert_or_assign(&expression,
+                                                              expected);
     if (!_directConstructions.contains(&expression) && type.OwnsStorage() &&
         (expression.Kind() == core::AstNodeKind::CallExpression ||
          expression.Kind() == core::AstNodeKind::MemberCallExpression ||
@@ -3770,7 +3924,26 @@ SemanticType SemanticAnalyzer::AnalyzeIsOf(
             value = value.WithoutConst();
             candidate = candidate.WithoutConst();
         }
-        if (value == candidate) {
+        SemanticType staticValue = value;
+        if (staticValue.Kind() == SemanticTypeKind::Reference)
+            staticValue = *staticValue.Target();
+        bool conforms = false;
+        if (candidate.Kind() == SemanticTypeKind::Interface) {
+            const InterfaceType* target = candidate.Interface();
+            const auto contains = [target](const auto& interfaces) {
+                return std::find(interfaces.begin(), interfaces.end(),
+                                 target) != interfaces.end();
+            };
+            if (staticValue.Kind() == SemanticTypeKind::Structure)
+                conforms =
+                    contains(staticValue.Structure()->conformanceClosure);
+            else if (staticValue.Kind() == SemanticTypeKind::Enum)
+                conforms = contains(staticValue.Enum()->conformanceClosure);
+            else if (staticValue.Kind() == SemanticTypeKind::Interface)
+                conforms = staticValue.Interface() == target ||
+                           contains(staticValue.Interface()->ancestors);
+        }
+        if (value == candidate || conforms) {
             result = true;
             break;
         }
@@ -6035,6 +6208,8 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
         const auto& parameters = candidate->ParameterTypes();
         const std::size_t maximum = parameters.size() - offset;
         std::size_t minimum = maximum;
+        const bool variadic = candidate->Declaration() != nullptr &&
+                              candidate->Declaration()->HasVariadicPack();
         if (const auto* declaration = candidate->Declaration()) {
             for (std::size_t index = offset;
                  index < declaration->Parameters().size(); ++index) {
@@ -6044,9 +6219,12 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
                 }
             }
         }
-        if (arguments.size() < minimum || arguments.size() > maximum) continue;
+        if (arguments.size() < minimum ||
+            (!variadic && arguments.size() > maximum))
+            continue;
 
-        std::size_t score = 0;
+        // Prefer an equally good fixed overload to a variadic family.
+        std::size_t score = variadic ? 1 : 0;
         bool viable = true;
         if (candidate->HasReceiver()) {
             const SemanticType expected = parameters.front();
@@ -6061,11 +6239,16 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
         }
         if (!viable) continue;
         for (std::size_t index = 0; index < actualTypes.size(); ++index) {
+            if (index + offset >= parameters.size()) continue;
             const SemanticType expected = parameters[index + offset];
             const SemanticType actual = actualTypes[index];
             if (actual == expected ||
                 actual.WithoutConst() == expected.WithoutConst())
                 continue;
+            if (CanImplicitlyConvertInterfaceReference(actual, expected)) {
+                score += 2;
+                continue;
+            }
             if (IsAssignable(expected, actual) ||
                 CanReborrow(expected, actual)) {
                 ++score;
@@ -7052,7 +7235,10 @@ void SemanticAnalyzer::ResolveInterfaceMethods() {
     const auto resolveContract = [&](const InterfaceType& owner,
                                      const core::InterfaceMethod& method) {
         const core::FunctionDeclaration& function = method.Signature();
-        SetSource(function.sourceId);
+        // Interface signatures are nested AST nodes, so module loading stamps
+        // their owning declaration rather than the embedded function. Resolve
+        // names in the interface declaration's source/module scope.
+        SetSource(owner.syntax->sourceId);
 
         if (!function.genericParameters.empty())
             Report(diagnostics::DiagnosticCode::InvalidInterface,
@@ -8385,6 +8571,8 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
             &static_cast<const core::ParenthesizedExpression&>(*source).Inner();
     const bool semanticDefault = IsNoneLiteral(*source);
     const SemanticType sourceType = _model.TypeOf(expression);
+    if (CanImplicitlyConvertInterfaceReference(sourceType, type))
+        type = sourceType;
     if (sourceType.ContainsOwnedBuffer()) type = sourceType;
     const Symbol* sourceSymbol =
         source->Kind() == core::AstNodeKind::NameExpression
@@ -8724,6 +8912,132 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
                 RequireUnsafe(expression.Range());
         }
     }
+
+    if (isStatic && interfaceOwner) {
+        std::vector<const MethodContract*> contracts;
+        std::vector<const FunctionSymbol*> providers;
+        for (const MethodContract* contract : interfaceOwner->methods)
+            if (contract->key.name == expression.Member() &&
+                contract->isCrashable == expression.IsCrashable() &&
+                contract->provider != nullptr) {
+                contracts.push_back(contract);
+                providers.push_back(contract->provider);
+            }
+        if (providers.empty()) {
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   expression.MemberRange(),
+                   "interface provider '" + interfaceOwner->displayName +
+                       "::" + expression.Member() + "' does not exist");
+            for (const auto& argument : expression.Arguments())
+                AnalyzeExpression(*argument);
+            return SemanticType::Error();
+        }
+        if (expression.Arguments().empty()) {
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "a qualified interface provider call requires an explicit "
+                   "receiver");
+            return SemanticType::Error();
+        }
+
+        const SemanticType explicitReceiver =
+            AnalyzeExpression(*expression.Arguments().front());
+        std::vector<const core::Expression*> trailing;
+        trailing.reserve(expression.Arguments().size() - 1);
+        for (std::size_t index = 1; index < expression.Arguments().size();
+             ++index)
+            trailing.push_back(expression.Arguments()[index].get());
+
+        const FunctionSymbol* provider = nullptr;
+        std::size_t selected = 0;
+        for (std::size_t index = 0; index < providers.size(); ++index) {
+            const FunctionSymbol* candidate = providers[index];
+            if (candidate->ParameterTypes().size() !=
+                expression.Arguments().size())
+                continue;
+            const SemanticType expectedReceiver =
+                candidate->ParameterTypes().front();
+            if (!IsAssignable(expectedReceiver, explicitReceiver) &&
+                !CanReborrow(expectedReceiver, explicitReceiver))
+                continue;
+            bool matches = true;
+            for (std::size_t argument = 0; argument < trailing.size();
+                 ++argument) {
+                const SemanticType actual = AnalyzeExpression(
+                    *trailing[argument],
+                    candidate->ParameterTypes()[argument + 1]);
+                if (!IsAssignable(candidate->ParameterTypes()[argument + 1],
+                                  actual) &&
+                    !CanReborrow(candidate->ParameterTypes()[argument + 1],
+                                 actual))
+                    matches = false;
+            }
+            if (!matches) continue;
+            if (provider != nullptr) {
+                Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                       expression.Range(),
+                       "ambiguous qualified interface provider call '" +
+                           interfaceOwner->displayName +
+                           "::" + expression.Member() + "'");
+                return SemanticType::Error();
+            }
+            provider = candidate;
+            selected = index;
+        }
+        if (provider == nullptr) {
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   expression.Range(),
+                   "no provider overload of '" + interfaceOwner->displayName +
+                       "::" + expression.Member() +
+                       "' accepts the supplied arguments");
+            return SemanticType::Error();
+        }
+
+        const MethodContract* qualified = contracts[selected];
+        const auto origin = [](const MethodContract* contract) {
+            while (contract != nullptr && contract->inherited != nullptr)
+                contract = contract->inherited;
+            return contract;
+        };
+        const MethodContract* callerContract = nullptr;
+        const MethodKey callerKey =
+            _currentFunction ? MethodKeyOf(*_currentFunction) : MethodKey{};
+        if (const InterfaceType* caller = CurrentInterfaceOwner())
+            for (const MethodContract* method : caller->methods)
+                if (method->key == callerKey) callerContract = method;
+        const auto findConcreteContract = [&](const auto* concrete) {
+            if (concrete == nullptr) return;
+            for (const auto& conformance : concrete->conformances)
+                for (const MethodContract* method : conformance.type->methods)
+                    if (method->key == callerKey && callerContract == nullptr)
+                        callerContract = method;
+        };
+        findConcreteContract(CurrentOwner());
+        findConcreteContract(CurrentEnumOwner());
+        if (_currentFunction == nullptr || callerContract == nullptr ||
+            origin(callerContract) != origin(qualified)) {
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   expression.Range(),
+                   "qualified interface providers may only be called from an "
+                   "override in the same method lineage");
+            return SemanticType::Error();
+        }
+
+        for (std::size_t index = 0; index < expression.Arguments().size();
+             ++index)
+            CheckTransfer(*expression.Arguments()[index],
+                          provider->ParameterTypes()[index],
+                          provider->ParameterContract(index) ==
+                              core::OwnershipContract::Own);
+        ValidateCrashableCall(expression.IsCrashable(), provider->Signature(),
+                              provider, expression.Range());
+        CheckMethodAccess(*provider, expression.MemberRange());
+        if (_currentFunction) _functionCalls[_currentFunction].insert(provider);
+        _model._methods[&expression] = provider;
+        _model._qualifiedInterfaceProviderCalls.insert(&expression);
+        return provider->ReturnType().WithoutConst();
+    }
+
     const auto* methods = owner       ? &owner->methods
                           : enumOwner ? &enumOwner->methods
                                       : nullptr;
@@ -8757,10 +9071,12 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
                               expression.Range(), isStatic, receiver);
     if (!function) return SemanticType::Error();
     _model._methods[&expression] = function;
+    const MethodContract* interfaceContract = nullptr;
     if (interfaceOwner)
         for (const MethodContract* contract : interfaceOwner->methods)
             if (contract->callable == function) {
                 _model._interfaceMethods[&expression] = contract;
+                interfaceContract = contract;
                 break;
             }
     ValidateCrashableCall(expression.IsCrashable(), function->Signature(),
@@ -8815,7 +9131,11 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
     arguments.reserve(expression.Arguments().size());
     for (const auto& argument : expression.Arguments())
         arguments.push_back(argument.get());
-    std::size_t required = function->ParameterTypes().size() - offset;
+    const bool variadic = function->Declaration() != nullptr &&
+                          function->Declaration()->HasVariadicPack();
+    const std::size_t fixedArgumentCount =
+        function->ParameterTypes().size() - offset;
+    std::size_t required = fixedArgumentCount;
     if (const auto* declaration = function->Declaration()) {
         for (std::size_t index = offset;
              index < declaration->Parameters().size(); ++index)
@@ -8823,7 +9143,7 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
                 required = index - offset;
                 break;
             }
-        if (arguments.size() >= required &&
+        if (!variadic && arguments.size() >= required &&
             arguments.size() + offset <= declaration->Parameters().size()) {
             for (std::size_t index = arguments.size() + offset;
                  index < declaration->Parameters().size(); ++index)
@@ -8833,35 +9153,65 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
                 _model._callArguments[&expression] = arguments;
         }
     }
-    if (arguments.size() + offset != function->ParameterTypes().size())
+    if ((!variadic &&
+         arguments.size() + offset != function->ParameterTypes().size()) ||
+        (variadic && arguments.size() < required))
         Report(diagnostics::DiagnosticCode::WrongArgumentCount,
                expression.Range(),
                "method expects " +
-                   (required != function->ParameterTypes().size() - offset
+                   (variadic ? "at least " + std::to_string(required)
+                    : required != fixedArgumentCount
                         ? "between " + std::to_string(required) + " and " +
-                              std::to_string(function->ParameterTypes().size() -
-                                             offset)
-                        : std::to_string(function->ParameterTypes().size() -
-                                         offset)) +
+                              std::to_string(fixedArgumentCount)
+                        : std::to_string(fixedArgumentCount)) +
                    " argument(s), found " +
                    std::to_string(expression.Arguments().size()));
+    std::vector<SemanticType> shapeTypes;
+    std::vector<core::OwnershipContract> shapeContracts;
+    if (variadic && interfaceContract != nullptr) {
+        shapeTypes.reserve(arguments.size());
+        shapeContracts.reserve(arguments.size());
+    }
     for (std::size_t i = 0; i < arguments.size(); ++i) {
+        const bool fixed = i + offset < function->ParameterTypes().size();
         const SemanticType expected =
-            i + offset < function->ParameterTypes().size()
-                ? function->ParameterTypes()[i + offset]
-                : SemanticType::Error();
+            fixed ? function->ParameterTypes()[i + offset]
+                  : SemanticType::Error();
         const bool provided = i < expression.Arguments().size();
         const SemanticType actual =
-            provided ? AnalyzeExpression(*arguments[i], expected)
+            provided ? (fixed ? AnalyzeExpression(*arguments[i], expected)
+                              : AnalyzeExpression(*arguments[i]))
                      : _model.TypeOf(*arguments[i]);
-        if (provided)
+        if (provided && fixed)
             CheckTransfer(*arguments[i], expected,
-                          i + offset < function->ParameterTypes().size() &&
-                              function->ParameterContract(i + offset) ==
-                                  core::OwnershipContract::Own);
-        if (!IsAssignable(expected, actual) && !CanReborrow(expected, actual))
+                          function->ParameterContract(i + offset) ==
+                              core::OwnershipContract::Own);
+        if (fixed && !IsAssignable(expected, actual) &&
+            !CanReborrow(expected, actual))
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                    arguments[i]->Range(), TypeMismatch(expected, actual));
+        if (variadic && interfaceContract != nullptr) {
+            shapeTypes.push_back(actual);
+            shapeContracts.push_back(
+                fixed ? function->ParameterContract(i + offset)
+                      : core::OwnershipContract::None);
+        }
+    }
+    if (variadic && interfaceContract != nullptr &&
+        std::ranges::none_of(
+            shapeTypes, [](SemanticType type) { return type.IsError(); })) {
+        const MethodContract* origin = interfaceContract;
+        while (origin->inherited != nullptr) origin = origin->inherited;
+        VariadicShape shape = NormalizeVariadicShape(std::move(shapeTypes),
+                                                     std::move(shapeContracts));
+        _model._interfaceVariadicCallShapes.insert_or_assign(&expression,
+                                                             shape);
+        std::vector<VariadicShape>& family =
+            _model._interfaceVariadicShapes[origin];
+        const auto position = std::ranges::lower_bound(family, shape.key, {},
+                                                       &VariadicShape::key);
+        if (position == family.end() || position->key != shape.key)
+            family.insert(position, std::move(shape));
     }
     return function->ReturnType().WithoutConst();
 }

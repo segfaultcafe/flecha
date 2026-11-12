@@ -1,0 +1,38 @@
+module consumer;
+@imports :: root::contracts :: root::providers :: root::other;
+
+export i32 consume(&const contracts::Base value) {
+    return value->run();
+}
+
+export bool isBase<T: contracts::Base>() {
+    return T.isof<contracts::Base>;
+}
+
+export i32 collectEmpty(&const contracts::VariadicPack value) {
+    return value->collect();
+}
+
+export i32 collectOne(&const contracts::VariadicPack value, i32 extra) {
+    return value->collect(extra);
+}
+
+export i32 collectPair(&const contracts::VariadicPack value,
+                       i32 left, i32 right) {
+    return value->collect(left, right);
+}
+
+export i32 collectBox(&const contracts::VariadicPack value,
+                      providers::Box<i32> box) {
+    return value->collect(box);
+}
+
+export i32 collectProviderValue(&const contracts::VariadicPack value,
+                                providers::Value extra) {
+    return value->collect(extra);
+}
+
+export i32 collectOtherValue(&const contracts::VariadicPack value,
+                             other::Value extra) {
+    return value->collect(extra);
+}

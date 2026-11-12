@@ -60,6 +60,13 @@ class SemanticModel final {
     [[nodiscard]] SemanticType TypeOf(const core::Expression& expression) const;
     [[nodiscard]] TransferKind TransferOf(
         const core::Expression& expression) const;
+    [[nodiscard]] SemanticType ImplicitInterfaceConversionFor(
+        const core::Expression& expression) const {
+        const auto found = _implicitInterfaceConversions.find(&expression);
+        return found == _implicitInterfaceConversions.end()
+                   ? SemanticType::Error()
+                   : found->second;
+    }
     [[nodiscard]] bool IsBuildInitializer(
         const core::AssignmentExpression& expression) const {
         return _buildInitializers.contains(&expression);
@@ -86,6 +93,23 @@ class SemanticModel final {
         const core::MemberCallExpression& expression) const {
         const auto found = _interfaceMethods.find(&expression);
         return found == _interfaceMethods.end() ? nullptr : found->second;
+    }
+    const VariadicShape* InterfaceVariadicShapeFor(
+        const core::MemberCallExpression& expression) const {
+        const auto found = _interfaceVariadicCallShapes.find(&expression);
+        return found == _interfaceVariadicCallShapes.end() ? nullptr
+                                                           : &found->second;
+    }
+    const auto& InterfaceVariadicShapes() const {
+        return _interfaceVariadicShapes;
+    }
+    const auto& VariadicTargets() const { return _variadicTargets; }
+    const auto& InterfaceVariadicShapeTargets() const {
+        return _interfaceVariadicShapeTargets;
+    }
+    [[nodiscard]] bool IsQualifiedInterfaceProviderCall(
+        const core::MemberCallExpression& expression) const {
+        return _qualifiedInterfaceProviderCalls.contains(&expression);
     }
     const auto& GeneratedFunctions() const { return _generatedFunctions; }
     const auto& AnonymousFunctions() const { return _anonymousFunctions; }
@@ -137,6 +161,12 @@ class SemanticModel final {
         _methods;
     std::unordered_map<const core::MemberCallExpression*, const MethodContract*>
         _interfaceMethods;
+    std::unordered_map<const core::MemberCallExpression*, VariadicShape>
+        _interfaceVariadicCallShapes;
+    std::unordered_map<const MethodContract*, std::vector<VariadicShape>>
+        _interfaceVariadicShapes;
+    std::unordered_set<const core::MemberCallExpression*>
+        _qualifiedInterfaceProviderCalls;
     std::vector<std::unique_ptr<Symbol>> _symbols;
     std::vector<std::unique_ptr<Scope>> _scopes;
     std::unordered_map<const core::NameExpression*, const Symbol*> _bindings;
@@ -144,12 +174,20 @@ class SemanticModel final {
     std::unordered_map<const core::AstNode*, const Symbol*> _declarations;
     std::unordered_map<const core::Expression*, SemanticType> _types;
     std::unordered_map<const core::Expression*, TransferKind> _transfers;
+    std::unordered_map<const core::Expression*, SemanticType>
+        _implicitInterfaceConversions;
     std::unordered_set<const core::AssignmentExpression*> _buildInitializers;
     std::unordered_map<const core::Expression*,
                        std::vector<const core::Expression*>>
         _callArguments;
     std::unordered_map<const FunctionSymbol*, const FunctionSymbol*>
         _variadicTargets;
+    std::unordered_map<const FunctionSymbol*,
+                       std::vector<const FunctionSymbol*>>
+        _variadicTargetCandidates;
+    std::unordered_map<const FunctionSymbol*,
+                       std::unordered_map<std::string, const FunctionSymbol*>>
+        _interfaceVariadicShapeTargets;
     std::unordered_map<const core::CallExpression*, const FunctionSymbol*>
         _forwardedFunctions;
     std::unordered_map<const Symbol*, const core::ModuleConstantDeclaration*>

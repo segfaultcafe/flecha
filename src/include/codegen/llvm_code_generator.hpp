@@ -104,7 +104,8 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::StructType* InterfaceTableType(
         const lowering::InterfaceTableLayout& layout);
     [[nodiscard]] llvm::FunctionType* InterfaceSlotType(
-        const semantic::MethodContract& origin);
+        const semantic::MethodContract& origin,
+        const semantic::VariadicShape* shape = nullptr);
     [[nodiscard]] llvm::Constant* InterfaceTableInitializer(
         const lowering::InterfaceTablePlan& plan,
         const lowering::InterfaceTableLayout& layout);
@@ -294,9 +295,11 @@ class LlvmCodeGenerator final {
                        std::unordered_map<const semantic::InterfaceType*,
                                           InterfaceUpcastLocation>>
         _interfaceUpcasts;
-    std::unordered_map<const semantic::InterfaceType*,
-                       std::unordered_map<const semantic::MethodContract*,
-                                          InterfaceDispatchSlotLocation>>
+    std::unordered_map<
+        const semantic::InterfaceType*,
+        std::unordered_map<
+            const semantic::MethodContract*,
+            std::unordered_map<std::string, InterfaceDispatchSlotLocation>>>
         _interfaceDispatchSlots;
     std::unordered_map<const semantic::VariableSymbol*, llvm::Value*>
         _variables;

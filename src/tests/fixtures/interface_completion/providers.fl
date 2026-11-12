@@ -1,0 +1,67 @@
+module providers;
+@imports :: root::contracts :: root::other;
+
+export structure Value << contracts::Final, contracts::VariadicPack {
+    i32 value;
+};
+
+protected i32 Value::hidden(&const self) override {
+    return self->value;
+}
+
+export enum Mode << contracts::Base, contracts::VariadicPack {
+    default Off,
+    On,
+}
+
+protected i32 Mode::hidden(&const self) override {
+    return 5;
+}
+
+export structure Box<T> << contracts::Base {
+    T value;
+};
+
+protected i32 Box<T>::hidden(&const self) override {
+    return 7;
+}
+
+i32 collect_target(&const Value value) { return value->value; }
+i32 collect_target(&const Value value, i32 extra) {
+    return value->value + extra;
+}
+i32 collect_target(&const Value value, i32 left, i32 right) {
+    return value->value + left + right;
+}
+i32 collect_target(&const Value value, Box<i32> box) {
+    return value->value + box.value;
+}
+i32 collect_target(&const Value value, Value extra) {
+    return value->value + extra.value;
+}
+i32 collect_target(&const Value value, other::Value extra) {
+    return value->value + 3;
+}
+
+i32 collect_target(&const Mode value) { return 5; }
+i32 collect_target(&const Mode value, i32 extra) { return 5 + extra; }
+i32 collect_target(&const Mode value, i32 left, i32 right) {
+    return 5 + left + right;
+}
+i32 collect_target(&const Mode value, Box<i32> box) {
+    return 5 + box.value;
+}
+i32 collect_target(&const Mode value, Value extra) {
+    return 5 + extra.value;
+}
+i32 collect_target(&const Mode value, other::Value extra) { return 8; }
+
+i32 collect_relay(values...) { return collect_target(values...); }
+
+i32 Value::collect(&const self, values...) override {
+    return collect_relay(self, values...);
+}
+
+i32 Mode::collect(&const self, values...) override {
+    return collect_relay(self, values...);
+}

@@ -226,6 +226,48 @@ TEST(InterfaceLayoutTests, ReusesOneSlotAcrossVirtualDefaultAndFinal) {
               InterfaceProviderKind::InterfaceBody);
 }
 
+TEST(InterfaceLayoutTests, MaterializesClosedVariadicShapesInCanonicalOrder) {
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_variadic_dispatch.fl");
+
+    ASSERT_FALSE(fixture.diagnostics.HasErrors());
+    std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
+    ASSERT_NE(program, nullptr);
+    const InterfaceTablePlan& plan =
+        FindPlan(*program, "VariadicConcrete", "Variadic");
+    std::vector<const SlotLayout*> slots;
+    CollectSlots(plan.layout, slots);
+    ASSERT_EQ(slots.size(), 4);
+    ASSERT_EQ(plan.providerMap.providers.size(), slots.size());
+
+    std::vector<std::string> sumShapes;
+    for (const SlotLayout* slot : slots) {
+        ASSERT_NE(slot->slot.origin, nullptr);
+        ASSERT_TRUE(slot->slot.shape.has_value());
+        if (slot->slot.origin->key.name == "sum")
+            sumShapes.push_back(slot->slot.shape->key);
+        const EffectiveInterfaceProvider* provider =
+            plan.providerMap.Find(*slot->slot.origin, &*slot->slot.shape);
+        ASSERT_NE(provider, nullptr);
+        ASSERT_NE(provider->dispatchTarget, nullptr);
+        EXPECT_FALSE(
+            provider->dispatchTarget->Declaration()->HasVariadicPack());
+    }
+    ASSERT_EQ(sumShapes.size(), 2);
+    EXPECT_LT(sumShapes[0], sumShapes[1]);
+    EXPECT_EQ(plan.layout.size, slots.size() * sizeof(void*));
+
+    const InterfaceTablePlan& defaultPlan =
+        FindPlan(*program, "DefaultConcrete", "DefaultVariadic");
+    ASSERT_EQ(defaultPlan.providerMap.providers.size(), 1);
+    EXPECT_EQ(defaultPlan.providerMap.providers[0].kind,
+              InterfaceProviderKind::InterfaceBody);
+    const InterfaceTablePlan& finalPlan =
+        FindPlan(*program, "FinalConcrete", "FinalVariadic");
+    ASSERT_EQ(finalPlan.providerMap.providers.size(), 1);
+    EXPECT_EQ(finalPlan.providerMap.providers[0].kind,
+              InterfaceProviderKind::InterfaceBody);
+}
+
 TEST(InterfaceProviderTests, RecordsAdjustmentForADeeperDefaultProvider) {
     AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
 

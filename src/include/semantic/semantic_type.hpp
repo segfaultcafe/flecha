@@ -197,6 +197,8 @@ struct CallableSignature final {
 [[nodiscard]] bool IsExternAssignable(SemanticType destination,
                                       SemanticType source);
 [[nodiscard]] bool CanReborrow(SemanticType destination, SemanticType source);
+[[nodiscard]] bool CanImplicitlyConvertInterfaceReference(
+    SemanticType source, SemanticType destination);
 [[nodiscard]] bool CanExplicitlyCast(SemanticType source,
                                      SemanticType destination);
 

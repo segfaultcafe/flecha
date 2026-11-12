@@ -381,12 +381,37 @@ add_test(
 )
 
 add_test(
+    NAME InterfaceFixtureTests.ValidVariadicDispatch
+    COMMAND $<TARGET_FILE:flecha>
+        check
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_variadic_dispatch.fl
+)
+
+add_test(
     NAME NativeRuntimeTests.InterfaceDynamicDispatch
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_dynamic_dispatch.fl
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/interface_dynamic_dispatch_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_dynamic_dispatch.cmake
+)
+
+add_test(
+    NAME NativeRuntimeTests.InterfaceVariadicDispatch
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_variadic_dispatch.fl
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/interface_variadic_dispatch_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_variadic_dispatch.cmake
+)
+
+add_test(
+    NAME NativeRuntimeTests.InterfaceCompletion
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interface_completion
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/interface_completion_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_completion.cmake
 )
 
 add_test(

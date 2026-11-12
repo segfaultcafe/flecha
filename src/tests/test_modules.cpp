@@ -110,6 +110,37 @@ TEST_F(ModuleTests, ResolvesExportedInterfacesInNominalRelations) {
               std::string::npos);
 }
 
+TEST_F(ModuleTests, ResolvesInterfaceMethodsAcrossThreeModules) {
+    Write("contracts.fl", R"(module contracts;
+        export interface Readable {
+            i32 read(&const self) virtual;
+            i32 adjusted(&const self) default;
+        };
+        i32 Readable::adjusted(&const self) {
+            return self->read() + 1;
+        }
+    )");
+    Write("providers.fl", R"(module providers;
+        @imports :: root::contracts;
+        export structure Value << contracts::Readable { i32 value; };
+        i32 Value::read(&const self) override { return self->value; }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::contracts :: root::providers;
+        i32 consume(&const contracts::Readable value) {
+            return value->adjusted();
+        }
+        i32 main() {
+            value := providers::Value::init();
+            value.value = 41;
+            view := value as &const contracts::Readable;
+            return consume(view);
+        }
+    )");
+
+    EXPECT_EQ(Check(), "");
+}
+
 TEST_F(ModuleTests, InterfaceRelationsRespectApiVisibility) {
     Write("main.fl", R"(module main;
         interface Hidden {};

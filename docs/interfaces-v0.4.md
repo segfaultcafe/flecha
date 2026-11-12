@@ -1,6 +1,6 @@
 # Interfaces for Flecha 0.4
 
-Status: accepted language contract; not implemented
+Status: accepted language contract; implemented in the reference compiler
 
 Interfaces define nominal receiver-method contracts without adding storage,
 implementation inheritance, or hidden allocation. Structures and enums conform
@@ -838,13 +838,19 @@ returning, casting, or upcasting an interface reference does not allocate.
 
 ### Composed subtables
 
-Flecha v0.4 lowers each root conformance to one composed table. Parent
-interfaces are embedded as subtables, followed by slots originated locally:
+Flecha v0.4 emits one composite immutable table global for each concrete type
+or closed generic specialization. Its root fields follow the concrete
+declaration's `<<` order. Inside each root, parent interfaces are embedded as
+subtables, followed by slots originated locally:
 
 ```text
-Table<Concrete, Interface> {
-    parent subtables in declared parent order
-    local slots in source declaration order
+InterfaceTables<Concrete> {
+    root tables in the concrete declaration's << order
+
+    RootTable<Concrete, Interface> {
+        parent subtables in interface declaration order
+        local slots in source declaration order
+    }
 }
 ```
 
@@ -868,28 +874,32 @@ structure Gee << Bar, Baz {
 };
 ```
 
-The compiler emits independent root tables conceptually shaped as:
+The compiler emits one global conceptually shaped as:
 
 ```text
-Gee-as-Bar {
-    Foo subtable {
-        foo -> Gee::foo
+Gee-interface-tables {
+    Bar root {
+        Foo subtable {
+            foo -> Gee::foo
+        }
+
+        Bar local {
+            bar -> Gee::bar
+        }
     }
 
-    Bar local {
-        bar -> Gee::bar
-    }
-}
-
-Gee-as-Baz {
-    Baz local {
-        baz -> Gee::baz
+    Baz root {
+        Baz local {
+            baz -> Gee::baz
+        }
     }
 }
 ```
 
-There is no required `Gee-all-interfaces` mega-table. The `Foo` view points
-directly to the embedded `Foo` subtable inside `Gee-as-Bar`.
+The `Foo` view points directly to the embedded `Foo` subtable inside the `Bar`
+root. A truly empty interface consumes no bytes; its views use the compiler's
+single aligned empty-table sentinel rather than adding a zero-sized root field.
+This sentinel is shared infrastructure, not a per-`(concrete, root)` table.
 
 A vertical redeclaration does not append a slot. It updates the effective
 declaration and selected provider for the canonical slot in its origin
@@ -900,6 +910,8 @@ The safe-composition rules guarantee:
 
 - every ancestor occurs exactly once under one root conformance;
 - every canonical slot occurs exactly once in that root table;
+- every non-empty direct root occurs exactly once in the concrete's composite
+  global and follows `<<` source order;
 - every interface-to-ancestor conversion has one path; and
 - every ancestor subtable has one statically known offset.
 
@@ -909,15 +921,15 @@ subtable directly:
 ```text
 g as &Bar:
     data  = address of g
-    table = address of Gee-as-Bar
+    table = address of Gee-interface-tables.Bar
 
 g as &Foo:
     data  = address of g
-    table = address of Gee-as-Bar.Foo
+    table = address of Gee-interface-tables.Bar.Foo
 
 g as &Baz:
     data  = address of g
-    table = address of Gee-as-Baz
+    table = address of Gee-interface-tables.Baz
 ```
 
 An interface-to-parent upcast preserves `data` and adjusts only `table` by a
@@ -931,6 +943,52 @@ foo.table = address of bar.table.Foo
 Dispatch loads the function pointer from a statically known subtable and slot.
 It performs no name, interface-ID, or concrete-type lookup.
 
+### Variadic method families
+
+A variadic interface declaration has one logical canonical origin and method
+lineage, but it does not have one type-erased runtime slot. The compiler
+collects every reachable closed call shape across the whole source graph before
+materializing tables. It emits one physical slot for each distinct normalized
+argument vector used by that canonical origin.
+
+For example, calls to `sink()`, `sink(i32)`, and `sink(i32, stringv)` create
+three typed slots in the `sink` family. Repeating any of those calls adds no
+slot. Vertical redeclarations continue the same family. Shapes reached through
+transitive variadic forwarding are resolved to an ordinary closed target before
+emission. Shape collection and forwarding resolution continue to a fixed point
+before layout.
+
+The canonical shape includes:
+
+- the qualified identity of every closed argument type;
+- fixed-parameter ownership/pass contracts and the pack's non-owning pass mode;
+- reference versus pointer representation and constness; and
+- array lengths, tuple/function structure, closed generic specialization
+  identity, and other properties that determine the typed ABI.
+
+Aliases, local display names, and discovery order do not participate. Shapes
+within one family are sorted by their canonical encoding. Generic shapes are
+recorded only after specialization has produced closed types.
+
+Each physical slot has an ordinary typed ABI:
+
+```text
+(sret?, data, table, concrete arguments...) -> result
+```
+
+The call site statically selects its shape slot. Every selected concrete,
+default, or final provider receives one link-once/COMDAT-eligible thunk per
+required shape. A thunk adapts the receiver and tail-calls the provider's final
+closed forwarding target. Empty packs, pack-only declarations, fixed-plus-pack
+declarations, deferred calls, and `...values` borrow sources use the same
+scheme.
+
+There is no runtime pack object, type tag sequence, boxing, C variadic call,
+name lookup, allocation, or separate global per shape. Shape slots remain
+nested fields of the concrete type or closed specialization's single composite
+interface-table global. Pack arguments retain ordinary exactly-once ownership,
+copy, borrow, and destruction rules.
+
 ### Linkage and generic specialization
 
 Nested tables are ordinary immutable globals. At object-file level, references
@@ -938,9 +996,11 @@ to an embedded subtable lower to normal symbol-plus-offset relocations; the
 linker does not need to understand interface semantics.
 
 Each closed generic specialization used through an interface receives its own
-root tables. Those tables and their interior references use the same linkage,
-deduplication, and COMDAT policy as the specialization's other generated
-artifacts.
+single composite table global. That global and its interior references use the
+same linkage, deduplication, and COMDAT policy as the specialization's other
+generated artifacts. Qualified module identity and closed specialization
+identity participate in generated symbol names, preventing homonymous modules
+or different specializations from colliding.
 
 Direct concrete calls may remain statically dispatched. Interface calls are
 indirect. No garbage collector, heap box, embedded base object, runtime type
@@ -982,8 +1042,10 @@ It then:
    ownership, and effects;
 8. checks every concrete type for unresolved virtual requirements and illegal
    final replacements;
-9. builds composed table layouts and cast paths; and
-10. type-checks interface, behavior, and concrete bodies normally.
+9. builds composed table layouts and cast paths;
+10. collects closed variadic call shapes, resolves transitive forwarding, and
+    orders each physical slot family canonically; and
+11. type-checks interface, behavior, and concrete bodies normally.
 
 A missing concrete implementation is reported at the relevant conformance
 edge with the complete required signature and its most-specific declaring
@@ -993,6 +1055,26 @@ Composition diagnostics should distinguish redundant parents, ancestor
 diamonds, and method-slot collisions. Dedicated diagnostics also cover invalid
 category regression, missing or extraneous `override`, protected-visibility
 mismatch, illegal interface-value storage, invalid casts, and borrow conflicts.
+
+## Future performance/resource analysis
+
+The v0.4 implementation deliberately imposes no arbitrary shape limit and does
+not change program semantics when a family grows. Follow-up measurement should
+cover:
+
+1. growth in distinct closed shapes per logical variadic method;
+2. resulting slots and provider thunks per concrete type or specialization;
+3. compile time, link time, LLVM IR size, object size, and final binary impact;
+4. identical-code folding, COMDAT, and cross-callsite shape-deduplication
+   opportunities;
+5. transitive or recursive forwarding patterns that can cause combinatorial
+   shape growth;
+6. opt-in metrics and diagnostics for pathological growth, without rejecting
+   valid programs or silently changing dispatch;
+7. exactly-once ownership transfer and destruction behavior for every pack
+   argument shape; and
+8. ASan/LSan coverage plus confirmation that interface-reference formation and
+   shaped dispatch perform zero allocation and leak no resources.
 
 ## Deferred beyond v0.4
 

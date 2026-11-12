@@ -151,6 +151,24 @@ TEST(SemanticInterfaceTests, RegistersInterfacesAndResolvesNominalRelations) {
         IsAssignable(symbol->Type(), SemanticType(SemanticTypeKind::None)));
 }
 
+TEST(SemanticInterfaceTests,
+     RejectsClosedVariadicShapesWithoutAUniqueForwardingTarget) {
+    Analysis analysis = Analyze(R"(
+        interface Pack { i32 value(&const self, args...) virtual; };
+        structure Concrete << Pack {};
+        i32 target(&const Concrete value, i32 only) { return only; }
+        i32 Concrete::value(&const self, args...) override {
+            return target(self, args...);
+        }
+        i32 use(&const Pack value) { return value->value(); }
+    )");
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidVariadic);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_NE(diagnostic->message.find("closed shape"), std::string::npos);
+}
+
 TEST(SemanticInterfaceTests, DiagnosesUnknownAndNonInterfaceParents) {
     const std::string source = R"(
         structure Concrete {};
@@ -549,6 +567,150 @@ TEST(SemanticInterfaceCallTests, EnforcesProtectedInterfaceLineages) {
         ADD_FAILURE() << diagnostic.message;
     }
     EXPECT_EQ(protectedErrors, 4);
+}
+
+TEST(SemanticInterfaceConversionTests,
+     ConvertsConcreteAndChildReferencesOnlyInTypedContexts) {
+    Analysis analysis = Analyze(R"(
+        interface Parent {};
+        interface Child << Parent {};
+        structure Concrete << Child {};
+
+        i32 exact(&const Concrete value) { return 1; }
+        i32 exact(&const Parent value) { return 2; }
+        void consume(&const Parent value) {}
+        &const Parent returnView(&const Concrete value) <-value {
+            return value;
+        }
+        void contexts(&Concrete value, &Child child) {
+            &const Parent initialized = value;
+            initialized = child;
+            consume(value);
+            if exact(value) != 1 {}
+        }
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticInterfaceConversionTests,
+     RejectsConstWideningAndAmbiguousIndependentInterfaces) {
+    Analysis analysis = Analyze(R"(
+        interface Left {};
+        interface Right {};
+        structure Both << Left, Right {};
+        void choose(&Left value) {}
+        void choose(&Right value) {}
+        void mutableOnly(&Left value) {}
+        void invalid(&const Both value, &Both both) {
+            mutableOnly(value);
+            choose(both);
+        }
+    )");
+
+    bool constError = false;
+    bool ambiguity = false;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics()) {
+        constError |=
+            diagnostic.message.find("no overload of 'mutableOnly'") !=
+                std::string::npos ||
+            diagnostic.message.find("argument 1") != std::string::npos;
+        ambiguity |= diagnostic.message.find(
+                         "ambiguous overload of 'choose'") != std::string::npos;
+    }
+    EXPECT_TRUE(constError);
+    EXPECT_TRUE(ambiguity);
+}
+
+TEST(SemanticInterfaceConversionTests, FoldsNominalInterfaceIsofStatically) {
+    Analysis analysis = Analyze(R"(
+        interface Parent {};
+        interface Child << Parent {};
+        interface Other {};
+        structure Concrete << Child, Other {};
+        bool concreteParent(Concrete value) { return value.isof<Parent>; }
+        bool concreteOther(Concrete value) { return value.isof<Other>; }
+        bool childParent(&Child value) { return value.isof<Parent>; }
+        bool erasedOther(&Child value) { return value.isof<Other>; }
+    )");
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+
+    const auto result = [&](std::size_t declaration) {
+        const auto& function = FunctionAt(analysis, declaration);
+        const auto& returned = static_cast<const ReturnStatement&>(
+            *function.Body().Statements().front());
+        return static_cast<const IsOfExpression&>(*returned.Value()).Result();
+    };
+    EXPECT_TRUE(result(4));
+    EXPECT_TRUE(result(5));
+    EXPECT_TRUE(result(6));
+    EXPECT_FALSE(result(7));
+}
+
+TEST(SemanticInterfaceProviderCallTests,
+     ResolvesTransitiveQualifiedProvidersInsideOverrides) {
+    Analysis analysis = Analyze(R"(
+        interface Base {
+            protected i32 run(&const self) default;
+        };
+        protected i32 Base::run(&const self) { return 10; }
+        interface Middle << Base {
+            protected i32 run(&const self) default;
+        };
+        protected i32 Middle::run(&const self) override {
+            return Base::run(self) + 1;
+        }
+        interface Leaf << Middle {
+            protected i32 run(&const self) final;
+        };
+        protected i32 Leaf::run(&const self) override {
+            return Middle::run(self) + 1;
+        }
+        structure Concrete << Leaf {};
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    const auto& middleBody = FunctionAt(analysis, 3);
+    const auto& returned = static_cast<const ReturnStatement&>(
+        *middleBody.Body().Statements().front());
+    const auto& binary =
+        static_cast<const BinaryExpression&>(*returned.Value());
+    const auto& call = static_cast<const MemberCallExpression&>(binary.Left());
+    EXPECT_TRUE(analysis.model.IsQualifiedInterfaceProviderCall(call));
+    ASSERT_NE(analysis.model.MethodFor(call), nullptr);
+    EXPECT_EQ(analysis.model.MethodFor(call)->InterfaceOwner()->displayName,
+              "Base");
+}
+
+TEST(SemanticInterfaceProviderCallTests,
+     DiagnosesMissingProvidersAndWrongLineages) {
+    Analysis analysis = Analyze(R"(
+        interface VirtualOnly { i32 run(&const self) virtual; };
+        interface Other { i32 run(&const self) default; };
+        i32 Other::run(&const self) { return 1; }
+        structure Concrete << VirtualOnly {};
+        i32 Concrete::run(&const self) override {
+            return Other::run(self);
+        }
+        i32 outsider(&const Other value) { return Other::run(value); }
+        i32 missing(&const VirtualOnly value) {
+            return VirtualOnly::run(value);
+        }
+    )");
+
+    bool wrongLineage = false;
+    bool missing = false;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics()) {
+        wrongLineage |=
+            diagnostic.message.find("same method lineage") != std::string::npos;
+        missing |=
+            diagnostic.message.find("does not exist") != std::string::npos;
+    }
+    EXPECT_TRUE(wrongLineage);
+    EXPECT_TRUE(missing);
 }
 
 TEST(SemanticTests, DerivesDeterministicJsonFieldMetadata) {
@@ -8350,6 +8512,44 @@ TEST(SemanticGenericTests, EnforcesBuiltinTypeSetConstraints) {
             diagnostic.message.find("does not satisfy type set 'integer'") !=
             std::string::npos;
     EXPECT_TRUE(constraint);
+}
+
+TEST(SemanticGenericTests, UsesInterfaceConstraintsDuringSpecialization) {
+    Analysis analysis = Analyze(R"(
+        interface Readable { i32 read(&const self) virtual; };
+        structure Item << Readable { i32 value; };
+        i32 Item::read(&const self) override { return self->value; }
+        i32 readThrough<T: Readable>(&const T value) {
+            &const Readable view = value;
+            return view->read();
+        }
+        bool proves<T: Readable>() { return T.isof<Readable>; }
+        i32 use() {
+            item := Item::init();
+            return readThrough<Item>(&item);
+        }
+        bool proof() { return proves<Item>(); }
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticGenericTests, RejectsUnsatisfiedInterfaceConstraints) {
+    Analysis analysis = Analyze(R"(
+        interface Readable {};
+        structure Item << Readable {};
+        structure Other {};
+        bool accepts<T: Readable>() { return true; }
+        bool invalid() { return accepts<Other>(); }
+    )");
+
+    bool rejected = false;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        rejected |=
+            diagnostic.message.find("does not satisfy type set 'Readable'") !=
+            std::string::npos;
+    EXPECT_TRUE(rejected);
 }
 
 TEST(SemanticGenericTests, SupportsNestedAndNominalCustomTypeSets) {
