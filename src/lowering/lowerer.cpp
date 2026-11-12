@@ -40,7 +40,10 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
                                   source.source, source.range,
                                   source.bodyLine});
     }
-    InterfaceLoweringPlanner interfacePlanner;
+    InterfaceLoweringPlanner interfacePlanner(
+        {}, &semanticModel.InterfaceVariadicShapes(),
+        &semanticModel.VariadicTargets(),
+        &semanticModel.InterfaceVariadicShapeTargets());
     std::vector<InterfaceTablePlan> interfaceTables =
         interfacePlanner.BuildPlans(semanticModel);
     std::vector<InterfaceTableLayout> interfaceLayouts;
@@ -52,7 +55,10 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
     _semanticModel = nullptr;
     return std::make_unique<BoundProgram>(
         std::move(functions), std::move(foreignSources),
-        std::move(interfaceTables), std::move(interfaceLayouts));
+        std::move(interfaceTables), std::move(interfaceLayouts),
+        semanticModel.InterfaceVariadicShapes(),
+        semanticModel.VariadicTargets(),
+        semanticModel.InterfaceVariadicShapeTargets());
 }
 
 std::unique_ptr<BoundFunction> Lowerer::LowerFunction(
@@ -715,14 +721,23 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     arguments.reserve(sourceArguments.size());
                     for (std::size_t index = 0; index < sourceArguments.size();
                          ++index) {
+                        const std::size_t parameter = index + 1;
                         arguments.push_back(LowerExpression(
                             *sourceArguments[index],
-                            method->ParameterTypes()[index + 1]));
+                            parameter < method->ParameterTypes().size()
+                                ? method->ParameterTypes()[parameter]
+                                : _semanticModel->TypeOf(
+                                      *sourceArguments[index])));
                     }
+                    const semantic::VariadicShape* shape =
+                        _semanticModel->InterfaceVariadicShapeFor(member);
                     return std::make_unique<BoundInterfaceCallExpression>(
                         expression.Range(), *contract,
                         LowerExpression(member.Receiver()),
-                        std::move(arguments));
+                        std::move(arguments),
+                        shape == nullptr
+                            ? std::optional<semantic::VariadicShape>{}
+                            : std::optional<semantic::VariadicShape>{*shape});
                 }
                 std::vector<std::unique_ptr<BoundExpression>> arguments;
                 if (method->HasReceiver()) {

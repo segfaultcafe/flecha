@@ -151,6 +151,24 @@ TEST(SemanticInterfaceTests, RegistersInterfacesAndResolvesNominalRelations) {
         IsAssignable(symbol->Type(), SemanticType(SemanticTypeKind::None)));
 }
 
+TEST(SemanticInterfaceTests,
+     RejectsClosedVariadicShapesWithoutAUniqueForwardingTarget) {
+    Analysis analysis = Analyze(R"(
+        interface Pack { i32 value(&const self, args...) virtual; };
+        structure Concrete << Pack {};
+        i32 target(&const Concrete value, i32 only) { return only; }
+        i32 Concrete::value(&const self, args...) override {
+            return target(self, args...);
+        }
+        i32 use(&const Pack value) { return value->value(); }
+    )");
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidVariadic);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_NE(diagnostic->message.find("closed shape"), std::string::npos);
+}
+
 TEST(SemanticInterfaceTests, DiagnosesUnknownAndNonInterfaceParents) {
     const std::string source = R"(
         structure Concrete {};

@@ -1,6 +1,7 @@
 #include "semantic/method_contract.hpp"
 
 #include <algorithm>
+#include <string>
 #include <utility>
 
 #include "semantic/symbol.hpp"
@@ -25,7 +26,87 @@ std::string LocalName(const FunctionSymbol& function) {
     return name;
 }
 
+void AppendIdentity(std::string& result, std::string_view value) {
+    result += std::to_string(value.size()) + ":" + std::string(value);
+}
+
+std::string NominalIdentity(SemanticType type) {
+    if (type.Kind() == SemanticTypeKind::Structure) {
+        const StructureType* structure = type.Structure();
+        if (structure->syntax != nullptr &&
+            !structure->syntax->specializationIdentity.empty())
+            return structure->syntax->specializationIdentity;
+        return structure->name;
+    }
+    if (type.Kind() == SemanticTypeKind::Enum) {
+        const EnumType* enumeration = type.Enum();
+        if (enumeration->syntax != nullptr &&
+            !enumeration->syntax->specializationIdentity.empty())
+            return enumeration->syntax->specializationIdentity;
+        return enumeration->name;
+    }
+    if (type.Kind() == SemanticTypeKind::Interface)
+        return type.Interface()->name;
+    return type.Family().name;
+}
+
 }  // namespace
+
+std::string CanonicalTypeIdentity(SemanticType type) {
+    std::string result = "t" + std::to_string(static_cast<int>(type.Kind()));
+    result += type.IsConst() ? "c" : "m";
+    if (type.Kind() == SemanticTypeKind::Structure ||
+        type.Kind() == SemanticTypeKind::Enum ||
+        type.Kind() == SemanticTypeKind::Interface ||
+        type.Kind() == SemanticTypeKind::NamedError) {
+        result += "n";
+        AppendIdentity(result, NominalIdentity(type));
+    }
+    if (type.Target() != nullptr) {
+        result += "p";
+        AppendIdentity(result, CanonicalTypeIdentity(*type.Target()));
+    }
+    if (type.Kind() == SemanticTypeKind::Array)
+        result += "l" + std::to_string(type.Length());
+    if (type.Kind() == SemanticTypeKind::Tuple) {
+        result += "e" + std::to_string(type.Elements().size());
+        for (const SemanticType element : type.Elements())
+            AppendIdentity(result, CanonicalTypeIdentity(element));
+    }
+    if (type.Kind() == SemanticTypeKind::Function) {
+        const CallableSignature& signature = type.Signature();
+        result += "r";
+        AppendIdentity(result, CanonicalTypeIdentity(signature.result));
+        result += "a" + std::to_string(signature.parameters.size());
+        for (std::size_t index = 0; index < signature.parameters.size();
+             ++index) {
+            AppendIdentity(result,
+                           CanonicalTypeIdentity(signature.parameters[index]));
+            result += "o" + std::to_string(static_cast<int>(
+                                index < signature.parameterContracts.size()
+                                    ? signature.parameterContracts[index]
+                                    : core::OwnershipContract::None));
+        }
+    }
+    return result;
+}
+
+VariadicShape NormalizeVariadicShape(
+    std::vector<SemanticType> parameters,
+    std::vector<core::OwnershipContract> parameterContracts) {
+    parameterContracts.resize(parameters.size(), core::OwnershipContract::None);
+    VariadicShape result{std::move(parameters), std::move(parameterContracts),
+                         "v1"};
+    result.key += "a" + std::to_string(result.parameters.size());
+    for (std::size_t index = 0; index < result.parameters.size(); ++index) {
+        AppendIdentity(result.key,
+                       CanonicalTypeIdentity(result.parameters[index]));
+        result.key +=
+            "o" +
+            std::to_string(static_cast<int>(result.parameterContracts[index]));
+    }
+    return result;
+}
 
 bool MethodContract::SameContract(const MethodContract& other) const {
     return key == other.key && result == other.result &&

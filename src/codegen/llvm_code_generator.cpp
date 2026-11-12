@@ -171,6 +171,9 @@ std::string InterfaceProviderThunkName(
             "." + EncodeInterfaceSymbolComponent(provider.function->LinkName());
     if (provider.kind == lowering::InterfaceProviderKind::AdjustmentThunk)
         result += "." + std::to_string(provider.tableAdjustment);
+    if (provider.slot.shape.has_value())
+        result += ".shape." +
+                  EncodeInterfaceSymbolComponent(provider.slot.shape->key);
     return result;
 }
 
@@ -406,7 +409,8 @@ bool LlvmCodeGenerator::ValidateInterfaceTableType(
 }
 
 llvm::FunctionType* LlvmCodeGenerator::InterfaceSlotType(
-    const semantic::MethodContract& origin) {
+    const semantic::MethodContract& origin,
+    const semantic::VariadicShape* shape) {
     if (origin.callable == nullptr || !origin.callable->HasReceiver() ||
         origin.callable->ParameterTypes().empty()) {
         Fail("interface slot has no receiver callable");
@@ -417,16 +421,20 @@ llvm::FunctionType* LlvmCodeGenerator::InterfaceSlotType(
                                  : MapType(origin.callable->ReturnType());
     if (returnType == nullptr) return nullptr;
     std::vector<llvm::Type*> parameters;
-    parameters.reserve(origin.callable->ParameterTypes().size() + 2);
+    const std::size_t explicitCount =
+        shape == nullptr ? origin.callable->ParameterTypes().size() - 1
+                         : shape->parameters.size();
+    parameters.reserve(explicitCount + 3);
     if (origin.callable->ReturnType().ContainsStructure())
         parameters.push_back(llvm::PointerType::getUnqual(_context));
     llvm::Type* pointer = llvm::PointerType::getUnqual(_context);
     parameters.push_back(pointer);
     parameters.push_back(pointer);
-    for (std::size_t index = 1;
-         index < origin.callable->ParameterTypes().size(); ++index) {
-        llvm::Type* parameter =
-            MapType(origin.callable->ParameterTypes()[index]);
+    for (std::size_t index = 0; index < explicitCount; ++index) {
+        const semantic::SemanticType parameterType =
+            shape == nullptr ? origin.callable->ParameterTypes()[index + 1]
+                             : shape->parameters[index];
+        llvm::Type* parameter = MapType(parameterType);
         if (parameter == nullptr) return nullptr;
         parameters.push_back(parameter);
     }
@@ -437,7 +445,7 @@ llvm::Function* LlvmCodeGenerator::InterfaceProviderThunk(
     const lowering::EffectiveInterfaceProvider& provider) {
     if (provider.slot.origin == nullptr ||
         provider.slot.origin->callable == nullptr ||
-        provider.function == nullptr)
+        provider.function == nullptr || provider.dispatchTarget == nullptr)
         return Fail("interface provider is incomplete"), nullptr;
 
     std::string name;
@@ -446,7 +454,9 @@ llvm::Function* LlvmCodeGenerator::InterfaceProviderThunk(
     } catch (const std::logic_error& error) {
         return Fail(error.what()), nullptr;
     }
-    llvm::FunctionType* type = InterfaceSlotType(*provider.slot.origin);
+    llvm::FunctionType* type = InterfaceSlotType(
+        *provider.slot.origin,
+        provider.slot.shape ? &*provider.slot.shape : nullptr);
     if (type == nullptr) return nullptr;
     llvm::Function* thunk = _module->getFunction(name);
     if (thunk != nullptr) {
@@ -455,7 +465,7 @@ llvm::Function* LlvmCodeGenerator::InterfaceProviderThunk(
         return thunk;
     }
 
-    const auto target = _functions.find(provider.function);
+    const auto target = _functions.find(provider.dispatchTarget);
     if (target == _functions.end())
         return Fail("interface provider function was not declared"), nullptr;
     llvm::Function* function = target->second;
@@ -552,7 +562,9 @@ llvm::Constant* LlvmCodeGenerator::InterfaceTableInitializer(
             return Fail("interface table slot has no canonical origin"),
                    nullptr;
         const lowering::EffectiveInterfaceProvider* provider =
-            plan.providerMap.Find(*slot.slot.origin);
+            plan.providerMap.Find(*slot.slot.origin, slot.slot.shape
+                                                         ? &*slot.slot.shape
+                                                         : nullptr);
         if (provider == nullptr)
             return Fail("interface table slot has no provider mapping"),
                    nullptr;
@@ -600,9 +612,11 @@ bool LlvmCodeGenerator::RecordInterfaceDispatchLayout(
             const InterfaceDispatchSlotLocation dispatch{
                 baseOffset + currentLayout->getElementOffset(elementIndex),
                 baseOffset};
+            const std::string key =
+                slot.slot.shape ? slot.slot.shape->key : std::string{};
             const auto [found, added] =
-                _interfaceDispatchSlots[layout.interfaceType].emplace(
-                    slot.slot.origin, dispatch);
+                _interfaceDispatchSlots[layout.interfaceType][slot.slot.origin]
+                    .emplace(key, dispatch);
             if (!added &&
                 (found->second.byteOffset != dispatch.byteOffset ||
                  found->second.tableAdjustment != dispatch.tableAdjustment))
@@ -741,7 +755,9 @@ bool LlvmCodeGenerator::DeclareInterfaceInfrastructure(
     const llvm::DataLayout& dataLayout = _module->getDataLayout();
     lowering::InterfaceLoweringPlanner planner(
         {dataLayout.getPointerSize(0),
-         dataLayout.getPointerABIAlignment(0).value()});
+         dataLayout.getPointerABIAlignment(0).value()},
+        &program.InterfaceVariadicShapes(), &program.VariadicTargets(),
+        &program.InterfaceVariadicShapeTargets());
     for (const lowering::InterfaceTableLayout& sourceLayout :
          program.InterfaceLayouts()) {
         if (sourceLayout.interfaceType == nullptr)
@@ -1444,10 +1460,18 @@ bool LlvmCodeGenerator::EmitDeferredCalls(const CleanupScope& scope) {
                 return Fail(
                     "deferred interface dispatch type has no materialized "
                     "slots");
-            const auto slot = interfaceSlots->second.find(origin);
-            if (slot == interfaceSlots->second.end())
+            const auto family = interfaceSlots->second.find(origin);
+            if (family == interfaceSlots->second.end())
                 return Fail(
                     "deferred interface method has no materialized slot");
+            const std::string shapeKey = interfaceCall.Shape() == nullptr
+                                             ? std::string{}
+                                             : interfaceCall.Shape()->key;
+            const auto slot = family->second.find(shapeKey);
+            if (slot == family->second.end())
+                return Fail(
+                    "deferred interface method shape has no materialized "
+                    "slot");
 
             llvm::Value* receiver = captured.front();
             llvm::Value* data = InterfaceReferenceData(receiver);
@@ -1482,7 +1506,8 @@ bool LlvmCodeGenerator::EmitDeferredCalls(const CleanupScope& scope) {
             arguments.insert(arguments.end(), captured.begin() + 1,
                              captured.end());
             llvm::Value* result = _builder.CreateCall(
-                InterfaceSlotType(*origin), target, arguments,
+                InterfaceSlotType(*origin, interfaceCall.Shape()), target,
+                arguments,
                 contract.result.Kind() == semantic::SemanticTypeKind::Void ||
                         contract.result.ContainsStructure()
                     ? ""
@@ -2500,9 +2525,15 @@ llvm::Value* LlvmCodeGenerator::EmitInterfaceCall(
     if (interfaceSlots == _interfaceDispatchSlots.end())
         return Fail("interface dispatch type has no materialized slots"),
                nullptr;
-    const auto slot = interfaceSlots->second.find(origin);
-    if (slot == interfaceSlots->second.end())
+    const auto family = interfaceSlots->second.find(origin);
+    if (family == interfaceSlots->second.end())
         return Fail("interface dispatch method has no materialized slot"),
+               nullptr;
+    const std::string shapeKey =
+        expression.Shape() == nullptr ? std::string{} : expression.Shape()->key;
+    const auto slot = family->second.find(shapeKey);
+    if (slot == family->second.end())
+        return Fail("interface dispatch shape has no materialized slot"),
                nullptr;
 
     llvm::Value* receiver = EmitExpression(expression.Receiver());
@@ -2528,8 +2559,12 @@ llvm::Value* LlvmCodeGenerator::EmitInterfaceCall(
             llvm::ConstantInt::get(indexType, slot->second.tableAdjustment),
             "interface.dispatch.table");
 
-    const auto& parameterTypes = contract.callable->ParameterTypes();
-    if (parameterTypes.size() != expression.Arguments().size() + 1)
+    const auto& fixedParameterTypes = contract.callable->ParameterTypes();
+    const semantic::VariadicShape* shape = expression.Shape();
+    if ((shape == nullptr &&
+         fixedParameterTypes.size() != expression.Arguments().size() + 1) ||
+        (shape != nullptr &&
+         shape->parameters.size() != expression.Arguments().size()))
         return Fail("interface dispatch argument count does not match method"),
                nullptr;
     std::vector<llvm::Value*> arguments;
@@ -2546,16 +2581,19 @@ llvm::Value* LlvmCodeGenerator::EmitInterfaceCall(
          ++index) {
         const lowering::BoundExpression& argument =
             *expression.Arguments()[index];
+        const semantic::SemanticType parameterType =
+            shape == nullptr ? fixedParameterTypes[index + 1]
+                             : shape->parameters[index];
         llvm::Value* value = EmitExpression(argument);
         if (value == nullptr) return nullptr;
-        value = CoerceValue(value, argument.Type(), parameterTypes[index + 1]);
+        value = CoerceValue(value, argument.Type(), parameterType);
         if (value == nullptr) return nullptr;
-        value = EmitValueCopy(value, parameterTypes[index + 1], true);
+        value = EmitValueCopy(value, parameterType, true);
         if (value == nullptr) return nullptr;
         arguments.push_back(value);
     }
 
-    llvm::FunctionType* type = InterfaceSlotType(*origin);
+    llvm::FunctionType* type = InterfaceSlotType(*origin, shape);
     if (type == nullptr) return nullptr;
     return _builder.CreateCall(
         type, target, arguments,
@@ -3097,8 +3135,12 @@ void LlvmCodeGenerator::CollectPositionScopePaths(
             const auto& parameters =
                 value.Contract().callable->ParameterTypes();
             for (std::size_t index = 0; index < value.Arguments().size();
-                 ++index)
-                addCapture(*value.Arguments()[index], parameters[index + 1]);
+                 ++index) {
+                const semantic::SemanticType type =
+                    value.Shape() == nullptr ? parameters[index + 1]
+                                             : value.Shape()->parameters[index];
+                addCapture(*value.Arguments()[index], type);
+            }
         } else {
             const auto& direct =
                 static_cast<const lowering::BoundCallExpression&>(call);

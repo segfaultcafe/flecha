@@ -94,6 +94,19 @@ class SemanticModel final {
         const auto found = _interfaceMethods.find(&expression);
         return found == _interfaceMethods.end() ? nullptr : found->second;
     }
+    const VariadicShape* InterfaceVariadicShapeFor(
+        const core::MemberCallExpression& expression) const {
+        const auto found = _interfaceVariadicCallShapes.find(&expression);
+        return found == _interfaceVariadicCallShapes.end() ? nullptr
+                                                           : &found->second;
+    }
+    const auto& InterfaceVariadicShapes() const {
+        return _interfaceVariadicShapes;
+    }
+    const auto& VariadicTargets() const { return _variadicTargets; }
+    const auto& InterfaceVariadicShapeTargets() const {
+        return _interfaceVariadicShapeTargets;
+    }
     [[nodiscard]] bool IsQualifiedInterfaceProviderCall(
         const core::MemberCallExpression& expression) const {
         return _qualifiedInterfaceProviderCalls.contains(&expression);
@@ -148,6 +161,10 @@ class SemanticModel final {
         _methods;
     std::unordered_map<const core::MemberCallExpression*, const MethodContract*>
         _interfaceMethods;
+    std::unordered_map<const core::MemberCallExpression*, VariadicShape>
+        _interfaceVariadicCallShapes;
+    std::unordered_map<const MethodContract*, std::vector<VariadicShape>>
+        _interfaceVariadicShapes;
     std::unordered_set<const core::MemberCallExpression*>
         _qualifiedInterfaceProviderCalls;
     std::vector<std::unique_ptr<Symbol>> _symbols;
@@ -165,6 +182,12 @@ class SemanticModel final {
         _callArguments;
     std::unordered_map<const FunctionSymbol*, const FunctionSymbol*>
         _variadicTargets;
+    std::unordered_map<const FunctionSymbol*,
+                       std::vector<const FunctionSymbol*>>
+        _variadicTargetCandidates;
+    std::unordered_map<const FunctionSymbol*,
+                       std::unordered_map<std::string, const FunctionSymbol*>>
+        _interfaceVariadicShapeTargets;
     std::unordered_map<const core::CallExpression*, const FunctionSymbol*>
         _forwardedFunctions;
     std::unordered_map<const Symbol*, const core::ModuleConstantDeclaration*>

@@ -4561,6 +4561,77 @@ TEST(CodeGeneratorTests, EmitsInterfaceProviderThunksWithoutRuntimeWork) {
 }
 
 TEST(CodeGeneratorTests,
+     EmitsTypedVariadicShapeSlotsWithoutRuntimePackInfrastructure) {
+    GeneratedSource result =
+        GenerateInterfaceFixture("valid_variadic_dispatch.fl");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+
+    std::size_t tableGlobals = 0;
+    for (llvm::GlobalVariable& global : result.module->globals())
+        if (global.getName().starts_with("__flecha_interface_tables."))
+            ++tableGlobals;
+    EXPECT_EQ(tableGlobals, 3);
+
+    std::size_t adapters = 0;
+    for (llvm::Function& function : result.module->functions()) {
+        if (!function.getName().starts_with("__flecha_interface_adapter."))
+            continue;
+        ++adapters;
+        EXPECT_TRUE(function.getName().contains(".shape."));
+        std::size_t calls = 0;
+        for (llvm::Instruction& instruction : llvm::instructions(function)) {
+            const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            if (call == nullptr) continue;
+            ++calls;
+            ASSERT_NE(call->getCalledFunction(), nullptr);
+            EXPECT_FALSE(call->getCalledFunction()->getName().starts_with(
+                "flecha_runtime_v1_alloc"));
+            EXPECT_FALSE(call->getCalledFunction()->getName().starts_with(
+                "flecha_runtime_v1_free"));
+        }
+        EXPECT_EQ(calls, 1);
+    }
+    EXPECT_EQ(adapters, 6);
+
+    llvm::Function* pair = result.module->getFunction("callPair");
+    ASSERT_NE(pair, nullptr);
+    bool foundTypedDispatch = false;
+    for (llvm::Instruction& instruction : llvm::instructions(*pair)) {
+        const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+        if (call != nullptr && call->getCalledFunction() == nullptr &&
+            call->arg_size() == 4)
+            foundTypedDispatch = true;
+    }
+    EXPECT_TRUE(foundTypedDispatch);
+
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_EQ(ir.find("va_arg"), std::string::npos);
+    EXPECT_EQ(ir.find("runtime_pack"), std::string::npos);
+    EXPECT_EQ(ir.find("interface.lookup"), std::string::npos);
+
+    LlvmCodeGenerator i386Generator;
+    i386Generator.ConfigureTarget("i386-unknown-linux-gnu",
+                                  llvm::DataLayout("e-p:32:32"));
+    std::unique_ptr<llvm::Module> i386 =
+        i386Generator.Generate(*result.boundProgram, "variadic_interface_i386");
+    ASSERT_NE(i386, nullptr) << i386Generator.Error();
+    EXPECT_TRUE(VerifyModule(*i386).empty());
+    llvm::Function* i386Pair = i386->getFunction("callPair");
+    ASSERT_NE(i386Pair, nullptr);
+    bool foundI386Dispatch = false;
+    for (llvm::Instruction& instruction : llvm::instructions(*i386Pair)) {
+        const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+        if (call != nullptr && call->getCalledFunction() == nullptr &&
+            call->arg_size() == 4)
+            foundI386Dispatch = true;
+    }
+    EXPECT_TRUE(foundI386Dispatch);
+}
+
+TEST(CodeGeneratorTests,
      DispatchesInterfaceMethodsThroughMaterializedCanonicalSlots) {
     GeneratedSource result =
         GenerateInterfaceFixture("valid_dynamic_dispatch.fl");

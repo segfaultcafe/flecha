@@ -1,0 +1,116 @@
+interface Variadic {
+    i32 sum(&const self, values...) virtual;
+    void record(&self, i32 base, values...) virtual;
+    &const i32 borrow(&const self, values...) virtual <-...values;
+};
+
+structure VariadicConcrete << Variadic {
+    i32 bias;
+};
+
+i32 sum(&const VariadicConcrete value) {
+    return value->bias;
+}
+
+i32 sum(&const VariadicConcrete value, i32 left, i32 right) {
+    return value->bias + left + right;
+}
+
+i32 relay(values...) {
+    return sum(values...);
+}
+
+i32 VariadicConcrete::sum(&const self, values...) override {
+    return relay(self, values...);
+}
+
+void record_values(&VariadicConcrete value, i32 base, i32 extra) {
+    value->bias = base + extra;
+}
+
+void VariadicConcrete::record(&self, i32 base, values...) override {
+    record_values(self, base, values...);
+}
+
+&const i32 borrow_value(&const VariadicConcrete value,
+                        &const i32 candidate) <-candidate {
+    return candidate;
+}
+
+&const i32 VariadicConcrete::borrow(&const self, values...) override
+    <-...values {
+    return borrow_value(self, values...);
+}
+
+i32 callPair(&const Variadic value) {
+    return value->sum(20, 21);
+}
+
+i32 callEmpty(&const Variadic value) {
+    return value->sum();
+}
+
+void deferRecord(&Variadic value) {
+    defer value->record(40, 2);
+}
+
+i32 callBorrow(&const Variadic value, &const i32 candidate) {
+    borrowed := value->borrow(candidate);
+    return *borrowed;
+}
+
+interface DefaultVariadic {
+    i32 supplied(&const self, values...) default;
+};
+
+i32 supplied_default(&const DefaultVariadic value) {
+    return 3;
+}
+
+i32 DefaultVariadic::supplied(&const self, values...) {
+    return supplied_default(self, values...);
+}
+
+structure DefaultConcrete << DefaultVariadic {};
+
+interface FinalRequirement {
+    i32 sealed(&const self, values...) virtual;
+};
+
+interface FinalVariadic << FinalRequirement {
+    i32 sealed(&const self, values...) final;
+};
+
+i32 supplied_final(&const FinalVariadic value, i32 number) {
+    return number;
+}
+
+i32 FinalVariadic::sealed(&const self, values...) override {
+    return supplied_final(self, values...);
+}
+
+structure FinalConcrete << FinalVariadic {};
+
+i32 callDefault(&const DefaultVariadic value) {
+    return value->supplied();
+}
+
+i32 callFinal(&const FinalRequirement value) {
+    return value->sealed(37);
+}
+
+i32 main() {
+    value := VariadicConcrete::init();
+    value.bias = 1;
+    if callEmpty(&value) != 1 { return 1; }
+    if callPair(&value) != 42 { return 2; }
+    candidate := 9;
+    if callBorrow(&value, &candidate) != 9 { return 3; }
+    deferRecord(&value);
+    if value.bias != 42 { return 4; }
+    defaults := DefaultConcrete::init();
+    if callDefault(&defaults) != 3 { return 5; }
+    finalValue := FinalConcrete::init();
+    if callFinal(&finalValue) != 37 { return 6; }
+    return 42;
+}

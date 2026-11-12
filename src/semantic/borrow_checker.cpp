@@ -1362,9 +1362,14 @@ class BorrowChecker final {
                         if (std::find(method->BorrowSourceIndices().begin(),
                                       method->BorrowSourceIndices().end(),
                                       parameter) !=
-                            method->BorrowSourceIndices().end())
+                                method->BorrowSourceIndices().end() ||
+                            (method->BorrowsVariadicPack() &&
+                             parameter >= method->ParameterTypes().size()))
                             AddBorrowSource(borrowSource, value);
-                        const auto type = method->ParameterTypes()[parameter];
+                        const auto type =
+                            parameter < method->ParameterTypes().size()
+                                ? method->ParameterTypes()[parameter]
+                                : _model.TypeOf(*arguments[i]);
                         if (type.HasBorrowedLifetime())
                             (void)Borrow(std::move(value),
                                          IsExclusiveBorrow(type),
@@ -1377,7 +1382,8 @@ class BorrowChecker final {
                     }
                     _temporaries = previousLoans;
                     if (CanCarryBorrow(method->ReturnType()) &&
-                        !method->BorrowSourceIndices().empty()) {
+                        (!method->BorrowSourceIndices().empty() ||
+                         method->BorrowsVariadicPack())) {
                         std::size_t resultIndex = 0;
                         return BorrowResult(method->ReturnType(), borrowSource,
                                             expression.Range(), method,

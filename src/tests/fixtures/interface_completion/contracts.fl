@@ -24,3 +24,7 @@ export interface Final << Child {
 i32 Final::run(&const self) override {
     return Child::run(self) + 1;
 }
+
+export interface VariadicPack {
+    i32 collect(&const self, values...) virtual;
+};
