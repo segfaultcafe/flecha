@@ -7,7 +7,7 @@ Status: Accepted
 Created: 2026-11-12
 
 Abstract
-========
+--------
 
 Every IFG year begins with IFG_YYYY_0000.txt. Entry 0000 is reserved for the
 reader and index of that year: it defines how to interpret that year's IFGs,
@@ -30,7 +30,7 @@ standard-library patterns can remain provisional until real use validates
 them.
 
 Purpose
-=======
+-------
 
 Flecha needs a durable way to answer both of these questions:
 
@@ -46,7 +46,7 @@ A pattern appearing once in the standard library is evidence, not an automatic
 rule. It becomes idiomatic only through an accepted IFG.
 
 File format and location
-========================
+------------------------
 
 Every IFG is a UTF-8 text file stored under docs/IFG using this name:
 
@@ -62,7 +62,7 @@ underlined RFC-style form. Indented blocks contain examples, grammar, layouts,
 or pseudocode.
 
 Required metadata
-=================
+-----------------
 
 Every IFG begins with these fields:
 
@@ -84,7 +84,7 @@ Include these fields when applicable:
     Release-Impact: Blocker, Required, Optional, or None
 
 IFG types
-=========
+---------
 
 Standards Track
 ---------------
@@ -112,7 +112,7 @@ Records architecture, rationale, comparisons, or experience without imposing
 a normative requirement.
 
 Lifecycle
-=========
+---------
 
 Draft
 -----
@@ -154,7 +154,7 @@ Superseded
 Another IFG replaces the proposal. The metadata must identify its successor.
 
 Implementation state
-====================
+--------------------
 
 Document status and implementation state are independent.
 
@@ -173,7 +173,7 @@ exist. Stable means the implementation has survived its stated validation and
 compatibility period.
 
 Required document sections
-==========================
+--------------------------
 
 A Standards Track or Guideline IFG should contain, where relevant:
 
@@ -194,7 +194,7 @@ Small proposals may combine sections, but they must remain precise enough to
 implement and review without relying on conversation history.
 
 Normative language
-==================
+------------------
 
 The words must, must not, required, should, should not, recommended, may, and
 optional are normative when written in a normative section.
@@ -209,7 +209,7 @@ because a Guideline IFG discusses its tradeoffs, unless a separate Standards
 Track IFG explicitly defines that diagnostic.
 
 Proposal process
-================
+----------------
 
 An IFG begins as a focused design discussion. Before acceptance it should:
 
@@ -233,7 +233,7 @@ the Implementation field only after the required tests, diagnostics,
 documentation, and affected tooling are present.
 
 When an IFG is required
-=======================
+-----------------------
 
 An IFG is expected for:
 
@@ -254,7 +254,7 @@ An IFG is normally unnecessary for:
 - an isolated documentation correction.
 
 Relationship to the specification
-=================================
+---------------------------------
 
 Accepted Standards Track IFGs are the decision authority for their focused
 subject. The consolidated SPEC.md should link to them and incorporate their
@@ -265,7 +265,7 @@ as proposed or not implemented. Compiler behavior and tests remain the
 authority for what the current toolchain actually accepts.
 
 Relationship to the standard library
-====================================
+------------------------------------
 
 The standard library is both a laboratory and a reference implementation.
 Experiments should be focused, tested, and reversible. A standard-library
@@ -281,7 +281,7 @@ A workaround for a compiler limitation does not become idiomatic merely
 because it appears in the standard library.
 
 Index
-=====
+-----
 
 The current IFG corpus begins with:
 

@@ -10,7 +10,7 @@ Implementation: Not Started
 Release-Impact: Blocker
 
 Abstract
-========
+--------
 
 Namespace attachment lets a source unit live in a physical submodule folder
 while contributing to a logical module in an ancestor namespace. It preserves
@@ -21,7 +21,7 @@ Flecha 0.4 is not complete until namespace attachment is implemented through
 the module loader, parser, semantic model, diagnostics, analyzer, and tests.
 
 Motivation
-==========
+----------
 
 A micro library can usually keep one small directory and one obvious public
 namespace. A super library such as std contains many independently growing
@@ -38,7 +38,7 @@ Namespace attachment separates those concerns:
   tree cannot be assembled arbitrarily.
 
 Syntax
-======
+------
 
 An attachment follows the module declaration and precedes imports and other
 declarations:
@@ -56,7 +56,7 @@ under and namespace are reserved in this header position. The target is a
 canonical namespace path, not an import alias.
 
 Identity
-========
+--------
 
 Every source unit has:
 
@@ -82,7 +82,7 @@ The filename and intermediate physical submodule folders are not part of the
 canonical identity.
 
 Ancestor restriction
-====================
+--------------------
 
 The attachment namespace must be a strict ancestor of the source unit's
 physical namespace within the same source identity.
@@ -103,7 +103,7 @@ alias, or escape the current package source root. Symbolic paths are validated
 after the compiler's normal source-root canonicalization.
 
 Root attachment
-===============
+---------------
 
 Attaching to root is semantically valid whenever root is a strict ancestor.
 The compiler does not assign it a warning or a different form of visibility.
@@ -115,7 +115,7 @@ the attachment target is root. IFG 2026-0003 describes discoverability
 tradeoffs without prohibiting root attachment.
 
 Submodule folders and multifile modules
-=======================================
+---------------------------------------
 
 Consider this source tree:
 
@@ -162,7 +162,7 @@ This module remains root::foo::baz::parser and can serve as an implementation
 detail of the sublibrary.
 
 Imports and discovery
-=====================
+---------------------
 
 Consumers import canonical logical modules without knowing their physical
 source locations:
@@ -186,7 +186,7 @@ physical-path order after indexing. Reaching the same canonical module through
 multiple import paths is deduplicated as it is today.
 
 Visibility and quivers
-======================
+----------------------
 
 The effective namespace determines quiver membership. A module attached under
 root::foo behaves for visibility as a module declared directly in root::foo,
@@ -210,7 +210,7 @@ namespace and canonical module identity must not change nominal type identity,
 generic specialization identity, exported symbols, or declaration visibility.
 
 Tests and tooling
-=================
+-----------------
 
 Logical test pairing uses the effective namespace. An attached bar_test module
 pairs with bar in the attachment namespace and receives the same one-way test
@@ -222,7 +222,7 @@ module and symbol resolution. Tools should expose both locations when that
 distinction helps navigation.
 
 Required diagnostics
-====================
+--------------------
 
 The compiler must diagnose at least:
 
@@ -240,7 +240,7 @@ The compiler must diagnose at least:
   namespace.
 
 Compatibility
-=============
+-------------
 
 Source units without under namespace retain the current module identity,
 quiver membership, import behavior, and diagnostics. Namespace attachment adds
@@ -258,7 +258,7 @@ unreachable declarations part of code generation merely because their headers
 were discovered.
 
 Implementation requirements
-===========================
+---------------------------
 
 Namespace attachment is complete only when all of the following are delivered:
 
@@ -275,7 +275,7 @@ Namespace attachment is complete only when all of the following are delivered:
 - documentation of the resulting standard-library organization.
 
 Sequencing
-==========
+----------
 
 Namespace attachment is the next language task after the Flecha 0.4 interface
 path is complete. It precedes standard-library reorganization because that

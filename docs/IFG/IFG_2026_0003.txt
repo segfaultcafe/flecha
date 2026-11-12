@@ -10,14 +10,14 @@ Requires: 2026-0001
 Implementation: Not Started
 
 Abstract
-========
+--------
 
 A library's physical tree organizes implementation ownership and local
 context. Its logical namespace organizes the API experienced by callers. Those
 trees may differ deliberately through namespace attachment.
 
 Micro libraries
-===============
+---------------
 
 A micro library with one focused context should prefer a direct layout:
 
@@ -27,7 +27,7 @@ A micro library with one focused context should prefer a direct layout:
     `-- value.fl    -> module json
 
 Super libraries
-===============
+---------------
 
 A super library may use submodule folders without exposing each folder as a
 public namespace:
@@ -47,7 +47,7 @@ Sources in the submodule folders can contribute to root::io::stream:
     under namespace root::io;
 
 Guidance
-========
+--------
 
 - Use a submodule folder when a context has several implementation concerns
   that no longer scan well in one directory.
@@ -63,7 +63,7 @@ Guidance
   locations.
 
 Root attachment
-===============
+---------------
 
 under namespace root is an ordinary valid attachment. Libraries may choose it
 to present a flat package surface, shorten imports, assemble a package facade,
@@ -75,7 +75,7 @@ compiler nor mandatory tooling may require the nearest ancestor, require an
 anchor source, or warn merely because the target is root.
 
 Standard-library trial
-======================
+----------------------
 
 The first structural trial begins only after interface dispatch and
 IFG 2026-0001 are implemented. It should reorganize one coherent subsystem

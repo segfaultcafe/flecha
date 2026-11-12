@@ -10,14 +10,14 @@ Requires: interface dispatch
 Implementation: Not Started
 
 Abstract
-========
+--------
 
 An API should accept an interface reference when it needs only a capability.
 Ownership should remain explicit in a concrete type, owning adapter, or generic
 parameter.
 
 Rule
-====
+----
 
 Capability interfaces should be minimal and orthogonal. Primitive operations
 belong in virtual slots. Algorithms derived from those primitives may be
@@ -35,7 +35,7 @@ implementation should remain direct unless dynamic redispatch is part of the
 contract.
 
 Example
-=======
+-------
 
     interface Readable {
         (usize, error) read(&self, []u8 destination) virtual;
@@ -54,14 +54,14 @@ Example
     );
 
 Naming
-======
+------
 
 Capability interfaces should use adjectives when natural, such as Readable and
 Writable. Concrete resources and owning adapters should use nouns such as File,
 Reader, Writer, or BufferedReader.
 
 Validation
-==========
+----------
 
 The first validation target is std::io. The initial experiment should keep the
 existing closure-owning reader and writer structures as adapters, introduce

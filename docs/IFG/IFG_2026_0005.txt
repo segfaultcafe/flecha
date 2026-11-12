@@ -9,14 +9,14 @@ Requires: 2026-0001
 Implementation: Not Started
 
 Abstract
-========
+--------
 
 Visibility is an architectural boundary, not a convenience for making code
 compile. Flecha code should use the narrowest visibility that honestly matches
 its intended consumers.
 
 Rule
-====
+----
 
 - Leave a declaration unmarked when only its logical module needs it.
 - Use quiver when multiple logical modules in one effective namespace need a
@@ -30,7 +30,7 @@ Rule
   API.
 
 Namespace attachment
-====================
+--------------------
 
 Under IFG 2026-0001, the effective namespace determines quiver membership. A
 deeply stored attached source receives the same quiver view as a direct source
@@ -41,14 +41,14 @@ Unmarked declarations remain available only inside their exact logical module,
 including its direct and attached source units.
 
 Library architecture
-====================
+--------------------
 
 Large sublibraries should keep most implementation declarations unmarked,
 share deliberate cross-module machinery with quiver, and export a small
 cohesive surface.
 
 Validation
-==========
+----------
 
 Before this IFG becomes Accepted, standard-library trials should demonstrate:
 

@@ -8,7 +8,7 @@ Created: 2026-11-12
 Implementation: Not Started
 
 Abstract
-========
+--------
 
 Public names should communicate whether an operation is a free algorithm, a
 receiver operation, a capability, or a concrete value. Function placement
@@ -16,7 +16,7 @@ should reflect ownership of the operation rather than convenience at the call
 site.
 
 Naming
-======
+------
 
 - Modules, source files, and free functions use snake_case.
 - Structures, enums, interfaces, error families, callable types, and type
@@ -35,7 +35,7 @@ Local-variable and parameter naming remains open until real standard-library
 use is consolidated. This IFG does not fix that rule speculatively.
 
 Function placement
-==================
+------------------
 
 Use a member when the operation is fundamentally about one receiver's state,
 invariants, identity, or capability contract.
@@ -61,13 +61,13 @@ Free functions are preferred for:
   expanding their member surface.
 
 Example
-=======
+-------
 
 reader.read() belongs to the receiver capability. copy(&Readable, &Writable,
 buffer) coordinates two peer capabilities and belongs as a free function.
 
 Compatibility
-=============
+-------------
 
 Existing public APIs remain subject to compatibility review. This guideline
 does not authorize opportunistic renaming.
