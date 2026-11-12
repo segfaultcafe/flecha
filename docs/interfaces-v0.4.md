@@ -1,6 +1,8 @@
 # Interfaces for Flecha 0.4
 
-Status: accepted language contract; not implemented
+Status: accepted language contract; implemented in the reference compiler
+except for variadic interface-pack dispatch, whose slot-shape encoding remains
+to be fixed without introducing a runtime variadic ABI
 
 Interfaces define nominal receiver-method contracts without adding storage,
 implementation inheritance, or hidden allocation. Structures and enums conform
@@ -838,13 +840,19 @@ returning, casting, or upcasting an interface reference does not allocate.
 
 ### Composed subtables
 
-Flecha v0.4 lowers each root conformance to one composed table. Parent
-interfaces are embedded as subtables, followed by slots originated locally:
+Flecha v0.4 emits one composite immutable table global for each concrete type
+or closed generic specialization. Its root fields follow the concrete
+declaration's `<<` order. Inside each root, parent interfaces are embedded as
+subtables, followed by slots originated locally:
 
 ```text
-Table<Concrete, Interface> {
-    parent subtables in declared parent order
-    local slots in source declaration order
+InterfaceTables<Concrete> {
+    root tables in the concrete declaration's << order
+
+    RootTable<Concrete, Interface> {
+        parent subtables in interface declaration order
+        local slots in source declaration order
+    }
 }
 ```
 
@@ -868,28 +876,32 @@ structure Gee << Bar, Baz {
 };
 ```
 
-The compiler emits independent root tables conceptually shaped as:
+The compiler emits one global conceptually shaped as:
 
 ```text
-Gee-as-Bar {
-    Foo subtable {
-        foo -> Gee::foo
+Gee-interface-tables {
+    Bar root {
+        Foo subtable {
+            foo -> Gee::foo
+        }
+
+        Bar local {
+            bar -> Gee::bar
+        }
     }
 
-    Bar local {
-        bar -> Gee::bar
-    }
-}
-
-Gee-as-Baz {
-    Baz local {
-        baz -> Gee::baz
+    Baz root {
+        Baz local {
+            baz -> Gee::baz
+        }
     }
 }
 ```
 
-There is no required `Gee-all-interfaces` mega-table. The `Foo` view points
-directly to the embedded `Foo` subtable inside `Gee-as-Bar`.
+The `Foo` view points directly to the embedded `Foo` subtable inside the `Bar`
+root. A truly empty interface consumes no bytes; its views use the compiler's
+single aligned empty-table sentinel rather than adding a zero-sized root field.
+This sentinel is shared infrastructure, not a per-`(concrete, root)` table.
 
 A vertical redeclaration does not append a slot. It updates the effective
 declaration and selected provider for the canonical slot in its origin
@@ -900,6 +912,8 @@ The safe-composition rules guarantee:
 
 - every ancestor occurs exactly once under one root conformance;
 - every canonical slot occurs exactly once in that root table;
+- every non-empty direct root occurs exactly once in the concrete's composite
+  global and follows `<<` source order;
 - every interface-to-ancestor conversion has one path; and
 - every ancestor subtable has one statically known offset.
 
@@ -909,15 +923,15 @@ subtable directly:
 ```text
 g as &Bar:
     data  = address of g
-    table = address of Gee-as-Bar
+    table = address of Gee-interface-tables.Bar
 
 g as &Foo:
     data  = address of g
-    table = address of Gee-as-Bar.Foo
+    table = address of Gee-interface-tables.Bar.Foo
 
 g as &Baz:
     data  = address of g
-    table = address of Gee-as-Baz
+    table = address of Gee-interface-tables.Baz
 ```
 
 An interface-to-parent upcast preserves `data` and adjusts only `table` by a
@@ -938,9 +952,11 @@ to an embedded subtable lower to normal symbol-plus-offset relocations; the
 linker does not need to understand interface semantics.
 
 Each closed generic specialization used through an interface receives its own
-root tables. Those tables and their interior references use the same linkage,
-deduplication, and COMDAT policy as the specialization's other generated
-artifacts.
+single composite table global. That global and its interior references use the
+same linkage, deduplication, and COMDAT policy as the specialization's other
+generated artifacts. Qualified module identity and closed specialization
+identity participate in generated symbol names, preventing homonymous modules
+or different specializations from colliding.
 
 Direct concrete calls may remain statically dispatched. Interface calls are
 indirect. No garbage collector, heap box, embedded base object, runtime type
