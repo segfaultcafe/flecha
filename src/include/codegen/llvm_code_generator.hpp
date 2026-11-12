@@ -60,6 +60,14 @@ class LlvmCodeGenerator final {
         std::size_t retainedScopeCount;
     };
 
+    struct InterfaceTableLocation final {
+        llvm::GlobalVariable* storage;
+        llvm::StructType* aggregateType;
+        std::size_t rootIndex;
+        std::size_t byteOffset;
+        bool usesEmptySentinel;
+    };
+
     bool EmitInto(const lowering::BoundExpression& expression,
                   llvm::Value* destination, semantic::SemanticType type);
     bool EmitDefaultInto(llvm::Value* destination, semantic::SemanticType type,
@@ -80,9 +88,24 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::Value* InterfaceReferenceData(llvm::Value* reference);
     [[nodiscard]] llvm::Value* InterfaceReferenceTable(llvm::Value* reference);
     [[nodiscard]] llvm::GlobalVariable* EmptyInterfaceTable();
-    void DeclareInterfaceInfrastructure(const lowering::BoundProgram& program);
+    [[nodiscard]] llvm::StructType* InterfaceTableType(
+        const lowering::InterfaceTableLayout& layout);
+    [[nodiscard]] llvm::FunctionType* InterfaceSlotType(
+        const semantic::MethodContract& origin);
+    [[nodiscard]] llvm::Constant* InterfaceTableInitializer(
+        const lowering::InterfaceTablePlan& plan,
+        const lowering::InterfaceTableLayout& layout);
+    [[nodiscard]] llvm::Function* InterfaceProviderEntry(
+        const lowering::EffectiveInterfaceProvider& provider);
+    [[nodiscard]] llvm::Function* InterfaceProviderThunk(
+        const lowering::EffectiveInterfaceProvider& provider);
+    bool ValidateInterfaceTableType(
+        const lowering::InterfaceTableLayout& layout, llvm::StructType* type);
+    bool DeclareInterfaceInfrastructure(const lowering::BoundProgram& program);
     [[nodiscard]] llvm::StructType* StringViewType();
     [[nodiscard]] llvm::StructType* StringType();
+    [[nodiscard]] llvm::FunctionType* MapFunctionType(
+        const semantic::FunctionSymbol& function, bool hasCaptures = false);
     [[nodiscard]] llvm::FunctionType* MapFunctionType(
         const lowering::BoundFunction& function);
     [[nodiscard]] llvm::FunctionType* MapCallableInvokeType(
@@ -236,6 +259,10 @@ class LlvmCodeGenerator final {
         _closureEnvironmentTypes;
     std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
         _closureDestroyers;
+    std::unordered_map<const void*,
+                       std::unordered_map<const semantic::InterfaceType*,
+                                          InterfaceTableLocation>>
+        _interfaceTables;
     std::unordered_map<const semantic::VariableSymbol*, llvm::Value*>
         _variables;
     std::unordered_map<std::string, llvm::BasicBlock*> _positions;

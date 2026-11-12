@@ -3,6 +3,7 @@
 #include <llvm/Support/Program.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <filesystem>
@@ -105,6 +106,46 @@ std::string ModuleText(const llvm::Module& module) {
     module.print(output, nullptr);
     output.flush();
     return text;
+}
+
+void CollectInterfaceTableEntries(llvm::Constant* value,
+                                  std::vector<llvm::Constant*>& entries) {
+    if (auto* structure = llvm::dyn_cast<llvm::ConstantStruct>(value)) {
+        for (llvm::Value* field : structure->operand_values())
+            CollectInterfaceTableEntries(llvm::cast<llvm::Constant>(field),
+                                         entries);
+        return;
+    }
+    entries.push_back(value);
+}
+
+llvm::Function* AdapterTarget(llvm::Function& adapter) {
+    for (llvm::BasicBlock& block : adapter)
+        for (llvm::Instruction& instruction : block)
+            if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+                return call->getCalledFunction();
+    return nullptr;
+}
+
+bool InterfaceTableValueCalls(llvm::Constant* value,
+                              std::string_view targetName) {
+    std::vector<llvm::Constant*> entries;
+    CollectInterfaceTableEntries(value, entries);
+    for (llvm::Constant* entry : entries) {
+        auto* adapter = llvm::dyn_cast<llvm::Function>(entry);
+        if (adapter == nullptr) continue;
+        llvm::Function* target = AdapterTarget(*adapter);
+        if (target != nullptr &&
+            target->getName() ==
+                llvm::StringRef(targetName.data(), targetName.size()))
+            return true;
+    }
+    return false;
+}
+
+bool InterfaceTableCalls(llvm::GlobalVariable& table,
+                         std::string_view targetName) {
+    return InterfaceTableValueCalls(table.getInitializer(), targetName);
 }
 
 }  // namespace
@@ -4198,6 +4239,267 @@ TEST(CodeGeneratorTests, EmitsOneAlignedEmptyInterfaceTableSentinel) {
     const std::size_t first = ir.find(symbol);
     ASSERT_NE(first, std::string::npos);
     EXPECT_EQ(ir.find(symbol, first + symbol.size()), std::string::npos);
+}
+
+TEST(CodeGeneratorTests, EmitsTargetAlignedComposedInterfaceTables) {
+    GeneratedSource result =
+        GenerateInterfaceFixture("valid_lowering_layouts.fl");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    LlvmCodeGenerator generator;
+    generator.ConfigureTarget("i386-unknown-linux-gnu",
+                              llvm::DataLayout("e-p:32:32"));
+    std::unique_ptr<llvm::Module> module =
+        generator.Generate(*result.boundProgram, "interface_tables_test");
+    ASSERT_NE(module, nullptr) << generator.Error();
+    EXPECT_TRUE(VerifyModule(*module).empty());
+
+    std::vector<const void*> expectedConcreteTypes;
+    bool sawOnlyEmptyConcrete = false;
+    for (const InterfaceTablePlan& plan :
+         result.boundProgram->InterfaceTables()) {
+        if (plan.providerMap.concrete.DisplayName() == "EmptyConcrete") {
+            sawOnlyEmptyConcrete = true;
+            EXPECT_EQ(plan.layout.size, 0);
+        }
+        if (plan.layout.size == 0) continue;
+        const void* identity =
+            plan.providerMap.concrete.kind == ConcreteTypeKind::Structure
+                ? static_cast<const void*>(plan.providerMap.concrete.structure)
+                : static_cast<const void*>(
+                      plan.providerMap.concrete.enumeration);
+        if (std::find(expectedConcreteTypes.begin(),
+                      expectedConcreteTypes.end(),
+                      identity) == expectedConcreteTypes.end())
+            expectedConcreteTypes.push_back(identity);
+    }
+    EXPECT_TRUE(sawOnlyEmptyConcrete);
+    std::vector<llvm::GlobalVariable*> emittedTables;
+    for (llvm::GlobalVariable& global : module->globals()) {
+        if (!global.getName().starts_with("__flecha_interface_tables."))
+            continue;
+        emittedTables.push_back(&global);
+        EXPECT_TRUE(global.isConstant());
+        EXPECT_TRUE(global.hasGlobalUnnamedAddr());
+        EXPECT_EQ(global.getLinkage(), llvm::GlobalValue::LinkOnceODRLinkage);
+        EXPECT_NE(global.getComdat(), nullptr);
+        ASSERT_TRUE(global.getAlign().has_value());
+        EXPECT_EQ(global.getAlign()->value(), 4);
+        std::vector<llvm::Constant*> entries;
+        CollectInterfaceTableEntries(global.getInitializer(), entries);
+        ASSERT_FALSE(entries.empty());
+        for (llvm::Constant* entry : entries) {
+            EXPECT_TRUE(entry->getType()->isPointerTy());
+            EXPECT_FALSE(llvm::isa<llvm::ConstantPointerNull>(entry));
+            EXPECT_TRUE(llvm::isa<llvm::Function>(entry));
+        }
+    }
+    EXPECT_EQ(emittedTables.size(), expectedConcreteTypes.size());
+
+    llvm::GlobalVariable* multiRoot = nullptr;
+    llvm::GlobalVariable* boxI32 = nullptr;
+    llvm::GlobalVariable* boxString = nullptr;
+    llvm::GlobalVariable* mode = nullptr;
+    std::string boxI32Target;
+    std::string boxStringTarget;
+    for (const InterfaceTablePlan& plan :
+         result.boundProgram->InterfaceTables()) {
+        if (plan.providerMap.providers.empty()) continue;
+        if (plan.providerMap.concrete.DisplayName() == "Box<i32>")
+            boxI32Target = plan.providerMap.providers[0].function->LinkName();
+        if (plan.providerMap.concrete.DisplayName() == "Box<string>")
+            boxStringTarget =
+                plan.providerMap.providers[0].function->LinkName();
+    }
+    ASSERT_FALSE(boxI32Target.empty());
+    ASSERT_FALSE(boxStringTarget.empty());
+    for (llvm::GlobalVariable* table : emittedTables) {
+        if (InterfaceTableCalls(*table, "Supplied::supplied") &&
+            InterfaceTableCalls(*table, "MultiRootConcrete::required"))
+            multiRoot = table;
+        if (InterfaceTableCalls(*table, boxI32Target)) boxI32 = table;
+        if (InterfaceTableCalls(*table, boxStringTarget)) boxString = table;
+        if (InterfaceTableCalls(*table, "Mode::reset")) mode = table;
+    }
+
+    ASSERT_NE(multiRoot, nullptr);
+    auto* type = llvm::dyn_cast<llvm::StructType>(multiRoot->getValueType());
+    ASSERT_NE(type, nullptr);
+    ASSERT_EQ(type->getNumElements(), 2);
+    EXPECT_TRUE(type->getElementType(0)->isStructTy());
+    EXPECT_TRUE(type->getElementType(1)->isStructTy());
+    const llvm::StructLayout* layout =
+        module->getDataLayout().getStructLayout(type);
+    EXPECT_EQ(layout->getElementOffset(0), 0);
+    EXPECT_EQ(layout->getElementOffset(1), 4);
+    EXPECT_EQ(layout->getSizeInBytes(), 8);
+    auto* multiRootInitializer =
+        llvm::dyn_cast<llvm::ConstantStruct>(multiRoot->getInitializer());
+    ASSERT_NE(multiRootInitializer, nullptr);
+    ASSERT_EQ(multiRootInitializer->getNumOperands(), 2);
+    EXPECT_TRUE(InterfaceTableValueCalls(
+        llvm::cast<llvm::Constant>(multiRootInitializer->getOperand(0)),
+        "Supplied::supplied"));
+    EXPECT_TRUE(InterfaceTableValueCalls(
+        llvm::cast<llvm::Constant>(multiRootInitializer->getOperand(1)),
+        "MultiRootConcrete::required"));
+
+    ASSERT_NE(boxI32, nullptr);
+    ASSERT_NE(boxString, nullptr);
+    EXPECT_NE(boxI32, boxString);
+    EXPECT_NE(boxI32->getName(), boxString->getName());
+    ASSERT_NE(mode, nullptr);
+
+    llvm::GlobalVariable* sentinel =
+        module->getNamedGlobal("__flecha_empty_interface_table");
+    ASSERT_NE(sentinel, nullptr);
+    EXPECT_TRUE(sentinel->isConstant());
+    const std::string ir = ModuleText(*module);
+    const std::string sentinelSymbol = "@__flecha_empty_interface_table";
+    const std::size_t first = ir.find(sentinelSymbol);
+    ASSERT_NE(first, std::string::npos);
+    EXPECT_EQ(ir.find(sentinelSymbol, first + sentinelSymbol.size()),
+              std::string::npos);
+}
+
+TEST(CodeGeneratorTests, EmitsInterfaceProviderThunksWithoutRuntimeWork) {
+    GeneratedSource result =
+        GenerateInterfaceFixture("valid_lowering_layouts.fl");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+
+    std::vector<llvm::Function*> adapters;
+    for (llvm::Function& function : result.module->functions()) {
+        if (!function.getName().starts_with("__flecha_interface_adapter."))
+            continue;
+        adapters.push_back(&function);
+        EXPECT_EQ(function.getLinkage(), llvm::GlobalValue::LinkOnceODRLinkage);
+        EXPECT_TRUE(function.hasGlobalUnnamedAddr());
+        EXPECT_TRUE(function.hasFnAttribute(llvm::Attribute::AlwaysInline));
+        ASSERT_GE(function.arg_size(), 2);
+        EXPECT_TRUE(function.getArg(0)->getType()->isPointerTy());
+        EXPECT_TRUE(function.getArg(1)->getType()->isPointerTy());
+        for (llvm::BasicBlock& block : function)
+            for (llvm::Instruction& instruction : block)
+                if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+                    EXPECT_NE(call->getCalledFunction(), nullptr);
+                    auto* callInstruction =
+                        llvm::dyn_cast<llvm::CallInst>(call);
+                    ASSERT_NE(callInstruction, nullptr);
+                    EXPECT_EQ(callInstruction->getTailCallKind(),
+                              llvm::CallInst::TCK_Tail);
+                    EXPECT_FALSE(
+                        call->getCalledFunction()->getName().starts_with(
+                            "flecha_runtime_v1_alloc"));
+                    EXPECT_FALSE(
+                        call->getCalledFunction()->getName().starts_with(
+                            "flecha_runtime_v1_free"));
+                }
+    }
+
+    llvm::Function* concrete = nullptr;
+    llvm::Function* transforming = nullptr;
+    llvm::Function* body = nullptr;
+    llvm::Function* adjusted = nullptr;
+    std::size_t adjustedAdapterCount = 0;
+    for (llvm::Function* adapter : adapters) {
+        llvm::Function* target = AdapterTarget(*adapter);
+        if (target == nullptr) continue;
+        if (target->getName() == "ConcreteOverride::execute")
+            concrete = adapter;
+        if (target->getName() == "Transformer::transform")
+            transforming = adapter;
+        if (target->getName() == "Supplied::supplied") body = adapter;
+        if (target->getName() == "Provided::adjusted") {
+            adjusted = adapter;
+            ++adjustedAdapterCount;
+        }
+    }
+
+    ASSERT_NE(concrete, nullptr);
+    ASSERT_EQ(concrete->arg_size(), 2);
+    EXPECT_TRUE(concrete->getArg(1)->use_empty());
+    for (llvm::Instruction& instruction : concrete->getEntryBlock()) {
+        if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+            ASSERT_NE(call->getCalledFunction(), nullptr);
+            EXPECT_EQ(call->getCalledFunction()->getName(),
+                      "ConcreteOverride::execute");
+            ASSERT_EQ(call->arg_size(), 1);
+            EXPECT_EQ(call->getArgOperand(0), concrete->getArg(0));
+        }
+        EXPECT_FALSE(llvm::isa<llvm::GetElementPtrInst>(instruction));
+        EXPECT_FALSE(llvm::isa<llvm::InsertValueInst>(instruction));
+    }
+
+    ASSERT_NE(transforming, nullptr);
+    ASSERT_EQ(transforming->arg_size(), 4);
+    EXPECT_TRUE(transforming->getArg(0)->getType()->isPointerTy());
+    EXPECT_TRUE(transforming->getArg(1)->getType()->isPointerTy());
+    EXPECT_TRUE(transforming->getArg(2)->getType()->isPointerTy());
+    EXPECT_TRUE(transforming->getArg(3)->getType()->isIntegerTy(32));
+    EXPECT_TRUE(transforming->getArg(2)->use_empty());
+    for (llvm::Instruction& instruction : transforming->getEntryBlock()) {
+        auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+        if (call == nullptr) continue;
+        ASSERT_EQ(call->arg_size(), 3);
+        EXPECT_EQ(call->getArgOperand(0), transforming->getArg(0));
+        EXPECT_EQ(call->getArgOperand(1), transforming->getArg(1));
+        EXPECT_EQ(call->getArgOperand(2), transforming->getArg(3));
+    }
+
+    ASSERT_NE(body, nullptr);
+    ASSERT_EQ(body->arg_size(), 2);
+    std::size_t bodyInsertions = 0;
+    for (llvm::Instruction& instruction : body->getEntryBlock()) {
+        if (llvm::isa<llvm::InsertValueInst>(instruction)) ++bodyInsertions;
+        EXPECT_FALSE(llvm::isa<llvm::GetElementPtrInst>(instruction));
+        if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+            ASSERT_EQ(call->arg_size(), 1);
+            EXPECT_TRUE(call->getArgOperand(0)->getType()->isStructTy());
+        }
+    }
+    EXPECT_EQ(bodyInsertions, 2);
+
+    ASSERT_NE(adjusted, nullptr);
+    EXPECT_EQ(adjustedAdapterCount, 1);
+    ASSERT_EQ(adjusted->arg_size(), 2);
+    std::size_t adjustedInsertions = 0;
+    std::size_t adjustments = 0;
+    for (llvm::Instruction& instruction : adjusted->getEntryBlock()) {
+        if (llvm::isa<llvm::InsertValueInst>(instruction)) ++adjustedInsertions;
+        if (auto* gep = llvm::dyn_cast<llvm::GetElementPtrInst>(&instruction)) {
+            ++adjustments;
+            ASSERT_EQ(gep->getNumIndices(), 1);
+            auto* offset =
+                llvm::dyn_cast<llvm::ConstantInt>(gep->getOperand(1));
+            ASSERT_NE(offset, nullptr);
+            EXPECT_EQ(offset->getSExtValue(),
+                      -static_cast<std::int64_t>(sizeof(void*)));
+        }
+        if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+            ASSERT_NE(call->getCalledFunction(), nullptr);
+            EXPECT_EQ(call->getCalledFunction()->getName(),
+                      "Provided::adjusted");
+        }
+    }
+    EXPECT_EQ(adjustedInsertions, 2);
+    EXPECT_EQ(adjustments, 1);
+
+    std::size_t adjustedEntries = 0;
+    for (llvm::GlobalVariable& global : result.module->globals()) {
+        if (!global.getName().starts_with("__flecha_interface_tables."))
+            continue;
+        std::vector<llvm::Constant*> entries;
+        CollectInterfaceTableEntries(global.getInitializer(), entries);
+        adjustedEntries += static_cast<std::size_t>(
+            std::count(entries.begin(), entries.end(),
+                       static_cast<llvm::Constant*>(adjusted)));
+    }
+    EXPECT_EQ(adjustedEntries, 2);
 }
 
 TEST(CodeGeneratorTests, EmitsAggregateValuesAndBoundsCheckedElementAddresses) {

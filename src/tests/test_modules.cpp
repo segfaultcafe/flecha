@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "core/module_loader.hpp"
 #include "semantic/semantic_analyzer.hpp"
@@ -1043,6 +1044,39 @@ TEST_F(ModuleTests, GenericDiamondImportsShareSpecializationIdentity) {
           "module main; @imports :: root::one :: root::two; i32 main() { b := "
           "one::make<i32>(); return two::read<i32>(&b); }");
     EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, ClosedSpecializationIdentityQualifiesHomonymousArguments) {
+    Write("left.fl", "module left; export structure Item { i32 value; };");
+    Write("right.fl", "module right; export structure Item { i32 value; };");
+    Write("box.fl", "module box; export structure Box<T> { T value; };");
+    Write("main.fl", R"(module main;
+        @imports :: root::left :: root::right :: root::box;
+        void useLeft(box::Box<left::Item> value) {}
+        void useRight(box::Box<right::Item> value) {}
+    )");
+
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit = loader.Load(root / "main.fl", root, {});
+    ASSERT_FALSE(diagnostics.HasErrors());
+    flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+    auto model = analyzer.Analyze(*unit);
+    ASSERT_FALSE(diagnostics.HasErrors());
+
+    std::vector<std::string> identities;
+    for (const auto& structure : model.Structures()) {
+        if (structure->displayName != "Box<Item>") continue;
+        ASSERT_NE(structure->syntax, nullptr);
+        ASSERT_FALSE(structure->syntax->specializationIdentity.empty());
+        identities.push_back(structure->syntax->specializationIdentity);
+    }
+    ASSERT_EQ(identities.size(), 2);
+    EXPECT_NE(identities[0], identities[1]);
+    EXPECT_EQ(identities[0].find("$generic_alias"), std::string::npos);
+    EXPECT_EQ(identities[1].find("$generic_alias"), std::string::npos);
+    EXPECT_EQ(identities[0].find("$specialization"), std::string::npos);
+    EXPECT_EQ(identities[1].find("$specialization"), std::string::npos);
 }
 
 TEST_F(ModuleTests, GenericVisibilityIsCheckedAtDefinitionAndUse) {
