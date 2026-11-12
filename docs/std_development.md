@@ -1,7 +1,8 @@
 # Flecha standard-library development guidelines
 
 These guidelines apply to Flecha source in `std/`. Follow the naming conventions
-in [library API style](library_api_style.md) as well.
+in [library API style](library_api_style.md) and the architectural conventions
+in the [Idiomatic Flecha Guideline](idiomatic_flecha.md) as well.
 
 ## Document public contracts at their declarations
 

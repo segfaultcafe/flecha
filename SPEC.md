@@ -1129,6 +1129,21 @@ blocks use `@imports :: root::path::module :: lib::library::module as alias;`,
 with a multiline form preferred. `root` and `lib` are reserved in import
 paths.
 
+Flecha 0.4 proposes namespace attachment immediately after the module header:
+
+```flecha
+module stream;
+under namespace root::io;
+```
+
+The source unit may live in a physical submodule folder while contributing to
+the named module in a strict ancestor namespace. The attachment namespace
+becomes the effective namespace for canonical module identity, multifile
+assembly, imports, quiver visibility, and logical test pairing. The accepted
+contract is a v0.4 release blocker and is specified in
+[namespace attachment](docs/namespace_attachment-v0.4.md); it is not yet
+implemented.
+
 `private module name;` remains accepted with a deprecation warning and
 restricts importing the complete logical module to its quiver. All contributing
 source units must agree on private status. `export` always has global

@@ -1,5 +1,10 @@
 # Logical module composition (0.2.1 correction)
 
+> This document records the implemented 0.2.1 contract. The accepted v0.4
+> [namespace attachment](namespace_attachment-v0.4.md) proposal preserves this
+> multifile model while allowing physical submodule folders to attach source
+> units to an ancestor namespace.
+
 This document defines the logical module model implemented in Flecha 0.2.1.
 
 ## Terms and identity
