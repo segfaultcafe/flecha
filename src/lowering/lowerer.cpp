@@ -524,6 +524,23 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
         case core::AstNodeKind::CastExpression: {
             const core::CastExpression& cast =
                 static_cast<const core::CastExpression&>(expression);
+            const semantic::SemanticType source =
+                _semanticModel->TypeOf(cast.Value());
+            if (type.Kind() == semantic::SemanticTypeKind::Reference &&
+                type.Target()->Kind() ==
+                    semantic::SemanticTypeKind::Interface &&
+                (source.Kind() == semantic::SemanticTypeKind::Structure ||
+                 source.Kind() == semantic::SemanticTypeKind::Enum)) {
+                semantic::SemanticType borrowed =
+                    type.Target()->IsConst() ? source.WithConst() : source;
+                return std::make_unique<BoundCastExpression>(
+                    expression.Range(), type,
+                    std::make_unique<BoundAddressExpression>(
+                        cast.Value().Range(),
+                        semantic::SemanticType(
+                            semantic::SemanticTypeKind::Reference, borrowed),
+                        LowerPlace(cast.Value())));
+            }
             return std::make_unique<BoundCastExpression>(
                 expression.Range(), type, LowerExpression(cast.Value()));
         }

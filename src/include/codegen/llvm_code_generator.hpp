@@ -7,6 +7,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -68,6 +69,11 @@ class LlvmCodeGenerator final {
         bool usesEmptySentinel;
     };
 
+    struct InterfaceUpcastLocation final {
+        std::ptrdiff_t tableAdjustment;
+        bool usesEmptySentinel;
+    };
+
     bool EmitInto(const lowering::BoundExpression& expression,
                   llvm::Value* destination, semantic::SemanticType type);
     bool EmitDefaultInto(llvm::Value* destination, semantic::SemanticType type,
@@ -99,6 +105,14 @@ class LlvmCodeGenerator final {
         const lowering::EffectiveInterfaceProvider& provider);
     [[nodiscard]] llvm::Function* InterfaceProviderThunk(
         const lowering::EffectiveInterfaceProvider& provider);
+    bool RecordInterfaceTableLayout(
+        const void* concreteIdentity, llvm::GlobalVariable* storage,
+        llvm::StructType* aggregateType, std::size_t rootIndex,
+        std::size_t rootOffset, const lowering::InterfaceTableLayout& layout,
+        llvm::StructType* materializedType = nullptr);
+    [[nodiscard]] llvm::Value* MaterializedInterfaceTable(
+        semantic::SemanticType concrete,
+        const semantic::InterfaceType& interfaceType);
     bool ValidateInterfaceTableType(
         const lowering::InterfaceTableLayout& layout, llvm::StructType* type);
     bool DeclareInterfaceInfrastructure(const lowering::BoundProgram& program);
@@ -263,6 +277,10 @@ class LlvmCodeGenerator final {
                        std::unordered_map<const semantic::InterfaceType*,
                                           InterfaceTableLocation>>
         _interfaceTables;
+    std::unordered_map<const semantic::InterfaceType*,
+                       std::unordered_map<const semantic::InterfaceType*,
+                                          InterfaceUpcastLocation>>
+        _interfaceUpcasts;
     std::unordered_map<const semantic::VariableSymbol*, llvm::Value*>
         _variables;
     std::unordered_map<std::string, llvm::BasicBlock*> _positions;

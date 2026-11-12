@@ -562,6 +562,122 @@ llvm::Constant* LlvmCodeGenerator::InterfaceTableInitializer(
     return llvm::ConstantStruct::get(type, fields);
 }
 
+bool LlvmCodeGenerator::RecordInterfaceTableLayout(
+    const void* concreteIdentity, llvm::GlobalVariable* storage,
+    llvm::StructType* aggregateType, std::size_t rootIndex,
+    std::size_t rootOffset, const lowering::InterfaceTableLayout& layout,
+    llvm::StructType* materializedType) {
+    if (concreteIdentity == nullptr || storage == nullptr ||
+        layout.interfaceType == nullptr)
+        return Fail("cannot record an incomplete interface table location");
+
+    const bool empty = layout.size == 0;
+    InterfaceTableLocation location{empty ? EmptyInterfaceTable() : storage,
+                                    empty ? nullptr : aggregateType,
+                                    empty ? 0 : rootIndex,
+                                    empty ? 0 : rootOffset, empty};
+    const auto [existing, inserted] =
+        _interfaceTables[concreteIdentity].emplace(layout.interfaceType,
+                                                   location);
+    if (!inserted &&
+        (existing->second.storage != location.storage ||
+         existing->second.byteOffset != location.byteOffset ||
+         existing->second.usesEmptySentinel != location.usesEmptySentinel))
+        return Fail("interface table has conflicting materialized locations");
+
+    const llvm::DataLayout& dataLayout = _module->getDataLayout();
+    const auto recordUpcasts =
+        [&](const auto& self, const lowering::InterfaceTableLayout& current,
+            llvm::StructType* currentType, std::ptrdiff_t adjustment) -> bool {
+        const llvm::StructLayout* currentLayout =
+            currentType == nullptr ? nullptr
+                                   : dataLayout.getStructLayout(currentType);
+        for (std::size_t index = 0; index < current.parents.size(); ++index) {
+            const lowering::ParentLayout& parent = current.parents[index];
+            if (parent.interfaceType == nullptr || parent.table == nullptr)
+                return Fail("interface parent has no materialized layout");
+            llvm::StructType* parentType = nullptr;
+            std::ptrdiff_t parentAdjustment = adjustment;
+            if (currentLayout != nullptr) {
+                parentAdjustment += static_cast<std::ptrdiff_t>(
+                    currentLayout->getElementOffset(index));
+                parentType = llvm::dyn_cast<llvm::StructType>(
+                    currentType->getElementType(index));
+                if (parentType == nullptr)
+                    return Fail("interface parent materialized as a non-table");
+            }
+            const InterfaceUpcastLocation upcast{
+                parent.table->size == 0 ? 0 : parentAdjustment,
+                parent.table->size == 0};
+            const auto [found, added] =
+                _interfaceUpcasts[layout.interfaceType].emplace(
+                    parent.interfaceType, upcast);
+            if (!added &&
+                (found->second.tableAdjustment != upcast.tableAdjustment ||
+                 found->second.usesEmptySentinel != upcast.usesEmptySentinel))
+                return Fail(
+                    "interface upcast has conflicting materialized "
+                    "offsets");
+            if (!self(self, *parent.table, parentType, parentAdjustment))
+                return false;
+        }
+        return true;
+    };
+    if (!recordUpcasts(recordUpcasts, layout, materializedType, 0))
+        return false;
+
+    const llvm::StructLayout* llvmLayout =
+        materializedType == nullptr
+            ? nullptr
+            : dataLayout.getStructLayout(materializedType);
+    for (std::size_t index = 0; index < layout.parents.size(); ++index) {
+        const lowering::ParentLayout& parent = layout.parents[index];
+        if (parent.table == nullptr)
+            return Fail("interface parent has no materialized layout");
+        llvm::StructType* parentType = nullptr;
+        std::size_t parentOffset = rootOffset;
+        if (llvmLayout != nullptr) {
+            parentOffset += llvmLayout->getElementOffset(index);
+            parentType = llvm::dyn_cast<llvm::StructType>(
+                materializedType->getElementType(index));
+            if (parentType == nullptr)
+                return Fail("interface parent materialized as a non-table");
+        }
+        if (!RecordInterfaceTableLayout(concreteIdentity, storage,
+                                        aggregateType, rootIndex, parentOffset,
+                                        *parent.table, parentType))
+            return false;
+    }
+    return true;
+}
+
+llvm::Value* LlvmCodeGenerator::MaterializedInterfaceTable(
+    semantic::SemanticType concrete,
+    const semantic::InterfaceType& interfaceType) {
+    const void* identity = nullptr;
+    if (concrete.Kind() == semantic::SemanticTypeKind::Structure)
+        identity = concrete.Structure();
+    else if (concrete.Kind() == semantic::SemanticTypeKind::Enum)
+        identity = concrete.Enum();
+    if (identity == nullptr)
+        return Fail("interface cast source is not a concrete type"), nullptr;
+    const auto concreteTables = _interfaceTables.find(identity);
+    if (concreteTables == _interfaceTables.end())
+        return Fail("interface cast source has no materialized tables"),
+               nullptr;
+    const auto table = concreteTables->second.find(&interfaceType);
+    if (table == concreteTables->second.end())
+        return Fail("interface cast target has no materialized table"), nullptr;
+    const InterfaceTableLocation& location = table->second;
+    if (location.usesEmptySentinel) return location.storage;
+    auto* indexType = llvm::IntegerType::get(
+        _context, _module->getDataLayout().getIndexSizeInBits(0));
+    return _builder.CreateInBoundsGEP(
+        llvm::Type::getInt8Ty(_context), location.storage,
+        llvm::ConstantInt::get(indexType, location.byteOffset),
+        "interface.table");
+}
+
 bool LlvmCodeGenerator::DeclareInterfaceInfrastructure(
     const lowering::BoundProgram& program) {
     const llvm::DataLayout& dataLayout = _module->getDataLayout();
@@ -612,14 +728,9 @@ bool LlvmCodeGenerator::DeclareInterfaceInfrastructure(
         for (const lowering::InterfaceTablePlan& plan : plans) {
             if (plan.layout.size == 0) {
                 llvm::GlobalVariable* sentinel = EmptyInterfaceTable();
-                const bool inserted =
-                    _interfaceTables[concreteIdentity]
-                        .emplace(plan.providerMap.root,
-                                 InterfaceTableLocation{sentinel, nullptr, 0, 0,
-                                                        true})
-                        .second;
-                if (!inserted)
-                    return Fail("duplicate empty interface root table");
+                if (!RecordInterfaceTableLayout(concreteIdentity, sentinel,
+                                                nullptr, 0, 0, plan.layout))
+                    return false;
                 continue;
             }
             llvm::StructType* rootType = InterfaceTableType(plan.layout);
@@ -656,16 +767,12 @@ bool LlvmCodeGenerator::DeclareInterfaceInfrastructure(
         ApplyOdrComdat(*_module, *table);
         for (std::size_t rootIndex = 0; rootIndex < storedPlans.size();
              ++rootIndex) {
-            const bool inserted =
-                _interfaceTables[concreteIdentity]
-                    .emplace(storedPlans[rootIndex]->providerMap.root,
-                             InterfaceTableLocation{
-                                 table, aggregateType, rootIndex,
-                                 aggregateLayout->getElementOffset(rootIndex),
-                                 false})
-                    .second;
-            if (!inserted)
-                return Fail("duplicate non-empty interface root table");
+            if (!RecordInterfaceTableLayout(
+                    concreteIdentity, table, aggregateType, rootIndex,
+                    aggregateLayout->getElementOffset(rootIndex),
+                    storedPlans[rootIndex]->layout,
+                    llvm::cast<llvm::StructType>(rootTypes[rootIndex])))
+                return false;
         }
     }
     return true;
@@ -3171,6 +3278,55 @@ llvm::Value* LlvmCodeGenerator::EmitCast(
     if (sourceType.WithoutConst() == expression.Type().WithoutConst())
         return value;
 
+    if (expression.Type().Kind() == semantic::SemanticTypeKind::Reference &&
+        expression.Type().Target()->Kind() ==
+            semantic::SemanticTypeKind::Interface) {
+        if (sourceType.Kind() != semantic::SemanticTypeKind::Reference)
+            return Fail("interface cast lowering lost its source address"),
+                   nullptr;
+        llvm::Value* data = value;
+        llvm::Value* table = nullptr;
+        const semantic::SemanticType sourceTarget = *sourceType.Target();
+        const semantic::InterfaceType& targetInterface =
+            *expression.Type().Target()->Interface();
+        if (sourceTarget.Kind() == semantic::SemanticTypeKind::Structure ||
+            sourceTarget.Kind() == semantic::SemanticTypeKind::Enum) {
+            table = MaterializedInterfaceTable(sourceTarget, targetInterface);
+        } else if (sourceTarget.Kind() ==
+                   semantic::SemanticTypeKind::Interface) {
+            data = InterfaceReferenceData(value);
+            table = InterfaceReferenceTable(value);
+            const auto origin =
+                _interfaceUpcasts.find(sourceTarget.Interface());
+            if (origin == _interfaceUpcasts.end())
+                return Fail(
+                           "interface upcast source has no materialized "
+                           "layout"),
+                       nullptr;
+            const auto target = origin->second.find(&targetInterface);
+            if (target == origin->second.end())
+                return Fail(
+                           "interface upcast target has no materialized "
+                           "offset"),
+                       nullptr;
+            if (target->second.usesEmptySentinel) {
+                table = EmptyInterfaceTable();
+            } else if (target->second.tableAdjustment != 0) {
+                auto* indexType = llvm::IntegerType::get(
+                    _context, _module->getDataLayout().getIndexSizeInBits(0));
+                table = _builder.CreateInBoundsGEP(
+                    llvm::Type::getInt8Ty(_context), table,
+                    llvm::ConstantInt::get(
+                        indexType, target->second.tableAdjustment, true),
+                    "interface.table.upcast");
+            }
+        } else {
+            return Fail("unsupported source for interface cast"), nullptr;
+        }
+        if (table == nullptr) return nullptr;
+        return CreateInterfaceReference(data, table);
+    }
+
     if (expression.Type().Kind() == semantic::SemanticTypeKind::String) {
         return EmitOwnedString(value, sourceType);
     }
@@ -5227,6 +5383,7 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
     _closureEnvironmentTypes.clear();
     _closureDestroyers.clear();
     _interfaceTables.clear();
+    _interfaceUpcasts.clear();
     _structureTypes.clear();
     _variables.clear();
     _module = std::make_unique<llvm::Module>(moduleName, _context);
