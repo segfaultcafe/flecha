@@ -80,6 +80,13 @@ const InterfaceType& FindInterface(const SemanticModel& model,
     throw std::logic_error("interface not found");
 }
 
+const BoundFunction& FindFunction(const BoundProgram& program,
+                                  std::string_view name) {
+    for (const std::unique_ptr<BoundFunction>& function : program.Functions())
+        if (function->Symbol().Name() == name) return *function;
+    throw std::logic_error("bound function not found");
+}
+
 void CollectSlots(const InterfaceTableLayout& layout,
                   std::vector<const SlotLayout*>& result) {
     for (const ParentLayout& parent : layout.parents)
@@ -389,4 +396,29 @@ TEST(InterfaceReferenceTests, PreservesBorrowTypesInBoundFunctionsAndFields) {
     EXPECT_EQ(CountPlans(*program, "EmptyReferenceEnum"), 1);
     EXPECT_EQ(CountPlans(*program, "ReadableStructure"), 1);
     EXPECT_EQ(CountPlans(*program, "ReadableEnum"), 1);
+}
+
+TEST(InterfaceDispatchTests, PreservesResolvedContractsInDedicatedBoundCalls) {
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_dynamic_dispatch.fl");
+
+    ASSERT_FALSE(fixture.diagnostics.HasErrors());
+    std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
+    ASSERT_NE(program, nullptr);
+
+    const BoundFunction& function = FindFunction(*program, "callRootStep");
+    ASSERT_EQ(function.Body().Statements().size(), 1);
+    const auto& returned = static_cast<const BoundReturnStatement&>(
+        *function.Body().Statements().front());
+    ASSERT_NE(returned.Expression(), nullptr);
+    ASSERT_EQ(returned.Expression()->Kind(),
+              BoundNodeKind::InterfaceCallExpression);
+    const auto& call = static_cast<const BoundInterfaceCallExpression&>(
+        *returned.Expression());
+    EXPECT_EQ(call.Contract().key.name, "step");
+    ASSERT_NE(call.Contract().declaredBy, nullptr);
+    EXPECT_EQ(call.Contract().declaredBy->displayName, "Counter");
+    ASSERT_EQ(call.Arguments().size(), 1);
+    EXPECT_TRUE(IsInterfaceReference(call.Receiver().Type()));
+    EXPECT_EQ(call.Receiver().Type().Target()->Interface()->displayName,
+              "Root");
 }
