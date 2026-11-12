@@ -187,7 +187,7 @@ TEST(InterfaceProviderTests, BuildsIndependentPlansForMultipleRoots) {
     ASSERT_FALSE(fixture.diagnostics.HasErrors());
     std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
     ASSERT_NE(program, nullptr);
-    ASSERT_EQ(CountPlans(*program, "MultiRootConcrete"), 2);
+    ASSERT_EQ(CountPlans(*program, "MultiRootConcrete"), 3);
     const InterfaceTablePlan& supplied =
         FindPlan(*program, "MultiRootConcrete", "Supplied");
     const InterfaceTablePlan& required =

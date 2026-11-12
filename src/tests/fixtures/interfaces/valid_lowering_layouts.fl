@@ -77,6 +77,8 @@ error Provided::adjusted(&self) override {
 
 structure AdjustedConcrete << Provided {};
 
+structure SecondAdjustedConcrete << Provided {};
+
 interface Runnable {
     error execute(&self) default;
 };
@@ -91,6 +93,27 @@ error ConcreteOverride::execute(&self) override {
     return none;
 }
 
+structure InterfaceResult {
+    i32 value;
+};
+
+InterfaceResult InterfaceResult::init(i32 value) override {
+    return build InterfaceResult { self.value = value; };
+}
+
+interface Transforming {
+    InterfaceResult transform(&const self, i32 value) virtual;
+};
+
+structure Transformer << Transforming {};
+
+InterfaceResult Transformer::transform(
+    &const self,
+    i32 value
+) override {
+    return InterfaceResult::init(value);
+}
+
 interface Supplied {
     error supplied(&self) default;
 };
@@ -103,7 +126,7 @@ interface Required {
     error required(&self) virtual;
 };
 
-structure MultiRootConcrete << Supplied, Required {};
+structure MultiRootConcrete << Empty, Supplied, Required {};
 
 error MultiRootConcrete::required(&self) override {
     return none;
@@ -122,6 +145,8 @@ error Box<T>::inspect(&const self) override {
 }
 
 void instantiate(Box<i32> value) {}
+
+void instantiateString(Box<string> value) {}
 
 interface Resettable {
     error reset(&self) virtual;
