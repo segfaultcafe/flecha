@@ -74,6 +74,13 @@ class LlvmCodeGenerator final {
         const std::function<void(llvm::Value*)>& action);
     llvm::Value* LifetimeFlag(llvm::Value* storage);
     [[nodiscard]] llvm::Type* MapType(semantic::SemanticType type);
+    [[nodiscard]] llvm::StructType* InterfaceReferenceType();
+    [[nodiscard]] llvm::Value* CreateInterfaceReference(llvm::Value* data,
+                                                        llvm::Value* table);
+    [[nodiscard]] llvm::Value* InterfaceReferenceData(llvm::Value* reference);
+    [[nodiscard]] llvm::Value* InterfaceReferenceTable(llvm::Value* reference);
+    [[nodiscard]] llvm::GlobalVariable* EmptyInterfaceTable();
+    void DeclareInterfaceInfrastructure(const lowering::BoundProgram& program);
     [[nodiscard]] llvm::StructType* StringViewType();
     [[nodiscard]] llvm::StructType* StringType();
     [[nodiscard]] llvm::FunctionType* MapFunctionType(
@@ -175,8 +182,8 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::Value* EmitBuiltInStringFormat(
         const lowering::BoundCallExpression& expression,
         const std::vector<llvm::Value*>& arguments);
-    [[nodiscard]] llvm::Value* EmitCrash(
-        llvm::Value* message, source::SourceRange range);
+    [[nodiscard]] llvm::Value* EmitCrash(llvm::Value* message,
+                                         source::SourceRange range);
     [[nodiscard]] llvm::Value* EmitBuiltInInput(
         const lowering::BoundCallExpression& expression,
         const std::vector<llvm::Value*>& arguments);

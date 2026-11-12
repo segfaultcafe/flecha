@@ -21,6 +21,7 @@
 
 #include "core/integer_literal.hpp"
 #include "core/output_format.hpp"
+#include "lowering/interface_reference.hpp"
 
 namespace flecha::codegen {
 namespace {
@@ -151,6 +152,9 @@ llvm::Type* LlvmCodeGenerator::MapType(semantic::SemanticType type) {
         case semantic::SemanticTypeKind::Bool:
             return llvm::Type::getInt1Ty(_context);
         case semantic::SemanticTypeKind::Reference:
+            if (lowering::IsInterfaceReference(type))
+                return InterfaceReferenceType();
+            return llvm::PointerType::getUnqual(_context);
         case semantic::SemanticTypeKind::Pointer:
         case semantic::SemanticTypeKind::Null:
             return llvm::PointerType::getUnqual(_context);
@@ -169,6 +173,86 @@ llvm::Type* LlvmCodeGenerator::MapType(semantic::SemanticType type) {
             Fail("LLVM type is not implemented for '" +
                  std::string(type.Name()) + "'");
             return nullptr;
+    }
+}
+
+llvm::StructType* LlvmCodeGenerator::InterfaceReferenceType() {
+    llvm::Type* pointer = llvm::PointerType::getUnqual(_context);
+    return llvm::StructType::get(_context, {pointer, pointer});
+}
+
+llvm::Value* LlvmCodeGenerator::CreateInterfaceReference(llvm::Value* data,
+                                                         llvm::Value* table) {
+    llvm::Type* pointer = llvm::PointerType::getUnqual(_context);
+    if (data == nullptr || table == nullptr || data->getType() != pointer ||
+        table->getType() != pointer ||
+        llvm::isa<llvm::ConstantPointerNull>(data) ||
+        llvm::isa<llvm::ConstantPointerNull>(table)) {
+        Fail("interface reference requires non-null data and table pointers");
+        return nullptr;
+    }
+    llvm::Value* result = llvm::PoisonValue::get(InterfaceReferenceType());
+    result = _builder.CreateInsertValue(
+        result, data,
+        lowering::InterfaceReferenceFieldIndex(
+            lowering::InterfaceReferenceField::Data));
+    return _builder.CreateInsertValue(
+        result, table,
+        lowering::InterfaceReferenceFieldIndex(
+            lowering::InterfaceReferenceField::Table),
+        "interface.reference");
+}
+
+llvm::Value* LlvmCodeGenerator::InterfaceReferenceData(llvm::Value* reference) {
+    if (reference == nullptr ||
+        reference->getType() != InterfaceReferenceType()) {
+        Fail("interface reference data extraction requires a reference value");
+        return nullptr;
+    }
+    return _builder.CreateExtractValue(
+        reference,
+        lowering::InterfaceReferenceFieldIndex(
+            lowering::InterfaceReferenceField::Data),
+        "interface.data");
+}
+
+llvm::Value* LlvmCodeGenerator::InterfaceReferenceTable(
+    llvm::Value* reference) {
+    if (reference == nullptr ||
+        reference->getType() != InterfaceReferenceType()) {
+        Fail("interface reference table extraction requires a reference value");
+        return nullptr;
+    }
+    return _builder.CreateExtractValue(
+        reference,
+        lowering::InterfaceReferenceFieldIndex(
+            lowering::InterfaceReferenceField::Table),
+        "interface.table");
+}
+
+llvm::GlobalVariable* LlvmCodeGenerator::EmptyInterfaceTable() {
+    constexpr std::string_view name = "__flecha_empty_interface_table";
+    if (llvm::GlobalVariable* existing = _module->getNamedGlobal(name))
+        return existing;
+
+    llvm::Type* storage = llvm::Type::getInt8Ty(_context);
+    auto* sentinel = new llvm::GlobalVariable(
+        *_module, storage, true, llvm::GlobalValue::LinkOnceODRLinkage,
+        llvm::ConstantInt::get(storage, 0), name);
+    sentinel->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    const llvm::Align alignment = _dataLayout.has_value()
+                                      ? _dataLayout->getPointerABIAlignment(0)
+                                      : llvm::Align(alignof(void*));
+    sentinel->setAlignment(alignment);
+    return sentinel;
+}
+
+void LlvmCodeGenerator::DeclareInterfaceInfrastructure(
+    const lowering::BoundProgram& program) {
+    for (const lowering::InterfaceTablePlan& plan : program.InterfaceTables()) {
+        if (plan.layout.size != 0) continue;
+        (void)EmptyInterfaceTable();
+        return;
     }
 }
 
@@ -4733,6 +4817,7 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
 #endif
     }
     if (_dataLayout.has_value()) _module->setDataLayout(*_dataLayout);
+    DeclareInterfaceInfrastructure(program);
     if (!DeclareFunctions(program)) return nullptr;
     for (const std::unique_ptr<lowering::BoundFunction>& function :
          program.Functions()) {

@@ -10,7 +10,9 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "codegen/llvm_code_generator.hpp"
@@ -85,6 +87,16 @@ GeneratedSource Generate(const std::string& source) {
             result.generator->Generate(*result.boundProgram, "test_module");
     }
     return result;
+}
+
+GeneratedSource GenerateInterfaceFixture(std::string_view name) {
+    const std::filesystem::path path =
+        std::filesystem::path(FLECHA_INTERFACE_FIXTURE_DIR) / name;
+    std::ifstream stream(path);
+    if (!stream)
+        throw std::runtime_error("could not open interface fixture '" +
+                                 path.string() + "'");
+    return Generate(std::string(std::istreambuf_iterator<char>(stream), {}));
 }
 
 std::string ModuleText(const llvm::Module& module) {
@@ -4107,6 +4119,85 @@ TEST(CodeGeneratorTests, EmitsCheckedReferencesAsAddressesAndReborrowingCalls) {
     EXPECT_NE(ir.find("define i8 @read(ptr %r)"), std::string::npos);
     EXPECT_NE(ir.find("call void @bump(ptr"), std::string::npos);
     EXPECT_NE(ir.find("mul i8"), std::string::npos);
+}
+
+TEST(CodeGeneratorTests, EmitsInterfaceReferencesAsTwoPointerBorrows) {
+    GeneratedSource result =
+        GenerateInterfaceFixture("valid_interface_references.fl");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+
+    llvm::Function* mutableRelay =
+        result.module->getFunction("relayMutableReference");
+    llvm::Function* constRelay =
+        result.module->getFunction("relayConstReference");
+    ASSERT_NE(mutableRelay, nullptr);
+    ASSERT_NE(constRelay, nullptr);
+    ASSERT_EQ(mutableRelay->arg_size(), 1);
+    ASSERT_EQ(constRelay->arg_size(), 1);
+
+    auto* referenceType =
+        llvm::dyn_cast<llvm::StructType>(mutableRelay->getReturnType());
+    ASSERT_NE(referenceType, nullptr);
+    ASSERT_EQ(referenceType->getNumElements(), 2);
+    EXPECT_TRUE(referenceType->getElementType(0)->isPointerTy());
+    EXPECT_TRUE(referenceType->getElementType(1)->isPointerTy());
+    EXPECT_EQ(mutableRelay->getArg(0)->getType(), referenceType);
+    EXPECT_EQ(constRelay->getReturnType(), referenceType);
+    EXPECT_EQ(constRelay->getArg(0)->getType(), referenceType);
+
+    llvm::StructType* fields = llvm::StructType::getTypeByName(
+        result.module->getContext(), "flecha.InterfaceReferenceFields");
+    ASSERT_NE(fields, nullptr);
+    ASSERT_EQ(fields->getNumElements(), 2);
+    EXPECT_EQ(fields->getElementType(0), referenceType);
+    EXPECT_EQ(fields->getElementType(1), referenceType);
+
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_EQ(ir.find("flecha_runtime_v1_alloc"), std::string::npos);
+    EXPECT_EQ(ir.find("flecha_runtime_v1_free"), std::string::npos);
+    EXPECT_EQ(ir.find("destroy"), std::string::npos);
+    EXPECT_EQ(ir.find("inttoptr"), std::string::npos);
+    EXPECT_EQ(ir.find("ptrtoint"), std::string::npos);
+    EXPECT_EQ(ir.find("interface.dispatch"), std::string::npos);
+    EXPECT_EQ(ir.find("interface.thunk"), std::string::npos);
+}
+
+TEST(CodeGeneratorTests, EmitsOneAlignedEmptyInterfaceTableSentinel) {
+    GeneratedSource result =
+        GenerateInterfaceFixture("valid_interface_references.fl");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    LlvmCodeGenerator generator;
+    generator.ConfigureTarget("i386-unknown-linux-gnu",
+                              llvm::DataLayout("e-p:32:32"));
+    std::unique_ptr<llvm::Module> module =
+        generator.Generate(*result.boundProgram, "interface_sentinel_test");
+    ASSERT_NE(module, nullptr) << generator.Error();
+    llvm::GlobalVariable* sentinel =
+        module->getNamedGlobal("__flecha_empty_interface_table");
+    ASSERT_NE(sentinel, nullptr);
+    EXPECT_TRUE(sentinel->isConstant());
+    EXPECT_TRUE(sentinel->hasGlobalUnnamedAddr());
+    EXPECT_EQ(sentinel->getLinkage(), llvm::GlobalValue::LinkOnceODRLinkage);
+    EXPECT_TRUE(sentinel->getValueType()->isIntegerTy(8));
+    EXPECT_TRUE(sentinel->getType()->isPointerTy());
+    auto* initializer =
+        llvm::dyn_cast<llvm::ConstantInt>(sentinel->getInitializer());
+    ASSERT_NE(initializer, nullptr);
+    EXPECT_TRUE(initializer->isZero());
+    ASSERT_TRUE(sentinel->getAlign().has_value());
+    EXPECT_EQ(sentinel->getAlign()->value(), 4);
+
+    const std::string ir = ModuleText(*module);
+    const std::string symbol = "@__flecha_empty_interface_table";
+    const std::size_t first = ir.find(symbol);
+    ASSERT_NE(first, std::string::npos);
+    EXPECT_EQ(ir.find(symbol, first + symbol.size()), std::string::npos);
 }
 
 TEST(CodeGeneratorTests, EmitsAggregateValuesAndBoundsCheckedElementAddresses) {
