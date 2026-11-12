@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/token_type.hpp"
+#include "lowering/interface_layout.hpp"
 #include "semantic/symbol.hpp"
 #include "source/source_range.hpp"
 
@@ -975,9 +976,11 @@ struct BoundForeignSource final {
 class BoundProgram final {
    public:
     explicit BoundProgram(std::vector<std::unique_ptr<BoundFunction>> functions,
-                          std::vector<BoundForeignSource> foreignSources = {})
+                          std::vector<BoundForeignSource> foreignSources = {},
+                          std::vector<InterfaceTablePlan> interfaceTables = {})
         : _functions(std::move(functions)),
-          _foreignSources(std::move(foreignSources)) {}
+          _foreignSources(std::move(foreignSources)),
+          _interfaceTables(std::move(interfaceTables)) {}
     BoundProgram(const BoundProgram&) = delete;
     BoundProgram& operator=(const BoundProgram&) = delete;
     BoundProgram(BoundProgram&&) = default;
@@ -990,10 +993,15 @@ class BoundProgram final {
         const {
         return _foreignSources;
     }
+    [[nodiscard]] const std::vector<InterfaceTablePlan>& InterfaceTables()
+        const {
+        return _interfaceTables;
+    }
 
    private:
     std::vector<std::unique_ptr<BoundFunction>> _functions;
     std::vector<BoundForeignSource> _foreignSources;
+    std::vector<InterfaceTablePlan> _interfaceTables;
 };
 
 }  // namespace flecha::lowering

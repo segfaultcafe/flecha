@@ -1,5 +1,6 @@
 add_library(lowering STATIC
     bound_ir_dumper.cpp
+    interface_layout.cpp
     lowerer.cpp
 )
 
