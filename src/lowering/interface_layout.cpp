@@ -4,6 +4,7 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace flecha::lowering {
 namespace {
@@ -52,9 +53,17 @@ const semantic::MethodContract& EffectiveContract(
     return *result;
 }
 
-InterfaceTableLayout BuildLayout(const semantic::InterfaceType& current,
-                                 const semantic::InterfaceType& root,
-                                 const InterfaceLayoutAbi& abi) {
+InterfaceTableLayout BuildLayout(
+    const semantic::InterfaceType& current, const semantic::InterfaceType& root,
+    const InterfaceLayoutAbi& abi,
+    std::unordered_set<const semantic::InterfaceType*>& active,
+    std::unordered_set<const semantic::InterfaceType*>& seen) {
+    if (active.contains(&current))
+        InvariantFailure("interface composition contains a cycle");
+    if (!seen.insert(&current).second)
+        InvariantFailure("interface occurs through more than one parent path");
+    active.insert(&current);
+
     InterfaceTableLayout result;
     result.interfaceType = &current;
     std::size_t cursor = 0;
@@ -63,7 +72,8 @@ InterfaceTableLayout BuildLayout(const semantic::InterfaceType& current,
     for (const semantic::InterfaceReference& parent : current.parents) {
         if (parent.type == nullptr)
             InvariantFailure("interface has a null parent");
-        InterfaceTableLayout parentTable = BuildLayout(*parent.type, root, abi);
+        InterfaceTableLayout parentTable =
+            BuildLayout(*parent.type, root, abi, active, seen);
         cursor = AlignUp(cursor, parentTable.alignment);
         result.alignment = std::max(result.alignment, parentTable.alignment);
         const std::size_t offset = cursor;
@@ -93,6 +103,7 @@ InterfaceTableLayout BuildLayout(const semantic::InterfaceType& current,
     }
 
     result.size = AlignUp(cursor, result.alignment);
+    active.erase(&current);
     return result;
 }
 
@@ -228,7 +239,9 @@ InterfaceLoweringPlanner::InterfaceLoweringPlanner(InterfaceLayoutAbi abi)
 
 InterfaceTableLayout InterfaceLoweringPlanner::BuildLayout(
     const semantic::InterfaceType& root) const {
-    return lowering::BuildLayout(root, root, _abi);
+    std::unordered_set<const semantic::InterfaceType*> active;
+    std::unordered_set<const semantic::InterfaceType*> seen;
+    return lowering::BuildLayout(root, root, _abi, active, seen);
 }
 
 InterfaceTablePlan InterfaceLoweringPlanner::BuildPlan(

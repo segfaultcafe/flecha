@@ -268,6 +268,21 @@ TEST(InterfaceProviderTests, TreatsUnresolvedVirtualAsASemanticInvariant) {
         std::logic_error);
 }
 
+TEST(InterfaceLayoutTests, RejectsInvalidCompositionAsAnInternalInvariant) {
+    AnalyzedFixture fixture = AnalyzeFixture(R"(
+        interface Root {};
+        interface Left << Root {};
+        interface Right << Root {};
+        interface Diamond << Left, Right {};
+    )");
+
+    ASSERT_TRUE(fixture.diagnostics.HasErrors());
+    InterfaceLoweringPlanner planner;
+    EXPECT_THROW(
+        (void)planner.BuildLayout(FindInterface(fixture.model, "Diamond")),
+        std::logic_error);
+}
+
 TEST(InterfaceProviderTests, PlansEachClosedGenericSpecialization) {
     AnalyzedFixture fixture = AnalyzeFixture(R"(
         interface Inspectable {
