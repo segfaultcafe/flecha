@@ -713,6 +713,103 @@ TEST(SemanticInterfaceProviderCallTests,
     EXPECT_TRUE(missing);
 }
 
+TEST(SemanticInterfaceProviderCallTests,
+     RanksReceiverAndParameterOverloadsBeforeValidatingLineage) {
+    Analysis analysis = Analyze(R"(
+        interface Base {
+            i32 read(&self) default;
+            i32 read(&const self) default;
+            i32 choose(&const self, i32 value) default;
+            i32 choose(&const self, i64 value) default;
+            i32 contextual(&const self, u8 value) default;
+        };
+        i32 Base::read(&self) { return 1; }
+        i32 Base::read(&const self) { return 2; }
+        i32 Base::choose(&const self, i32 value) { return value; }
+        i32 Base::choose(&const self, i64 value) { return value.cast<i32>; }
+        i32 Base::contextual(&const self, u8 value) { return value.cast<i32>; }
+        interface Child << Base {
+            i32 read(&self) default;
+            i32 read(&const self) default;
+            i32 choose(&const self, i32 value) default;
+            i32 choose(&const self, i64 value) default;
+            i32 contextual(&const self, u8 value) default;
+        };
+        i32 Child::read(&self) override { return Base::read(self); }
+        i32 Child::read(&const self) override { return Base::read(self); }
+        i32 Child::choose(&const self, i32 value) override {
+            return Base::choose(self, value);
+        }
+        i32 Child::choose(&const self, i64 value) override {
+            return Base::choose(self, value);
+        }
+        i32 Child::contextual(&const self, u8 value) override {
+            return Base::contextual(self, 7);
+        }
+        structure Concrete << Child {};
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
+TEST(SemanticInterfaceProviderCallTests,
+     KeepsTrulyEquivalentQualifiedProvidersAmbiguous) {
+    Analysis analysis = Analyze(R"(
+        interface Left {};
+        interface Right {};
+        structure Both << Left, Right {};
+        interface Base {
+            i32 select(&const self, &const Left value) default;
+            i32 select(&const self, &const Right value) default;
+            i32 probe(&const self, &const Both value) default;
+        };
+        i32 Base::select(&const self, &const Left value) { return 1; }
+        i32 Base::select(&const self, &const Right value) { return 2; }
+        i32 Base::probe(&const self, &const Both value) { return 0; }
+        interface Child << Base {
+            i32 probe(&const self, &const Both value) final;
+        };
+        i32 Child::probe(&const self, &const Both value) override {
+            return Base::select(self, value);
+        }
+        structure Concrete << Child {};
+    )");
+
+    const auto& diagnostics = analysis.diagnostics.Diagnostics();
+    EXPECT_TRUE(std::any_of(
+        diagnostics.begin(), diagnostics.end(),
+        [](const Diagnostic& diagnostic) {
+            return diagnostic.message.find("ambiguous") != std::string::npos &&
+                   diagnostic.message.find("Base::select") != std::string::npos;
+        }));
+}
+
+TEST(SemanticInterfaceCallTests, RejectsUseAfterVariadicPackMove) {
+    Analysis analysis = Analyze(R"(
+        interface Sink { i32 take(&const self, values...) virtual; };
+        structure Owner { i32 value; };
+        void Owner::tear(&self) override {}
+        structure Concrete << Sink {};
+        i32 target(&const Concrete value, Owner owner) { return owner.value; }
+        i32 Concrete::take(&const self, values...) override {
+            return target(self, values...);
+        }
+        i32 invalid(&const Sink sink, Owner owner) {
+            sink->take(owner);
+            return owner.value;
+        }
+    )");
+
+    EXPECT_TRUE(analysis.diagnostics.HasErrors());
+    const auto& diagnostics = analysis.diagnostics.Diagnostics();
+    EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(),
+                            [](const Diagnostic& diagnostic) {
+                                return diagnostic.message.find("moved") !=
+                                       std::string::npos;
+                            }));
+}
+
 TEST(SemanticTests, DerivesDeterministicJsonFieldMetadata) {
     Analysis analysis = Analyze(R"(
         decoration json;

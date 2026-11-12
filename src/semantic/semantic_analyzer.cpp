@@ -6167,10 +6167,25 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
     const std::vector<std::unique_ptr<core::Expression>>& arguments,
     source::SourceRange range, bool isStatic, SemanticType receiver) {
     std::vector<SemanticType> actualTypes;
+    std::vector<const core::Expression*> argumentExpressions;
     actualTypes.reserve(arguments.size());
-    for (const auto& argument : arguments)
+    argumentExpressions.reserve(arguments.size());
+    for (const auto& argument : arguments) {
         actualTypes.push_back(AnalyzeExpression(*argument));
+        argumentExpressions.push_back(argument.get());
+    }
 
+    return ResolveOverloadFromTypes(displayName, candidates,
+                                    argumentExpressions, actualTypes, range,
+                                    isStatic, receiver);
+}
+
+const FunctionSymbol* SemanticAnalyzer::ResolveOverloadFromTypes(
+    std::string_view displayName,
+    const std::vector<const FunctionSymbol*>& candidates,
+    const std::vector<const core::Expression*>& arguments,
+    const std::vector<SemanticType>& actualTypes, source::SourceRange range,
+    bool isStatic, SemanticType receiver) {
     const auto isNumericLiteral = [](const core::Expression& expression) {
         const core::Expression* value = &expression;
         while (value->Kind() == core::AstNodeKind::ParenthesizedExpression)
@@ -8943,57 +8958,38 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
         const SemanticType explicitReceiver =
             AnalyzeExpression(*expression.Arguments().front());
         std::vector<const core::Expression*> trailing;
+        std::vector<SemanticType> trailingTypes;
         trailing.reserve(expression.Arguments().size() - 1);
+        trailingTypes.reserve(expression.Arguments().size() - 1);
         for (std::size_t index = 1; index < expression.Arguments().size();
-             ++index)
+             ++index) {
             trailing.push_back(expression.Arguments()[index].get());
+            trailingTypes.push_back(
+                AnalyzeExpression(*expression.Arguments()[index]));
+        }
 
-        const FunctionSymbol* provider = nullptr;
-        std::size_t selected = 0;
-        for (std::size_t index = 0; index < providers.size(); ++index) {
-            const FunctionSymbol* candidate = providers[index];
-            if (candidate->ParameterTypes().size() !=
-                expression.Arguments().size())
-                continue;
+        std::vector<const FunctionSymbol*> receiverCompatible;
+        for (const FunctionSymbol* candidate : providers) {
+            if (candidate->ParameterTypes().empty()) continue;
             const SemanticType expectedReceiver =
                 candidate->ParameterTypes().front();
-            if (!IsAssignable(expectedReceiver, explicitReceiver) &&
-                !CanReborrow(expectedReceiver, explicitReceiver))
-                continue;
-            bool matches = true;
-            for (std::size_t argument = 0; argument < trailing.size();
-                 ++argument) {
-                const SemanticType actual = AnalyzeExpression(
-                    *trailing[argument],
-                    candidate->ParameterTypes()[argument + 1]);
-                if (!IsAssignable(candidate->ParameterTypes()[argument + 1],
-                                  actual) &&
-                    !CanReborrow(candidate->ParameterTypes()[argument + 1],
-                                 actual))
-                    matches = false;
-            }
-            if (!matches) continue;
-            if (provider != nullptr) {
-                Report(diagnostics::DiagnosticCode::IncompatibleArgument,
-                       expression.Range(),
-                       "ambiguous qualified interface provider call '" +
-                           interfaceOwner->displayName +
-                           "::" + expression.Member() + "'");
-                return SemanticType::Error();
-            }
-            provider = candidate;
-            selected = index;
+            if (IsAssignable(expectedReceiver, explicitReceiver) ||
+                CanReborrow(expectedReceiver, explicitReceiver))
+                receiverCompatible.push_back(candidate);
         }
+        const std::string qualifiedName =
+            interfaceOwner->displayName + "::" + expression.Member();
+        const FunctionSymbol* provider = ResolveOverloadFromTypes(
+            qualifiedName, receiverCompatible, trailing, trailingTypes,
+            expression.Range(), false, explicitReceiver);
         if (provider == nullptr) {
-            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
-                   expression.Range(),
-                   "no provider overload of '" + interfaceOwner->displayName +
-                       "::" + expression.Member() +
-                       "' accepts the supplied arguments");
             return SemanticType::Error();
         }
 
-        const MethodContract* qualified = contracts[selected];
+        const auto selected = std::ranges::find(providers, provider);
+        if (selected == providers.end()) return SemanticType::Error();
+        const MethodContract* qualified = contracts[static_cast<std::size_t>(
+            std::distance(providers.begin(), selected))];
         const auto origin = [](const MethodContract* contract) {
             while (contract != nullptr && contract->inherited != nullptr)
                 contract = contract->inherited;
@@ -9023,6 +9019,9 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
             return SemanticType::Error();
         }
 
+        for (std::size_t index = 0; index < trailing.size(); ++index)
+            AnalyzeExpression(*trailing[index],
+                              provider->ParameterTypes()[index + 1]);
         for (std::size_t index = 0; index < expression.Arguments().size();
              ++index)
             CheckTransfer(*expression.Arguments()[index],
@@ -9182,19 +9181,19 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
             provided ? (fixed ? AnalyzeExpression(*arguments[i], expected)
                               : AnalyzeExpression(*arguments[i]))
                      : _model.TypeOf(*arguments[i]);
-        if (provided && fixed)
-            CheckTransfer(*arguments[i], expected,
-                          function->ParameterContract(i + offset) ==
-                              core::OwnershipContract::Own);
+        const core::OwnershipContract contract =
+            fixed ? function->ParameterContract(i + offset)
+                  : core::OwnershipContract::None;
+        if (provided)
+            CheckTransfer(*arguments[i], fixed ? expected : actual,
+                          contract == core::OwnershipContract::Own);
         if (fixed && !IsAssignable(expected, actual) &&
             !CanReborrow(expected, actual))
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                    arguments[i]->Range(), TypeMismatch(expected, actual));
         if (variadic && interfaceContract != nullptr) {
             shapeTypes.push_back(actual);
-            shapeContracts.push_back(
-                fixed ? function->ParameterContract(i + offset)
-                      : core::OwnershipContract::None);
+            shapeContracts.push_back(contract);
         }
     }
     if (variadic && interfaceContract != nullptr &&

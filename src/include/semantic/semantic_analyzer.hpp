@@ -100,6 +100,12 @@ class SemanticAnalyzer final {
         const std::vector<std::unique_ptr<core::Expression>>& arguments,
         source::SourceRange range, bool isStatic = true,
         SemanticType receiver = SemanticType::Error());
+    const FunctionSymbol* ResolveOverloadFromTypes(
+        std::string_view displayName,
+        const std::vector<const FunctionSymbol*>& candidates,
+        const std::vector<const core::Expression*>& arguments,
+        const std::vector<SemanticType>& actualTypes, source::SourceRange range,
+        bool isStatic, SemanticType receiver = SemanticType::Error());
     void CheckTransfer(const core::Expression& expression, SemanticType type,
                        bool consumingOwnership = false);
     void WarnForNontrivialDefault(SemanticType type, source::SourceRange range);

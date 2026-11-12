@@ -121,6 +121,33 @@ TEST(InterfaceCastTests, AcceptsTheStaticCastAndUpcastMatrix) {
     EXPECT_EQ(CountPlans(*program, "Box<string>"), 1);
 }
 
+TEST(InterfaceDispatchTests, MovesNoncopyableVariadicPackArguments) {
+    AnalyzedFixture fixture = AnalyzeFixture(R"(
+        interface Sink { void take(&const self, values...) virtual; };
+        structure Owner { i32 value; };
+        void Owner::tear(&self) override {}
+        structure Concrete << Sink {};
+        void target(&const Concrete value, Owner owner) {}
+        void Concrete::take(&const self, values...) override {
+            target(self, values...);
+        }
+        void invoke(&const Sink sink, Owner owner) {
+            sink->take(owner);
+        }
+    )");
+
+    ASSERT_FALSE(fixture.diagnostics.HasErrors());
+    std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
+    ASSERT_NE(program, nullptr);
+    const BoundFunction& invoke = FindFunction(*program, "invoke");
+    const auto& statement = static_cast<const BoundExpressionStatement&>(
+        *invoke.Body().Statements().front());
+    const auto& call = static_cast<const BoundInterfaceCallExpression&>(
+        statement.Expression());
+    ASSERT_EQ(call.Arguments().size(), 1);
+    EXPECT_EQ(call.Arguments().front()->Kind(), BoundNodeKind::MoveExpression);
+}
+
 TEST(InterfaceCastTests, RejectsEveryCastThatWouldNeedDynamicKnowledge) {
     AnalyzedFixture fixture = AnalyzeFixtureFile("invalid_casts_upcasts.fl");
 
