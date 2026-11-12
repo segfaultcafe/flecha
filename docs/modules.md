@@ -1,6 +1,6 @@
 # Modules and imports
 
-> **Flecha 0.4 blocker:** [Namespace attachment](namespace_attachment-v0.4.md)
+> **Flecha 0.4 blocker:** [Namespace Attachment](IFG/IFG_2026_0001.txt)
 > extends this model by allowing source units in physical submodule folders to
 > contribute to logical modules in an ancestor namespace. The contract is
 > accepted but not yet implemented; the rules below describe current behavior.
@@ -215,4 +215,4 @@ See [Logical module composition](module_composition.md) for the precise 0.2.1
 contract, [Longbow](longbow.md) for project workflows, and
 [the module example](../examples/modules/src/main.fl) for a runnable project.
 Library architecture conventions built on this model are collected in the
-[Idiomatic Flecha Guideline](idiomatic_flecha.md).
+[module-organization IFG](IFG/IFG_2026_0003.txt).

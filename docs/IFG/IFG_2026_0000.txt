@@ -1,0 +1,295 @@
+IFG: 2026-0000
+Title: 2026 IFG Reader and Process
+Author: Flecha Project
+Type: Process
+Topic: Governance
+Status: Accepted
+Created: 2026-11-12
+
+Abstract
+========
+
+Every IFG year begins with IFG_YYYY_0000.txt. Entry 0000 is reserved for the
+reader and index of that year: it defines how to interpret that year's IFGs,
+records the process conventions in force, and lists the documents published in
+that series. Proposals begin at 0001.
+
+A later annual reader inherits the preceding process unless it explicitly
+changes a rule. This makes each year independently discoverable without
+renumbering or rewriting older decisions.
+
+The Idiomatic Flecha Guideline, abbreviated IFG, is Flecha's permanent record
+for language proposals, library architecture, idiomatic programming rules, and
+project-wide technical process. It serves the role that PEPs serve for Python
+and RFCs serve for other language communities.
+
+An IFG records one rule or one cohesive proposal. It separates acceptance of a
+design from implementation of that design. Accepted language behavior can
+therefore be precise before the compiler implements it, and experimental
+standard-library patterns can remain provisional until real use validates
+them.
+
+Purpose
+=======
+
+Flecha needs a durable way to answer both of these questions:
+
+1. What does the language or library contract require?
+2. Which valid designs are considered idiomatic Flecha?
+
+The language specification remains the consolidated description of language
+behavior. IFGs preserve the decisions, rationale, alternatives, compatibility
+constraints, and implementation state that produced that specification.
+
+The standard library is Flecha's primary laboratory and canonical reference.
+A pattern appearing once in the standard library is evidence, not an automatic
+rule. It becomes idiomatic only through an accepted IFG.
+
+File format and location
+========================
+
+Every IFG is a UTF-8 text file stored under docs/IFG using this name:
+
+    IFG_YYYY_NNNN.txt
+
+YYYY is the creation year. NNNN is a zero-padded sequence within that year.
+0000 is reserved for the annual reader; proposals begin at 0001. The combined
+identifier is permanent, and sequence numbers are never reused within a year,
+including after rejection or withdrawal.
+
+IFGs use plain text so they remain readable without a renderer. Headings use an
+underlined RFC-style form. Indented blocks contain examples, grammar, layouts,
+or pseudocode.
+
+Required metadata
+=================
+
+Every IFG begins with these fields:
+
+    IFG: YYYY-NNNN identifier
+    Title: concise unique title
+    Author: person or project responsible for the proposal
+    Type: Standards Track, Guideline, Process, or Informational
+    Topic: Language, Library, Idiom, Tooling, Governance, or another clear area
+    Status: lifecycle status
+    Created: YYYY-MM-DD
+
+Include these fields when applicable:
+
+    Target: intended Flecha release
+    Requires: prerequisite IFG numbers
+    Supersedes: IFG numbers replaced by this document
+    Superseded-By: replacement IFG number
+    Implementation: Not Started, In Progress, Implemented, or Stable
+    Release-Impact: Blocker, Required, Optional, or None
+
+IFG types
+=========
+
+Standards Track
+---------------
+
+Defines language semantics, compiler-visible contracts, runtime ABI, package
+behavior, or a public standard-library contract. Acceptance is normative even
+when implementation remains incomplete.
+
+Guideline
+---------
+
+Defines idiomatic source organization, API design, naming, visibility,
+ownership, error handling, testing, or another programming convention.
+
+Process
+-------
+
+Defines how Flecha itself is designed, reviewed, released, documented, or
+maintained. IFG 2026-0000 is a Process IFG and the reader for the 2026 series.
+
+Informational
+-------------
+
+Records architecture, rationale, comparisons, or experience without imposing
+a normative requirement.
+
+Lifecycle
+=========
+
+Draft
+-----
+
+The proposal is being designed. Its number and file are stable, but its
+contents may change substantially.
+
+Accepted
+--------
+
+The contract or guideline is approved. Acceptance does not mean the compiler,
+standard library, or tooling already implements it.
+
+Rejected
+--------
+
+The proposal will not be adopted in its current form. The document remains as
+a historical record and explains the reason.
+
+Deferred
+--------
+
+The proposal is valid for future consideration but is not active work.
+
+Withdrawn
+---------
+
+The author or project withdrew the proposal before acceptance.
+
+Deprecated
+----------
+
+The rule remains part of history or compatibility but is no longer recommended
+for new work.
+
+Superseded
+----------
+
+Another IFG replaces the proposal. The metadata must identify its successor.
+
+Implementation state
+====================
+
+Document status and implementation state are independent.
+
+For example:
+
+    Status: Accepted
+    Implementation: Not Started
+    Release-Impact: Blocker
+
+means the design is settled, implementation has not begun, and the target
+release cannot complete without it.
+
+An implementation may be In Progress only while a tracked compiler, library,
+or tooling change is active. Implemented means the required behavior and tests
+exist. Stable means the implementation has survived its stated validation and
+compatibility period.
+
+Required document sections
+==========================
+
+A Standards Track or Guideline IFG should contain, where relevant:
+
+1. Abstract.
+2. Motivation.
+3. Definitions or terminology.
+4. Normative rule or detailed specification.
+5. Canonical examples.
+6. Invalid examples or counterexamples.
+7. Compatibility and migration.
+8. Diagnostics and tooling effects.
+9. Implementation requirements.
+10. Validation or standard-library evidence.
+11. Rejected alternatives.
+12. Open questions, if the status is Draft.
+
+Small proposals may combine sections, but they must remain precise enough to
+implement and review without relying on conversation history.
+
+Normative language
+==================
+
+The words must, must not, required, should, should not, recommended, may, and
+optional are normative when written in a normative section.
+
+Must and must not define a conformance requirement. Should and should not
+define a recommended default with legitimate exceptions. May identifies an
+allowed choice.
+
+An IFG must distinguish language correctness from architectural guidance. A
+compiler must not reject or warn about a valid architectural choice merely
+because a Guideline IFG discusses its tradeoffs, unless a separate Standards
+Track IFG explicitly defines that diagnostic.
+
+Proposal process
+================
+
+An IFG begins as a focused design discussion. Before acceptance it should:
+
+1. state the problem and scope;
+2. define observable behavior and failure behavior;
+3. cover compatibility and migration;
+4. identify compiler, runtime, tooling, and library consequences;
+5. include examples and important boundary cases; and
+6. record significant alternatives.
+
+Draft IFGs may be committed to a focused branch and reviewed through an
+ordinary pull request. Acceptance occurs through project review and is
+recorded by changing the Status field in the reviewed document.
+
+An accepted IFG is changed only for clarifications, corrected examples, or
+errata that preserve the accepted contract. A substantive semantic change
+requires a new IFG that supersedes or amends the earlier one.
+
+Implementation changes should reference the governing IFG. Completion updates
+the Implementation field only after the required tests, diagnostics,
+documentation, and affected tooling are present.
+
+When an IFG is required
+=======================
+
+An IFG is expected for:
+
+- new language syntax or semantics;
+- a compatibility-affecting change to existing language behavior;
+- public runtime or ABI contracts;
+- standard-library architecture intended to guide future modules;
+- project-wide API naming or visibility rules;
+- compiler or tooling policy that affects users or contributors; and
+- deprecation or replacement of an accepted technical contract.
+
+An IFG is normally unnecessary for:
+
+- a bug fix that restores already documented behavior;
+- a local refactor with no observable contract change;
+- an implementation detail already permitted by an accepted IFG;
+- a new private helper; or
+- an isolated documentation correction.
+
+Relationship to the specification
+=================================
+
+Accepted Standards Track IFGs are the decision authority for their focused
+subject. The consolidated SPEC.md should link to them and incorporate their
+implemented behavior at the appropriate time.
+
+Until an accepted IFG is implemented, documentation must identify the feature
+as proposed or not implemented. Compiler behavior and tests remain the
+authority for what the current toolchain actually accepts.
+
+Relationship to the standard library
+====================================
+
+The standard library is both a laboratory and a reference implementation.
+Experiments should be focused, tested, and reversible. A standard-library
+experiment becomes an idiomatic rule only after an IFG records:
+
+- the abstraction boundary;
+- ownership, borrow, allocation, and dispatch consequences;
+- contexts that validate the rule;
+- counterexamples where the rule should not be used; and
+- compatibility consequences of broader adoption.
+
+A workaround for a compiler limitation does not become idiomatic merely
+because it appears in the standard library.
+
+Index
+=====
+
+The current IFG corpus begins with:
+
+    IFG 2026-0000  2026 IFG Reader and Process
+    IFG 2026-0001  Namespace Attachment
+    IFG 2026-0002  Capability Interfaces and Explicit Ownership
+    IFG 2026-0003  Physical and Logical Module Organization
+    IFG 2026-0004  API Naming and Function Placement
+    IFG 2026-0005  Declaration Visibility and Quiver Usage
+
+This index is updated whenever an IFG is added or superseded.

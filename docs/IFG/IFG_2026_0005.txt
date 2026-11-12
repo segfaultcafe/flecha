@@ -1,0 +1,60 @@
+IFG: 2026-0005
+Title: Declaration Visibility and Quiver Usage
+Author: Flecha Project
+Type: Guideline
+Topic: Idiom
+Status: Draft
+Created: 2026-11-12
+Requires: 2026-0001
+Implementation: Not Started
+
+Abstract
+========
+
+Visibility is an architectural boundary, not a convenience for making code
+compile. Flecha code should use the narrowest visibility that honestly matches
+its intended consumers.
+
+Rule
+====
+
+- Leave a declaration unmarked when only its logical module needs it.
+- Use quiver when multiple logical modules in one effective namespace need a
+  shared contract or implementation detail.
+- Use export only when callers outside the quiver are intended consumers of a
+  supported API.
+- Do not use export only to avoid arranging modules or imports correctly.
+- Do not use quiver for data that should remain an invariant of one type or one
+  logical module.
+- Public APIs must expose only nominal types whose visibility supports that
+  API.
+
+Namespace attachment
+====================
+
+Under IFG 2026-0001, the effective namespace determines quiver membership. A
+deeply stored attached source receives the same quiver view as a direct source
+in that effective namespace.
+
+Attachment grants no additional private access and does not inherit imports.
+Unmarked declarations remain available only inside their exact logical module,
+including its direct and attached source units.
+
+Library architecture
+====================
+
+Large sublibraries should keep most implementation declarations unmarked,
+share deliberate cross-module machinery with quiver, and export a small
+cohesive surface.
+
+Validation
+==========
+
+Before this IFG becomes Accepted, standard-library trials should demonstrate:
+
+- an implementation split across source units of one logical module;
+- cooperation between separate modules through quiver;
+- a deliberately small exported facade;
+- diagnostics for accidental visibility leaks; and
+- unchanged visibility after moving a source into an attached submodule
+  folder.

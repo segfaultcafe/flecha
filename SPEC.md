@@ -1141,8 +1141,7 @@ the named module in a strict ancestor namespace. The attachment namespace
 becomes the effective namespace for canonical module identity, multifile
 assembly, imports, quiver visibility, and logical test pairing. The accepted
 contract is a v0.4 release blocker and is specified in
-[namespace attachment](docs/namespace_attachment-v0.4.md); it is not yet
-implemented.
+[IFG 2026-0001](docs/IFG/IFG_2026_0001.txt); it is not yet implemented.
 
 `private module name;` remains accepted with a deprecation warning and
 restricts importing the complete logical module to its quiver. All contributing

@@ -10,7 +10,7 @@ implementation rules in
 
 Broader architectural guidance for interfaces, modules, function placement,
 naming, and visibility lives in the
-[Idiomatic Flecha Guideline](idiomatic_flecha.md).
+[Idiomatic Flecha Guideline series](IFG/IFG_2026_0000.txt).
 
 For Flecha source formatting in `std/`, also follow the
 [standard-library development guidelines](std_development.md).

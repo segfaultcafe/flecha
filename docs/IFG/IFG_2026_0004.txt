@@ -1,0 +1,73 @@
+IFG: 2026-0004
+Title: API Naming and Function Placement
+Author: Flecha Project
+Type: Guideline
+Topic: Idiom
+Status: Draft
+Created: 2026-11-12
+Implementation: Not Started
+
+Abstract
+========
+
+Public names should communicate whether an operation is a free algorithm, a
+receiver operation, a capability, or a concrete value. Function placement
+should reflect ownership of the operation rather than convenience at the call
+site.
+
+Naming
+======
+
+- Modules, source files, and free functions use snake_case.
+- Structures, enums, interfaces, error families, callable types, and type
+  parameters use PascalCase.
+- Members and member functions use camelCase.
+- Acronyms behave as words: isUtf8, not isUTF8.
+- Capability interfaces prefer role names such as Readable, Writable, or
+  Hashable when that spelling is clear.
+- Concrete and owning types prefer nouns such as File, Socket, Reader, and
+  Arena.
+- Boolean queries should read as predicates and avoid ambiguous negation.
+- Names should not repeat a module name when qualification already supplies
+  the context.
+
+Local-variable and parameter naming remains open until real standard-library
+use is consolidated. This IFG does not fix that rule speculatively.
+
+Function placement
+==================
+
+Use a member when the operation is fundamentally about one receiver's state,
+invariants, identity, or capability contract.
+
+Members are preferred for:
+
+- observing or mutating a receiver;
+- maintaining a type invariant;
+- constructors and lifecycle operations defined by the type;
+- interface slots and their concrete implementations; and
+- operations whose borrow result is naturally tied to the receiver.
+
+Use a free function when the operation is symmetric, combines several peer
+values, or is an algorithm whose meaning does not belong to one receiver.
+
+Free functions are preferred for:
+
+- algorithms over several equal participants;
+- conversions where neither side clearly owns the operation;
+- orchestration across multiple capabilities;
+- package-level entry points; and
+- operations that should work for types outside the defining module without
+  expanding their member surface.
+
+Example
+=======
+
+reader.read() belongs to the receiver capability. copy(&Readable, &Writable,
+buffer) coordinates two peer capabilities and belongs as a free function.
+
+Compatibility
+=============
+
+Existing public APIs remain subject to compatibility review. This guideline
+does not authorize opportunistic renaming.

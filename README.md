@@ -324,13 +324,13 @@ Makefile                Convenient build, test, and example targets
 - [`docs/decorations.md`](docs/decorations.md) — declarative decoration metadata and the JSON derivation proof of concept
 - [`docs/interfaces-v0.4.md`](docs/interfaces-v0.4.md) — proposed v0.4
   signature-only interfaces, composition, conformance, and dispatch
-- [`docs/namespace_attachment-v0.4.md`](docs/namespace_attachment-v0.4.md) —
-  accepted v0.4 namespace attachment for organizing logical modules across
-  physical submodule folders
+- [`docs/IFG/IFG_2026_0001.txt`](docs/IFG/IFG_2026_0001.txt) — accepted v0.4
+  Namespace Attachment for organizing logical modules across physical
+  submodule folders
 - [`docs/behaviors-v0.4.md`](docs/behaviors-v0.4.md) — proposed v0.4 typed
   decoration behaviors that derive interface implementations
-- [`docs/idiomatic_flecha.md`](docs/idiomatic_flecha.md) — living guidance for
-  interfaces, module architecture, naming, function placement, and visibility
+- [`docs/IFG/IFG_2026_0000.txt`](docs/IFG/IFG_2026_0000.txt) — the 2026 reader
+  and process for the Idiomatic Flecha Guideline RFC series
 - [`docs/module_composition.md`](docs/module_composition.md) — corrected 0.2.1 logical-module model
 - [`docs/memory_safety_invariants.md`](docs/memory_safety_invariants.md) — normative safety properties and the concurrency gate
 - [`docs/memory_model.md`](docs/memory_model.md) — memory model proposal and implementation status

@@ -1,0 +1,72 @@
+IFG: 2026-0002
+Title: Capability Interfaces and Explicit Ownership
+Author: Flecha Project
+Type: Guideline
+Topic: Idiom
+Status: Draft
+Created: 2026-11-12
+Target: Flecha 0.4
+Requires: interface dispatch
+Implementation: Not Started
+
+Abstract
+========
+
+An API should accept an interface reference when it needs only a capability.
+Ownership should remain explicit in a concrete type, owning adapter, or generic
+parameter.
+
+Rule
+====
+
+Capability interfaces should be minimal and orthogonal. Primitive operations
+belong in virtual slots. Algorithms derived from those primitives may be
+default methods when their meaning belongs to every implementation.
+
+Concrete values should normally be returned from constructors and factories.
+An interface reference may be returned only when its data identity and borrow
+origin remain valid under the declared contract.
+
+A structure should not store a borrowed interface reference merely to erase a
+type when doing so obscures the owner or extends the required lifetime.
+
+Dynamic dispatch belongs at an abstraction boundary. Calls within a concrete
+implementation should remain direct unless dynamic redispatch is part of the
+contract.
+
+Example
+=======
+
+    interface Readable {
+        (usize, error) read(&self, []u8 destination) virtual;
+        error readExact(&self, []u8 destination) default;
+    };
+
+    interface Writable {
+        (usize, error) write(&self, []const u8 source) virtual;
+        error writeAll(&self, []const u8 source) default;
+    };
+
+    (usize, error) copy(
+        &Readable source,
+        &Writable destination,
+        []u8 buffer,
+    );
+
+Naming
+======
+
+Capability interfaces should use adjectives when natural, such as Readable and
+Writable. Concrete resources and owning adapters should use nouns such as File,
+Reader, Writer, or BufferedReader.
+
+Validation
+==========
+
+The first validation target is std::io. The initial experiment should keep the
+existing closure-owning reader and writer structures as adapters, introduce
+capability interfaces, make copy depend on those interfaces, and then let
+files, buffers, pipes, and sockets conform directly where ownership permits.
+
+The experiment must record dispatch, allocation, ownership, borrow, aggregate
+return, and compatibility consequences before this IFG can become Accepted.

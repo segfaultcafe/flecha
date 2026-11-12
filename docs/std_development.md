@@ -2,7 +2,7 @@
 
 These guidelines apply to Flecha source in `std/`. Follow the naming conventions
 in [library API style](library_api_style.md) and the architectural conventions
-in the [Idiomatic Flecha Guideline](idiomatic_flecha.md) as well.
+in the [Idiomatic Flecha Guideline series](IFG/IFG_2026_0000.txt) as well.
 
 ## Document public contracts at their declarations
 
