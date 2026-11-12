@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
+#include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/Support/Program.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -146,6 +149,53 @@ bool InterfaceTableValueCalls(llvm::Constant* value,
 bool InterfaceTableCalls(llvm::GlobalVariable& table,
                          std::string_view targetName) {
     return InterfaceTableValueCalls(table.getInitializer(), targetName);
+}
+
+std::vector<llvm::InsertValueInst*> InterfaceReferences(
+    llvm::Function& function) {
+    std::vector<llvm::InsertValueInst*> result;
+    for (llvm::BasicBlock& block : function)
+        for (llvm::Instruction& instruction : block) {
+            auto* insert = llvm::dyn_cast<llvm::InsertValueInst>(&instruction);
+            auto* type =
+                insert == nullptr
+                    ? nullptr
+                    : llvm::dyn_cast<llvm::StructType>(insert->getType());
+            if (type != nullptr && type->getNumElements() == 2 &&
+                type->getElementType(0)->isPointerTy() &&
+                type->getElementType(1)->isPointerTy() &&
+                insert->getNumIndices() == 1 && *insert->idx_begin() == 1)
+                result.push_back(insert);
+        }
+    return result;
+}
+
+llvm::Value* InterfaceReferenceDataValue(llvm::InsertValueInst& reference) {
+    auto* data =
+        llvm::dyn_cast<llvm::InsertValueInst>(reference.getAggregateOperand());
+    return data == nullptr ? nullptr : data->getInsertedValueOperand();
+}
+
+std::pair<llvm::GlobalVariable*, std::int64_t> GlobalTableAndOffset(
+    llvm::Value* value, const llvm::DataLayout& layout) {
+    if (auto* global = llvm::dyn_cast<llvm::GlobalVariable>(value))
+        return {global, 0};
+    auto* gep = llvm::dyn_cast<llvm::GEPOperator>(value);
+    if (gep == nullptr) return {nullptr, 0};
+    llvm::APInt offset(layout.getIndexSizeInBits(0), 0, true);
+    if (!gep->accumulateConstantOffset(layout, offset)) return {nullptr, 0};
+    auto* global =
+        llvm::dyn_cast<llvm::GlobalVariable>(gep->getPointerOperand());
+    return {global, offset.getSExtValue()};
+}
+
+std::optional<std::int64_t> DynamicTableAdjustment(
+    llvm::Value* value, const llvm::DataLayout& layout) {
+    auto* gep = llvm::dyn_cast<llvm::GEPOperator>(value);
+    if (gep == nullptr) return std::nullopt;
+    llvm::APInt offset(layout.getIndexSizeInBits(0), 0, true);
+    if (!gep->accumulateConstantOffset(layout, offset)) return std::nullopt;
+    return offset.getSExtValue();
 }
 
 }  // namespace
@@ -4500,6 +4550,202 @@ TEST(CodeGeneratorTests, EmitsInterfaceProviderThunksWithoutRuntimeWork) {
                        static_cast<llvm::Constant*>(adjusted)));
     }
     EXPECT_EQ(adjustedEntries, 2);
+}
+
+TEST(CodeGeneratorTests,
+     BuildsConcreteInterfaceCastsFromMaterializedLocations) {
+    GeneratedSource result = GenerateInterfaceFixture("valid_casts_upcasts.fl");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const llvm::DataLayout& layout = result.module->getDataLayout();
+    llvm::Function* castMulti = result.module->getFunction("castMulti");
+    ASSERT_NE(castMulti, nullptr);
+    std::vector<llvm::InsertValueInst*> casts = InterfaceReferences(*castMulti);
+    ASSERT_EQ(casts.size(), 8);
+
+    llvm::Value* data = InterfaceReferenceDataValue(*casts[0]);
+    ASSERT_NE(data, nullptr);
+    for (llvm::InsertValueInst* cast : casts)
+        EXPECT_EQ(InterfaceReferenceDataValue(*cast), data);
+
+    std::vector<std::pair<llvm::GlobalVariable*, std::int64_t>> tables;
+    for (llvm::InsertValueInst* cast : casts)
+        tables.push_back(
+            GlobalTableAndOffset(cast->getInsertedValueOperand(), layout));
+    ASSERT_NE(tables[0].first, nullptr);
+    EXPECT_EQ(tables[0], tables[1]);
+    EXPECT_EQ(tables[0].second, 0);
+    EXPECT_EQ(tables[2].first, tables[0].first);
+    EXPECT_EQ(tables[2].second, 6 * static_cast<std::int64_t>(sizeof(void*)));
+    EXPECT_EQ(tables[3].first, tables[0].first);
+    EXPECT_EQ(tables[3].second, 2 * static_cast<std::int64_t>(sizeof(void*)));
+    EXPECT_EQ(tables[4].first->getName(), "__flecha_empty_interface_table");
+    EXPECT_EQ(tables[5].first, tables[4].first);
+    EXPECT_EQ(tables[6].first, tables[4].first);
+    EXPECT_EQ(tables[7], tables[3]);
+
+    llvm::Function* castEmptyOnly = result.module->getFunction("castEmptyOnly");
+    ASSERT_NE(castEmptyOnly, nullptr);
+    const auto allEmptyCasts = InterfaceReferences(*castEmptyOnly);
+    ASSERT_EQ(allEmptyCasts.size(), 1);
+    EXPECT_EQ(GlobalTableAndOffset(allEmptyCasts[0]->getInsertedValueOperand(),
+                                   layout)
+                  .first,
+              tables[4].first);
+    std::size_t compositeCount = 0;
+    for (const llvm::GlobalVariable& global : result.module->globals())
+        if (global.getName().starts_with("__flecha_interface_tables."))
+            ++compositeCount;
+    EXPECT_EQ(compositeCount, 6);
+
+    EXPECT_TRUE(
+        InterfaceTableCalls(*tables[0].first, "MultiConcrete::concrete"));
+    EXPECT_TRUE(InterfaceTableCalls(*tables[0].first, "Prefix::prefix"));
+    EXPECT_TRUE(InterfaceTableCalls(*tables[0].first, "Pad::pad"));
+    EXPECT_TRUE(InterfaceTableCalls(*tables[0].first, "Root::aggregate"));
+    EXPECT_TRUE(InterfaceTableCalls(*tables[0].first, "OtherRoot::other"));
+
+    auto tableFor = [&](std::string_view functionName) {
+        llvm::Function* function = result.module->getFunction(
+            llvm::StringRef(functionName.data(), functionName.size()));
+        EXPECT_NE(function, nullptr);
+        if (function == nullptr)
+            return static_cast<llvm::GlobalVariable*>(nullptr);
+        const auto references = InterfaceReferences(*function);
+        EXPECT_FALSE(references.empty());
+        return references.empty()
+                   ? static_cast<llvm::GlobalVariable*>(nullptr)
+                   : GlobalTableAndOffset(
+                         references[0]->getInsertedValueOperand(), layout)
+                         .first;
+    };
+    llvm::GlobalVariable* boxI32 = tableFor("castBoxI32");
+    llvm::GlobalVariable* boxString = tableFor("castBoxString");
+    llvm::GlobalVariable* enumeration = tableFor("castEnum");
+    ASSERT_NE(boxI32, nullptr);
+    ASSERT_NE(boxString, nullptr);
+    ASSERT_NE(enumeration, nullptr);
+    EXPECT_NE(boxI32, boxString);
+    EXPECT_TRUE(
+        enumeration->getName().starts_with("__flecha_interface_tables.enum."));
+
+    for (llvm::Instruction& instruction : llvm::instructions(*castMulti))
+        EXPECT_FALSE(llvm::isa<llvm::CallBase>(instruction));
+}
+
+TEST(CodeGeneratorTests, RetargetsCastOffsetsWithTheMaterializedAbi) {
+    GeneratedSource result = GenerateInterfaceFixture("valid_casts_upcasts.fl");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    LlvmCodeGenerator generator;
+    generator.ConfigureTarget("i386-unknown-linux-gnu",
+                              llvm::DataLayout("e-p:32:32"));
+    std::unique_ptr<llvm::Module> module =
+        generator.Generate(*result.boundProgram, "interface_cast_i386");
+    ASSERT_NE(module, nullptr) << generator.Error();
+    EXPECT_TRUE(VerifyModule(*module).empty());
+    llvm::Function* concrete = module->getFunction("castMulti");
+    ASSERT_NE(concrete, nullptr);
+    const auto concreteCasts = InterfaceReferences(*concrete);
+    ASSERT_EQ(concreteCasts.size(), 8);
+    EXPECT_EQ(GlobalTableAndOffset(concreteCasts[2]->getInsertedValueOperand(),
+                                   module->getDataLayout())
+                  .second,
+              24);
+    EXPECT_EQ(GlobalTableAndOffset(concreteCasts[3]->getInsertedValueOperand(),
+                                   module->getDataLayout())
+                  .second,
+              8);
+
+    llvm::Function* upcast = module->getFunction("upcastRoot");
+    ASSERT_NE(upcast, nullptr);
+    const auto upcasts = InterfaceReferences(*upcast);
+    ASSERT_EQ(upcasts.size(), 6);
+    EXPECT_EQ(DynamicTableAdjustment(upcasts[0]->getInsertedValueOperand(),
+                                     module->getDataLayout()),
+              4);
+    EXPECT_EQ(DynamicTableAdjustment(upcasts[1]->getInsertedValueOperand(),
+                                     module->getDataLayout()),
+              8);
+}
+
+TEST(CodeGeneratorTests, UpcastsOnlyAdjustTheMaterializedTablePointer) {
+    GeneratedSource result = GenerateInterfaceFixture("valid_casts_upcasts.fl");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const llvm::DataLayout& layout = result.module->getDataLayout();
+    llvm::Function* root = result.module->getFunction("upcastRoot");
+    ASSERT_NE(root, nullptr);
+    const auto casts = InterfaceReferences(*root);
+    ASSERT_EQ(casts.size(), 6);
+    for (llvm::InsertValueInst* cast : casts) {
+        auto* extracted = llvm::dyn_cast<llvm::ExtractValueInst>(
+            InterfaceReferenceDataValue(*cast));
+        ASSERT_NE(extracted, nullptr);
+        ASSERT_EQ(extracted->getNumIndices(), 1);
+        EXPECT_EQ(*extracted->idx_begin(), 0);
+    }
+    EXPECT_EQ(
+        DynamicTableAdjustment(casts[0]->getInsertedValueOperand(), layout),
+        static_cast<std::int64_t>(sizeof(void*)));
+    EXPECT_EQ(
+        DynamicTableAdjustment(casts[1]->getInsertedValueOperand(), layout),
+        2 * static_cast<std::int64_t>(sizeof(void*)));
+    EXPECT_EQ(
+        DynamicTableAdjustment(casts[2]->getInsertedValueOperand(), layout),
+        static_cast<std::int64_t>(sizeof(void*)));
+    const auto empty =
+        GlobalTableAndOffset(casts[3]->getInsertedValueOperand(), layout);
+    ASSERT_NE(empty.first, nullptr);
+    EXPECT_EQ(empty.first->getName(), "__flecha_empty_interface_table");
+    const auto emptyAncestor =
+        GlobalTableAndOffset(casts[4]->getInsertedValueOperand(), layout);
+    EXPECT_EQ(emptyAncestor.first, empty.first);
+    EXPECT_EQ(
+        DynamicTableAdjustment(casts[5]->getInsertedValueOperand(), layout),
+        2 * static_cast<std::int64_t>(sizeof(void*)));
+
+    llvm::Function* parent = result.module->getFunction("upcastParent");
+    ASSERT_NE(parent, nullptr);
+    const auto parentCasts = InterfaceReferences(*parent);
+    ASSERT_EQ(parentCasts.size(), 2);
+    EXPECT_FALSE(DynamicTableAdjustment(
+                     parentCasts[0]->getInsertedValueOperand(), layout)
+                     .has_value());
+    EXPECT_EQ(DynamicTableAdjustment(parentCasts[1]->getInsertedValueOperand(),
+                                     layout),
+              static_cast<std::int64_t>(sizeof(void*)));
+
+    llvm::Function* other = result.module->getFunction("upcastOther");
+    ASSERT_NE(other, nullptr);
+    const auto otherCasts = InterfaceReferences(*other);
+    ASSERT_EQ(otherCasts.size(), 1);
+    EXPECT_FALSE(
+        DynamicTableAdjustment(otherCasts[0]->getInsertedValueOperand(), layout)
+            .has_value());
+
+    for (llvm::Function* function : {root, parent, other})
+        for (llvm::Instruction& instruction : llvm::instructions(*function))
+            EXPECT_FALSE(llvm::isa<llvm::CallBase>(instruction));
+}
+
+TEST(CodeGeneratorTests, LeavesProgramsWithoutInterfacesFreeOfInfrastructure) {
+    GeneratedSource result =
+        Generate("i32 identity(i32 value) { return value; }");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    for (const llvm::GlobalVariable& global : result.module->globals())
+        EXPECT_FALSE(global.getName().starts_with("__flecha_interface_"));
+    for (const llvm::Function& function : *result.module)
+        EXPECT_FALSE(
+            function.getName().starts_with("__flecha_interface_adapter."));
 }
 
 TEST(CodeGeneratorTests, EmitsAggregateValuesAndBoundsCheckedElementAddresses) {

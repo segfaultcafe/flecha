@@ -1261,6 +1261,30 @@ class BorrowChecker final {
                                       expression.Range());
                     return Evaluate(cast.Value());
                 }
+                if (resultType.Kind() == SemanticTypeKind::Reference &&
+                    resultType.Target()->Kind() ==
+                        SemanticTypeKind::Interface) {
+                    if (valueType.Kind() == SemanticTypeKind::Structure ||
+                        valueType.Kind() == SemanticTypeKind::Enum)
+                        return Borrow(Place(cast.Value()),
+                                      !resultType.Target()->IsConst(),
+                                      expression.Range());
+                    const core::Expression& source = Unwrap(cast.Value());
+                    const Symbol* symbol = Named(source);
+                    if (TracksBorrow(symbol)) {
+                        const Handle& handle = (*_state)[symbol];
+                        if (handle.moved)
+                            Report(Code::MovedReference, source.Range(),
+                                   "use of possibly moved reference '" +
+                                       symbol->Name() + "'");
+                        return Borrow({handle.origins, symbol, 0},
+                                      !resultType.Target()->IsConst(),
+                                      expression.Range());
+                    }
+                    return Borrow(Evaluate(cast.Value()),
+                                  !resultType.Target()->IsConst(),
+                                  expression.Range());
+                }
                 (void)Evaluate(cast.Value());
                 return {};
             }

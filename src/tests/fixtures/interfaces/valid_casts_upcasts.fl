@@ -1,0 +1,174 @@
+// Cast fixture boundaries:
+// - Empty nodes exercise the shared sentinel and zero-storage ancestors.
+// - Root's parents have deliberately different subtable sizes and offsets.
+// - MultiConcrete declares an empty, a large, and a small root in that order.
+interface EmptyAncestor {};
+
+interface EmptyBranch << EmptyAncestor {};
+
+interface EmptyRoot {};
+
+interface Prefix {
+    i32 prefix(&self, i32 value) default;
+};
+
+i32 Prefix::prefix(&self, i32 value) {
+    return value;
+}
+
+interface Pad {
+    i32 pad(&const self) final;
+};
+
+i32 Pad::pad(&const self) {
+    return 7;
+}
+
+interface Grand {
+    i32 grand(&self) default;
+};
+
+i32 Grand::grand(&self) {
+    return 11;
+}
+
+interface Parent << Pad, Grand {
+    i32 parent(&self) default;
+};
+
+i32 Parent::parent(&self) {
+    return 13;
+}
+
+structure CastResult {
+    i64 value;
+};
+
+CastResult CastResult::init(i64 value) override {
+    return build CastResult { self.value = value; };
+}
+
+interface Root << EmptyBranch, Prefix, Parent {
+    i32 concrete(&self, i32 value) virtual;
+    CastResult aggregate(&const self, i64 value) default;
+};
+
+CastResult Root::aggregate(&const self, i64 value) {
+    return CastResult::init(value);
+}
+
+interface OtherBase {
+    i32 otherBase(&self) default;
+};
+
+i32 OtherBase::otherBase(&self) {
+    return 17;
+}
+
+interface OtherRoot << OtherBase {
+    i32 other(&self) default;
+};
+
+i32 OtherRoot::other(&self) {
+    return 19;
+}
+
+structure EmptyOnly << EmptyRoot {};
+
+structure NoPayload << Root {};
+
+i32 NoPayload::concrete(&self, i32 value) override {
+    return value;
+}
+
+structure SimplePayload << Root {
+    i32 value;
+};
+
+i32 SimplePayload::concrete(&self, i32 value) override {
+    return self->value + value;
+}
+
+structure MultiConcrete << EmptyRoot, Root, OtherRoot {
+    i8 narrow;
+    i64 wide;
+};
+
+i32 MultiConcrete::concrete(&self, i32 value) override {
+    return value;
+}
+
+structure Box<T> << Root {
+    T value;
+};
+
+i32 Box<T>::concrete(&self, i32 value) override {
+    return value;
+}
+
+enum CastMode << Root {
+    default Off,
+    On,
+}
+
+i32 CastMode::concrete(&self, i32 value) override {
+    return value;
+}
+
+// Inferred and explicit declarations cover concrete-to-root, second/last
+// root, transitive ancestor, empty root, empty ancestor, and repeated casts.
+void castMulti(MultiConcrete value) {
+    inferred := value as &Root;
+    &Root explicit = value as &Root;
+    other := value as &OtherRoot;
+    ancestor := value as &Grand;
+    emptyRoot := value as &EmptyRoot;
+    emptyBranch := value as &EmptyBranch;
+    emptyAncestor := value as &EmptyAncestor;
+    repeated := value as &Grand;
+}
+
+void castNoPayload(NoPayload value) {
+    root := value as &Root;
+}
+
+void castEmptyOnly(EmptyOnly value) {
+    empty := value as &EmptyRoot;
+}
+
+void castSimplePayload(SimplePayload value) {
+    root := value as &Root;
+}
+
+void castEnum(CastMode value) {
+    root := value as &Root;
+    ancestor := value as &Grand;
+}
+
+void castBoxI32(Box<i32> value) {
+    root := value as &Root;
+}
+
+void castBoxString(Box<string> value) {
+    root := value as &Root;
+}
+
+// Interface upcasts cover direct and transitive parents, non-zero offsets,
+// an empty ancestor, repeated casts, and each non-empty root of a composition.
+void upcastRoot(&Root value) {
+    direct := value as &Parent;
+    transitive := value as &Grand;
+    padded := value as &Pad;
+    emptyBranch := value as &EmptyBranch;
+    empty := value as &EmptyAncestor;
+    repeated := value as &Grand;
+}
+
+void upcastParent(&Parent value) {
+    pad := value as &Pad;
+    grand := value as &Grand;
+}
+
+void upcastOther(&OtherRoot value) {
+    base := value as &OtherBase;
+}

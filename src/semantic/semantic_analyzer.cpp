@@ -4696,6 +4696,16 @@ SemanticType SemanticAnalyzer::AnalyzeCast(
                    std::string(target.Name()) + "'");
         return SemanticType::Error();
     }
+    if (target.Kind() == SemanticTypeKind::Reference &&
+        target.Target()->Kind() == SemanticTypeKind::Interface &&
+        (source.Kind() == SemanticTypeKind::Structure ||
+         source.Kind() == SemanticTypeKind::Enum) &&
+        !IsSafePlace(expression.Value())) {
+        Report(diagnostics::DiagnosticCode::InvalidCast, expression.Range(),
+               "casting concrete storage to an interface reference requires "
+               "an addressable value");
+        return SemanticType::Error();
+    }
     if (_currentFunction && target.Kind() == SemanticTypeKind::String &&
         source.Kind() != SemanticTypeKind::String)
         _forbiddenZeroEffects.insert(_currentFunction);

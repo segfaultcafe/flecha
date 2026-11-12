@@ -5,7 +5,9 @@
 #include <string>
 #include <vector>
 
+#include "codegen/llvm_code_generator.hpp"
 #include "core/module_loader.hpp"
+#include "lowering/lowerer.hpp"
 #include "semantic/semantic_analyzer.hpp"
 
 namespace {
@@ -1077,6 +1079,61 @@ TEST_F(ModuleTests, ClosedSpecializationIdentityQualifiesHomonymousArguments) {
     EXPECT_EQ(identities[1].find("$generic_alias"), std::string::npos);
     EXPECT_EQ(identities[0].find("$specialization"), std::string::npos);
     EXPECT_EQ(identities[1].find("$specialization"), std::string::npos);
+}
+
+TEST_F(ModuleTests, HomonymousModuleTypesCastToTheSharedEmptySentinel) {
+    Write("contracts.fl", "module contracts; export interface Marker {};");
+    Write("left.fl", R"(module left;
+        @imports :: root::contracts;
+        export structure Item << contracts::Marker { i32 value; };
+    )");
+    Write("right.fl", R"(module right;
+        @imports :: root::contracts;
+        export structure Item << contracts::Marker { i64 value; };
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::contracts :: root::left :: root::right;
+        void castLeft(left::Item value) {
+            marker := value as &contracts::Marker;
+        }
+        void castRight(right::Item value) {
+            marker := value as &contracts::Marker;
+        }
+    )");
+
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit = loader.Load(root / "main.fl", root, {});
+    ASSERT_FALSE(diagnostics.HasErrors());
+    flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+    auto model = analyzer.Analyze(*unit);
+    ASSERT_FALSE(diagnostics.HasErrors());
+    flecha::lowering::Lowerer lowerer;
+    auto program = lowerer.Lower(*unit, model, diagnostics);
+    ASSERT_NE(program, nullptr);
+    flecha::codegen::LlvmCodeGenerator generator;
+    auto module = generator.Generate(*program, "homonymous_empty_casts");
+    ASSERT_NE(module, nullptr) << generator.Error();
+    EXPECT_TRUE(flecha::codegen::VerifyModule(*module).empty());
+
+    llvm::GlobalVariable* sentinel =
+        module->getNamedGlobal("__flecha_empty_interface_table");
+    ASSERT_NE(sentinel, nullptr);
+    std::size_t sentinelCasts = 0;
+    for (const llvm::Function& function : *module)
+        for (const llvm::BasicBlock& block : function)
+            for (const llvm::Instruction& instruction : block) {
+                const auto* insert =
+                    llvm::dyn_cast<llvm::InsertValueInst>(&instruction);
+                if (insert != nullptr && insert->getNumIndices() == 1 &&
+                    *insert->idx_begin() == 1 &&
+                    insert->getInsertedValueOperand() == sentinel)
+                    ++sentinelCasts;
+            }
+    EXPECT_EQ(sentinelCasts, 2);
+    for (const llvm::GlobalVariable& global : module->globals())
+        EXPECT_FALSE(
+            global.getName().starts_with("__flecha_interface_tables."));
 }
 
 TEST_F(ModuleTests, GenericVisibilityIsCheckedAtDefinitionAndUse) {

@@ -1,5 +1,6 @@
 #include "semantic/semantic_type.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <unordered_set>
 #include <utility>
@@ -541,6 +542,26 @@ bool CanReborrow(SemanticType destination, SemanticType source) {
 
 bool CanExplicitlyCast(SemanticType source, SemanticType destination) {
     if (source.IsError() || destination.IsError()) return true;
+    if (destination.Kind() == SemanticTypeKind::Reference &&
+        destination.Target()->Kind() == SemanticTypeKind::Interface) {
+        const InterfaceType* target = destination.Target()->Interface();
+        const auto contains = [target](const auto& interfaces) {
+            return std::find(interfaces.begin(), interfaces.end(), target) !=
+                   interfaces.end();
+        };
+        if (source.Kind() == SemanticTypeKind::Structure)
+            return (destination.Target()->IsConst() || !source.IsConst()) &&
+                   contains(source.Structure()->conformanceClosure);
+        if (source.Kind() == SemanticTypeKind::Enum)
+            return (destination.Target()->IsConst() || !source.IsConst()) &&
+                   contains(source.Enum()->conformanceClosure);
+        if (source.Kind() != SemanticTypeKind::Reference ||
+            source.Target()->Kind() != SemanticTypeKind::Interface ||
+            (!destination.Target()->IsConst() && source.Target()->IsConst()))
+            return false;
+        const InterfaceType* origin = source.Target()->Interface();
+        return origin == target || contains(origin->ancestors);
+    }
     if (source.Kind() == SemanticTypeKind::Slice &&
         source.Target()->WithoutConst().Kind() == SemanticTypeKind::U8 &&
         destination.Kind() == SemanticTypeKind::StringView)
