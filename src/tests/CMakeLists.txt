@@ -6,6 +6,7 @@ add_executable(test_flecha
     test_codegen.cpp
     test_diagnostics.cpp
     test_analyzer_transport.cpp
+    test_interface_lowering.cpp
     test_lowering.cpp
     test_longbow.cpp
     test_lsp_protocol.cpp
