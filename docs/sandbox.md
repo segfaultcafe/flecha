@@ -3,7 +3,7 @@
 The development sandbox provides a disposable Linux environment with the
 current checkout of Flecha installed. It includes:
 
-- `flecha` and `longbow` on `PATH`
+- `flecha`, `longbow`, and `flecha-lsp` on `PATH`
 - the bundled standard library, discovered automatically by Longbow
 - Clang 18 as Flecha's native linker
 - Neovim 0.12.6 with the Flecha plugin and the host configuration when present
@@ -63,6 +63,7 @@ This starts the container if necessary and opens an interactive login shell in
 ```sh
 flecha --version
 longbow --version
+command -v flecha-lsp
 cd /workspace/hello
 longbow check
 longbow run

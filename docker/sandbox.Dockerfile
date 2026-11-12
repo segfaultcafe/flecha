@@ -27,8 +27,14 @@ RUN cmake -S . -B /tmp/flecha-build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/opt/flecha \
         "-DFLECHA_BUILD_VERSION=${FLECHA_BUILD_VERSION}" \
-    && cmake --build /tmp/flecha-build --parallel \
-    && cmake --install /tmp/flecha-build
+    && cmake --build /tmp/flecha-build \
+        --target flecha longbow flecha-lsp --parallel \
+    && cmake --install /tmp/flecha-build \
+    && cmake \
+        -DFLECHA_COMPILER=/opt/flecha/bin/flecha \
+        -DFLECHA_LSP=/opt/flecha/bin/flecha-lsp \
+        -DTEST_ROOT=/tmp/flecha-lsp-smoke \
+        -P cmake/verify_lsp_stdio.cmake
 
 FROM ubuntu:24.04
 
@@ -95,6 +101,7 @@ WORKDIR /workspace
 
 RUN flecha --version \
     && longbow --version \
+    && command -v flecha-lsp \
     && nvim --version \
     && longbow new hello \
     && cd hello \
