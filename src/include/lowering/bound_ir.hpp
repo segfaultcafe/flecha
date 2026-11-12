@@ -53,6 +53,7 @@ enum class BoundNodeKind {
     OverflowingArithmeticExpression,
     AssignmentExpression,
     CallExpression,
+    InterfaceCallExpression,
     IndirectCallExpression,
     AllocationExpression,
     StringViewOperationExpression,
@@ -676,6 +677,34 @@ class BoundCallExpression final : public BoundExpression {
     std::vector<std::unique_ptr<BoundExpression>> _arguments;
 };
 
+class BoundInterfaceCallExpression final : public BoundExpression {
+   public:
+    BoundInterfaceCallExpression(
+        source::SourceRange range, const semantic::MethodContract& contract,
+        std::unique_ptr<BoundExpression> receiver,
+        std::vector<std::unique_ptr<BoundExpression>> arguments)
+        : BoundExpression(range, contract.result.WithoutConst()),
+          _contract(contract),
+          _receiver(std::move(receiver)),
+          _arguments(std::move(arguments)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::InterfaceCallExpression;
+    }
+    [[nodiscard]] const semantic::MethodContract& Contract() const {
+        return _contract;
+    }
+    [[nodiscard]] const BoundExpression& Receiver() const { return *_receiver; }
+    [[nodiscard]] const std::vector<std::unique_ptr<BoundExpression>>&
+    Arguments() const {
+        return _arguments;
+    }
+
+   private:
+    const semantic::MethodContract& _contract;
+    std::unique_ptr<BoundExpression> _receiver;
+    std::vector<std::unique_ptr<BoundExpression>> _arguments;
+};
+
 class BoundIndirectCallExpression final : public BoundExpression {
    public:
     BoundIndirectCallExpression(
@@ -975,12 +1004,15 @@ struct BoundForeignSource final {
 
 class BoundProgram final {
    public:
-    explicit BoundProgram(std::vector<std::unique_ptr<BoundFunction>> functions,
-                          std::vector<BoundForeignSource> foreignSources = {},
-                          std::vector<InterfaceTablePlan> interfaceTables = {})
+    explicit BoundProgram(
+        std::vector<std::unique_ptr<BoundFunction>> functions,
+        std::vector<BoundForeignSource> foreignSources = {},
+        std::vector<InterfaceTablePlan> interfaceTables = {},
+        std::vector<InterfaceTableLayout> interfaceLayouts = {})
         : _functions(std::move(functions)),
           _foreignSources(std::move(foreignSources)),
-          _interfaceTables(std::move(interfaceTables)) {}
+          _interfaceTables(std::move(interfaceTables)),
+          _interfaceLayouts(std::move(interfaceLayouts)) {}
     BoundProgram(const BoundProgram&) = delete;
     BoundProgram& operator=(const BoundProgram&) = delete;
     BoundProgram(BoundProgram&&) = default;
@@ -997,11 +1029,16 @@ class BoundProgram final {
         const {
         return _interfaceTables;
     }
+    [[nodiscard]] const std::vector<InterfaceTableLayout>& InterfaceLayouts()
+        const {
+        return _interfaceLayouts;
+    }
 
    private:
     std::vector<std::unique_ptr<BoundFunction>> _functions;
     std::vector<BoundForeignSource> _foreignSources;
     std::vector<InterfaceTablePlan> _interfaceTables;
+    std::vector<InterfaceTableLayout> _interfaceLayouts;
 };
 
 }  // namespace flecha::lowering

@@ -549,6 +549,22 @@ class Dumper final {
                 _stream << ")";
                 break;
             }
+            case BoundNodeKind::InterfaceCallExpression: {
+                const auto& call =
+                    static_cast<const BoundInterfaceCallExpression&>(
+                        expression);
+                _stream << "(call_interface "
+                        << call.Contract().declaredBy->displayName
+                        << "::" << call.Contract().key.name << " ";
+                WriteExpression(call.Receiver());
+                for (const std::unique_ptr<BoundExpression>& argument :
+                     call.Arguments()) {
+                    _stream << " ";
+                    WriteExpression(*argument);
+                }
+                _stream << ")";
+                break;
+            }
             case BoundNodeKind::IndirectCallExpression: {
                 const auto& call =
                     static_cast<const BoundIndirectCallExpression&>(expression);
