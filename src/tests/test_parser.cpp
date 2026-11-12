@@ -2197,6 +2197,50 @@ TEST(ParserTests, ParsesModuleImportsAndExportsOnOneLineOrMultipleLines) {
     }
 }
 
+TEST(ParserTests, ParsesOptionalNamespaceAttachmentBeforeImports) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "module gee; under namespace root::foo; "
+        "@imports :: root::support; void run() {}",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    EXPECT_EQ(unit->moduleName, "gee");
+    ASSERT_TRUE(unit->namespaceAttachment.has_value());
+    EXPECT_EQ(unit->namespaceAttachment->path,
+              (std::vector<std::string>{"root", "foo"}));
+    ASSERT_EQ(unit->namespaceAttachment->segmentRanges.size(), 2);
+    EXPECT_EQ(unit->namespaceAttachment->segmentRanges[0].start.column, 29);
+    EXPECT_EQ(unit->namespaceAttachment->segmentRanges[1].start.column, 35);
+    ASSERT_EQ(unit->imports.size(), 1);
+}
+
+TEST(ParserTests, AcceptsRootNamespaceAttachment) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource("module gee; under namespace root; void run() {}",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_TRUE(unit->namespaceAttachment.has_value());
+    EXPECT_EQ(unit->namespaceAttachment->path,
+              (std::vector<std::string>{"root"}));
+}
+
+TEST(ParserTests, DiagnosesMalformedAndDuplicateNamespaceAttachments) {
+    for (const std::string& source : {
+             "module gee; under root::foo; void run() {}",
+             "module gee; under namespace root::; void run() {}",
+             "under namespace root; void run() {}",
+             "module gee; under namespace root; under namespace root::foo; "
+             "void run() {}",
+             "module root::foo::gee; void run() {}",
+         }) {
+        DiagnosticBag diagnostics;
+        (void)ParseSource(source, diagnostics);
+        EXPECT_TRUE(diagnostics.HasErrors()) << source;
+    }
+}
+
 TEST(ParserTests, ParsesQuiverVisibilityOnTopLevelDeclarations) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

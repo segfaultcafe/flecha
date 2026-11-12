@@ -895,6 +895,11 @@ struct Import final {
     std::string resolvedModule;
     source::SourceRange range;
 };
+struct NamespaceAttachment final {
+    std::vector<std::string> path;
+    std::vector<source::SourceRange> segmentRanges;
+    source::SourceRange range;
+};
 struct Module final {
     std::string id;
     std::string sourceId;
@@ -907,6 +912,11 @@ struct Module final {
     bool test = false;
     std::string testPair;
     std::vector<Import> imports;
+    // Attached modules keep their physical source namespace for diagnostics
+    // and tooling while quiverId/quiverName describe logical ownership.
+    std::string physicalQuiverId;
+    std::string physicalQuiverName;
+    std::optional<NamespaceAttachment> namespaceAttachment;
 };
 
 enum class ForeignLanguage { C, Assembly };
@@ -933,6 +943,7 @@ class CompilationUnit final : public AstNode {
     }
     std::string moduleName;
     bool privateModule = false;
+    std::optional<NamespaceAttachment> namespaceAttachment;
     std::vector<Import> imports;
     std::vector<Module> modules;
     std::vector<ForeignSource> foreignSources;

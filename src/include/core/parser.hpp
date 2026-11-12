@@ -29,12 +29,17 @@ class Parser {
     }
     [[nodiscard]] const std::string& ModuleName() const { return _moduleName; }
     [[nodiscard]] bool PrivateModule() const { return _modulePrivate; }
+    [[nodiscard]] const std::optional<NamespaceAttachment>&
+    NamespaceAttachmentClause() const {
+        return _namespaceAttachment;
+    }
     [[nodiscard]] std::unique_ptr<CompilationUnit> Parse();
 
    private:
     bool _headerParsed = false;
     std::string _moduleName;
     bool _modulePrivate = false;
+    std::optional<NamespaceAttachment> _namespaceAttachment;
     std::vector<Import> _imports;
     std::set<std::string> _importAliases;
     [[nodiscard]] const Token& Current() const;

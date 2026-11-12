@@ -23,7 +23,7 @@ syntax match flechaTypeSetName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaTest test
 syntax keyword flechaConditional if else also match
 syntax keyword flechaRepeat while for loop range
-syntax keyword flechaStatement return yield proceed break defer enum structure interface decoration build
+syntax keyword flechaStatement return yield proceed break defer enum structure interface decoration build under namespace
 syntax keyword flechaStatement module nextgroup=flechaModuleName skipwhite
 syntax match flechaModuleName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaJump jumpto nextgroup=flechaJumpTarget skipwhite

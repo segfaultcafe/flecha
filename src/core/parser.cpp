@@ -2838,6 +2838,40 @@ void Parser::ParseHeader() {
         if (name) moduleName = name->value;
         Consume(TokenType::SemiColon, "';' after module declaration");
     }
+    while (Check(TokenType::Under)) {
+        const Token& under = Advance();
+        NamespaceAttachment attachment;
+        attachment.range.start = under.range.start;
+        Consume(TokenType::Namespace, "'namespace' after 'under'");
+        const Token* first =
+            Consume(TokenType::Identifier, "namespace attachment root");
+        if (first) {
+            attachment.path.push_back(first->value);
+            attachment.segmentRanges.push_back(first->range);
+        }
+        while (Match(TokenType::Scope)) {
+            const Token* segment =
+                Consume(TokenType::Identifier, "namespace path segment");
+            if (!segment) break;
+            attachment.path.push_back(segment->value);
+            attachment.segmentRanges.push_back(segment->range);
+        }
+        const Token* semicolon = Consume(
+            TokenType::SemiColon, "';' after namespace attachment clause");
+        attachment.range.end =
+            semicolon ? semicolon->range.end : Current().range.start;
+        if (_namespaceAttachment) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::DuplicateDeclaration,
+                attachment.range, "duplicate 'under namespace' clause");
+        } else {
+            _namespaceAttachment = std::move(attachment);
+        }
+    }
+    if (_namespaceAttachment && moduleName.empty())
+        _diagnostics.Report(diagnostics::DiagnosticCode::UnexpectedToken,
+                            _namespaceAttachment->range,
+                            "'under namespace' requires a module declaration");
     if (Check(TokenType::At) && Peek(1).type == TokenType::Identifier &&
         Peek(1).value == "imports") {
         Advance();
@@ -2995,6 +3029,7 @@ std::unique_ptr<CompilationUnit> Parser::Parse() {
         std::move(declarations));
     unit->moduleName = std::move(_moduleName);
     unit->privateModule = _modulePrivate;
+    unit->namespaceAttachment = std::move(_namespaceAttachment);
     unit->imports = std::move(_imports);
     unit->foreignSources = std::move(foreignSources);
     return unit;
