@@ -43,10 +43,16 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
     InterfaceLoweringPlanner interfacePlanner;
     std::vector<InterfaceTablePlan> interfaceTables =
         interfacePlanner.BuildPlans(semanticModel);
+    std::vector<InterfaceTableLayout> interfaceLayouts;
+    interfaceLayouts.reserve(semanticModel.Interfaces().size());
+    for (const std::unique_ptr<semantic::InterfaceType>& interfaceType :
+         semanticModel.Interfaces())
+        interfaceLayouts.push_back(
+            interfacePlanner.BuildLayout(*interfaceType));
     _semanticModel = nullptr;
-    return std::make_unique<BoundProgram>(std::move(functions),
-                                          std::move(foreignSources),
-                                          std::move(interfaceTables));
+    return std::make_unique<BoundProgram>(
+        std::move(functions), std::move(foreignSources),
+        std::move(interfaceTables), std::move(interfaceLayouts));
 }
 
 std::unique_ptr<BoundFunction> Lowerer::LowerFunction(
@@ -682,6 +688,24 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 return cursor;
             }
             if (const auto* method = _semanticModel->MethodFor(member)) {
+                if (const auto* contract =
+                        _semanticModel->InterfaceMethodFor(member)) {
+                    std::vector<std::unique_ptr<BoundExpression>> arguments;
+                    const auto sourceArguments =
+                        _semanticModel->ArgumentsFor(member);
+                    arguments.reserve(sourceArguments.size());
+                    for (std::size_t index = 0; index < sourceArguments.size();
+                         ++index) {
+                        arguments.push_back(LowerExpression(
+                            *sourceArguments[index],
+                            method->ParameterTypes()[index + 1]));
+                    }
+                    return std::make_unique<BoundInterfaceCallExpression>(
+                        expression.Range(), *contract,
+                        LowerExpression(member.Receiver(),
+                                        method->ParameterTypes()[0]),
+                        std::move(arguments));
+                }
                 std::vector<std::unique_ptr<BoundExpression>> arguments;
                 if (method->HasReceiver()) {
                     const semantic::SemanticType parameter =

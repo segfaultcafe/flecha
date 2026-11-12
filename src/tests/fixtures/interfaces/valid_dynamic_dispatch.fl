@@ -1,0 +1,385 @@
+// Dynamic-dispatch boundaries:
+// - Empty ancestors consume no table storage.
+// - Root places a final-method subtable before Counter, forcing a non-zero
+//   table adjustment for inherited Counter calls.
+// - Counter::relay redispatches its virtual step through the active table.
+// - Separate roots use homonymous method names with distinct MethodKeys.
+
+structure DispatchResult {
+    i64 value;
+};
+
+DispatchResult DispatchResult::init(i64 value) override {
+    return build DispatchResult { self.value = value; };
+}
+
+interface EmptyAncestor {};
+interface EmptyBranch << EmptyAncestor {};
+
+interface Padding {
+    i32 pad(&const self) final;
+};
+
+i32 Padding::pad(&const self) {
+    return 5;
+}
+
+interface Counter {
+    i32 step(&const self, i32 value) virtual;
+    void bump(&self, i32 value) virtual;
+    i32 relay(&const self, i32 value) default;
+};
+
+i32 Counter::relay(&const self, i32 value) {
+    return self->step(value);
+}
+
+interface Root << EmptyBranch, Padding, Counter {
+    i32 choose(&const self, i32 value) default;
+    DispatchResult aggregate(&const self, i64 value) default;
+};
+
+i32 Root::choose(&const self, i32 value) {
+    return value;
+}
+
+DispatchResult Root::aggregate(&const self, i64 value) {
+    return DispatchResult::init(value);
+}
+
+interface OtherRoot {
+    i32 choose(&const self, stringv value) virtual;
+};
+
+structure DispatchConcrete << Root, OtherRoot {
+    i32 bias;
+};
+
+i32 DispatchConcrete::step(&const self, i32 value) override {
+    return self->bias + value;
+}
+
+void DispatchConcrete::bump(&self, i32 value) override {
+    self->bias = self->bias + value;
+}
+
+i32 DispatchConcrete::choose(&const self, stringv value) override {
+    return self->bias;
+}
+
+structure ReorderedConcrete << OtherRoot, Root {
+    i32 bias;
+};
+
+i32 ReorderedConcrete::step(&const self, i32 value) override {
+    return self->bias + value;
+}
+
+void ReorderedConcrete::bump(&self, i32 value) override {
+    self->bias = self->bias + value;
+}
+
+i32 ReorderedConcrete::choose(&const self, stringv value) override {
+    return self->bias;
+}
+
+interface FirstRoot {
+    i32 first(&const self) default;
+};
+
+i32 FirstRoot::first(&const self) {
+    return 1;
+}
+
+structure ThirdRootConcrete << FirstRoot, OtherRoot, Root {
+    i32 bias;
+};
+
+i32 ThirdRootConcrete::step(&const self, i32 value) override {
+    return self->bias + value;
+}
+
+void ThirdRootConcrete::bump(&self, i32 value) override {
+    self->bias = self->bias + value;
+}
+
+i32 ThirdRootConcrete::choose(&const self, stringv value) override {
+    return self->bias;
+}
+
+enum DispatchMode << Root {
+    default Off,
+    On,
+}
+
+i32 DispatchMode::step(&const self, i32 value) override {
+    return value;
+}
+
+void DispatchMode::bump(&self, i32 value) override {}
+
+structure DispatchBox<T> << Root {
+    T value;
+};
+
+i32 DispatchBox<T>::step(&const self, i32 value) override {
+    return value;
+}
+
+void DispatchBox<T>::bump(&self, i32 value) override {}
+
+interface Borrowing {
+    &const i32 borrow(&const self) virtual <-self;
+};
+
+structure Borrowed << Borrowing {
+    i32 value;
+};
+
+&const i32 Borrowed::borrow(&const self) override <-self {
+    return &self->value;
+}
+
+// A consumer may dispatch through an interface even when this compilation
+// unit materializes no concrete table for that interface.
+interface ExternalOnly {
+    i32 external(&const self) virtual;
+};
+
+i32 callExternalOnly(&const ExternalOnly value) {
+    return value->external();
+}
+
+interface OverloadedReceiver {
+    i32 read(&self) virtual;
+    i32 read(&const self) virtual;
+};
+
+structure OverloadConcrete << OverloadedReceiver {
+    i32 value;
+};
+
+i32 OverloadConcrete::read(&self) override {
+    self->value = self->value + 1;
+    return self->value;
+}
+
+i32 OverloadConcrete::read(&const self) override {
+    return self->value;
+}
+
+i32 callMutableOverload(&OverloadedReceiver value) {
+    return value->read();
+}
+
+i32 callConstOverload(&const OverloadedReceiver value) {
+    return value->read();
+}
+
+// One canonical Stage slot is successively provided by default and final
+// bodies without appending new slots.
+interface Stage {
+    i32 stage(&const self) virtual;
+};
+
+interface DefaultStage << Stage {
+    i32 stage(&const self) default;
+};
+
+i32 DefaultStage::stage(&const self) override {
+    return 11;
+}
+
+interface SecondDefaultStage << DefaultStage {
+    i32 stage(&const self) default;
+};
+
+i32 SecondDefaultStage::stage(&const self) override {
+    return 12;
+}
+
+interface FinalStage << SecondDefaultStage {
+    i32 stage(&const self) final;
+};
+
+i32 FinalStage::stage(&const self) override {
+    return 13;
+}
+
+structure FinalConcrete << FinalStage {};
+
+interface DirectVirtual {
+    i32 sealed(&const self) virtual;
+};
+
+interface DirectFinal << DirectVirtual {
+    i32 sealed(&const self) final;
+};
+
+i32 DirectFinal::sealed(&const self) override {
+    return 17;
+}
+
+structure DirectFinalConcrete << DirectFinal {};
+
+i32 callStep(&Counter value, i32 input) {
+    return value->step(input);
+}
+
+i32 callRootStep(&Root value, i32 input) {
+    return value->step(input);
+}
+
+i32 callRelay(&const Root value, i32 input) {
+    return value->relay(input);
+}
+
+void callBump(&Root value, i32 input) {
+    value->bump(input);
+}
+
+i32 callRootChoice(&const Root value, i32 input) {
+    return value->choose(input);
+}
+
+i32 callOtherChoice(&const OtherRoot value, stringv input) {
+    return value->choose(input);
+}
+
+DispatchResult callAggregate(&const Root value, i64 input) {
+    return value->aggregate(input);
+}
+
+&const i32 callBorrow(&const Borrowing value) <-value {
+    return value->borrow();
+}
+
+i32 callStage(&const Stage value) {
+    return value->stage();
+}
+
+void deferStep(&const Counter value, i32 input) {
+    defer value->step(input);
+}
+
+i32 dispatchConcrete(DispatchConcrete value) {
+    root := value as &const Root;
+    counter := root as &const Counter;
+    other := value as &const OtherRoot;
+    first := root->step(1);
+    second := counter->step(2);
+    third := other->choose("value");
+    return first + second + third;
+}
+
+i32 directConcrete(&const DispatchConcrete value) {
+    return value->step(3);
+}
+
+i32 dispatchEnum(DispatchMode value) {
+    root := value as &Root;
+    return root->step(4);
+}
+
+i32 dispatchBoxI32(DispatchBox<i32> value) {
+    root := value as &Root;
+    return root->step(5);
+}
+
+i32 dispatchBoxString(DispatchBox<string> value) {
+    root := value as &Root;
+    return root->step(6);
+}
+
+i32 dispatchReordered(ReorderedConcrete value) {
+    root := value as &Root;
+    return root->step(7);
+}
+
+i32 dispatchThirdRoot(ThirdRootConcrete value) {
+    root := value as &Root;
+    return root->step(8);
+}
+
+i32 dispatchFinal(FinalConcrete value) {
+    finalView := value as &FinalStage;
+    stageView := finalView as &Stage;
+    return stageView->stage();
+}
+
+i32 dispatchDirectFinal(DirectFinalConcrete value) {
+    finalView := value as &DirectFinal;
+    baseView := finalView as &DirectVirtual;
+    return baseView->sealed();
+}
+
+i32 main() {
+    concrete := DispatchConcrete::init();
+    concrete.bias = 10;
+    {
+        root := concrete as &Root;
+        if root->step(2) != 12 { return 1; }
+        if root->relay(3) != 13 { return 2; }
+        if root->pad() != 5 { return 3; }
+        if root->choose(9) != 9 { return 4; }
+        aggregate := root->aggregate(21);
+        if aggregate.value != 21 { return 5; }
+        counter := root as &Counter;
+        if counter->step(4) != 14 { return 6; }
+    }
+    {
+        other := concrete as &OtherRoot;
+        if other->choose("value") != 10 { return 7; }
+    }
+    {
+        root := concrete as &Root;
+        defer root->bump(2);
+    }
+    if concrete.bias != 12 { return 8; }
+
+    mode := DispatchMode.On;
+    {
+        root := mode as &Root;
+        if root->step(30) != 30 { return 9; }
+    }
+
+    box := DispatchBox<i32>::init();
+    {
+        root := box as &Root;
+        if root->step(31) != 31 { return 10; }
+    }
+
+    reordered := ReorderedConcrete::init();
+    reordered.bias = 1;
+    if dispatchReordered(reordered) != 8 { return 15; }
+
+    thirdRoot := ThirdRootConcrete::init();
+    thirdRoot.bias = 2;
+    if dispatchThirdRoot(thirdRoot) != 10 { return 16; }
+
+    finalConcrete := FinalConcrete::init();
+    {
+        finalView := finalConcrete as &FinalStage;
+        stageView := finalView as &Stage;
+        if stageView->stage() != 13 { return 11; }
+    }
+
+    directFinal := DirectFinalConcrete::init();
+    {
+        finalView := directFinal as &DirectFinal;
+        baseView := finalView as &DirectVirtual;
+        if baseView->sealed() != 17 { return 12; }
+    }
+
+    overload := OverloadConcrete::init();
+    overload.value = 20;
+    {
+        mutableView := overload as &OverloadedReceiver;
+        if mutableView->read() != 21 { return 13; }
+    }
+    {
+        constView := overload as &const OverloadedReceiver;
+        if constView->read() != 21 { return 14; }
+    }
+    return 42;
+}

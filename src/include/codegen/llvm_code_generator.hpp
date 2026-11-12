@@ -32,12 +32,14 @@ class LlvmCodeGenerator final {
     [[nodiscard]] const std::string& Error() const { return _error; }
 
    private:
+    enum class DeferredCallKind { Direct, Indirect, Interface };
+
     struct DeferredCall final {
         const lowering::BoundDeferStatement* statement;
         llvm::StructType* recordType;
         std::vector<semantic::SemanticType> captureTypes;
         std::vector<bool> captureOwnershipTransfers;
-        bool indirect;
+        DeferredCallKind kind;
     };
     struct OwnedStorage final {
         llvm::Value* storage;
@@ -72,6 +74,11 @@ class LlvmCodeGenerator final {
     struct InterfaceUpcastLocation final {
         std::ptrdiff_t tableAdjustment;
         bool usesEmptySentinel;
+    };
+
+    struct InterfaceDispatchSlotLocation final {
+        std::size_t byteOffset;
+        std::size_t tableAdjustment;
     };
 
     bool EmitInto(const lowering::BoundExpression& expression,
@@ -110,6 +117,9 @@ class LlvmCodeGenerator final {
         llvm::StructType* aggregateType, std::size_t rootIndex,
         std::size_t rootOffset, const lowering::InterfaceTableLayout& layout,
         llvm::StructType* materializedType = nullptr);
+    bool RecordInterfaceDispatchLayout(
+        const lowering::InterfaceTableLayout& layout,
+        llvm::StructType* materializedType);
     [[nodiscard]] llvm::Value* MaterializedInterfaceTable(
         semantic::SemanticType concrete,
         const semantic::InterfaceType& interfaceType);
@@ -175,6 +185,9 @@ class LlvmCodeGenerator final {
                                     llvm::Value* index);
     llvm::Value* EmitIndirectCall(
         const lowering::BoundIndirectCallExpression& expression,
+        llvm::Value* destination = nullptr);
+    llvm::Value* EmitInterfaceCall(
+        const lowering::BoundInterfaceCallExpression& expression,
         llvm::Value* destination = nullptr);
     llvm::Value* EmitExpression(const lowering::BoundExpression& expression);
     [[nodiscard]] llvm::Value* EmitLiteral(
@@ -281,6 +294,10 @@ class LlvmCodeGenerator final {
                        std::unordered_map<const semantic::InterfaceType*,
                                           InterfaceUpcastLocation>>
         _interfaceUpcasts;
+    std::unordered_map<const semantic::InterfaceType*,
+                       std::unordered_map<const semantic::MethodContract*,
+                                          InterfaceDispatchSlotLocation>>
+        _interfaceDispatchSlots;
     std::unordered_map<const semantic::VariableSymbol*, llvm::Value*>
         _variables;
     std::unordered_map<std::string, llvm::BasicBlock*> _positions;

@@ -198,6 +198,14 @@ std::optional<std::int64_t> DynamicTableAdjustment(
     return offset.getSExtValue();
 }
 
+std::vector<llvm::CallBase*> IndirectCalls(llvm::Function& function) {
+    std::vector<llvm::CallBase*> result;
+    for (llvm::Instruction& instruction : llvm::instructions(function))
+        if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+            if (call->getCalledFunction() == nullptr) result.push_back(call);
+    return result;
+}
+
 }  // namespace
 
 TEST(LlvmCodeGeneratorTests, EmitsVerifiedFunctionsLocalsCallsAndReturns) {
@@ -4550,6 +4558,135 @@ TEST(CodeGeneratorTests, EmitsInterfaceProviderThunksWithoutRuntimeWork) {
                        static_cast<llvm::Constant*>(adjusted)));
     }
     EXPECT_EQ(adjustedEntries, 2);
+}
+
+TEST(CodeGeneratorTests,
+     DispatchesInterfaceMethodsThroughMaterializedCanonicalSlots) {
+    GeneratedSource result =
+        GenerateInterfaceFixture("valid_dynamic_dispatch.fl");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const llvm::DataLayout& layout = result.module->getDataLayout();
+
+    llvm::Function* directView = result.module->getFunction("callStep");
+    llvm::Function* rootView = result.module->getFunction("callRootStep");
+    llvm::Function* relay = result.module->getFunction("Counter::relay");
+    llvm::Function* aggregate = result.module->getFunction("callAggregate");
+    llvm::Function* borrowed = result.module->getFunction("callBorrow");
+    ASSERT_NE(directView, nullptr);
+    ASSERT_NE(rootView, nullptr);
+    ASSERT_NE(relay, nullptr);
+    ASSERT_NE(aggregate, nullptr);
+    ASSERT_NE(borrowed, nullptr);
+
+    const auto directCalls = IndirectCalls(*directView);
+    ASSERT_EQ(directCalls.size(), 1);
+    ASSERT_EQ(directCalls[0]->arg_size(), 3);
+    EXPECT_TRUE(directCalls[0]->getArgOperand(0)->getType()->isPointerTy());
+    EXPECT_TRUE(directCalls[0]->getArgOperand(1)->getType()->isPointerTy());
+    EXPECT_TRUE(directCalls[0]->getArgOperand(2)->getType()->isIntegerTy(32));
+    EXPECT_FALSE(
+        DynamicTableAdjustment(directCalls[0]->getArgOperand(1), layout)
+            .has_value());
+
+    const auto rootCalls = IndirectCalls(*rootView);
+    ASSERT_EQ(rootCalls.size(), 1);
+    ASSERT_EQ(rootCalls[0]->arg_size(), 3);
+    EXPECT_EQ(DynamicTableAdjustment(rootCalls[0]->getArgOperand(1), layout),
+              static_cast<std::int64_t>(sizeof(void*)));
+
+    const auto relayCalls = IndirectCalls(*relay);
+    ASSERT_EQ(relayCalls.size(), 1);
+    EXPECT_EQ(relayCalls[0]->arg_size(), 3);
+
+    const auto aggregateCalls = IndirectCalls(*aggregate);
+    ASSERT_EQ(aggregateCalls.size(), 1);
+    EXPECT_TRUE(aggregateCalls[0]->getType()->isVoidTy());
+    ASSERT_EQ(aggregateCalls[0]->arg_size(), 4);
+    EXPECT_EQ(aggregateCalls[0]->getArgOperand(0), aggregate->getArg(0));
+    EXPECT_TRUE(aggregateCalls[0]->getArgOperand(1)->getType()->isPointerTy());
+    EXPECT_TRUE(aggregateCalls[0]->getArgOperand(2)->getType()->isPointerTy());
+    EXPECT_TRUE(
+        aggregateCalls[0]->getArgOperand(3)->getType()->isIntegerTy(64));
+
+    const auto borrowCalls = IndirectCalls(*borrowed);
+    ASSERT_EQ(borrowCalls.size(), 1);
+    EXPECT_TRUE(borrowCalls[0]->getType()->isPointerTy());
+
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_EQ(ir.find("flecha_runtime_v1_alloc"), std::string::npos);
+    EXPECT_EQ(ir.find("inttoptr"), std::string::npos);
+    EXPECT_EQ(ir.find("ptrtoint"), std::string::npos);
+}
+
+TEST(CodeGeneratorTests,
+     KeepsConcreteCallsDirectAndDispatchesEveryConcreteInterfaceShape) {
+    GeneratedSource result =
+        GenerateInterfaceFixture("valid_dynamic_dispatch.fl");
+
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+
+    llvm::Function* direct = result.module->getFunction("directConcrete");
+    ASSERT_NE(direct, nullptr);
+    EXPECT_TRUE(IndirectCalls(*direct).empty());
+    bool calledConcrete = false;
+    for (llvm::Instruction& instruction : llvm::instructions(*direct))
+        if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+            calledConcrete |= call->getCalledFunction() != nullptr &&
+                              call->getCalledFunction()->getName() ==
+                                  "DispatchConcrete::step";
+    EXPECT_TRUE(calledConcrete);
+
+    for (std::string_view name :
+         {"dispatchConcrete", "dispatchEnum", "dispatchBoxI32",
+          "dispatchBoxString", "dispatchReordered", "dispatchThirdRoot",
+          "dispatchFinal", "dispatchDirectFinal", "deferStep"}) {
+        llvm::Function* function = result.module->getFunction(
+            llvm::StringRef(name.data(), name.size()));
+        ASSERT_NE(function, nullptr) << name;
+        EXPECT_FALSE(IndirectCalls(*function).empty()) << name;
+    }
+    llvm::Function* externalOnly =
+        result.module->getFunction("callExternalOnly");
+    ASSERT_NE(externalOnly, nullptr);
+    EXPECT_EQ(IndirectCalls(*externalOnly).size(), 1);
+    for (std::string_view name : {"callMutableOverload", "callConstOverload"}) {
+        llvm::Function* function = result.module->getFunction(
+            llvm::StringRef(name.data(), name.size()));
+        ASSERT_NE(function, nullptr) << name;
+        EXPECT_EQ(IndirectCalls(*function).size(), 1) << name;
+    }
+}
+
+TEST(CodeGeneratorTests, RetargetsInterfaceDispatchSlotsToI386) {
+    GeneratedSource result =
+        GenerateInterfaceFixture("valid_dynamic_dispatch.fl");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    LlvmCodeGenerator generator;
+    generator.ConfigureTarget("i386-unknown-linux-gnu",
+                              llvm::DataLayout("e-p:32:32"));
+    std::unique_ptr<llvm::Module> module =
+        generator.Generate(*result.boundProgram, "interface_dispatch_i386");
+    ASSERT_NE(module, nullptr) << generator.Error();
+    EXPECT_TRUE(VerifyModule(*module).empty());
+
+    llvm::Function* rootView = module->getFunction("callRootStep");
+    ASSERT_NE(rootView, nullptr);
+    const auto calls = IndirectCalls(*rootView);
+    ASSERT_EQ(calls.size(), 1);
+    EXPECT_EQ(DynamicTableAdjustment(calls[0]->getArgOperand(1),
+                                     module->getDataLayout()),
+              4);
+    const std::string ir = ModuleText(*module);
+    EXPECT_NE(ir.find("interface.slot.address = getelementptr inbounds i8, "
+                      "ptr %interface.table, i32 4"),
+              std::string::npos);
 }
 
 TEST(CodeGeneratorTests,
