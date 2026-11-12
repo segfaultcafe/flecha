@@ -1,0 +1,27 @@
+module providers;
+@imports :: root::contracts;
+
+export structure Value << contracts::Final {
+    i32 value;
+};
+
+protected i32 Value::hidden(&const self) override {
+    return self->value;
+}
+
+export enum Mode << contracts::Base {
+    default Off,
+    On,
+}
+
+protected i32 Mode::hidden(&const self) override {
+    return 5;
+}
+
+export structure Box<T> << contracts::Base {
+    T value;
+};
+
+protected i32 Box<T>::hidden(&const self) override {
+    return 7;
+}

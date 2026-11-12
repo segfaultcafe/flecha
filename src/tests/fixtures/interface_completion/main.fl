@@ -1,0 +1,19 @@
+module main;
+@imports :: root::contracts :: root::providers :: root::consumer
+    :: root::other;
+
+i32 main() {
+    value := providers::Value::init();
+    value.value = 39;
+    if consumer::consume(&value) != 42 { return 1; }
+
+    mode := providers::Mode.On;
+    if consumer::consume(&mode) != 6 { return 2; }
+
+    box := providers::Box<i32>::init();
+    if consumer::consume(&box) != 8 { return 3; }
+    if !consumer::isBase<providers::Value>() { return 4; }
+    otherValue := other::Value::init();
+    if other::consume(&otherValue) != 9 { return 5; }
+    return 42;
+}

@@ -1,0 +1,26 @@
+module contracts;
+
+export interface Base {
+    protected i32 hidden(&const self) virtual;
+    i32 run(&const self) default;
+};
+
+i32 Base::run(&const self) {
+    return self->hidden() + 1;
+}
+
+export interface Child << Base {
+    i32 run(&const self) default;
+};
+
+i32 Child::run(&const self) override {
+    return Base::run(self) + 1;
+}
+
+export interface Final << Child {
+    i32 run(&const self) final;
+};
+
+i32 Final::run(&const self) override {
+    return Child::run(self) + 1;
+}

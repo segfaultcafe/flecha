@@ -390,6 +390,15 @@ add_test(
 )
 
 add_test(
+    NAME NativeRuntimeTests.InterfaceCompletion
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interface_completion
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/interface_completion_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_completion.cmake
+)
+
+add_test(
     NAME InterfaceFixtureTests.InvalidLoweringProviderDiagnostics
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>

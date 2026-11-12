@@ -1,0 +1,10 @@
+module consumer;
+@imports :: root::contracts;
+
+export i32 consume(&const contracts::Base value) {
+    return value->run();
+}
+
+export bool isBase<T: contracts::Base>() {
+    return T.isof<contracts::Base>;
+}

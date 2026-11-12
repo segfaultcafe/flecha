@@ -1,0 +1,15 @@
+module other;
+
+export interface Base {
+    i32 run(&const self) virtual;
+};
+
+export structure Value << Base {};
+
+i32 Value::run(&const self) override {
+    return 9;
+}
+
+export i32 consume(&const Base value) {
+    return value->run();
+}
