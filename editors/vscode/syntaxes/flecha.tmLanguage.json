@@ -8,6 +8,7 @@
     {"include": "#characters"},
     {"include": "#imports"},
     {"include": "#tests"},
+    {"include": "#nominalDeclarations"},
     {"include": "#methodDeclarations"},
     {"include": "#functionDeclarations"},
     {"include": "#callableDeclarations"},
@@ -81,6 +82,32 @@
     "tests": {
       "name": "keyword.other.test.flecha",
       "match": "\\btest\\b"
+    },
+    "nominalDeclarations": {
+      "begin": "\\b(interface|structure|enum)(\\s+)([A-Za-z_][A-Za-z0-9_]*)",
+      "beginCaptures": {
+        "1": {"name": "keyword.declaration.type.flecha"},
+        "3": {"name": "entity.name.type.flecha"}
+      },
+      "end": "(?=\\{)|;",
+      "patterns": [
+        {
+          "match": "(<<)(\\s*)((?:[A-Za-z_][A-Za-z0-9_]*\\s*::\\s*)*[A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {"name": "keyword.operator.inheritance.flecha"},
+            "3": {"name": "entity.other.inherited-class.flecha"}
+          }
+        },
+        {
+          "match": "(,)(\\s*)((?:[A-Za-z_][A-Za-z0-9_]*\\s*::\\s*)*[A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {"name": "punctuation.separator.inheritance.flecha"},
+            "3": {"name": "entity.other.inherited-class.flecha"}
+          }
+        },
+        {"include": "#types"},
+        {"include": "#operators"}
+      ]
     },
     "methodDeclarations": {
       "begin": "^(\\s*)((?:(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected|override)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)(::)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",

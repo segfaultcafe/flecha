@@ -147,8 +147,8 @@ TEST(SemanticInterfaceTests, RegistersInterfacesAndResolvesNominalRelations) {
     EXPECT_EQ(symbol->Type().Kind(), SemanticTypeKind::Interface);
     EXPECT_EQ(symbol->Type().Interface(), &displayable);
     EXPECT_EQ(symbol->Type().Name(), "Displayable");
-    EXPECT_FALSE(IsAssignable(symbol->Type(),
-                              SemanticType(SemanticTypeKind::None)));
+    EXPECT_FALSE(
+        IsAssignable(symbol->Type(), SemanticType(SemanticTypeKind::None)));
 }
 
 TEST(SemanticInterfaceTests, DiagnosesUnknownAndNonInterfaceParents) {
@@ -324,6 +324,231 @@ TEST(SemanticInterfaceTests, GenericStructuresMayConform) {
     EXPECT_EQ(box.conformances[0].type, analysis.model.Interfaces()[0].get());
     ASSERT_EQ(box.conformanceClosure.size(), 1);
     EXPECT_EQ(box.conformanceClosure[0], analysis.model.Interfaces()[0].get());
+}
+
+TEST(SemanticInterfaceMethodTests,
+     BuildsVerticalContractsAndConcreteOverrides) {
+    Analysis analysis = Analyze(R"(
+        interface Requirement {
+            error run(&self) virtual;
+        };
+        interface Provided << Requirement {
+            error run(&self) default;
+        };
+        error Provided::run(&self) override { return none; }
+
+        interface Validated {
+            protected error validate(&const self) virtual;
+        };
+        structure Record << Provided, Validated {};
+        protected error Record::validate(&const self) override {
+            return none;
+        }
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_EQ(analysis.model.Interfaces().size(), 3);
+    const InterfaceType& provided = *analysis.model.Interfaces()[1];
+    ASSERT_EQ(provided.methods.size(), 1);
+    EXPECT_EQ(provided.methods[0]->category, MethodCategory::Default);
+    EXPECT_NE(provided.methods[0]->inherited, nullptr);
+    EXPECT_NE(provided.methods[0]->provider, nullptr);
+}
+
+TEST(SemanticInterfaceMethodTests, RequiresConcreteVirtualImplementations) {
+    const std::string source = R"(
+        interface Foo {
+            error bar(&self) virtual;
+        };
+        structure Bar << Foo {};
+    )";
+    Analysis analysis = Analyze(source);
+
+    const Diagnostic* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::InvalidInterface);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(diagnostic->message,
+              "structure 'Bar' does not implement 'bar' required by "
+              "interface 'Foo'");
+    EXPECT_EQ(diagnostic->range.start.offset, source.find("Foo {}"));
+}
+
+TEST(SemanticInterfaceMethodTests, SeparatesKeysFromCompleteContracts) {
+    Analysis analysis = Analyze(R"(
+        interface Base {
+            error read(&const self) virtual;
+        };
+        interface ChangedResult << Base {
+            i32 read(&const self) virtual;
+        };
+        interface ChangedReceiver << Base {
+            error read(&self) virtual;
+        };
+    )");
+
+    std::size_t contractChanges = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::InvalidInterface &&
+            diagnostic.message.find("changes the inherited contract") !=
+                std::string::npos)
+            ++contractChanges;
+    EXPECT_EQ(contractChanges, 1);
+    ASSERT_EQ(analysis.model.Interfaces()[1]->methods.size(), 1);
+    EXPECT_EQ(analysis.model.Interfaces()[2]->methods.size(), 2);
+}
+
+TEST(SemanticInterfaceMethodTests, EnforcesCategoryTransitionsAndBodies) {
+    Analysis analysis = Analyze(R"(
+        interface Defaulted {
+            error run(&self) default;
+        };
+        error Defaulted::run(&self) { return none; }
+        interface Reabstracted << Defaulted {
+            error run(&self) virtual;
+        };
+
+        interface Sealed << Defaulted {
+            error run(&self) final;
+        };
+        error Sealed::run(&self) override { return none; }
+        interface TooLate << Sealed {
+            error run(&self) default;
+        };
+    )");
+
+    bool regression = false;
+    bool sealed = false;
+    bool missingBody = false;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics()) {
+        regression |= diagnostic.message.find("cannot become virtual again") !=
+                      std::string::npos;
+        sealed |= diagnostic.message.find("cannot be redeclared") !=
+                  std::string::npos;
+        missingBody |= diagnostic.message.find("requires exactly one") !=
+                       std::string::npos;
+    }
+    EXPECT_TRUE(regression);
+    EXPECT_TRUE(sealed);
+    EXPECT_TRUE(missingBody);
+}
+
+TEST(SemanticInterfaceMethodTests, RejectsHorizontalAndFinalOverrides) {
+    Analysis analysis = Analyze(R"(
+        interface Left { error run(&self) virtual; };
+        interface Right { error run(&self) virtual; };
+        structure Ambiguous << Left, Right {};
+
+        interface Sealed { error stop(&self) final; };
+        error Sealed::stop(&self) { return none; }
+        structure Concrete << Sealed {};
+        error Concrete::stop(&self) { return none; }
+    )");
+
+    bool horizontal = false;
+    bool finalOverride = false;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics()) {
+        horizontal |= diagnostic.message.find("conflicting method 'run'") !=
+                      std::string::npos;
+        finalOverride |= diagnostic.message.find("cannot be overridden") !=
+                         std::string::npos;
+    }
+    EXPECT_TRUE(horizontal);
+    EXPECT_TRUE(finalOverride);
+}
+
+TEST(SemanticInterfaceCallTests,
+     ResolvesInterfaceOverloadsAndPrefersExactReceiverConstness) {
+    Analysis analysis = Analyze(R"(
+        interface Value {
+            i32 get(&self) virtual;
+            i32 get(&const self) virtual;
+        };
+
+        i32 readMutable(&Value value) { return value->get(); }
+        i32 readConst(&const Value value) { return value->get(); }
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    const auto resolvedCall = [&](std::size_t declaration) {
+        const auto& function = FunctionAt(analysis, declaration);
+        const auto& returned = static_cast<const ReturnStatement&>(
+            *function.Body().Statements().front());
+        const auto& call =
+            static_cast<const MemberCallExpression&>(*returned.Value());
+        return analysis.model.InterfaceMethodFor(call);
+    };
+
+    const MethodContract* mutableCall = resolvedCall(1);
+    const MethodContract* constCall = resolvedCall(2);
+    ASSERT_NE(mutableCall, nullptr);
+    ASSERT_NE(constCall, nullptr);
+    EXPECT_EQ(mutableCall->key.receiver, MethodReceiverKind::Reference);
+    EXPECT_EQ(constCall->key.receiver, MethodReceiverKind::ConstReference);
+}
+
+TEST(SemanticInterfaceCallTests, EnforcesProtectedInterfaceLineages) {
+    Analysis analysis = Analyze(R"(
+        interface Validated {
+            protected error validate(&const self) virtual;
+            error run(&const self) default;
+        };
+        error Validated::run(&const self) {
+            return self->validate();
+        }
+
+        interface Child << Validated {
+            error child(&const self) default;
+        };
+        error Child::child(&const self) {
+            return self->validate();
+        }
+
+        structure Record << Child {};
+        protected error Record::validate(&const self) override {
+            return none;
+        }
+        error Record::internal(&const self) {
+            return self->validate();
+        }
+
+        error outsider(&const Validated value) {
+            return value->validate();
+        }
+
+        error concreteOutsider(&const Record value) {
+            return value->validate();
+        }
+
+        enum State << Validated { default Unknown, }
+        protected error State::validate(&const self) override {
+            return none;
+        }
+        error State::internal(&const self) {
+            return self->validate();
+        }
+        error enumOutsider(&const State value) {
+            return value->validate();
+        }
+
+        structure Stranger {};
+        error Stranger::probe(&const self, &const Validated value) {
+            return value->validate();
+        }
+    )");
+
+    std::size_t protectedErrors = 0;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics()) {
+        if (diagnostic.code == DiagnosticCode::PrivateAccess &&
+            diagnostic.message == "method 'validate' is protected") {
+            ++protectedErrors;
+            continue;
+        }
+        ADD_FAILURE() << diagnostic.message;
+    }
+    EXPECT_EQ(protectedErrors, 4);
 }
 
 TEST(SemanticTests, DerivesDeterministicJsonFieldMetadata) {
@@ -7354,8 +7579,8 @@ TEST(SemanticMemoryTests, SummarizesSafeResourceHelperChainsOnce) {
                   "(choose); } return " + previous + "(choose); }";
         previous = current;
     }
-    source += "unsafe i32 use(bool choose) { return " + previous +
-              "(choose); }";
+    source +=
+        "unsafe i32 use(bool choose) { return " + previous + "(choose); }";
 
     auto analysis = Analyze(source);
     for (const auto& diagnostic : analysis.diagnostics.Diagnostics())

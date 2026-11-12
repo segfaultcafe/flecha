@@ -9,6 +9,7 @@ add_executable(test_flecha
     test_lowering.cpp
     test_longbow.cpp
     test_lsp_protocol.cpp
+    test_method_key.cpp
     test_modules.cpp
     test_main.cpp
     test_parser.cpp
@@ -339,6 +340,21 @@ add_test(
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/invalid_hierarchy.fl
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_hierarchy.cmake
+)
+
+add_test(
+    NAME InterfaceFixtureTests.ValidMethodContracts
+    COMMAND $<TARGET_FILE:flecha>
+        check
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_method_contracts.fl
+)
+
+add_test(
+    NAME InterfaceFixtureTests.InvalidMethodContractDiagnostics
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/invalid_method_contracts.fl
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_interface_method_contracts.cmake
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

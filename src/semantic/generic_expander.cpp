@@ -1159,10 +1159,11 @@ class Expander {
                 });
             current = saved;
             for (const auto* method : genericMethods[instance.origin])
-                if (!method->IsCrashable() &&
-                    method->genericParameters.empty() &&
-                    (method->Name() == "init" || method->Name() == "zero" ||
-                     method->Name() == "tear"))
+                if (method->genericParameters.empty() &&
+                    (method->HasModifier(FunctionModifier::Override) ||
+                     (!method->IsCrashable() &&
+                      (method->Name() == "init" || method->Name() == "zero" ||
+                       method->Name() == "tear"))))
                     if (auto* clone = Clone(*method, arguments, method->Name(),
                                             at, Name(*concrete)))
                         concreteMethods[{concrete, Name(*clone)}] =

@@ -1,0 +1,81 @@
+interface Runnable {
+    error run(&self) virtual;
+};
+
+interface ProvidedRunnable << Runnable {
+    error run(&self) default;
+};
+
+error ProvidedRunnable::run(&self) override {
+    return none;
+}
+
+interface Validated {
+    protected error validate(&const self) virtual;
+    error ensure(&const self) default;
+};
+
+error Validated::ensure(&const self) {
+    return self->validate();
+}
+
+interface Named {
+    &const i32 rawName(&const self) virtual <-self;
+    &const i32 name(&const self) final <-self;
+};
+
+&const i32 Named::name(&const self) <-self {
+    return self->rawName();
+}
+
+structure Record << ProvidedRunnable, Validated, Named {
+    i32 label;
+};
+
+protected error Record::validate(&const self) override {
+    return none;
+}
+
+error Record::check(&const self) {
+    return self->validate();
+}
+
+&const i32 Record::rawName(&const self) override <-self {
+    return &self->label;
+}
+
+error execute(&Runnable runnable) {
+    return runnable->run();
+}
+
+&const i32 interfaceName(&const Named value) <-value {
+    return value->name();
+}
+
+interface WritableI32 {
+    error write(&self, i32 value) virtual;
+};
+
+interface WritableString {
+    error write(&self, stringv value) virtual;
+};
+
+structure Writer << WritableI32, WritableString {};
+
+error Writer::write(&self, i32 value) override {
+    return none;
+}
+
+error Writer::write(&self, stringv value) override {
+    return none;
+}
+
+structure GenericRecord<T> << Validated {
+    T value;
+};
+
+protected error GenericRecord<T>::validate(&const self) override {
+    return none;
+}
+
+void instantiate(GenericRecord<i32> value) {}

@@ -82,14 +82,16 @@ class SemanticAnalyzer final {
         const core::MemberAccessExpression& expression);
     void RegisterStructures(const core::CompilationUnit& unit);
     void ResolveNominalRelations();
+    void ResolveInterfaceMethods();
+    void ValidateInterfaceConformance();
     void ResolveStructureFields();
     void RegisterFunction(const core::FunctionDeclaration& function,
                           bool generated = false);
     void GenerateInitializers();
     void GenerateJsonMethods();
     SemanticType AnalyzeBuild(const core::BuildExpression& expression);
-    SemanticType AnalyzeStructureCall(
-        const core::MemberCallExpression& expression, SemanticType receiver);
+    SemanticType AnalyzeMethodCall(const core::MemberCallExpression& expression,
+                                   SemanticType receiver);
     std::vector<const FunctionSymbol*> LookupFunctions(
         std::string_view name) const;
     const FunctionSymbol* ResolveOverload(
@@ -110,6 +112,7 @@ class SemanticAnalyzer final {
                            source::SourceRange range);
     const StructureType* CurrentOwner() const;
     const EnumType* CurrentEnumOwner() const;
+    const InterfaceType* CurrentInterfaceOwner() const;
     void RegisterBuiltIns();
     void RegisterFunctions(const core::CompilationUnit& unit);
     void AnalyzeFunction(const core::FunctionDeclaration& function);

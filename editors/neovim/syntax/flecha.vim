@@ -35,6 +35,7 @@ syntax match flechaSelf /\%(<-\s*\.\.\.\s*\)\@<=args\>/
 syntax keyword flechaWordOperator and or
 
 syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>\|<=\|>=\|&&\|||\|[&|~=+*\/%^!<>-]/
+syntax match flechaInheritanceOperator /<<\ze\_s*\%([A-Za-z_][A-Za-z0-9_]*\_s*::\_s*\)*[A-Z][A-Za-z0-9_]*\_s*\%([,{]\)/
 syntax match flechaCrashableBang /\%([A-Za-z0-9_>]\)\@<=!\ze\s*(/
 syntax match flechaRawAddress /\%(&\s*\)\@<=raw\>/
 syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?!\?\s*(/
@@ -102,6 +103,7 @@ call s:FollowTheme('flechaBoolean', '@boolean', 'Boolean')
 call s:FollowTheme('flechaConstant', '@constant.builtin', 'Constant')
 call s:FollowTheme('flechaWordOperator', '@operator', 'Operator')
 call s:FollowTheme('flechaOperator', '@operator', 'Operator')
+call s:FollowTheme('flechaInheritanceOperator', '@keyword.operator', 'Keyword')
 call s:FollowTheme('flechaRawAddress', '@keyword', 'Keyword')
 call s:FollowTheme('flechaCastMethod', '@function.method', 'Function')
 call s:FollowTheme('flechaIsOfMethod', '@function.method', 'Function')

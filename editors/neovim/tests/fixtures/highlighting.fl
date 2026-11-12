@@ -71,6 +71,9 @@ interface Highlightable {
     error close(&self) final;
 };
 structure Highlighted << Highlightable {};
+structure WrappedHighlight
+    << Highlightable {
+};
 bool IsOn(State state) { return match state { State.On => true, _ => false, }; }
 error genericError = MathError.Overflow;
 

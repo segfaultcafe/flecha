@@ -2370,6 +2370,33 @@ interface Broken {
     EXPECT_EQ(declaration.Methods()[2]->Category(), MethodCategory::Virtual);
 }
 
+TEST(ParserInterfaceTests, ParsesBorrowContractsAfterCategoryAndOverride) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(R"(
+interface View {
+    &const i32 current(&const self) virtual <- self;
+};
+&const i32 View::current(&const self) override <- self { return self; }
+&const i32 View::legacy(&const self) <- self override { return self; }
+)",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 3);
+    const auto& interfaceType =
+        static_cast<const InterfaceDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(interfaceType.Methods().size(), 1);
+    EXPECT_EQ(interfaceType.Methods()[0]->Signature().BorrowSources(),
+              std::vector<std::string>{"self"});
+
+    for (std::size_t index = 1; index < unit->Declarations().size(); ++index) {
+        const auto& function = static_cast<const FunctionDeclaration&>(
+            *unit->Declarations()[index]);
+        EXPECT_TRUE(function.HasModifier(FunctionModifier::Override));
+        EXPECT_EQ(function.BorrowSources(), std::vector<std::string>{"self"});
+    }
+}
+
 TEST(ParserInterfaceTests, RejectsMalformedHeadersAndRecovers) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(R"(
