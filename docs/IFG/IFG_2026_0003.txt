@@ -1,0 +1,82 @@
+IFG: 2026-0003
+Title: Physical and Logical Module Organization
+Author: Flecha Project
+Type: Guideline
+Topic: Idiom
+Status: Draft
+Created: 2026-11-12
+Target: Flecha 0.4
+Requires: 2026-0001
+Implementation: Not Started
+
+Abstract
+--------
+
+A library's physical tree organizes implementation ownership and local
+context. Its logical namespace organizes the API experienced by callers. Those
+trees may differ deliberately through namespace attachment.
+
+Micro libraries
+---------------
+
+A micro library with one focused context should prefer a direct layout:
+
+    src/
+    |-- reader.fl   -> module json
+    |-- writer.fl   -> module json
+    `-- value.fl    -> module json
+
+Super libraries
+---------------
+
+A super library may use submodule folders without exposing each folder as a
+public namespace:
+
+    io/
+    |-- stream.fl
+    `-- stream/
+        |-- reader.fl
+        |-- writer.fl
+        |-- copy.fl
+        `-- adapters/
+            `-- closure.fl
+
+Sources in the submodule folders can contribute to root::io::stream:
+
+    module stream;
+    under namespace root::io;
+
+Guidance
+--------
+
+- Use a submodule folder when a context has several implementation concerns
+  that no longer scan well in one directory.
+- Consider which valid ancestor namespace best communicates conceptual
+  ownership.
+- A conventional anchor source at the direct path can give readers an obvious
+  starting point, but it is never required.
+- Keep implementation-only parsers, platform layers, codecs, and helpers in
+  their physical nested namespace when callers do not need them.
+- Multiple attached source units may compose one logical module when they
+  represent one cohesive API.
+- Imports should reveal conceptual dependencies rather than incidental file
+  locations.
+
+Root attachment
+---------------
+
+under namespace root is an ordinary valid attachment. Libraries may choose it
+to present a flat package surface, shorten imports, assemble a package facade,
+or contribute to a root-level multifile module.
+
+The IFG does not prohibit that choice. Authors should account for
+discoverability and collision tradeoffs as the package grows. Neither the
+compiler nor mandatory tooling may require the nearest ancestor, require an
+anchor source, or warn merely because the target is root.
+
+Standard-library trial
+----------------------
+
+The first structural trial begins only after interface dispatch and
+IFG 2026-0001 are implemented. It should reorganize one coherent subsystem
+instead of moving the complete standard library at once.
