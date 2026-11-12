@@ -713,6 +713,31 @@ TEST(SemanticInterfaceProviderCallTests,
     EXPECT_TRUE(missing);
 }
 
+TEST(SemanticInterfaceCallTests, RejectsUseAfterVariadicPackMove) {
+    Analysis analysis = Analyze(R"(
+        interface Sink { i32 take(&const self, values...) virtual; };
+        structure Owner { i32 value; };
+        void Owner::tear(&self) override {}
+        structure Concrete << Sink {};
+        i32 target(&const Concrete value, Owner owner) { return owner.value; }
+        i32 Concrete::take(&const self, values...) override {
+            return target(self, values...);
+        }
+        i32 invalid(&const Sink sink, Owner owner) {
+            sink->take(owner);
+            return owner.value;
+        }
+    )");
+
+    EXPECT_TRUE(analysis.diagnostics.HasErrors());
+    const auto& diagnostics = analysis.diagnostics.Diagnostics();
+    EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(),
+                            [](const Diagnostic& diagnostic) {
+                                return diagnostic.message.find("moved") !=
+                                       std::string::npos;
+                            }));
+}
+
 TEST(SemanticTests, DerivesDeterministicJsonFieldMetadata) {
     Analysis analysis = Analyze(R"(
         decoration json;

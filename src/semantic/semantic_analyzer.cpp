@@ -9182,19 +9182,19 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
             provided ? (fixed ? AnalyzeExpression(*arguments[i], expected)
                               : AnalyzeExpression(*arguments[i]))
                      : _model.TypeOf(*arguments[i]);
-        if (provided && fixed)
-            CheckTransfer(*arguments[i], expected,
-                          function->ParameterContract(i + offset) ==
-                              core::OwnershipContract::Own);
+        const core::OwnershipContract contract =
+            fixed ? function->ParameterContract(i + offset)
+                  : core::OwnershipContract::None;
+        if (provided)
+            CheckTransfer(*arguments[i], fixed ? expected : actual,
+                          contract == core::OwnershipContract::Own);
         if (fixed && !IsAssignable(expected, actual) &&
             !CanReborrow(expected, actual))
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                    arguments[i]->Range(), TypeMismatch(expected, actual));
         if (variadic && interfaceContract != nullptr) {
             shapeTypes.push_back(actual);
-            shapeContracts.push_back(
-                fixed ? function->ParameterContract(i + offset)
-                      : core::OwnershipContract::None);
+            shapeContracts.push_back(contract);
         }
     }
     if (variadic && interfaceContract != nullptr &&
