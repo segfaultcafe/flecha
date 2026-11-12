@@ -1,0 +1,36 @@
+interface Root {};
+interface Child << Root {};
+interface Sibling {};
+
+structure RootConcrete << Root {};
+structure ChildConcrete << Child {};
+structure Unrelated {};
+structure GenericConcrete<T> << Root {};
+
+RootConcrete makeRoot() {
+    return build RootConcrete {};
+}
+
+void nonconforming(Unrelated value) {
+    value as &Root;
+}
+
+void sibling(&Child value) {
+    value as &Sibling;
+}
+
+void downcast(&Root value) {
+    value as &Child;
+}
+
+void crossRoot(&Root value) {
+    value as &Sibling;
+}
+
+void incompatibleSpecialization(GenericConcrete<i32> value) {
+    value as &Sibling;
+}
+
+void temporary() {
+    makeRoot() as &Root;
+}

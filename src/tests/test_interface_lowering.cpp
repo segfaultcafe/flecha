@@ -87,7 +87,82 @@ void CollectSlots(const InterfaceTableLayout& layout,
     for (const SlotLayout& slot : layout.slots) result.push_back(&slot);
 }
 
+const InterfaceTableLayout& FindSubtable(const InterfaceTableLayout& layout,
+                                         std::string_view name) {
+    if (layout.interfaceType->displayName == name) return layout;
+    for (const ParentLayout& parent : layout.parents) {
+        try {
+            return FindSubtable(*parent.table, name);
+        } catch (const std::logic_error&) {
+        }
+    }
+    throw std::logic_error("interface subtable not found");
+}
+
 }  // namespace
+
+TEST(InterfaceCastTests, AcceptsTheStaticCastAndUpcastMatrix) {
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_casts_upcasts.fl");
+
+    ASSERT_FALSE(fixture.diagnostics.HasErrors());
+    std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
+    ASSERT_NE(program, nullptr);
+    EXPECT_EQ(CountPlans(*program, "EmptyOnly"), 1);
+    EXPECT_EQ(CountPlans(*program, "MultiConcrete"), 3);
+    EXPECT_EQ(CountPlans(*program, "CastMode"), 1);
+    EXPECT_EQ(CountPlans(*program, "Box<i32>"), 1);
+    EXPECT_EQ(CountPlans(*program, "Box<string>"), 1);
+}
+
+TEST(InterfaceCastTests, RejectsEveryCastThatWouldNeedDynamicKnowledge) {
+    AnalyzedFixture fixture = AnalyzeFixtureFile("invalid_casts_upcasts.fl");
+
+    std::vector<std::string> messages;
+    for (const Diagnostic& diagnostic : fixture.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::InvalidCast)
+            messages.push_back(diagnostic.message);
+    ASSERT_EQ(messages.size(), 6);
+    EXPECT_NE(messages[0].find("Unrelated"), std::string::npos);
+    EXPECT_NE(messages[1].find("&Child"), std::string::npos);
+    EXPECT_NE(messages[1].find("&Sibling"), std::string::npos);
+    EXPECT_NE(messages[2].find("&Root"), std::string::npos);
+    EXPECT_NE(messages[2].find("&Child"), std::string::npos);
+    EXPECT_NE(messages[4].find("GenericConcrete<i32>"), std::string::npos);
+    EXPECT_NE(messages[5].find("requires an addressable value"),
+              std::string::npos);
+    EXPECT_EQ(LowerFixture(fixture), nullptr);
+}
+
+TEST(InterfaceCastTests, KeepsDeclaredRootAndNestedSubtableOffsets) {
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_casts_upcasts.fl");
+
+    ASSERT_FALSE(fixture.diagnostics.HasErrors());
+    std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
+    ASSERT_NE(program, nullptr);
+    const InterfaceTableLayout& root =
+        FindPlan(*program, "MultiConcrete", "Root").layout;
+    ASSERT_EQ(root.parents.size(), 3);
+    EXPECT_EQ(root.parents[0].interfaceType->displayName, "EmptyBranch");
+    EXPECT_EQ(root.parents[0].offset, 0);
+    EXPECT_EQ(root.parents[1].interfaceType->displayName, "Prefix");
+    EXPECT_EQ(root.parents[1].offset, 0);
+    EXPECT_EQ(root.parents[2].interfaceType->displayName, "Parent");
+    EXPECT_EQ(root.parents[2].offset, sizeof(void*));
+
+    const InterfaceTableLayout& parent = FindSubtable(root, "Parent");
+    ASSERT_EQ(parent.parents.size(), 2);
+    EXPECT_EQ(parent.parents[0].interfaceType->displayName, "Pad");
+    EXPECT_EQ(parent.parents[0].offset, 0);
+    EXPECT_EQ(parent.parents[1].interfaceType->displayName, "Grand");
+    EXPECT_EQ(parent.parents[1].offset, sizeof(void*));
+    EXPECT_EQ(FindSubtable(root, "Grand").size, sizeof(void*));
+}
+
+TEST(InterfaceCastTests, LeavesShiftLeftExpressionSemanticsUnchanged) {
+    AnalyzedFixture fixture =
+        AnalyzeFixture("i32 shifted(i32 value) { return value << 3; }");
+    EXPECT_FALSE(fixture.diagnostics.HasErrors());
+}
 
 TEST(InterfaceLayoutTests, PlacesParentsBeforeLocalSlotsInDeclarationOrder) {
     AnalyzedFixture fixture = AnalyzeFixtureFile("valid_lowering_layouts.fl");
