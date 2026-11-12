@@ -10,6 +10,23 @@ mirror every implementation directory.
 Flecha 0.4 is not complete until namespace attachment is implemented through
 the module loader, parser, semantic model, diagnostics, analyzer, and tests.
 
+## V0.4 sequencing
+
+Namespace attachment is the next language task after the v0.4 interface path
+is complete. It precedes standard-library reorganization under the Idiomatic
+Flecha Guideline because that work needs stable physical-to-logical module
+placement before files move into submodule folders.
+
+The intended sequence is:
+
+```text
+complete interface dispatch and hardening
+        -> implement namespace attachment
+        -> reorganize one standard-library subsystem as the first IFG trial
+```
+
+Behavior and decoration work is not a prerequisite for namespace attachment.
+
 ## Motivation
 
 A micro library can usually keep one small directory and one obvious public
@@ -249,6 +266,11 @@ The compiler must diagnose at least:
 Source units without `under namespace` retain the current module identity,
 quiver membership, import behavior, and diagnostics. Namespace attachment adds
 no runtime representation and has no direct lowering or LLVM ABI effect.
+
+This is backward compatibility for existing source: a project that does not
+adopt the new header must continue to behave as it did on the previous module
+model. A source unit that does adopt `under namespace` requires a compiler that
+implements the v0.4 feature and is not expected to parse on an older compiler.
 
 The feature does change module discovery from target-directory scanning to a
 source-root module index. The index must preserve deterministic assembly and

@@ -262,6 +262,11 @@ cohesive surface.
 
 ## Standard library adoption process
 
+The first structural IFG trial begins only after v0.4 interface dispatch and
+namespace attachment are complete. Interfaces provide the abstraction boundary;
+namespace attachment lets the physical standard-library tree change without
+forcing those implementation folders into its public namespace.
+
 An IFG experiment in `std` should be introduced through a focused change with:
 
 - the pattern and its intended boundary stated explicitly;
