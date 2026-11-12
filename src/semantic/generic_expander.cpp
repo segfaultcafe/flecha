@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <string_view>
 
 #include "core/parser.hpp"
 #include "core/tokenizer.hpp"
@@ -324,6 +325,41 @@ std::string Key(const Arguments& arguments) {
         key += "]";
     }
     return key;
+}
+
+void AppendIdentityComponent(std::string& result, std::string_view value) {
+    result += std::to_string(value.size()) + ":" + std::string(value);
+}
+
+std::string DeclarationIdentity(const Declaration& declaration) {
+    if (!declaration.specializationIdentity.empty())
+        return declaration.specializationIdentity;
+    std::string result;
+    AppendIdentityComponent(result, declaration.moduleId);
+    AppendIdentityComponent(result, Name(declaration));
+    return result;
+}
+
+std::string SpecializationIdentity(const Declaration& origin,
+                                   const Arguments& arguments,
+                                   const CompilationUnit& unit) {
+    std::string result = DeclarationIdentity(origin);
+    result += "<";
+    for (const Tokens& argument : arguments) {
+        result += "[";
+        for (const Token& token : argument) {
+            result += std::to_string(static_cast<int>(token.type)) + ":";
+            const auto alias = unit.genericAliases.find(token.value);
+            if (alias == unit.genericAliases.end())
+                AppendIdentityComponent(result, token.value);
+            else
+                AppendIdentityComponent(result,
+                                        DeclarationIdentity(*alias->second));
+        }
+        result += "]";
+    }
+    result += ">";
+    return result;
 }
 struct Instance {
     const Declaration* origin;
@@ -1106,6 +1142,8 @@ class Expander {
         if (current)
             concrete->instantiationOrigins = current->instantiationOrigins;
         concrete->instantiationOrigins.push_back(at);
+        concrete->specializationIdentity =
+            SpecializationIdentity(origin, arguments, unit);
         concrete->specializationName = Name(origin) + "<";
         for (std::size_t i = 0; i < arguments.size(); ++i) {
             if (i) concrete->specializationName += ", ";

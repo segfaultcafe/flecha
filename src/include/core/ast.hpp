@@ -129,6 +129,9 @@ class Declaration : public AstNode {
     std::size_t ownerTokenIndex = 0;
     std::vector<source::SourceRange> instantiationOrigins;
     std::string specializationName;
+    // Stable, qualified identity for generated closed specializations. Unlike
+    // specializationName, this is compiler-internal and never user-facing.
+    std::string specializationIdentity;
     std::vector<DecorationApplication> decorations;
 };
 
