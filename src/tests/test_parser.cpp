@@ -2197,6 +2197,77 @@ TEST(ParserTests, ParsesModuleImportsAndExportsOnOneLineOrMultipleLines) {
     }
 }
 
+TEST(ParserTests, ParsesOptionalNamespaceAttachmentBeforeImports) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "module gee; under namespace root::foo; "
+        "@imports :: root::support; void run() {}",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    EXPECT_EQ(unit->moduleName, "gee");
+    ASSERT_TRUE(unit->namespaceAttachment.has_value());
+    EXPECT_EQ(unit->namespaceAttachment->path,
+              (std::vector<std::string>{"root", "foo"}));
+    ASSERT_EQ(unit->namespaceAttachment->segmentRanges.size(), 2);
+    EXPECT_EQ(unit->namespaceAttachment->segmentRanges[0].start.column, 29);
+    EXPECT_EQ(unit->namespaceAttachment->segmentRanges[1].start.column, 35);
+    ASSERT_EQ(unit->imports.size(), 1);
+}
+
+TEST(ParserTests, AcceptsRootNamespaceAttachment) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource("module gee; under namespace root; void run() {}",
+                            diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_TRUE(unit->namespaceAttachment.has_value());
+    EXPECT_EQ(unit->namespaceAttachment->path,
+              (std::vector<std::string>{"root"}));
+}
+
+TEST(ParserTests, KeepsNamespaceAttachmentWordsValidAsIdentifiers) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "const i32 under = 20; const i32 namespace = 22; "
+        "i32 local_names() { i32 under = 20; i32 namespace = 22; "
+        "return under + namespace; } i32 main() { return local_names(); }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 4);
+    EXPECT_EQ(
+        static_cast<const ModuleConstantDeclaration&>(*unit->Declarations()[0])
+            .Name(),
+        "under");
+    EXPECT_EQ(
+        static_cast<const ModuleConstantDeclaration&>(*unit->Declarations()[1])
+            .Name(),
+        "namespace");
+}
+
+TEST(ParserTests, DiagnosesMalformedAndDuplicateNamespaceAttachments) {
+    for (const std::string& source : {
+             "module gee; under root::foo; void run() {}",
+             "module gee; under namespace root::; void run() {}",
+             "under namespace root; void run() {}",
+             "module gee; under namespace root; under namespace root::foo; "
+             "void run() {}",
+             "module root::foo::gee; void run() {}",
+         }) {
+        DiagnosticBag diagnostics;
+        (void)ParseSource(source, diagnostics);
+        EXPECT_TRUE(diagnostics.HasErrors()) << source;
+    }
+
+    DiagnosticBag missingKeyword;
+    (void)ParseSource("module gee; under root::foo; void run() {}",
+                      missingKeyword);
+    ASSERT_FALSE(missingKeyword.Diagnostics().empty());
+    EXPECT_EQ(missingKeyword.Diagnostics()[0].message,
+              "expected 'namespace' after 'under', found 'root'");
+}
+
 TEST(ParserTests, ParsesQuiverVisibilityOnTopLevelDeclarations) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

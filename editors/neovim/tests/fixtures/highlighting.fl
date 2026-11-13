@@ -78,6 +78,11 @@ bool IsOn(State state) { return match state { State.On => true, _ => false, }; }
 error genericError = MathError.Overflow;
 
 structure Box { private i32 x; };
+
+module attached;
+under namespace root::foundation;
+i32 under = 20;
+i32 namespace = 22;
 Box Box::init() override { return build Box {}; }
 i32 Box::value(&self) { return self->x; }
 void Server::run() {}

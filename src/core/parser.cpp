@@ -2833,11 +2833,66 @@ void Parser::ParseHeader() {
         Advance();
         _modulePrivate = true;
     }
-    if (Match(TokenType::Module)) {
+    const bool hasModuleDeclaration = Match(TokenType::Module);
+    if (hasModuleDeclaration) {
         const Token* name = Consume(TokenType::Identifier, "module name");
         if (name) moduleName = name->value;
         Consume(TokenType::SemiColon, "';' after module declaration");
     }
+    const auto isIdentifier = [&](std::size_t offset, std::string_view value) {
+        return Peek(offset).type == TokenType::Identifier &&
+               Peek(offset).value == value;
+    };
+    const auto startsNamespaceAttachment = [&] {
+        if (!isIdentifier(0, "under")) return false;
+        // `under namespace` is the contextual header phrase. Preserve the
+        // focused missing-keyword diagnostic for the unambiguous malformed
+        // shape `under root::...` and the missing-module diagnostic without
+        // reserving `under` globally.
+        return isIdentifier(1, "namespace") ||
+               (Peek(1).type == TokenType::Identifier &&
+                Peek(2).type == TokenType::Scope);
+    };
+    while (startsNamespaceAttachment()) {
+        const Token& under = Advance();
+        NamespaceAttachment attachment;
+        attachment.range.start = under.range.start;
+        if (isIdentifier(0, "namespace"))
+            Advance();
+        else
+            _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                                Current().range,
+                                "expected 'namespace' after 'under', found '" +
+                                    Current().value + "'");
+        const Token* first =
+            Consume(TokenType::Identifier, "namespace attachment root");
+        if (first) {
+            attachment.path.push_back(first->value);
+            attachment.segmentRanges.push_back(first->range);
+        }
+        while (Match(TokenType::Scope)) {
+            const Token* segment =
+                Consume(TokenType::Identifier, "namespace path segment");
+            if (!segment) break;
+            attachment.path.push_back(segment->value);
+            attachment.segmentRanges.push_back(segment->range);
+        }
+        const Token* semicolon = Consume(
+            TokenType::SemiColon, "';' after namespace attachment clause");
+        attachment.range.end =
+            semicolon ? semicolon->range.end : Current().range.start;
+        if (_namespaceAttachment) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::DuplicateDeclaration,
+                attachment.range, "duplicate 'under namespace' clause");
+        } else {
+            _namespaceAttachment = std::move(attachment);
+        }
+    }
+    if (_namespaceAttachment && !hasModuleDeclaration)
+        _diagnostics.Report(diagnostics::DiagnosticCode::UnexpectedToken,
+                            _namespaceAttachment->range,
+                            "'under namespace' requires a module declaration");
     if (Check(TokenType::At) && Peek(1).type == TokenType::Identifier &&
         Peek(1).value == "imports") {
         Advance();
@@ -2995,6 +3050,7 @@ std::unique_ptr<CompilationUnit> Parser::Parse() {
         std::move(declarations));
     unit->moduleName = std::move(_moduleName);
     unit->privateModule = _modulePrivate;
+    unit->namespaceAttachment = std::move(_namespaceAttachment);
     unit->imports = std::move(_imports);
     unit->foreignSources = std::move(foreignSources);
     return unit;

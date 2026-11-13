@@ -32,3 +32,25 @@ test("nominal composition has stable scopes across line breaks", () => {
   assert.doesNotMatch(declaration.end, /\$/);
   assert.match(grammar.repository.operators.match, /<</);
 });
+
+test("namespace attachment has explicit keyword and namespace scopes", () => {
+  const includes = grammar.patterns.map((pattern) => pattern.include);
+  assert.ok(
+    includes.indexOf("#namespaceAttachments") <
+      includes.indexOf("#namespaces"),
+  );
+  const attachment = grammar.repository.namespaceAttachments;
+  assert.match("under namespace root::foo;", new RegExp(attachment.begin));
+  assert.equal(
+    attachment.beginCaptures["1"].name,
+    "keyword.control.module.flecha",
+  );
+  assert.equal(
+    attachment.beginCaptures["3"].name,
+    "keyword.control.module.flecha",
+  );
+  assert.equal(attachment.patterns[0].include, "#namespaces");
+  assert.doesNotMatch("i32 under = 20;", new RegExp(attachment.begin));
+  assert.doesNotMatch("i32 namespace = 22;", new RegExp(attachment.begin));
+  assert.doesNotMatch(grammar.repository.control.match, /under|namespace/);
+});

@@ -1,0 +1,4 @@
+module main;
+under namespace root::foo::baz::child;
+
+i32 main() { return 0; }

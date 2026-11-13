@@ -14,6 +14,7 @@
     {"include": "#callableDeclarations"},
     {"include": "#typeSetDeclarations"},
     {"include": "#moduleDeclarations"},
+    {"include": "#namespaceAttachments"},
     {"include": "#typeQualifiers"},
     {"include": "#namespaces"},
     {"include": "#typeSets"},
@@ -175,6 +176,17 @@
         "1": {"name": "keyword.control.module.flecha"},
         "3": {"name": "entity.name.namespace.flecha"}
       }
+    },
+    "namespaceAttachments": {
+      "begin": "\\b(under)(\\s+)(namespace)\\b",
+      "beginCaptures": {
+        "1": {"name": "keyword.control.module.flecha"},
+        "3": {"name": "keyword.control.module.flecha"}
+      },
+      "end": ";",
+      "patterns": [
+        {"include": "#namespaces"}
+      ]
     },
     "typeQualifiers": {
       "name": "entity.name.type.flecha",

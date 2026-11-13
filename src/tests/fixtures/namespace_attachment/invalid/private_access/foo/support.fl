@@ -1,0 +1,5 @@
+module support;
+
+export i32 exportedValue() { return 1; }
+quiver i32 quiverValue() { return 2; }
+i32 privateValue() { return 3; }

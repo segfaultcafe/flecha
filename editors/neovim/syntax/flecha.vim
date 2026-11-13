@@ -25,6 +25,7 @@ syntax keyword flechaConditional if else also match
 syntax keyword flechaRepeat while for loop range
 syntax keyword flechaStatement return yield proceed break defer enum structure interface decoration build
 syntax keyword flechaStatement module nextgroup=flechaModuleName skipwhite
+syntax match flechaNamespaceAttachment /\<under\>\_s\+namespace\>/
 syntax match flechaModuleName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaJump jumpto nextgroup=flechaJumpTarget skipwhite
 syntax keyword flechaCast as
@@ -97,6 +98,7 @@ call s:FollowTheme('flechaModifier', '@keyword.modifier', 'StorageClass')
 call s:FollowTheme('flechaConditional', '@keyword.conditional', 'Conditional')
 call s:FollowTheme('flechaRepeat', '@keyword.repeat', 'Repeat')
 call s:FollowTheme('flechaStatement', '@keyword', 'Statement')
+call s:FollowTheme('flechaNamespaceAttachment', '@keyword', 'Statement')
 call s:FollowTheme('flechaJump', '@keyword', 'Statement')
 call s:FollowTheme('flechaCast', '@keyword.operator', 'Keyword')
 call s:FollowTheme('flechaBoolean', '@boolean', 'Boolean')

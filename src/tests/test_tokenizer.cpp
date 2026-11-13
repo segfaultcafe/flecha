@@ -547,3 +547,18 @@ TEST(TokenizerTests, RecognizesModuleAndImportDirectiveTokens) {
     EXPECT_EQ(tokens[4].type, TokenType::Identifier);
     EXPECT_EQ(tokens[5].type, TokenType::Scope);
 }
+
+TEST(TokenizerTests, KeepsNamespaceAttachmentWordsContextual) {
+    const auto tokens = Tokenize(
+        "module gee; under namespace root::foo; underneath namespaced");
+    ASSERT_EQ(tokens.size(), 12);
+    EXPECT_EQ(tokens[0].type, TokenType::Module);
+    EXPECT_EQ(tokens[3].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[3].value, "under");
+    EXPECT_EQ(tokens[4].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[4].value, "namespace");
+    EXPECT_EQ(tokens[5].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[6].type, TokenType::Scope);
+    EXPECT_EQ(tokens[9].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[10].type, TokenType::Identifier);
+}

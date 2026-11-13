@@ -42,6 +42,11 @@ class ModuleLoader final {
         bool verboseTests = false);
 
    private:
+    struct IndexedSource final {
+        std::filesystem::path file;
+        std::string name;
+        std::optional<NamespaceAttachment> namespaceAttachment;
+    };
     struct LibrarySource final {
         std::string identity;
         std::filesystem::path root;
@@ -54,6 +59,12 @@ class ModuleLoader final {
     std::optional<LibrarySource> ResolveLibrary(
         const std::string& sourceIdentity, const std::string& alias,
         source::SourceRange range, bool includeLegacyHint = false);
+    std::optional<std::filesystem::path> ResolveNamespaceAttachment(
+        const std::filesystem::path& file,
+        const NamespaceAttachment& attachment,
+        const std::filesystem::path& root, bool reportErrors = true);
+    const std::vector<IndexedSource>& IndexSourceRoot(
+        const std::filesystem::path& root);
     std::string SourceName(const std::string& sourceIdentity) const;
     std::string VisitModule(const std::filesystem::path& directory,
                             const std::string& name,
@@ -74,6 +85,7 @@ class ModuleLoader final {
     std::map<std::filesystem::path, std::filesystem::path> _roots;
     std::vector<std::string> _active;
     std::map<std::string, std::filesystem::path> _libraries;
+    std::map<std::filesystem::path, std::vector<IndexedSource>> _sourceIndexes;
     const PackageGraph* _packageGraph = nullptr;
     std::vector<Module> _modules;
     std::vector<std::unique_ptr<Declaration>> _declarations;

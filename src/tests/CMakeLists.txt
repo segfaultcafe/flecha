@@ -26,6 +26,7 @@ target_link_libraries(process_fixture PRIVATE flecha_project_options)
 target_compile_definitions(test_flecha PRIVATE
     FLECHA_PROCESS_FIXTURE="$<TARGET_FILE:process_fixture>"
     FLECHA_INTERFACE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces"
+    FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/namespace_attachment"
 )
 add_dependencies(test_flecha process_fixture)
 

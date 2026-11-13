@@ -1,0 +1,4 @@
+module main;
+under namespace lib::dependency;
+
+i32 main() { return 0; }
