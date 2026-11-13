@@ -1,4 +1,5 @@
 module fmt;
+under namespace root;
 
 export void print(values...) {
     stdout(values...);
