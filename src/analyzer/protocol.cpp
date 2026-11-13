@@ -360,10 +360,11 @@ std::string ProtocolServer::Handle(std::string_view message) {
                                                         ? "{\"closed\":true}"
                                                         : "{\"closed\":false}");
             }
-            const AnalysisSnapshot snapshot = _session->Analyze(path);
+            const std::shared_ptr<const AnalysisSnapshot> snapshot =
+                _session->AnalyzeCached(path);
             if (request->method == "document/diagnostics")
                 return SuccessResponse(request->id,
-                                       DiagnosticsResult(snapshot));
+                                       DiagnosticsResult(*snapshot));
 
             if (request->method == "document/completion") {
                 std::string query;
@@ -374,7 +375,7 @@ std::string ProtocolServer::Handle(std::string_view message) {
                     return ErrorResponse(request->id, INVALID_PARAMS,
                                          "completion query must be a string");
                 const std::vector<SemanticSymbol> symbols =
-                    snapshot.Symbols(query);
+                    snapshot->Symbols(query);
                 std::string result = "{\"items\":[";
                 for (std::size_t index = 0; index < symbols.size(); ++index) {
                     if (index != 0) result += ',';
@@ -386,7 +387,7 @@ std::string ProtocolServer::Handle(std::string_view message) {
 
             if (request->method == "document/semanticTokens") {
                 const std::vector<SemanticOccurrence> occurrences =
-                    snapshot.Occurrences(path);
+                    snapshot->Occurrences(path);
                 std::string result = "{\"tokens\":[";
                 for (std::size_t index = 0; index < occurrences.size();
                      ++index) {
@@ -405,7 +406,7 @@ std::string ProtocolServer::Handle(std::string_view message) {
             const std::size_t byteOffset = static_cast<std::size_t>(offset);
             if (request->method == "document/hover") {
                 const std::optional<SemanticHover> hover =
-                    snapshot.Hover(path, byteOffset);
+                    snapshot->Hover(path, byteOffset);
                 return SuccessResponse(
                     request->id,
                     hover ? "{\"hover\":" + SemanticItemResult(*hover) + "}"
@@ -413,7 +414,7 @@ std::string ProtocolServer::Handle(std::string_view message) {
             }
             if (request->method == "document/definition") {
                 const std::optional<source::SourceRange> definition =
-                    snapshot.Definition(path, byteOffset);
+                    snapshot->Definition(path, byteOffset);
                 return SuccessResponse(
                     request->id,
                     definition
@@ -431,7 +432,8 @@ std::string ProtocolServer::Handle(std::string_view message) {
                                      "includeDeclaration must be a boolean");
             if (request->method == "document/references") {
                 const auto references =
-                    snapshot.References(path, byteOffset, includeDeclaration);
+                    snapshot->References(path, byteOffset,
+                                         includeDeclaration);
                 if (!references)
                     return SuccessResponse(request->id,
                                            "{\"references\":null}");
@@ -445,7 +447,7 @@ std::string ProtocolServer::Handle(std::string_view message) {
                 return SuccessResponse(request->id, result);
             }
             const std::optional<SemanticRename> rename =
-                snapshot.Rename(path, byteOffset, includeDeclaration);
+                snapshot->Rename(path, byteOffset, includeDeclaration);
             if (!rename)
                 return SuccessResponse(request->id, "{\"rename\":null}");
             std::string result =

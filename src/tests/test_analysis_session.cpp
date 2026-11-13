@@ -182,6 +182,34 @@ TEST_F(AnalysisSessionTests, TracksChangesAndReturnsToFilesystemOnClose) {
     EXPECT_FALSE(closed.HasErrors());
 }
 
+TEST_F(AnalysisSessionTests, CachesSnapshotsUntilAnySourceChanges) {
+    Write("main.fl", "module main;\nvoid main() {}\n");
+    Write("dependency.fl", "module dependency;\n");
+    AnalysisSession session(_root);
+
+    const auto first = session.AnalyzeCached("main.fl");
+    const auto reused = session.AnalyzeCached(_root / "main.fl");
+
+    EXPECT_EQ(first, reused);
+    EXPECT_FALSE(first->version);
+    ASSERT_EQ(session.Open("dependency.fl", "module dependency;\n", 1),
+              OverlayUpdateResult::Applied);
+
+    const auto invalidated = session.AnalyzeCached("main.fl");
+    EXPECT_NE(first, invalidated);
+    EXPECT_FALSE(invalidated->HasErrors());
+
+    const auto dependency = session.AnalyzeCached("dependency.fl");
+    ASSERT_TRUE(dependency->version);
+    EXPECT_EQ(*dependency->version, 1);
+    ASSERT_EQ(session.Change("dependency.fl", "module dependency;\n", 2),
+              OverlayUpdateResult::Applied);
+    const auto changed = session.AnalyzeCached("dependency.fl");
+    EXPECT_NE(dependency, changed);
+    ASSERT_TRUE(changed->version);
+    EXPECT_EQ(*changed->version, 2);
+}
+
 TEST_F(AnalysisSessionTests, AppliesOverlaysToImportedModules) {
     Write("dependency.fl",
           "module dependency;\nexport i32 value() { return 42; }\n");

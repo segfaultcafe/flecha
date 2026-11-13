@@ -272,6 +272,11 @@ std::vector<std::string> ProtocolServer::PublishDiagnostics(
     const std::filesystem::path& requestedEntry) {
     const std::filesystem::path entry = Normalize(requestedEntry);
     const AnalyzerSnapshot snapshot = _analyzer.Diagnostics(entry);
+    const auto currentDocument = _documents.find(entry);
+    if (currentDocument != _documents.end() &&
+        (!snapshot.version ||
+         *snapshot.version != currentDocument->second.version))
+        return {};
     std::map<std::filesystem::path, std::vector<const AnalyzerDiagnostic*>>
         groups;
     groups[entry];
