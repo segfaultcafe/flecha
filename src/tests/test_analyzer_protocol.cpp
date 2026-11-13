@@ -265,6 +265,85 @@ TEST_F(AnalyzerProtocolTests, RecoversAfterTransientInterfaceValueMethodCall) {
 }
 
 TEST_F(AnalyzerProtocolTests,
+       RecoversFromTransientNamespaceHeadersAroundInterfaceCalls) {
+    const std::filesystem::path relative = "io/buffered/reader.fl";
+    const std::filesystem::path path = _root / relative;
+    const std::string attachment = "under namespace root::io;";
+    const std::string invalidBody =
+        "\n"
+        "interface Readable { i32 read(&self) virtual; };\n"
+        "structure Reader << Readable {};\n"
+        "i32 Reader::read(&self) override { return 42; }\n"
+        "Readable make() { return Reader::init(); }\n"
+        "i32 use() { reader := make(); return reader.read(); }\n";
+    const std::string validBody =
+        "\n"
+        "interface Readable { i32 read(&self) virtual; };\n"
+        "structure Reader << Readable {};\n"
+        "i32 Reader::read(&self) override { return 42; }\n"
+        "Reader make() { return Reader::init(); }\n"
+        "i32 use() { reader := make(); return reader.read(); }\n";
+    const std::string validText = "module reader;\n" + attachment + validBody;
+    Write(relative.string(), validText);
+    ProtocolServer server("test-compiler");
+    ASSERT_EQ(ErrorCode(Initialize(server)), 0);
+    std::int64_t version = 0;
+    std::size_t requestId = 2;
+    const auto update = [&](std::string_view method, const std::string& text) {
+        const std::string params =
+            "{\"path\":" +
+            flecha::analyzer::json::Quote(path.generic_string()) +
+            ",\"version\":" + std::to_string(++version) +
+            ",\"text\":" + flecha::analyzer::json::Quote(text) + "}";
+        return server.Handle(
+            Request(std::to_string(requestId++), method, params));
+    };
+    const std::string documentParams =
+        "{\"path\":" + flecha::analyzer::json::Quote(path.generic_string()) +
+        "}";
+    const auto diagnostics = [&] {
+        return server.Handle(Request(std::to_string(requestId++),
+                                     "document/diagnostics", documentParams));
+    };
+
+    ASSERT_EQ(ErrorCode(update("document/open", validText)), 0);
+    for (std::size_t length = 0; length <= attachment.size(); ++length) {
+        const std::string text =
+            "module reader;\n" + attachment.substr(0, length) + invalidBody;
+        ASSERT_EQ(ErrorCode(update("document/change", text)), 0);
+        const std::string response = diagnostics();
+        ASSERT_EQ(ErrorCode(response), 0) << response;
+        EXPECT_NE(response.find("\"version\":" + std::to_string(version)),
+                  std::string::npos)
+            << response;
+    }
+
+    const std::string invalidText =
+        "module reader;\n" + attachment + invalidBody;
+    ASSERT_EQ(ErrorCode(update("document/change", invalidText)), 0);
+    const std::string invalidDiagnostics = diagnostics();
+    ASSERT_EQ(ErrorCode(invalidDiagnostics), 0) << invalidDiagnostics;
+    EXPECT_NE(invalidDiagnostics.find(
+                  "interface methods require a checked-reference receiver"),
+              std::string::npos)
+        << invalidDiagnostics;
+
+    ASSERT_EQ(ErrorCode(update("document/change", validText)), 0);
+    const std::string recovered = diagnostics();
+    ASSERT_EQ(ErrorCode(recovered), 0) << recovered;
+    EXPECT_NE(recovered.find("\"version\":" + std::to_string(version)),
+              std::string::npos)
+        << recovered;
+    EXPECT_NE(recovered.find("\"diagnostics\":[]"), std::string::npos)
+        << recovered;
+    const std::string tokens =
+        server.Handle(Request(std::to_string(requestId++),
+                              "document/semanticTokens", documentParams));
+    ASSERT_EQ(ErrorCode(tokens), 0) << tokens;
+    EXPECT_NE(tokens.find("\"tokens\":[{"), std::string::npos) << tokens;
+}
+
+TEST_F(AnalyzerProtocolTests,
        RecoversFromErrorTypedBorrowAcrossFullDocumentChanges) {
     Write("main.fl", "module main;\nvoid main() {}\n");
     ProtocolServer server("test-compiler");
