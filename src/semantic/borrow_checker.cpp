@@ -56,6 +56,15 @@ bool IsExclusiveBorrow(SemanticType type) {
     return false;
 }
 
+bool HasErrorType(SemanticType type) {
+    if (type.IsError()) return true;
+    if (type.Kind() == SemanticTypeKind::Tuple)
+        return std::any_of(type.Elements().begin(), type.Elements().end(),
+                           HasErrorType);
+    return type.IsCompound() &&
+           (type.Target() == nullptr || HasErrorType(*type.Target()));
+}
+
 const core::Expression& Unwrap(const core::Expression& expression) {
     if (expression.Kind() == Kind::ParenthesizedExpression)
         return Unwrap(
@@ -158,6 +167,15 @@ class BorrowChecker final {
           _defs(graph.nodes.size()) {}
 
     void Analyze(const core::FunctionDeclaration& function) {
+        const Symbol* declared = _model.DeclaredSymbol(function);
+        if (declared != nullptr && declared->Kind() == SymbolKind::Function)
+            _function = static_cast<const FunctionSymbol*>(declared);
+        if (_function != nullptr &&
+            (HasErrorType(_function->ReturnType()) ||
+             std::any_of(_function->ParameterTypes().begin(),
+                         _function->ParameterTypes().end(), HasErrorType)))
+            return;
+
         State seed;
         for (const std::unique_ptr<core::Parameter>& parameter :
              function.Parameters()) {
@@ -171,9 +189,7 @@ class BorrowChecker final {
                      symbol->Type().Kind() == SemanticTypeKind::Function ||
                          IsExclusiveBorrow(symbol->Type())});
         }
-        const Symbol* declared = _model.DeclaredSymbol(function);
-        if (declared != nullptr && declared->Kind() == SymbolKind::Function) {
-            _function = static_cast<const FunctionSymbol*>(declared);
+        if (_function != nullptr) {
             for (const std::size_t source : _function->BorrowSourceIndices()) {
                 if (source >= function.Parameters().size()) continue;
                 if (const Symbol* parameter =
@@ -940,6 +956,13 @@ class BorrowChecker final {
 
     Value Evaluate(const core::Expression& expression,
                    bool applyImplicitConversion = true) {
+        // Semantic analysis deliberately keeps walking a function after a
+        // declaration error so that the editor can receive useful follow-up
+        // diagnostics.  Such expressions have no sound borrow semantics: an
+        // unknown field or result type, for example, leaves a unary borrow
+        // typed as Error rather than Reference.  Do not apply reference-only
+        // invariants to that recovery model.
+        if (HasErrorType(_model.TypeOf(expression))) return {};
         const SemanticType implicit =
             _model.ImplicitInterfaceConversionFor(expression);
         if (applyImplicitConversion && !implicit.IsError())

@@ -23,6 +23,11 @@ using JsonObject = analyzer::json::Value::Object;
 constexpr std::size_t MAX_HEADER_BYTES = 8 * 1024;
 constexpr std::size_t MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
 
+class AnalyzerTransportError final : public std::runtime_error {
+   public:
+    using std::runtime_error::runtime_error;
+};
+
 const JsonObject& ResponseResult(const analyzer::json::Value& response) {
     const JsonObject* envelope = analyzer::json::AsObject(response);
     if (!envelope) throw std::runtime_error("analyzer returned a non-object");
@@ -124,9 +129,29 @@ std::string QueryParams(const std::filesystem::path& path,
 
 void RequireRuntimeSuccess(int32_t status, std::string_view operation) {
     if (status != FLECHA_RUNTIME_PROCESS_OK)
-        throw std::runtime_error(std::string(operation) +
-                                 " failed with runtime status " +
-                                 std::to_string(status));
+        throw AnalyzerTransportError(std::string(operation) +
+                                     " failed with runtime status " +
+                                     std::to_string(status));
+}
+
+std::string InitializeParams(
+    const std::filesystem::path& workspace,
+    const std::optional<std::filesystem::path>& packageGraph) {
+    std::string params =
+        "{\"protocolMajor\":1,\"protocolMinor\":0,\"workspace\":" +
+        analyzer::json::Quote(workspace.generic_string());
+    if (packageGraph)
+        params += ",\"packageGraph\":" +
+                  analyzer::json::Quote(packageGraph->generic_string());
+    params += '}';
+    return params;
+}
+
+std::string DocumentParams(const std::filesystem::path& path,
+                           std::string_view text, std::int64_t version) {
+    return "{\"path\":" + analyzer::json::Quote(path.generic_string()) +
+           ",\"version\":" + std::to_string(version) +
+           ",\"text\":" + analyzer::json::Quote(text) + '}';
 }
 
 }  // namespace
@@ -147,6 +172,8 @@ SubprocessAnalyzerClient::~SubprocessAnalyzerClient() {
 
 void SubprocessAnalyzerClient::Start() {
     if (_process) return;
+    if (_shutdown)
+        throw std::runtime_error("Flecha analyzer client is shut down");
     const std::string executable = _compiler.string();
     const std::string arguments = "analyze--stdio";
     const std::size_t offsets[] = {0, 7, 14};
@@ -184,7 +211,7 @@ std::string SubprocessAnalyzerClient::ReadFrame() {
         const std::size_t separator = _readBuffer.find("\r\n\r\n");
         if (separator != std::string::npos) {
             if (separator > MAX_HEADER_BYTES)
-                throw std::runtime_error(
+                throw AnalyzerTransportError(
                     "analyzer response header is too large");
             const std::string_view headers(_readBuffer.data(), separator);
             std::optional<std::size_t> contentLength;
@@ -206,7 +233,7 @@ std::string SubprocessAnalyzerClient::ReadFrame() {
                         value.data(), value.data() + value.size(), parsed);
                     if (value.empty() || error != std::errc{} ||
                         last != value.data() + value.size())
-                        throw std::runtime_error(
+                        throw AnalyzerTransportError(
                             "invalid analyzer Content-Length header");
                     contentLength = parsed;
                 }
@@ -214,10 +241,10 @@ std::string SubprocessAnalyzerClient::ReadFrame() {
                 begin = end + 2;
             }
             if (!contentLength)
-                throw std::runtime_error(
+                throw AnalyzerTransportError(
                     "analyzer response has no Content-Length header");
             if (*contentLength > MAX_MESSAGE_BYTES)
-                throw std::runtime_error("analyzer response is too large");
+                throw AnalyzerTransportError("analyzer response is too large");
             const std::size_t body = separator + 4;
             if (_readBuffer.size() >= body + *contentLength) {
                 std::string message = _readBuffer.substr(body, *contentLength);
@@ -225,7 +252,8 @@ std::string SubprocessAnalyzerClient::ReadFrame() {
                 return message;
             }
         } else if (_readBuffer.size() > MAX_HEADER_BYTES) {
-            throw std::runtime_error("analyzer response header is too large");
+            throw AnalyzerTransportError(
+                "analyzer response header is too large");
         }
 
         std::uint8_t bytes[4096];
@@ -234,13 +262,29 @@ std::string SubprocessAnalyzerClient::ReadFrame() {
             _output, bytes, sizeof(bytes), &count);
         RequireRuntimeSuccess(status, "reading from Flecha analyzer");
         if (count == 0)
-            throw std::runtime_error("Flecha analyzer exited unexpectedly");
+            throw AnalyzerTransportError("Flecha analyzer exited unexpectedly");
         _readBuffer.append(reinterpret_cast<const char*>(bytes), count);
     }
 }
 
 std::string SubprocessAnalyzerClient::Request(std::string_view method,
                                               std::string_view params) {
+    try {
+        return RequestOnce(method, params);
+    } catch (const AnalyzerTransportError&) {
+        Recover();
+    }
+    try {
+        return RequestOnce(method, params);
+    } catch (const AnalyzerTransportError&) {
+        CloseHandles();
+        _readBuffer.clear();
+        throw;
+    }
+}
+
+std::string SubprocessAnalyzerClient::RequestOnce(std::string_view method,
+                                                  std::string_view params) {
     Start();
     const std::int64_t id = _nextRequestId++;
     const std::string request =
@@ -251,50 +295,137 @@ std::string SubprocessAnalyzerClient::Request(std::string_view method,
     return ReadFrame();
 }
 
+void SubprocessAnalyzerClient::ApplyDocumentMutation(std::string_view method,
+                                                     std::string_view params) {
+    try {
+        analyzer::json::Value response =
+            ParseResponse(RequestOnce(method, params));
+        (void)ResponseResult(response);
+    } catch (const AnalyzerTransportError&) {
+        // The desired document state is recorded before this call.  A fresh
+        // analyzer receives that state through document/open replay, so
+        // resending the mutation would only create a stale-version error.
+        Recover();
+    }
+}
+
+void SubprocessAnalyzerClient::InitializeProcess() {
+    if (!_workspace)
+        throw std::runtime_error("Flecha analyzer was not initialized");
+    analyzer::json::Value response = ParseResponse(RequestOnce(
+        "initialize", InitializeParams(*_workspace, _packageGraph)));
+    (void)ResponseResult(response);
+}
+
+void SubprocessAnalyzerClient::ReplayOpenDocuments() {
+    for (const auto& [path, document] : _openDocuments) {
+        analyzer::json::Value response = ParseResponse(
+            RequestOnce("document/open",
+                        DocumentParams(path, document.text, document.version)));
+        (void)ResponseResult(response);
+    }
+}
+
+void SubprocessAnalyzerClient::Recover() {
+    if (!_initialized)
+        throw std::runtime_error("Flecha analyzer was not initialized");
+    CloseHandles();
+    _readBuffer.clear();
+    try {
+        InitializeProcess();
+        ReplayOpenDocuments();
+    } catch (...) {
+        CloseHandles();
+        _readBuffer.clear();
+        throw;
+    }
+}
+
 std::string SubprocessAnalyzerClient::Initialize(
     const std::filesystem::path& workspace,
     const std::optional<std::filesystem::path>& packageGraph) {
-    std::string params =
-        "{\"protocolMajor\":1,\"protocolMinor\":0,\"workspace\":" +
-        analyzer::json::Quote(workspace.generic_string());
-    if (packageGraph)
-        params += ",\"packageGraph\":" +
-                  analyzer::json::Quote(packageGraph->generic_string());
-    params += '}';
-    analyzer::json::Value response =
-        ParseResponse(Request("initialize", params));
+    _workspace = workspace;
+    _packageGraph = packageGraph;
+    analyzer::json::Value response;
+    try {
+        response = ParseResponse(RequestOnce(
+            "initialize", InitializeParams(workspace, packageGraph)));
+    } catch (const AnalyzerTransportError&) {
+        CloseHandles();
+        _readBuffer.clear();
+        try {
+            response = ParseResponse(RequestOnce(
+                "initialize", InitializeParams(workspace, packageGraph)));
+        } catch (const AnalyzerTransportError&) {
+            CloseHandles();
+            _readBuffer.clear();
+            throw;
+        }
+    }
     const JsonObject& result = ResponseResult(response);
-    return RequiredString(result, "compilerVersion");
+    std::string compilerVersion = RequiredString(result, "compilerVersion");
+    _initialized = true;
+    return compilerVersion;
 }
 
 void SubprocessAnalyzerClient::Open(const std::filesystem::path& path,
                                     std::string text, std::int64_t version) {
-    const std::string params =
-        "{\"path\":" + analyzer::json::Quote(path.generic_string()) +
-        ",\"version\":" + std::to_string(version) +
-        ",\"text\":" + analyzer::json::Quote(text) + '}';
-    analyzer::json::Value response =
-        ParseResponse(Request("document/open", params));
-    (void)ResponseResult(response);
+    const std::filesystem::path normalized = path.lexically_normal();
+    const auto previous = _openDocuments.find(normalized);
+    const std::optional<OpenDocument> saved =
+        previous == _openDocuments.end()
+            ? std::nullopt
+            : std::optional<OpenDocument>(previous->second);
+    _openDocuments.insert_or_assign(normalized, OpenDocument{text, version});
+    try {
+        ApplyDocumentMutation("document/open",
+                              DocumentParams(path, text, version));
+    } catch (...) {
+        if (saved)
+            _openDocuments.insert_or_assign(normalized, *saved);
+        else
+            _openDocuments.erase(normalized);
+        throw;
+    }
 }
 
 void SubprocessAnalyzerClient::Change(const std::filesystem::path& path,
                                       std::string text, std::int64_t version) {
-    const std::string params =
-        "{\"path\":" + analyzer::json::Quote(path.generic_string()) +
-        ",\"version\":" + std::to_string(version) +
-        ",\"text\":" + analyzer::json::Quote(text) + '}';
-    analyzer::json::Value response =
-        ParseResponse(Request("document/change", params));
-    (void)ResponseResult(response);
+    const std::filesystem::path normalized = path.lexically_normal();
+    const auto found = _openDocuments.find(normalized);
+    if (found == _openDocuments.end()) {
+        analyzer::json::Value response = ParseResponse(
+            Request("document/change", DocumentParams(path, text, version)));
+        (void)ResponseResult(response);
+        return;
+    }
+    const OpenDocument saved = found->second;
+    found->second = {text, version};
+    try {
+        ApplyDocumentMutation("document/change",
+                              DocumentParams(path, text, version));
+    } catch (...) {
+        found->second = saved;
+        throw;
+    }
 }
 
 void SubprocessAnalyzerClient::Close(const std::filesystem::path& path) {
+    const std::filesystem::path normalized = path.lexically_normal();
+    const auto found = _openDocuments.find(normalized);
+    const std::optional<OpenDocument> saved =
+        found == _openDocuments.end()
+            ? std::nullopt
+            : std::optional<OpenDocument>(found->second);
+    _openDocuments.erase(normalized);
     const std::string params =
         "{\"path\":" + analyzer::json::Quote(path.generic_string()) + '}';
-    analyzer::json::Value response =
-        ParseResponse(Request("document/close", params));
-    (void)ResponseResult(response);
+    try {
+        ApplyDocumentMutation("document/close", params);
+    } catch (...) {
+        if (saved) _openDocuments.insert_or_assign(normalized, *saved);
+        throw;
+    }
 }
 
 AnalyzerSnapshot SubprocessAnalyzerClient::Diagnostics(
@@ -448,11 +579,18 @@ std::vector<AnalyzerSemanticToken> SubprocessAnalyzerClient::SemanticTokens(
 
 void SubprocessAnalyzerClient::Shutdown() {
     if (!_process || _shutdown) return;
-    analyzer::json::Value response = ParseResponse(Request("shutdown", "{}"));
-    const JsonObject* envelope = analyzer::json::AsObject(response);
-    if (!envelope || analyzer::json::Field(*envelope, "error"))
-        throw std::runtime_error("Flecha analyzer rejected shutdown");
+    try {
+        analyzer::json::Value response =
+            ParseResponse(RequestOnce("shutdown", "{}"));
+        const JsonObject* envelope = analyzer::json::AsObject(response);
+        if (!envelope || analyzer::json::Field(*envelope, "error"))
+            throw std::runtime_error("Flecha analyzer rejected shutdown");
+    } catch (const AnalyzerTransportError&) {
+        // A dead analyzer is already shut down from the client's perspective.
+    }
     _shutdown = true;
+    _initialized = false;
+    _openDocuments.clear();
     CloseHandles();
 }
 

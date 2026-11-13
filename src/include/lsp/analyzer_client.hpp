@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -119,18 +120,33 @@ class SubprocessAnalyzerClient final : public AnalyzerClient {
     void Shutdown() override;
 
    private:
+    struct OpenDocument final {
+        std::string text;
+        std::int64_t version = 0;
+    };
+
     std::string Request(std::string_view method, std::string_view params);
+    std::string RequestOnce(std::string_view method, std::string_view params);
+    void ApplyDocumentMutation(std::string_view method,
+                               std::string_view params);
+    void Recover();
+    void InitializeProcess();
+    void ReplayOpenDocuments();
     void Start();
     void WriteFrame(std::string_view message);
     std::string ReadFrame();
     void CloseHandles() noexcept;
 
     std::filesystem::path _compiler;
+    std::optional<std::filesystem::path> _workspace;
+    std::optional<std::filesystem::path> _packageGraph;
+    std::map<std::filesystem::path, OpenDocument> _openDocuments;
     void* _process = nullptr;
     void* _input = nullptr;
     void* _output = nullptr;
     std::string _readBuffer;
     std::int64_t _nextRequestId = 1;
+    bool _initialized = false;
     bool _shutdown = false;
 };
 
