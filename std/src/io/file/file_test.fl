@@ -117,8 +117,8 @@ test closed_files_reject_every_operation(&testing::UnitTest t) {
     closed, openError := file::File::open("", file::OpenOptions::readOnly());
     asserts::is_true(t, openError == errors::IoError.InvalidPath, "the setup File is closed");
 
-    [0]u8 empty = none;
-    bytesRead, readError := closed.read(empty[:]);
+    [1]u8 byte = none;
+    bytesRead, readError := closed.read(byte[:]);
     asserts::is_true(
         t,
         bytesRead == 0 and readError == errors::IoError.Closed,
@@ -126,11 +126,11 @@ test closed_files_reject_every_operation(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
-        closed.readExact(empty[:]) == errors::IoError.Closed,
+        closed.readExact(byte[:]) == errors::IoError.Closed,
         "readExact rejects a closed File"
     );
 
-    bytesWritten, writeError := closed.write(empty[:]);
+    bytesWritten, writeError := closed.write(byte[:]);
     asserts::is_true(
         t,
         bytesWritten == 0 and writeError == errors::IoError.Closed,
@@ -138,7 +138,7 @@ test closed_files_reject_every_operation(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
-        closed.writeAll(empty[:]) == errors::IoError.Closed,
+        closed.writeAll(byte[:]) == errors::IoError.Closed,
         "writeAll rejects a closed File"
     );
     stringv emptyText = "";
