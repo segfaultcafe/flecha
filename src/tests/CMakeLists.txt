@@ -2,6 +2,7 @@ add_executable(test_flecha
     test_analysis_session.cpp
     test_analyzer_protocol.cpp
     test_analyzer_server_loop.cpp
+    test_analyzer_client.cpp
     test_ast.cpp
     test_codegen.cpp
     test_diagnostics.cpp
@@ -25,10 +26,17 @@ add_executable(process_fixture fixtures/process_fixture.cpp)
 target_link_libraries(process_fixture PRIVATE flecha_project_options)
 target_compile_definitions(test_flecha PRIVATE
     FLECHA_PROCESS_FIXTURE="$<TARGET_FILE:process_fixture>"
+    FLECHA_ANALYZER_FIXTURE="$<TARGET_FILE:analyzer_fixture>"
     FLECHA_INTERFACE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces"
     FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/namespace_attachment"
 )
-add_dependencies(test_flecha process_fixture)
+add_executable(analyzer_fixture fixtures/analyzer_fixture.cpp)
+target_link_libraries(analyzer_fixture
+    PRIVATE
+        flecha_project_options
+        analyzer
+)
+add_dependencies(test_flecha process_fixture analyzer_fixture)
 
 add_executable(compiler_stress compiler_stress.cpp)
 target_link_libraries(compiler_stress
