@@ -383,6 +383,13 @@ add_test(
 )
 
 add_test(
+    NAME InterfaceFixtureTests.ValidAdjacentFieldBorrows
+    COMMAND $<TARGET_FILE:flecha>
+        check
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces/valid_adjacent_field_borrows.fl
+)
+
+add_test(
     NAME InterfaceFixtureTests.ValidDynamicDispatch
     COMMAND $<TARGET_FILE:flecha>
         check

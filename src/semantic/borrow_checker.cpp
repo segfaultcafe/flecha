@@ -778,6 +778,19 @@ class BorrowChecker final {
         return value;
     }
 
+    bool ProjectsCheckedReference(const core::Expression& expression) const {
+        const core::Expression& inner = Unwrap(expression);
+        if (inner.Kind() != Kind::MemberAccessExpression) return false;
+        const auto& field =
+            static_cast<const core::MemberAccessExpression&>(inner);
+        if (field.Access() == TokenType::Arrow &&
+            _model.TypeOf(field.Receiver()).Kind() ==
+                SemanticTypeKind::Reference)
+            return true;
+        return field.Access() == TokenType::Dot &&
+               ProjectsCheckedReference(field.Receiver());
+    }
+
     Value Place(const core::Expression& expression) {
         const core::Expression& inner = Unwrap(expression);
         const Symbol* symbol = Named(inner);
@@ -1345,10 +1358,17 @@ class BorrowChecker final {
                             receiverType.Kind() ==
                                 SemanticTypeKind::Structure ||
                             receiverType.Kind() == SemanticTypeKind::Enum;
-                        Value value =
-                            owningReceiver || call.Access() == TokenType::Arrow
-                                ? Evaluate(call.Receiver())
-                                : Place(call.Receiver());
+                        const bool projectedReferenceReceiver =
+                            call.Access() == TokenType::Arrow &&
+                            _model.TypeOf(call.Receiver()).Kind() ==
+                                SemanticTypeKind::Reference &&
+                            ProjectsCheckedReference(call.Receiver());
+                        const bool placeReceiver =
+                            !owningReceiver &&
+                            (call.Access() != TokenType::Arrow ||
+                             projectedReferenceReceiver);
+                        Value value = placeReceiver ? Place(call.Receiver())
+                                                    : Evaluate(call.Receiver());
                         if (std::find(method->BorrowSourceIndices().begin(),
                                       method->BorrowSourceIndices().end(),
                                       0) != method->BorrowSourceIndices().end())
