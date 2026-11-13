@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace flecha::core {
 
@@ -13,6 +14,11 @@ class SourceProvider {
 
     [[nodiscard]] virtual std::optional<std::string> Read(
         const std::filesystem::path& path) const = 0;
+    [[nodiscard]] virtual std::vector<std::filesystem::path> KnownSources(
+        const std::filesystem::path& root) const {
+        (void)root;
+        return {};
+    }
 };
 
 class FilesystemSourceProvider final : public SourceProvider {
