@@ -50,4 +50,7 @@ test("namespace attachment has explicit keyword and namespace scopes", () => {
     "keyword.control.module.flecha",
   );
   assert.equal(attachment.patterns[0].include, "#namespaces");
+  assert.doesNotMatch("i32 under = 20;", new RegExp(attachment.begin));
+  assert.doesNotMatch("i32 namespace = 22;", new RegExp(attachment.begin));
+  assert.doesNotMatch(grammar.repository.control.match, /under|namespace/);
 });

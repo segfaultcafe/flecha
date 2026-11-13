@@ -1,1 +1,7 @@
-i32 main() { return 42; }
+i32 under() { return 20; }
+i32 namespace() { return 22; }
+i32 main() {
+    i32 under = 20;
+    i32 namespace = 22;
+    return under + namespace;
+}

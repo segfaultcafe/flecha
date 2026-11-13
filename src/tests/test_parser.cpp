@@ -2226,6 +2226,24 @@ TEST(ParserTests, AcceptsRootNamespaceAttachment) {
               (std::vector<std::string>{"root"}));
 }
 
+TEST(ParserTests, KeepsNamespaceAttachmentWordsValidAsIdentifiers) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "i32 under() { return 20; } i32 namespace() { return 22; } "
+        "i32 main() { i32 under = 20; i32 namespace = 22; "
+        "return under + namespace; }",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 3);
+    EXPECT_EQ(static_cast<const FunctionDeclaration&>(*unit->Declarations()[0])
+                  .Name(),
+              "under");
+    EXPECT_EQ(static_cast<const FunctionDeclaration&>(*unit->Declarations()[1])
+                  .Name(),
+              "namespace");
+}
+
 TEST(ParserTests, DiagnosesMalformedAndDuplicateNamespaceAttachments) {
     for (const std::string& source : {
              "module gee; under root::foo; void run() {}",
@@ -2239,6 +2257,13 @@ TEST(ParserTests, DiagnosesMalformedAndDuplicateNamespaceAttachments) {
         (void)ParseSource(source, diagnostics);
         EXPECT_TRUE(diagnostics.HasErrors()) << source;
     }
+
+    DiagnosticBag missingKeyword;
+    (void)ParseSource("module gee; under root::foo; void run() {}",
+                      missingKeyword);
+    ASSERT_FALSE(missingKeyword.Diagnostics().empty());
+    EXPECT_EQ(missingKeyword.Diagnostics()[0].message,
+              "expected 'namespace' after 'under', found 'root'");
 }
 
 TEST(ParserTests, ParsesQuiverVisibilityOnTopLevelDeclarations) {

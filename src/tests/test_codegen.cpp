@@ -331,6 +331,37 @@ TEST(NativeCompilerTests, InlinesModuleConstantExpressions) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, KeepsNamespaceAttachmentWordsContextual) {
+    GeneratedSource result = Generate(R"(
+        i32 under() { return 20; }
+        i32 namespace() { return 22; }
+        i32 main() {
+            if under() + namespace() != 42 { return 1; }
+            i32 under = 20;
+            i32 namespace = 22;
+            return under + namespace;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_contextual_namespace_attachment_words_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(
+        *result.boundProgram, "contextual_words_test", executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, EmitsHexadecimalIntegerLiterals) {
     GeneratedSource result = Generate(R"(
         enum Code: u32 { Value = 0x6a09e667, }

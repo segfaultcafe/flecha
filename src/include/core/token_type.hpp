@@ -80,8 +80,6 @@ enum class TokenType {
 
     // Keywords
     Module,
-    Under,
-    Namespace,
     Test,
     Enum,
     TypeSet,

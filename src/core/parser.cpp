@@ -2833,16 +2833,37 @@ void Parser::ParseHeader() {
         Advance();
         _modulePrivate = true;
     }
-    if (Match(TokenType::Module)) {
+    const bool hasModuleDeclaration = Match(TokenType::Module);
+    if (hasModuleDeclaration) {
         const Token* name = Consume(TokenType::Identifier, "module name");
         if (name) moduleName = name->value;
         Consume(TokenType::SemiColon, "';' after module declaration");
     }
-    while (Check(TokenType::Under)) {
+    const auto isIdentifier = [&](std::size_t offset, std::string_view value) {
+        return Peek(offset).type == TokenType::Identifier &&
+               Peek(offset).value == value;
+    };
+    const auto startsNamespaceAttachment = [&] {
+        if (!isIdentifier(0, "under")) return false;
+        // `under namespace` is the contextual header phrase. Preserve the
+        // focused missing-keyword diagnostic for the unambiguous malformed
+        // shape `under root::...` and the missing-module diagnostic without
+        // reserving `under` globally.
+        return isIdentifier(1, "namespace") ||
+               (Peek(1).type == TokenType::Identifier &&
+                Peek(2).type == TokenType::Scope);
+    };
+    while (startsNamespaceAttachment()) {
         const Token& under = Advance();
         NamespaceAttachment attachment;
         attachment.range.start = under.range.start;
-        Consume(TokenType::Namespace, "'namespace' after 'under'");
+        if (isIdentifier(0, "namespace"))
+            Advance();
+        else
+            _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                                Current().range,
+                                "expected 'namespace' after 'under', found '" +
+                                    Current().value + "'");
         const Token* first =
             Consume(TokenType::Identifier, "namespace attachment root");
         if (first) {
@@ -2868,7 +2889,7 @@ void Parser::ParseHeader() {
             _namespaceAttachment = std::move(attachment);
         }
     }
-    if (_namespaceAttachment && moduleName.empty())
+    if (_namespaceAttachment && !hasModuleDeclaration)
         _diagnostics.Report(diagnostics::DiagnosticCode::UnexpectedToken,
                             _namespaceAttachment->range,
                             "'under namespace' requires a module declaration");

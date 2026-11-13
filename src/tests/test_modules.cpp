@@ -149,6 +149,22 @@ TEST_F(ModuleTests, OrdersMultipleAttachedSourcesByPhysicalPath) {
     EXPECT_NE(files[1].find("/two/"), std::string::npos);
 }
 
+TEST_F(ModuleTests, OrdersInvalidAttachmentDiagnosticsByPhysicalPath) {
+    Write("foo/anchor.fl", "module anchor; void keep() {}");
+    Write("alpha/bad.fl",
+          "module bad; under namespace root::foo; void first() {}");
+    Write("zeta/bad.fl",
+          "module bad; under namespace root::foo; void second() {}");
+    Write("main.fl", "module main; @imports :: root::foo::bad; void main() {}");
+
+    const std::string errors = Check();
+    const std::size_t alpha = errors.find("alpha/bad.fl");
+    const std::size_t zeta = errors.find("zeta/bad.fl");
+    ASSERT_NE(alpha, std::string::npos) << errors;
+    ASSERT_NE(zeta, std::string::npos) << errors;
+    EXPECT_LT(alpha, zeta) << errors;
+}
+
 TEST_F(ModuleTests, ResolvesAttachmentsInsideEachPackageSourceRoot) {
     Write("app/main.fl", R"(module main;
         @imports :: lib::dependency::foo::gee;

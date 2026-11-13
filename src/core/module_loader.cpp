@@ -352,6 +352,17 @@ const std::vector<ModuleLoader::IndexedSource>& ModuleLoader::IndexSourceRoot(
         sources.push_back({entry.path(), std::move(header.name),
                            std::move(header.namespaceAttachment)});
     }
+    std::sort(sources.begin(), sources.end(),
+              [](const IndexedSource& left, const IndexedSource& right) {
+                  const std::string leftPhysical =
+                      fs::weakly_canonical(left.file).generic_string();
+                  const std::string rightPhysical =
+                      fs::weakly_canonical(right.file).generic_string();
+                  if (leftPhysical != rightPhysical)
+                      return leftPhysical < rightPhysical;
+                  return left.file.lexically_normal().generic_string() <
+                         right.file.lexically_normal().generic_string();
+              });
     return _sourceIndexes.emplace(root, std::move(sources)).first->second;
 }
 
