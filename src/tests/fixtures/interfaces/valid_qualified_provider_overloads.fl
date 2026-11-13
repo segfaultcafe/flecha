@@ -1,0 +1,73 @@
+interface Base {
+    i32 read(&self) default;
+    i32 read(&const self) default;
+    i32 choose(&const self, i32 value) default;
+    i32 choose(&const self, i64 value) default;
+    i32 contextual(&const self, u8 value) default;
+};
+
+i32 Base::read(&self) { return 1; }
+i32 Base::read(&const self) { return 2; }
+i32 Base::choose(&const self, i32 value) { return 10 + value; }
+i32 Base::choose(&const self, i64 value) { return 20 + value.cast<i32>; }
+i32 Base::contextual(&const self, u8 value) { return value.cast<i32>; }
+
+interface Child << Base {
+    i32 read(&self) default;
+    i32 read(&const self) default;
+    i32 choose(&const self, i32 value) default;
+    i32 choose(&const self, i64 value) default;
+    i32 contextual(&const self, u8 value) default;
+};
+
+i32 Child::read(&self) override { return Base::read(self); }
+i32 Child::read(&const self) override { return Base::read(self); }
+i32 Child::choose(&const self, i32 value) override {
+    return Base::choose(self, value);
+}
+i32 Child::choose(&const self, i64 value) override {
+    return Base::choose(self, value);
+}
+i32 Child::contextual(&const self, u8 value) override {
+    return Base::contextual(self, 9);
+}
+
+interface ProtectedBase {
+    protected i32 probe(&const self) default;
+};
+
+protected i32 ProtectedBase::probe(&const self) { return 0; }
+
+interface ProtectedMiddle << ProtectedBase {
+    protected i32 probe(&const self) default;
+};
+
+protected i32 ProtectedMiddle::probe(&const self) override {
+    return ProtectedBase::probe(self);
+}
+
+interface ProtectedLeaf << ProtectedMiddle {
+    protected i32 probe(&const self) final;
+};
+
+protected i32 ProtectedLeaf::probe(&const self) override {
+    return ProtectedMiddle::probe(self);
+}
+
+structure Concrete << Child, ProtectedLeaf {};
+
+i32 main() {
+    value := Concrete::init();
+    i32 result = 0;
+    {
+        &Child mutable = &value;
+        result += mutable->read();
+    }
+    {
+        &const Child immutable = &value;
+        result += immutable->read() + immutable->choose(0 as i32) +
+                  immutable->choose(0 as i64) +
+                  immutable->contextual(0 as u8);
+    }
+    return result;
+}
