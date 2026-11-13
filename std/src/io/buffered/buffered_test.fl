@@ -1,4 +1,5 @@
 module buffered_test;
+under namespace root::io;
 
 @imports
     :: root::io::buffered
