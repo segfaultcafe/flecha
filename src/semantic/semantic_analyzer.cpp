@@ -9105,7 +9105,8 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
         } else {
             SemanticType target =
                 receiver.Kind() == SemanticTypeKind::Structure ||
-                        receiver.Kind() == SemanticTypeKind::Enum
+                        receiver.Kind() == SemanticTypeKind::Enum ||
+                        receiver.Kind() == SemanticTypeKind::Interface
                     ? PlaceType(expression.Receiver())
                     : *receiver.Target();
             if (target.IsError())

@@ -507,6 +507,32 @@ TEST(SemanticInterfaceCallTests,
     EXPECT_EQ(constCall->key.receiver, MethodReceiverKind::ConstReference);
 }
 
+TEST(SemanticInterfaceCallTests,
+     DiagnosesMethodCallsOnInterfaceValuesWithoutCrashing) {
+    Analysis analysis = Analyze(R"(
+        interface Readable {
+            i32 read(&self) virtual;
+        };
+        structure Reader << Readable {};
+        i32 Reader::read(&self) override { return 42; }
+        Readable make() { return Reader::init(); }
+        i32 use() {
+            reader := make();
+            return reader.read();
+        }
+    )");
+
+    bool invalidReceiver = false;
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        invalidReceiver |=
+            diagnostic.code == DiagnosticCode::InvalidInterface &&
+            diagnostic.message ==
+                "interface methods require a checked-reference receiver";
+    EXPECT_TRUE(invalidReceiver);
+    EXPECT_NE(FindErrorDiagnostic(analysis, DiagnosticCode::InvalidReturnType),
+              nullptr);
+}
+
 TEST(SemanticInterfaceCallTests, EnforcesProtectedInterfaceLineages) {
     Analysis analysis = Analyze(R"(
         interface Validated {
