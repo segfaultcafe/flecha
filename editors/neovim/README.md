@@ -78,6 +78,8 @@ manager instead, call the module's setup function:
 require("flecha.lsp").setup({
   cmd = { "/path/to/flecha-lsp" },
   compiler_path = "/path/to/flecha",
+  -- Coalesce rapid edits before notifying the server (default: 150 ms).
+  debounce_text_changes = 150,
   -- Optional: capabilities, init_options, settings, on_attach, root_markers.
 })
 ```
