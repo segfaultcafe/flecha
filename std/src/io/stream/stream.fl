@@ -6,8 +6,8 @@ under namespace root::io;
 // Copies bytes until end of input, returning the count written and any error.
 // The caller-provided buffer must be nonempty.
 export (usize, error) copy(
-    &Reader reader,
-    &Writer writer,
+    &Readable reader,
+    &Writable writer,
     []u8 buffer
 ) {
     if buffer.len() == 0 {

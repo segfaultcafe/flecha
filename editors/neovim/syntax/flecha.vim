@@ -76,6 +76,7 @@ endfunction
 
 call s:FollowTheme('flechaImports', '@keyword.import', 'Include')
 call s:FollowTheme('flechaSelf', '@variable.builtin', 'Special')
+call s:FollowTheme('@lsp.type.self.flecha', '@variable.builtin', 'Special')
 call s:FollowTheme('flechaTest', '@keyword', 'Keyword')
 call s:FollowTheme('flechaFuncKeyword', '@keyword.function', 'Keyword')
 call s:FollowTheme('flechaFloatConstant', '@constant', 'Constant')

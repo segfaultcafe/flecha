@@ -5,50 +5,47 @@ under namespace root::io;
     :: root::io::errors
     :: root::io::stream;
 
-export structure BufferedWriter {
-    private stream::Writer writer = none;
+export structure BufferedWriter << stream::Writable {
+    private &stream::Writable sink;
     private own []u8 buffer;
     private usize length;
 };
 
-BufferedWriter BufferedWriter::zero() override {
-    return build BufferedWriter {
-        self.writer = none;
-        self.buffer = none;
-        self.length = 0;
-    };
-}
-
 (BufferedWriter, error) BufferedWriter::withCapacity(
-    stream::Writer writer,
+    &stream::Writable sink,
     usize capacity,
-) <-writer {
+) <-sink {
     if capacity == 0 {
-        return (none, errors::IoError.InvalidOptions);
+        return (build BufferedWriter {
+            self.sink = sink;
+            self.buffer = none;
+            self.length = 0;
+        }, errors::IoError.InvalidOptions);
     }
 
     storage, allocationError := new<own []u8>(capacity);
     if allocationError != none {
-        return (none, allocationError);
+        return (build BufferedWriter {
+            self.sink = sink;
+            self.buffer = none;
+            self.length = 0;
+        }, allocationError);
     }
 
     return (build BufferedWriter {
-        self.writer = writer;
+        self.sink = sink;
         self.buffer = storage;
         self.length = 0;
     }, none);
 }
 
-(usize, error) BufferedWriter::write(
-    &self,
-    []const u8 source
-) {
+(usize, error) BufferedWriter::write(&self, []const u8 source) override {
     if source.len() == 0 {
         return (none, none);
     }
 
     if self->length == 0 and source.len() >= self->buffer.len() {
-        count, writeError := self->writer.write(source);
+        count, writeError := self->sink->write(source);
         if count > source.len() {
             return (none, errors::IoError.WriteFailed);
         }
@@ -62,7 +59,7 @@ BufferedWriter BufferedWriter::zero() override {
             return (none, flushError);
         }
     } also source.len() >= self->buffer.len() {
-        count, writeError := self->writer.write(source);
+        count, writeError := self->sink->write(source);
         if count > source.len() {
             return (none, errors::IoError.WriteFailed);
         }
@@ -76,33 +73,10 @@ BufferedWriter BufferedWriter::zero() override {
     return (source.len(), none);
 }
 
-error BufferedWriter::writeAll(
-    &self,
-    []const u8 source
-) {
-    usize offset = 0;
-    while offset < source.len() {
-        count, writeError := self->write(source[offset:]);
-        if count > source.len() - offset {
-            return errors::IoError.WriteFailed;
-        }
-
-        offset = offset + count;
-        if writeError != none {
-            return writeError;
-        }
-        if count == 0 {
-            return errors::IoError.WriteFailed;
-        }
-    }
-
-    return none;
-}
-
 error BufferedWriter::flush(&self) {
     usize offset = 0;
     while offset < self->length {
-        count, writeError := self->writer.write(
+        count, writeError := self->sink->write(
             self->buffer[offset:self->length]
         );
         if count > self->length - offset {

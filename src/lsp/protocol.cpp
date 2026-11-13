@@ -167,13 +167,16 @@ int CompletionKind(std::string_view kind) {
     return 25;
 }
 
-int SemanticTokenKind(std::string_view kind) {
+int SemanticTokenKind(std::string_view kind, std::string_view spelling = {}) {
     if (kind == "function") return 0;
+    if (kind == "parameter" && spelling == "self") return 7;
     if (kind == "parameter") return 1;
     if (kind == "field") return 3;
     if (kind == "enumType") return 4;
     if (kind == "structureType") return 5;
-    if (kind == "errorType" || kind == "callableType") return 6;
+    if (kind == "errorType" || kind == "interfaceType" ||
+        kind == "callableType")
+        return 6;
     return 2;
 }
 
@@ -385,7 +388,7 @@ std::vector<std::string> ProtocolServer::Handle(std::string_view messageText) {
                 "\"renameProvider\":true,"
                 "\"semanticTokensProvider\":{\"legend\":{"
                 "\"tokenTypes\":[\"function\",\"parameter\",\"variable\","
-                "\"property\",\"enum\",\"struct\",\"type\"],"
+                "\"property\",\"enum\",\"struct\",\"type\",\"self\"],"
                 "\"tokenModifiers\":[\"declaration\"]},\"full\":true}},"
                 "\"serverInfo\":{\"name\":\"flecha-lsp\",\"version\":" +
                 analyzer::json::Quote(compilerVersion) + "}}";
@@ -546,6 +549,13 @@ std::vector<std::string> ProtocolServer::Handle(std::string_view messageText) {
                     if (start.line != end.line ||
                         end.character <= start.character)
                         continue;
+                    const std::string_view spelling =
+                        token.range.startByte <= token.range.endByte &&
+                                token.range.endByte <= source.size()
+                            ? std::string_view(source).substr(
+                                  token.range.startByte,
+                                  token.range.endByte - token.range.startByte)
+                            : std::string_view{};
                     const std::size_t deltaLine = start.line - previousLine;
                     const std::size_t deltaStart =
                         deltaLine == 0 ? start.character - previousCharacter
@@ -554,7 +564,7 @@ std::vector<std::string> ProtocolServer::Handle(std::string_view messageText) {
                     first = false;
                     data << deltaLine << ',' << deltaStart << ','
                          << end.character - start.character << ','
-                         << SemanticTokenKind(token.kind) << ','
+                         << SemanticTokenKind(token.kind, spelling) << ','
                          << (token.isDeclaration ? 1 : 0);
                     previousLine = start.line;
                     previousCharacter = start.character;

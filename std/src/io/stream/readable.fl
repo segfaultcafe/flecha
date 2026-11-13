@@ -1,0 +1,32 @@
+module stream;
+under namespace root::io;
+
+@imports
+    :: root::io::errors;
+
+export interface Readable {
+    (usize, error) read(&self, []u8 destination) virtual;
+    error readExact(&self, []u8 destination) default;
+};
+
+error Readable::readExact(&self, []u8 destination) {
+    usize offset = 0;
+
+    while offset < destination.len() {
+        count, readErr := self->read(destination[offset:]);
+        if count > destination.len() - offset {
+            return errors::IoError.ReadFailed;
+        }
+
+        offset += count;
+        if readErr != none {
+            return readErr;
+        }
+
+        if count == 0 {
+            return errors::IoError.UnexpectedEof;
+        }
+    }
+
+    return none;
+}

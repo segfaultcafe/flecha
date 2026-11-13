@@ -110,7 +110,9 @@ i32 main() {
     if value.bias != 42 { return 4; }
     defaults := DefaultConcrete::init();
     if callDefault(&defaults) != 3 { return 5; }
+    if defaults.supplied() != 3 { return 7; }
     finalValue := FinalConcrete::init();
     if callFinal(&finalValue) != 37 { return 6; }
+    if finalValue.sealed(38) != 38 { return 8; }
     return 42;
 }

@@ -251,6 +251,7 @@ call assert_equal('flechaSelf', s:HighlightAt('take(self->storage)', 5))
 call assert_equal('flechaSelf', s:HighlightAt('<- ...args', 6))
 call assert_notequal('flechaSelf', s:HighlightAt('args := 0', 0))
 call s:HighlightLink('flechaSelf', '@variable.builtin', 'Special')
+call s:HighlightLink('@lsp.type.self.flecha', '@variable.builtin', 'Special')
 call assert_equal('flechaType', s:HighlightAt('AllocationError', 0))
 
 call assert_equal('flechaTypeSetKeyword', s:HighlightAt('typeset scalar_numbers', 0))

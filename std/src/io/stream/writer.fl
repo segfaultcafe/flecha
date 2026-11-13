@@ -7,7 +7,7 @@ under namespace root::io;
 export func Write([]const u8 source) => (usize, error);
 
 // Owns a reusable byte-write operation.
-export structure Writer {
+export structure Writer << Writable {
     private Write operation;
 };
 
@@ -26,29 +26,8 @@ Writer Writer::zero() override {
 }
 
 // Performs one write and preserves its partial byte count on error.
-(usize, error) Writer::write(&self, []const u8 source) {
+(usize, error) Writer::write(&self, []const u8 source) override {
     return (self->operation)(source);
-}
-
-// Writes every source byte or returns the first write failure.
-error Writer::writeAll(&self, []const u8 source) {
-    usize offset = 0;
-    while offset < source.len() {
-        bytesWritten, err := self->write(source[offset:]);
-        if bytesWritten > source.len() - offset {
-            return errors::IoError.WriteFailed;
-        }
-
-        offset = offset + bytesWritten;
-        if err != none {
-            return err;
-        }
-        if bytesWritten == 0 {
-            return errors::IoError.WriteFailed;
-        }
-    }
-
-    return none;
 }
 
 quiver (usize, error) closed_write([]const u8 source) {
