@@ -9023,6 +9023,66 @@ TEST(SemanticReferenceTests, AllowsDisjointStructureFieldBorrows) {
 }
 
 TEST(SemanticReferenceTests,
+     PreservesCheckedReferenceFieldProjectionsAcrossMethodCalls) {
+    auto adjacent = Analyze(R"(
+        interface Writable {
+            (usize, error) write(&self, []const u8 source) virtual;
+        };
+        structure BufferedOutput {
+            &Writable sink;
+            own []u8 buffer;
+            usize length;
+        };
+        error BufferedOutput::flush(&self) {
+            usize offset = 0;
+            count, failure :=
+                self->sink->write(self->buffer[offset:self->length]);
+            return failure;
+        }
+    )");
+    for (const auto& diagnostic : adjacent.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+
+    auto overlapping = Analyze(R"(
+        interface Peer {
+            void combine(&self, &const Peer other) virtual;
+        };
+        structure Holder {
+            &Peer peer;
+        };
+        void Holder::combinePeer(&self) {
+            self->peer->combine(self->peer);
+        }
+    )");
+    EXPECT_NE(FindDiagnostic(overlapping, DiagnosticCode::BorrowConflict),
+              nullptr);
+
+    auto externalPointee = Analyze(R"(
+        structure Pair {
+            i32 left;
+            i32 right;
+        };
+        structure View {
+            &Pair pair;
+        };
+        View View::init(&Pair pair) <- pair override {
+            return build View {
+                self.pair = pair;
+            };
+        }
+        i32 invalid() {
+            pair := Pair::init();
+            view := View::init(&pair);
+            left := &view.pair->left;
+            pair.left = 42;
+            return *left;
+        }
+    )");
+    EXPECT_NE(FindDiagnostic(externalPointee, DiagnosticCode::BorrowConflict),
+              nullptr);
+}
+
+TEST(SemanticReferenceTests,
      FieldBorrowsRejectOverlappingAndWholeStructureAccess) {
     const std::string prefix = R"(
         structure Pair { i32 x; i32 y; };
