@@ -1,0 +1,3 @@
+module bar;
+
+export i32 same() { return 1; }

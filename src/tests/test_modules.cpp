@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -75,7 +76,156 @@ class ModuleTests : public ::testing::Test {
                 diagnostic.range.start.file + ":" + diagnostic.message + "\n";
         return messages;
     }
+    std::string CheckFixture(const std::string& fixture,
+                             const std::string& entry = "main.fl") {
+        const fs::path fixtureRoot =
+            fs::path(FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR) / fixture;
+        flecha::diagnostics::DiagnosticBag diagnostics;
+        flecha::core::ModuleLoader loader(diagnostics);
+        auto unit = loader.Load(fixtureRoot / entry, fixtureRoot);
+        if (!diagnostics.HasErrors()) {
+            flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+            auto model = analyzer.Analyze(*unit);
+        }
+        std::string messages;
+        for (const auto& diagnostic : diagnostics.Diagnostics())
+            messages +=
+                diagnostic.range.start.file + ":" + diagnostic.message + "\n";
+        return messages;
+    }
 };
+
+TEST_F(ModuleTests, LoadsAndComposesAttachedModulesFromAncestorNamespaces) {
+    EXPECT_EQ(CheckFixture("valid"), "");
+}
+
+TEST_F(ModuleTests, KeepsLegacySourcesUnchangedWithoutAnAttachmentClause) {
+    EXPECT_EQ(CheckFixture("legacy"), "");
+}
+
+TEST_F(ModuleTests, AttachedSourcesGainQuiverButNotPrivateAccess) {
+    EXPECT_EQ(CheckFixture("valid"), "");
+    const std::string errors =
+        CheckFixture("invalid/private_access", "foo/baz/main.fl");
+    EXPECT_NE(errors.find("unknown name 'support::privateValue'"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, RetainsPhysicalPathsAlongsideLogicalNamespaceOwnership) {
+    const fs::path fixtureRoot =
+        fs::path(FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR) / "valid";
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit = loader.Load(fixtureRoot / "main.fl", fixtureRoot);
+    ASSERT_FALSE(diagnostics.HasErrors());
+
+    const flecha::core::Module* gee = nullptr;
+    for (const auto& module : unit->modules)
+        if (module.name == "gee") gee = &module;
+    ASSERT_NE(gee, nullptr);
+    EXPECT_EQ(fs::path(gee->file).filename(), "gee.fl");
+    EXPECT_EQ(gee->quiverName, "root::foo");
+    EXPECT_EQ(gee->physicalQuiverName, "root::foo::baz");
+    ASSERT_TRUE(gee->namespaceAttachment.has_value());
+    EXPECT_EQ(gee->namespaceAttachment->path,
+              (std::vector<std::string>{"root", "foo"}));
+}
+
+TEST_F(ModuleTests, OrdersMultipleAttachedSourcesByPhysicalPath) {
+    const fs::path fixtureRoot =
+        fs::path(FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR) / "valid";
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit = loader.Load(fixtureRoot / "main.fl", fixtureRoot);
+    ASSERT_FALSE(diagnostics.HasErrors());
+
+    std::vector<std::string> files;
+    for (const auto& module : unit->modules)
+        if (module.name == "pieces")
+            files.push_back(fs::path(module.file).generic_string());
+    ASSERT_EQ(files.size(), 2);
+    EXPECT_TRUE(std::is_sorted(files.begin(), files.end()));
+    EXPECT_NE(files[0].find("/one/"), std::string::npos);
+    EXPECT_NE(files[1].find("/two/"), std::string::npos);
+}
+
+TEST_F(ModuleTests, ResolvesAttachmentsInsideEachPackageSourceRoot) {
+    Write("app/main.fl", R"(module main;
+        @imports :: lib::dependency::foo::gee;
+        i32 main() { return gee::answer(); }
+    )");
+    Write("dependency/foo/bar/gee.fl", R"(module gee;
+        under namespace root::foo;
+        export i32 answer() { return 42; }
+    )");
+    EXPECT_EQ(CheckGraph(R"({
+        "schema": 1,
+        "root": "app",
+        "packages": [
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"dependency":"dependency@1"}},
+            {"id":"dependency@1", "identity":"example/dependency",
+             "version":"1.0.0", "source":"../dependency",
+             "dependencies":{}}
+        ]
+    })"),
+              "");
+}
+
+TEST_F(ModuleTests, RejectsNonAncestorAndEscapingAttachmentTargets) {
+    struct Rejection final {
+        const char* fixture;
+        const char* entry;
+        const char* message;
+    };
+    for (const Rejection rejection : std::vector<Rejection>{
+             {"invalid/sibling", "foo/baz/main.fl", "is not an ancestor"},
+             {"invalid/descendant", "foo/baz/main.fl", "is not an ancestor"},
+             {"invalid/unrelated", "foo/baz/main.fl", "is not an ancestor"},
+             {"invalid/missing", "foo/baz/main.fl",
+              "is not an existing directory"},
+             {"invalid/escape", "foo/main.fl", "must start with 'root'"},
+         }) {
+        const std::string errors =
+            CheckFixture(rejection.fixture, rejection.entry);
+        EXPECT_NE(errors.find(rejection.message), std::string::npos)
+            << rejection.fixture << "\n"
+            << errors;
+        EXPECT_NE(errors.find(rejection.entry), std::string::npos)
+            << rejection.fixture << "\n"
+            << errors;
+    }
+}
+
+TEST_F(ModuleTests, KeepsHeaderDiagnosticsExplicitAndPhysical) {
+    for (const auto& [fixture, expected] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"invalid/duplicate", "duplicate 'under namespace' clause"},
+             {"invalid/malformed", "expected 'namespace' after 'under'"},
+             {"invalid/qualified_module",
+              "expected ';' after module declaration"},
+         }) {
+        const std::string errors = CheckFixture(fixture, "foo/main.fl");
+        EXPECT_NE(errors.find(expected), std::string::npos) << fixture << "\n"
+                                                            << errors;
+        EXPECT_NE(errors.find("foo/main.fl"), std::string::npos)
+            << fixture << "\n"
+            << errors;
+    }
+}
+
+TEST_F(ModuleTests, DiagnosesCollisionsAcrossPhysicalAndAttachedParts) {
+    const std::string errors = CheckFixture("invalid/collision");
+    EXPECT_NE(errors.find("duplicate"), std::string::npos) << errors;
+    EXPECT_NE(errors.find("bar.fl"), std::string::npos) << errors;
+}
+
+// Foundation boundary: explicit imports use the attachment-aware discovery
+// path above. Wildcard expansion still enumerates physical files in the target
+// directory and will move to the same attachment index in the follow-up.
+TEST_F(ModuleTests, DISABLED_DiscoversAttachedModulesThroughWildcardImports) {
+    EXPECT_EQ(CheckFixture("deferred/wildcard"), "");
+}
 TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
     Write("a/calc.fl", "module calc; export i32 value() { return 20; }");
     Write("b/calc.fl", "module calc; export i32 value() { return 22; }");

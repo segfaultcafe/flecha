@@ -1,0 +1,13 @@
+module main;
+@imports
+    :: root::foo::gee
+    :: root::foo::bar
+    :: root::foo::pieces
+    :: root::foo::client
+    :: root::rooted;
+
+i32 main() {
+    return gee::attached() + bar::ordinary() + bar::attached() +
+           pieces::one() + pieces::two() + client::allowed() +
+           rooted::value();
+}

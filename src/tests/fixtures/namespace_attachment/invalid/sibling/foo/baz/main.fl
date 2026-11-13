@@ -1,0 +1,4 @@
+module main;
+under namespace root::foo::other;
+
+i32 main() { return 0; }

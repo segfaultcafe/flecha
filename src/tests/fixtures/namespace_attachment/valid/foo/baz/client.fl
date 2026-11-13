@@ -1,0 +1,7 @@
+module client;
+under namespace root::foo;
+@imports :: root::foo::support;
+
+export i32 allowed() {
+    return support::exportedValue() + support::quiverValue();
+}
