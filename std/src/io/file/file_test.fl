@@ -320,7 +320,7 @@ test copy_transfers_bytes_between_file_adapters(&testing::UnitTest t) {
 
     if verification.isOpen() {
         [6]u8 actual = none;
-        readError := verification->readExact(actual[:]);
+        readError := verification.readExact(actual[:]);
         asserts::is_true(
             t,
             readError == none,
@@ -364,7 +364,7 @@ test buffered_adapters_round_trip_bytes_and_release_file_borrows(
     if output.isOpen() {
         writer := output.writer();
         bufferedWriter, allocationError :=
-            buffered::BufferedWriter::withCapacity(&writer, 3);
+            buffered::BufferedWriter::withCapacity(writer, 3);
         asserts::is_true(
             t,
             allocationError == none,
