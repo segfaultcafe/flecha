@@ -211,6 +211,59 @@ TEST_F(AnalyzerProtocolTests, OpensChangesClosesAndDiagnosesDocuments) {
     EXPECT_NE(savedDiagnostics.find("\"diagnostics\":[]"), std::string::npos);
 }
 
+TEST_F(AnalyzerProtocolTests, RecoversAfterTransientInterfaceValueMethodCall) {
+    const std::string validText =
+        "module main;\n"
+        "interface Readable { i32 read(&self) virtual; };\n"
+        "structure Reader << Readable {};\n"
+        "i32 Reader::read(&self) override { return 42; }\n"
+        "Reader make() { return Reader::init(); }\n"
+        "i32 use() { reader := make(); return reader.read(); }\n";
+    Write("main.fl", validText);
+    ProtocolServer server("test-compiler");
+    ASSERT_EQ(ErrorCode(Initialize(server)), 0);
+    const std::string invalidText =
+        "module main;\n"
+        "interface Readable { i32 read(&self) virtual; };\n"
+        "structure Reader << Readable {};\n"
+        "i32 Reader::read(&self) override { return 42; }\n"
+        "Readable make() { return Reader::init(); }\n"
+        "i32 use() { reader := make(); return reader.read(); }\n";
+    const std::string path = (_root / "main.fl").generic_string();
+    const std::string openParams =
+        "{\"path\":" + flecha::analyzer::json::Quote(path) +
+        ",\"version\":1,\"text\":" +
+        flecha::analyzer::json::Quote(invalidText) + "}";
+    ASSERT_EQ(
+        ErrorCode(server.Handle(Request("2", "document/open", openParams))), 0);
+    const std::string documentParams =
+        "{\"path\":" + flecha::analyzer::json::Quote(path) + "}";
+
+    const std::string invalidDiagnostics =
+        server.Handle(Request("3", "document/diagnostics", documentParams));
+    EXPECT_NE(invalidDiagnostics.find("\"version\":1"), std::string::npos);
+    EXPECT_NE(invalidDiagnostics.find(
+                  "interface methods require a checked-reference receiver"),
+              std::string::npos);
+
+    const std::string changeParams =
+        "{\"path\":" + flecha::analyzer::json::Quote(path) +
+        ",\"version\":2,\"text\":" + flecha::analyzer::json::Quote(validText) +
+        "}";
+    ASSERT_EQ(
+        ErrorCode(server.Handle(Request("4", "document/change", changeParams))),
+        0);
+    const std::string validDiagnostics =
+        server.Handle(Request("5", "document/diagnostics", documentParams));
+    EXPECT_NE(validDiagnostics.find("\"version\":2"), std::string::npos);
+    EXPECT_NE(validDiagnostics.find("\"diagnostics\":[]"), std::string::npos)
+        << validDiagnostics;
+
+    const std::string tokens =
+        server.Handle(Request("6", "document/semanticTokens", documentParams));
+    EXPECT_NE(tokens.find("\"tokens\":[{"), std::string::npos) << tokens;
+}
+
 TEST_F(AnalyzerProtocolTests, DoesNotReportCommandErrorForTestModuleEntry) {
     Write("value.fl", "module value;\nexport i32 answer() { return 42; }\n");
     Write("value_test.fl",
