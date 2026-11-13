@@ -264,6 +264,63 @@ TEST_F(AnalyzerProtocolTests, RecoversAfterTransientInterfaceValueMethodCall) {
     EXPECT_NE(tokens.find("\"tokens\":[{"), std::string::npos) << tokens;
 }
 
+TEST_F(AnalyzerProtocolTests,
+       RecoversFromErrorTypedBorrowAcrossFullDocumentChanges) {
+    Write("main.fl", "module main;\nvoid main() {}\n");
+    ProtocolServer server("test-compiler");
+    ASSERT_EQ(ErrorCode(Initialize(server)), 0);
+    const std::string path = (_root / "main.fl").generic_string();
+    const std::string invalidText =
+        "module main;\n"
+        "structure Holder { Missing resource; };\n"
+        "&Missing borrow(&Holder holder) <-holder {\n"
+        "    return &holder->resource;\n"
+        "}\n";
+    const std::string openParams =
+        "{\"path\":" + flecha::analyzer::json::Quote(path) +
+        ",\"version\":1,\"text\":" +
+        flecha::analyzer::json::Quote(invalidText) + "}";
+    ASSERT_EQ(
+        ErrorCode(server.Handle(Request("2", "document/open", openParams))), 0);
+    const std::string documentParams =
+        "{\"path\":" + flecha::analyzer::json::Quote(path) + "}";
+
+    const std::string invalidDiagnostics =
+        server.Handle(Request("3", "document/diagnostics", documentParams));
+    EXPECT_NE(invalidDiagnostics.find("\"version\":1"), std::string::npos);
+    EXPECT_NE(invalidDiagnostics.find("unknown type 'Missing'"),
+              std::string::npos);
+    EXPECT_EQ(invalidDiagnostics.find("borrowed result does not originate"),
+              std::string::npos)
+        << invalidDiagnostics;
+
+    const std::string validText =
+        "module main;\n"
+        "structure Resource { i32 value; };\n"
+        "structure Holder { Resource resource; };\n"
+        "&Resource borrow(&Holder holder) <-holder {\n"
+        "    return &holder->resource;\n"
+        "}\n";
+    const std::string changeParams =
+        "{\"path\":" + flecha::analyzer::json::Quote(path) +
+        ",\"version\":2,\"text\":" + flecha::analyzer::json::Quote(validText) +
+        "}";
+    ASSERT_EQ(
+        ErrorCode(server.Handle(Request("4", "document/change", changeParams))),
+        0);
+
+    const std::string validDiagnostics =
+        server.Handle(Request("5", "document/diagnostics", documentParams));
+    EXPECT_NE(validDiagnostics.find("\"version\":2"), std::string::npos);
+    EXPECT_NE(validDiagnostics.find("\"diagnostics\":[]"), std::string::npos)
+        << validDiagnostics;
+    const std::string tokens =
+        server.Handle(Request("6", "document/semanticTokens", documentParams));
+    EXPECT_NE(tokens.find("\"tokens\":[{"), std::string::npos) << tokens;
+    EXPECT_NE(tokens.find("\"name\":\"Resource\""), std::string::npos)
+        << tokens;
+}
+
 TEST_F(AnalyzerProtocolTests, DoesNotReportCommandErrorForTestModuleEntry) {
     Write("value.fl", "module value;\nexport i32 answer() { return 42; }\n");
     Write("value_test.fl",
