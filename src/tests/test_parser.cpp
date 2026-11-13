@@ -2229,19 +2229,21 @@ TEST(ParserTests, AcceptsRootNamespaceAttachment) {
 TEST(ParserTests, KeepsNamespaceAttachmentWordsValidAsIdentifiers) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(
-        "i32 under() { return 20; } i32 namespace() { return 22; } "
-        "i32 main() { i32 under = 20; i32 namespace = 22; "
-        "return under + namespace; }",
+        "const i32 under = 20; const i32 namespace = 22; "
+        "i32 local_names() { i32 under = 20; i32 namespace = 22; "
+        "return under + namespace; } i32 main() { return local_names(); }",
         diagnostics);
 
     ASSERT_FALSE(diagnostics.HasErrors());
-    ASSERT_EQ(unit->Declarations().size(), 3);
-    EXPECT_EQ(static_cast<const FunctionDeclaration&>(*unit->Declarations()[0])
-                  .Name(),
-              "under");
-    EXPECT_EQ(static_cast<const FunctionDeclaration&>(*unit->Declarations()[1])
-                  .Name(),
-              "namespace");
+    ASSERT_EQ(unit->Declarations().size(), 4);
+    EXPECT_EQ(
+        static_cast<const ModuleConstantDeclaration&>(*unit->Declarations()[0])
+            .Name(),
+        "under");
+    EXPECT_EQ(
+        static_cast<const ModuleConstantDeclaration&>(*unit->Declarations()[1])
+            .Name(),
+        "namespace");
 }
 
 TEST(ParserTests, DiagnosesMalformedAndDuplicateNamespaceAttachments) {

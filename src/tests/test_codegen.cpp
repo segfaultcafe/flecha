@@ -333,13 +333,16 @@ TEST(NativeCompilerTests, InlinesModuleConstantExpressions) {
 
 TEST(NativeCompilerTests, KeepsNamespaceAttachmentWordsContextual) {
     GeneratedSource result = Generate(R"(
-        i32 under() { return 20; }
-        i32 namespace() { return 22; }
-        i32 main() {
-            if under() + namespace() != 42 { return 1; }
+        const i32 under = 20;
+        const i32 namespace = 22;
+        i32 local_names() {
             i32 under = 20;
             i32 namespace = 22;
             return under + namespace;
+        }
+        i32 main() {
+            if under + namespace != 42 { return 1; }
+            return local_names();
         }
     )");
     for (const auto& diagnostic : result.diagnostics.Diagnostics())
