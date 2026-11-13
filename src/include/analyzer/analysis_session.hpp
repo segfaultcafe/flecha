@@ -12,6 +12,7 @@
 #include "analyzer/semantic_queries.hpp"
 #include "analyzer/source_overlays.hpp"
 #include "core/ast.hpp"
+#include "core/module_source_index.hpp"
 #include "core/package_graph.hpp"
 #include "core/source_provider.hpp"
 #include "diagnostics/diagnostic_bag.hpp"
@@ -66,6 +67,7 @@ class AnalysisSession final {
                                              std::string text,
                                              std::int64_t version);
     [[nodiscard]] bool Close(const std::filesystem::path& path);
+    void Refresh(const std::filesystem::path& path);
 
     [[nodiscard]] AnalysisSnapshot Analyze(
         const std::filesystem::path& entry) const;
@@ -84,6 +86,7 @@ class AnalysisSession final {
     SourceOverlays _overlays;
     core::FilesystemSourceProvider _filesystem;
     OverlaySourceProvider _sources;
+    mutable core::ModuleSourceIndex _sourceIndex;
 };
 
 }  // namespace flecha::analyzer

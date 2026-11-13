@@ -36,6 +36,13 @@ class AnalysisSessionTests : public ::testing::Test {
     std::filesystem::path _root;
 };
 
+bool HasModule(const AnalysisSnapshot& snapshot, const std::string& name) {
+    return snapshot.unit &&
+           std::ranges::any_of(snapshot.unit->modules, [&](const auto& module) {
+               return module.name == name;
+           });
+}
+
 TEST_F(AnalysisSessionTests, AnalyzesSavedSource) {
     Write("main.fl", "module main;\nvoid main() {}\n");
     AnalysisSession session(_root);
@@ -192,6 +199,123 @@ TEST_F(AnalysisSessionTests, AppliesOverlaysToImportedModules) {
 
     ASSERT_TRUE(snapshot.semanticModel);
     EXPECT_TRUE(snapshot.HasErrors());
+}
+
+TEST_F(AnalysisSessionTests,
+       IncrementallyTracksOverlayOnlyAttachedWildcardModules) {
+    Write("foo/ordinary.fl", "module ordinary;\n");
+    Write("main.fl",
+          "module main;\n@imports :: root::foo::*;\nvoid main() {}\n");
+    const std::filesystem::path attached = "foo/deep/attached.fl";
+    AnalysisSession session(_root);
+
+    AnalysisSnapshot initial = session.Analyze("main.fl");
+    ASSERT_FALSE(initial.HasErrors());
+    EXPECT_TRUE(HasModule(initial, "ordinary"));
+    EXPECT_FALSE(HasModule(initial, "attached"));
+
+    ASSERT_EQ(session.Open(attached,
+                           "module attached;\n"
+                           "under namespace root::foo;\n",
+                           1),
+              OverlayUpdateResult::Applied);
+    AnalysisSnapshot opened = session.Analyze("main.fl");
+    ASSERT_FALSE(opened.HasErrors());
+    EXPECT_TRUE(HasModule(opened, "attached"));
+
+    ASSERT_EQ(session.Change(attached,
+                             "module renamed;\n"
+                             "under namespace root::foo;\n",
+                             2),
+              OverlayUpdateResult::Applied);
+    AnalysisSnapshot renamed = session.Analyze("main.fl");
+    ASSERT_FALSE(renamed.HasErrors());
+    EXPECT_FALSE(HasModule(renamed, "attached"));
+    EXPECT_TRUE(HasModule(renamed, "renamed"));
+
+    std::filesystem::create_directories(_root / "foo/deep");
+    ASSERT_EQ(session.Change(attached,
+                             "module renamed;\n"
+                             "under namespace root::foo::deep;\n",
+                             3),
+              OverlayUpdateResult::Applied);
+    AnalysisSnapshot retargeted = session.Analyze("main.fl");
+    ASSERT_FALSE(retargeted.HasErrors());
+    EXPECT_FALSE(HasModule(retargeted, "renamed"));
+
+    ASSERT_EQ(session.Change(attached,
+                             "module renamed;\n"
+                             "under namespace root::foo;\n`\n",
+                             4),
+              OverlayUpdateResult::Applied);
+    AnalysisSnapshot invalidContent = session.Analyze("main.fl");
+    EXPECT_TRUE(invalidContent.HasErrors());
+    EXPECT_TRUE(std::ranges::any_of(
+        invalidContent.diagnostics.Diagnostics(), [&](const auto& diagnostic) {
+            return diagnostic.range.start.file == (_root / attached).string();
+        }));
+
+    ASSERT_EQ(session.Change(attached,
+                             "module renamed;\n"
+                             "under namespace root::foo;\n",
+                             5),
+              OverlayUpdateResult::Applied);
+    ASSERT_FALSE(session.Analyze("main.fl").HasErrors());
+
+    ASSERT_TRUE(session.Close(attached));
+    AnalysisSnapshot closed = session.Analyze("main.fl");
+    ASSERT_FALSE(closed.HasErrors());
+    EXPECT_FALSE(HasModule(closed, "renamed"));
+}
+
+TEST_F(AnalysisSessionTests, RefreshesCreatedAndRemovedAttachedDiskSources) {
+    Write("foo/ordinary.fl", "module ordinary;\n");
+    Write("main.fl",
+          "module main;\n@imports :: root::foo::*;\nvoid main() {}\n");
+    AnalysisSession session(_root);
+    ASSERT_FALSE(session.Analyze("main.fl").HasErrors());
+
+    Write("foo/deep/disk.fl", "module disk;\nunder namespace root::foo;\n");
+    session.Refresh("foo/deep/disk.fl");
+    AnalysisSnapshot created = session.Analyze("main.fl");
+    ASSERT_FALSE(created.HasErrors());
+    EXPECT_TRUE(HasModule(created, "disk"));
+
+    ASSERT_TRUE(std::filesystem::remove(_root / "foo/deep/disk.fl"));
+    session.Refresh("foo/deep/disk.fl");
+    AnalysisSnapshot removed = session.Analyze("main.fl");
+    ASSERT_FALSE(removed.HasErrors());
+    EXPECT_FALSE(HasModule(removed, "disk"));
+}
+
+TEST_F(AnalysisSessionTests, ClosingAttachedOverlayRestoresDiskIdentity) {
+    Write("foo/deep/source.fl",
+          "module fallback;\nunder namespace root::foo;\n");
+    Write("main.fl",
+          "module main;\n@imports :: root::foo::*;\nvoid main() {}\n");
+    AnalysisSession session(_root);
+    ASSERT_FALSE(session.Analyze("main.fl").HasErrors());
+
+    ASSERT_EQ(session.Open("foo/deep/source.fl",
+                           "module temporary;\n"
+                           "under namespace root::foo;\n",
+                           1),
+              OverlayUpdateResult::Applied);
+    AnalysisSnapshot opened = session.Analyze("main.fl");
+    ASSERT_FALSE(opened.HasErrors());
+    EXPECT_TRUE(HasModule(opened, "temporary"));
+    EXPECT_FALSE(HasModule(opened, "fallback"));
+
+    ASSERT_TRUE(session.Close("foo/deep/source.fl"));
+    AnalysisSnapshot closed = session.Analyze("main.fl");
+    ASSERT_FALSE(closed.HasErrors());
+    EXPECT_FALSE(HasModule(closed, "temporary"));
+    EXPECT_TRUE(HasModule(closed, "fallback"));
+    EXPECT_TRUE(
+        std::ranges::any_of(closed.unit->modules, [&](const auto& module) {
+            return module.name == "fallback" &&
+                   module.file == (_root / "foo/deep/source.fl").string();
+        }));
 }
 
 TEST_F(AnalysisSessionTests, QueriesHoverDefinitionAndReferencesByByteOffset) {

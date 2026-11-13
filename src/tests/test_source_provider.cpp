@@ -1,12 +1,15 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "analyzer/overlay_source_provider.hpp"
 #include "core/module_loader.hpp"
+#include "core/module_source_index.hpp"
 #include "core/source_provider.hpp"
 
 namespace {
@@ -32,6 +35,20 @@ class StubSourceProvider final : public SourceProvider {
 
    private:
     std::optional<std::string> _source;
+};
+
+class CountingSourceProvider final : public SourceProvider {
+   public:
+    [[nodiscard]] std::optional<std::string> Read(
+        const std::filesystem::path& path) const override {
+        ++reads;
+        return filesystem.Read(path);
+    }
+
+    mutable std::size_t reads = 0;
+
+   private:
+    FilesystemSourceProvider filesystem;
 };
 
 class SourceProviderFilesystemTests : public ::testing::Test {
@@ -119,6 +136,19 @@ TEST(SourceProviderTests, UsesFallbackAfterOverlayCloses) {
     EXPECT_EQ(*source, "saved");
 }
 
+TEST(SourceProviderTests, EnumeratesOnlyOverlaySourcesUnderRequestedRoot) {
+    SourceOverlays overlays;
+    ASSERT_EQ(overlays.Open("/workspace/src/deep/new.fl", "unsaved", 1),
+              OverlayUpdateResult::Applied);
+    ASSERT_EQ(overlays.Open("/other/source.fl", "other", 1),
+              OverlayUpdateResult::Applied);
+    StubSourceProvider fallback(std::nullopt);
+    OverlaySourceProvider provider(overlays, fallback);
+
+    EXPECT_EQ(provider.KnownSources("/workspace/src"),
+              std::vector<std::filesystem::path>{"/workspace/src/deep/new.fl"});
+}
+
 TEST_F(SourceProviderFilesystemTests, ModuleLoaderReadsUnsavedOverlay) {
     const std::filesystem::path path = _root / "main.fl";
     std::ofstream(path, std::ios::binary) << "module main;\nvoid main() {}\n";
@@ -143,6 +173,35 @@ TEST_F(SourceProviderFilesystemTests, ModuleLoaderReadsUnsavedOverlay) {
         }
     }
     EXPECT_TRUE(foundUnexpectedCharacter);
+}
+
+TEST_F(SourceProviderFilesystemTests,
+       ModuleSourceIndexReusesRootStateAndRefreshesOnePath) {
+    const std::filesystem::path ordinary = _root / "foo/ordinary.fl";
+    const std::filesystem::path attached = _root / "foo/deep/attached.fl";
+    std::filesystem::create_directories(attached.parent_path());
+    std::ofstream(ordinary) << "module ordinary;\n";
+    std::ofstream(attached) << "module attached;\nunder namespace root::foo;\n";
+    CountingSourceProvider sources;
+    flecha::core::ModuleSourceIndex index(sources);
+
+    const auto first = index.Discover(_root, _root / "foo");
+    ASSERT_EQ(first.size(), 2);
+    const std::size_t initialReads = sources.reads;
+
+    const auto second = index.Discover(_root, _root / "foo");
+    EXPECT_EQ(second.size(), 2);
+    EXPECT_EQ(sources.reads, initialReads);
+
+    std::ofstream(attached) << "module renamed;\nunder namespace root::foo;\n";
+    index.Invalidate(attached);
+    EXPECT_EQ(sources.reads, initialReads + 1);
+    const auto refreshed = index.Discover(_root, _root / "foo");
+    ASSERT_EQ(refreshed.size(), 2);
+    EXPECT_TRUE(std::ranges::any_of(refreshed, [](const auto& source) {
+        return source.name == "renamed";
+    }));
+    EXPECT_EQ(sources.reads, initialReads + 1);
 }
 
 }  // namespace

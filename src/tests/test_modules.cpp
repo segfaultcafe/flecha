@@ -165,6 +165,22 @@ TEST_F(ModuleTests, OrdersInvalidAttachmentDiagnosticsByPhysicalPath) {
     EXPECT_LT(alpha, zeta) << errors;
 }
 
+TEST_F(ModuleTests, WildcardOrdersInvalidAttachmentDiagnosticsByPhysicalPath) {
+    Write("foo/anchor.fl", "module anchor; void keep() {}");
+    Write("alpha/bad.fl",
+          "module bad; under namespace root::foo; void first() {}");
+    Write("zeta/bad.fl",
+          "module bad; under namespace root::foo; void second() {}");
+    Write("main.fl", "module main; @imports :: root::foo::*; void main() {}");
+
+    const std::string errors = Check();
+    const std::size_t alpha = errors.find("alpha/bad.fl");
+    const std::size_t zeta = errors.find("zeta/bad.fl");
+    ASSERT_NE(alpha, std::string::npos) << errors;
+    ASSERT_NE(zeta, std::string::npos) << errors;
+    EXPECT_LT(alpha, zeta) << errors;
+}
+
 TEST_F(ModuleTests, ResolvesAttachmentsInsideEachPackageSourceRoot) {
     Write("app/main.fl", R"(module main;
         @imports :: lib::dependency::foo::gee;
@@ -236,11 +252,49 @@ TEST_F(ModuleTests, DiagnosesCollisionsAcrossPhysicalAndAttachedParts) {
     EXPECT_NE(errors.find("bar.fl"), std::string::npos) << errors;
 }
 
-// Foundation boundary: explicit imports use the attachment-aware discovery
-// path above. Wildcard expansion still enumerates physical files in the target
-// directory and will move to the same attachment index in the follow-up.
-TEST_F(ModuleTests, DISABLED_DiscoversAttachedModulesThroughWildcardImports) {
-    EXPECT_EQ(CheckFixture("deferred/wildcard"), "");
+TEST_F(ModuleTests, DiscoversAttachedModulesThroughWildcardImports) {
+    EXPECT_EQ(CheckFixture("wildcard"), "");
+}
+
+TEST_F(ModuleTests, WildcardComposesOrdinaryAndAttachedModulePartsOnce) {
+    Write("foo/pieces.fl",
+          "module pieces; export i32 ordinary() { return 20; }");
+    Write("foo/deep/extension.fl",
+          "module pieces; under namespace root::foo; "
+          "export i32 attached() { return 22; }");
+    Write("main.fl",
+          "module main; @imports :: root::foo::*; "
+          "i32 main() { return pieces::ordinary() + pieces::attached(); }");
+
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, WildcardAttachmentsStayInsideEachPackageSourceRoot) {
+    Write("app/main.fl", R"(module main;
+        @imports :: lib::left::foo::* :: lib::right::foo::*;
+        i32 main() { return left_value::answer() + right_value::answer(); }
+    )");
+    Write("left/foo/deep/value.fl", R"(module left_value;
+        under namespace root::foo;
+        export i32 answer() { return 20; }
+    )");
+    Write("right/foo/deep/value.fl", R"(module right_value;
+        under namespace root::foo;
+        export i32 answer() { return 22; }
+    )");
+
+    EXPECT_EQ(CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"left":"left", "right":"right"}},
+            {"id":"left", "identity":"owner/left", "source":"../left",
+             "dependencies":{}},
+            {"id":"right", "identity":"owner/right", "source":"../right",
+             "dependencies":{}}
+        ]
+    })"),
+              "");
 }
 TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
     Write("a/calc.fl", "module calc; export i32 value() { return 20; }");
