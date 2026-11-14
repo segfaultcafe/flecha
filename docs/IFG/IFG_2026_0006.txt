@@ -1,0 +1,339 @@
+IFG: 2026-0006
+Title: Typed Decorations and Interface Behaviors
+Author: Flecha Project
+Type: Standards Track
+Topic: Language
+Status: Accepted
+Created: 2026-11-14
+Target: Flecha 0.4
+Requires: interface dispatch
+Implementation: Not Started
+Release-Impact: Blocker
+
+Abstract
+--------
+
+Typed decorations attach compile-time metadata to declarations. Behaviors use
+that metadata to derive implementations of ordinary interfaces for structures
+and enums. The feature moves reusable derivation, beginning with JSON, out of
+compiler-owned special cases and into Flecha libraries without introducing an
+unrestricted macro language or runtime reflection.
+
+This IFG records the accepted boundary and completion criteria. The full
+source contract, reflection surface, conflict rules, and expansion algorithm
+are specified in docs/behaviors-v0.4.md. That document is the detailed design
+companion to this IFG and must remain consistent with the normative decisions
+below.
+
+Motivation
+----------
+
+Flecha 0.3 recognizes JSON decorations in the compiler. That proves the value
+of declaration-driven serialization, but it makes one library format part of
+the compiler and gives other libraries no equivalent mechanism.
+
+General source-generating macros would solve a much larger problem while also
+creating new syntax, name-resolution phases, hygiene rules, build inputs, and
+ways to bypass ordinary type and ownership checking. Flecha instead needs a
+bounded facility for a narrower job: derive a declared capability from typed
+metadata and direct fields.
+
+The interface system already defines the public callable contract, method
+identity, composition rules, and runtime dispatch representation. Behaviors
+must reuse that system rather than create a second form of polymorphism.
+
+Separation of responsibilities
+------------------------------
+
+The model has three independent declarations:
+
+1. A decoration declares the application forms and typed metadata accepted in
+   source.
+2. An interface declares the callable capability visible to ordinary Flecha
+   code.
+3. A behavior derives conformance and receiver-method implementations for a
+   decorated structure or enum.
+
+Applying a decoration does not execute code. Declaring a behavior does not
+invent a new runtime type. After expansion, generated methods and conformance
+use the same semantic analysis, borrowing, lowering, and static interface
+tables as handwritten Flecha declarations.
+
+Typed decoration declarations
+-----------------------------
+
+A behavior-capable decoration declares each accepted application shape:
+
+    export decoration json {
+        application(structure) target structure;
+        application(stringv name) target structure::field;
+        application(stringv name) target enum;
+    };
+
+The initial target categories are structure, structure::field, enum, and
+interface. The qualified structure::field spelling identifies a field together
+with its owning structure; it is not runtime member access.
+
+Application arguments must be compile-time values of the declared Flecha
+types. The compiler must reject an unsupported target kind, wrong argument
+count or type, inaccessible decoration, and an ambiguous duplicate
+application before behavior expansion.
+
+The initial contract permits at most one application signature for each target
+category in one decoration. Tagged alternatives and other overload schemes are
+deferred until a concrete use requires them.
+
+An interface-target application is metadata only. It cannot activate a
+behavior, propagate to descendants or conforming types, change interface
+composition, or add or replace methods.
+
+Interface-owned API
+-------------------
+
+A behavior may implement only receiver methods reachable from interfaces in
+its declared conformance list. Libraries therefore declare ordinary
+interfaces before defining derivation:
+
+    export interface JsonWritable {
+        error writeJson(&const self, &Writer writer) virtual;
+        (own []u8, error) json(&const self) default;
+    };
+
+    export interface JsonReadable {
+        error readJson(&self, &Reader reader) virtual;
+    };
+
+Convenience operations shared by every implementation should remain ordinary
+interface defaults. Type-level construction remains an ordinary generic
+function such as json::from<T>. Behaviors do not add static interface methods,
+constructors, unrelated receiver methods, or free functions.
+
+Behavior declaration
+--------------------
+
+The canonical structure behavior form is:
+
+    behavior json<T> => structure << JsonWritable, JsonReadable {
+        error T::writeJson(&const self, &Writer writer) override {
+            for<F> Field<T, F> field = T::fields() {
+                // Ordinary typed Flecha for this field.
+            }
+        }
+
+        error T::readJson(&self, &Reader reader) override {
+            for<F> Field<T, F> field = T::fields() {
+                // Ordinary typed Flecha for this field.
+            }
+        }
+    };
+
+Enum behavior is declared separately:
+
+    behavior json<T> => enum << JsonWritable {
+        error T::writeJson(&const self, &Writer writer) override {
+            return none;
+        }
+    };
+
+T is the behavior's one target-type parameter. It is bound by the compiler to
+the decorated concrete declaration and cannot be constrained, annotated,
+defaulted, explicitly instantiated, or accompanied by another type parameter.
+The => structure and => enum clauses select the target declaration kind.
+
+The << list is the complete public capability the behavior may add. Every
+behavior method must be an exact override of a method reachable from that
+interface graph and must use override. A behavior may inherit an interface
+default, but it cannot replace a final method or use a generated method to
+repair invalid interface composition.
+
+Activation
+----------
+
+A compatible decoration application directly on a structure or enum may
+activate a behavior for that concrete target. A compatible application on a
+direct structure field associates metadata with the field and may activate a
+structure behavior for the field's owner.
+
+Applications on an interface never activate behaviors. Behavior activation
+does not propagate through interface inheritance, concrete conformance, field
+types, aliases, imports, or nested declarations.
+
+At most one matching behavior may be active for one decoration and target
+kind. Multiple active behaviors may contribute disjoint interface roots, but
+their combined conformances must satisfy the ordinary antichain, unique-path,
+and disjoint-MethodKey rules before any body is selected.
+
+A behavior must live in the same logical module as its decoration. Importing a
+module cannot add or replace behavior for a decoration owned elsewhere. A
+decoration that supports both concrete target kinds uses separate structure
+and enum behavior declarations.
+
+Compile-time field model
+------------------------
+
+T::fields() is a compile-time-only operation that yields the direct declared
+fields of a structure in source order. It does not include inherited,
+promoted, synthetic, captured, or padding fields.
+
+The restricted loop form binds one field type per expansion:
+
+    for<F> Field<T, F> field = T::fields() {
+        // F is the exact type of this field.
+    }
+
+Field<T, F> identifies one declaration, not merely a field type. Two i32
+fields therefore have different descriptors even though both bind F to i32.
+The bounded descriptor operations are:
+
+- field::name(), which returns the source declaration name as stringv;
+- field::decorated(), which reports whether the current behavior decoration is
+  applied directly to the field;
+- field::decorator(), which returns that application's typed argument record;
+  and
+- field::get(receiver), which projects this exact field hygienically.
+
+The target type provides the corresponding T::decorated() and T::decorator()
+operations for a direct target application. A decorator() call must be guarded
+by compile-time proof from decorated() when the application is optional. These
+operations refer only to the decoration that owns the current behavior; they
+cannot inspect arbitrary decorations.
+
+Field names are compile-time stringv values. Field descriptors and decoration
+metadata have no runtime representation and cannot escape behavior expansion,
+be stored in runtime data, or be returned from ordinary functions.
+
+Field projection must preserve the normal access, constness, borrowing,
+ownership, move, and definite-assignment rules of the projected field. The
+generated target method receives ordinary target-method access to private
+fields because the declaration's decoration is explicit opt-in. It receives no
+authority over unrelated declarations.
+
+Method selection and conflicts
+------------------------------
+
+A handwritten exact implementation suppresses generation of the same
+canonical behavior method. It must still be a valid override of the derived
+interface contract. A same-named method with a different MethodKey is an
+overload and does not suppress generation.
+
+Two active behaviors cannot provide the same canonical requirement. Duplicate
+roots, related roots, shared ancestors, horizontal method collisions, illegal
+vertical transitions, and unresolved virtual requirements are diagnosed
+without using source order or decoration order as a tiebreaker.
+
+Behavior bodies are type-checked after the complete conformance graph and
+provider set are registered. They use the existing interface rules for
+visibility, receiver type, parameters, return type, variadics, borrowing,
+ownership, default, final, and override.
+
+Expansion order
+---------------
+
+The compiler processes an active behavior in this order:
+
+1. Resolve and type-check decoration applications.
+2. Identify the concrete target and bind T.
+3. Add the behavior's declared interface conformance edges.
+4. Instantiate and register candidate receiver signatures.
+5. Validate combined conformance roots, unique paths, and method sets.
+6. Select exact handwritten implementations and diagnose body conflicts.
+7. Expand bounded field packs, binding a concrete F and field identity.
+8. Validate vertical method states and remaining virtual requirements.
+9. Type-check surviving bodies through the normal semantic pipeline.
+10. Lower the resulting ordinary Flecha declarations.
+
+Expansion must obey existing compiler specialization, declaration, depth, and
+token budgets. Exceeding a budget is a compile-time error, not permission to
+emit a partial implementation.
+
+Runtime and allocation contract
+-------------------------------
+
+Decoration metadata, field packs, and field descriptors are compile-time only.
+They add no hidden target fields, runtime registry, type identifier, or
+allocation. Behavior-derived conformance uses the same immutable interface
+tables and two-word checked interface references as handwritten conformance.
+
+A generated body may call ordinary APIs that allocate or perform I/O. Those
+effects belong to the called Flecha APIs and retain their normal error and
+ownership contracts; they are not implicit behavior-expansion costs.
+
+Diagnostics and tooling
+-----------------------
+
+Diagnostics must identify the decoration application that activates the
+failed behavior. When relevant they must provide related locations for the
+behavior declaration, interface requirement, concrete target, field
+declaration, and the specialized T and F types.
+
+The parser, formatter, syntax highlighters, analyzer, semantic tokens, hover,
+navigation, and generated documentation must understand decoration
+applications and behavior declarations without presenting compile-time field
+descriptors as runtime values.
+
+Compatibility and migration
+---------------------------
+
+Flecha 0.3 JSON decorations remain valid while the behavior engine is built.
+The compiler-owned JSON path must remain authoritative until the library
+behavior passes equivalent positive, negative, ownership, allocation-failure,
+and runtime fixtures.
+
+The migration completes only when the native JSON package expresses its
+derivation through this feature and the compiler-specific JSON implementation
+is removed. Removing the special case must not silently change the accepted
+decoration spellings or serialized field-name behavior. Any intentional API
+change requires separate release documentation.
+
+Programs that declare no behavior-capable decoration retain their current
+parsing, semantic analysis, runtime layout, and generated code.
+
+Validation and completion
+-------------------------
+
+The native JSON package is the release proof. Completion requires:
+
+- JSON interfaces and behavior implemented in Flecha source;
+- parity for structures, field-name overrides, supported enums, nested values,
+  errors, ownership, allocation failures, and invalid applications;
+- collision and handwritten-override fixtures;
+- confirmation that metadata and interface conversion do not allocate;
+- sanitizer coverage for generated read and write paths;
+- compiler, analyzer, formatter, VS Code, and Neovim coverage; and
+- removal of the compiler-owned JSON derivation only after parity passes.
+
+The IFG implementation state becomes Implemented when the complete language
+contract and JSON migration are delivered. Stable requires subsequent release
+and standard-library use without reopening the accepted language boundary.
+
+Rejected alternatives
+---------------------
+
+Unrestricted token or syntax-tree macros are rejected for this milestone. They
+would require a separate hygiene, staging, security, reproducibility, and
+tooling model.
+
+General compile-time execution is rejected. The feature is bounded derivation,
+not a second dynamically typed language or a way to inspect files, processes,
+the environment, the network, the clock, or compiler memory.
+
+Compiler plugins per decoration are rejected as the long-term model because
+they preserve the compiler/library coupling that this IFG removes.
+
+Runtime reflection is rejected. It would add representation and allocation
+questions that field-derived compile-time implementations do not require.
+
+Arbitrary generated public methods are rejected. Interfaces remain the single
+source of the callable capability and its dispatch contract.
+
+Deferred work
+-------------
+
+The initial system deliberately defers static interface requirements, static
+behavior methods, behavior-defined free functions, enum-variant reflection or
+generation, lifecycle hooks, generated fields, tagged decoration alternatives,
+runtime reflection, source-generating macros, unrestricted compile-time
+functions, and a stable cross-compiler expansion ABI.
+
+Atomic variables and concurrent execution are unrelated to this IFG. They
+remain gated on a separate threading and memory-order contract.

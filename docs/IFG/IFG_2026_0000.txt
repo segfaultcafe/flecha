@@ -291,5 +291,6 @@ The current IFG corpus begins with:
     IFG 2026-0003  Physical and Logical Module Organization
     IFG 2026-0004  API Naming and Function Placement
     IFG 2026-0005  Declaration Visibility and Quiver Usage
+    IFG 2026-0006  Typed Decorations and Interface Behaviors
 
 This index is updated whenever an IFG is added or superseded.
