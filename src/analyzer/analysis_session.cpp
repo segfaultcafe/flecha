@@ -104,8 +104,10 @@ OverlayUpdateResult AnalysisSession::Open(const std::filesystem::path& path,
     const std::filesystem::path normalized = Normalize(path);
     const OverlayUpdateResult result =
         _overlays.Open(normalized, std::move(text), version);
-    if (result == OverlayUpdateResult::Applied)
+    if (result == OverlayUpdateResult::Applied) {
         _sourceIndex.Invalidate(normalized);
+        _snapshots.clear();
+    }
     return result;
 }
 
@@ -115,20 +117,26 @@ OverlayUpdateResult AnalysisSession::Change(const std::filesystem::path& path,
     const std::filesystem::path normalized = Normalize(path);
     const OverlayUpdateResult result =
         _overlays.Change(normalized, std::move(text), version);
-    if (result == OverlayUpdateResult::Applied)
+    if (result == OverlayUpdateResult::Applied) {
         _sourceIndex.Invalidate(normalized);
+        _snapshots.clear();
+    }
     return result;
 }
 
 bool AnalysisSession::Close(const std::filesystem::path& path) {
     const std::filesystem::path normalized = Normalize(path);
     const bool closed = _overlays.Close(normalized);
-    if (closed) _sourceIndex.Invalidate(normalized);
+    if (closed) {
+        _sourceIndex.Invalidate(normalized);
+        _snapshots.clear();
+    }
     return closed;
 }
 
 void AnalysisSession::Refresh(const std::filesystem::path& path) {
     _sourceIndex.Invalidate(Normalize(path));
+    _snapshots.clear();
 }
 
 AnalysisSnapshot AnalysisSession::Analyze(
@@ -154,6 +162,18 @@ AnalysisSnapshot AnalysisSession::Analyze(
 
     return {normalized,      _workspaceRoot,           std::move(version),
             std::move(unit), std::move(semanticModel), std::move(diagnostics)};
+}
+
+std::shared_ptr<const AnalysisSnapshot> AnalysisSession::AnalyzeCached(
+    const std::filesystem::path& entry) const {
+    const std::filesystem::path normalized = Normalize(entry);
+    const auto found = _snapshots.find(normalized);
+    if (found != _snapshots.end()) return found->second;
+
+    auto snapshot =
+        std::make_shared<const AnalysisSnapshot>(Analyze(normalized));
+    _snapshots.emplace(normalized, snapshot);
+    return snapshot;
 }
 
 }  // namespace flecha::analyzer

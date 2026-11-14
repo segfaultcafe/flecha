@@ -57,7 +57,7 @@ class FakeAnalyzer final : public AnalyzerClient {
         const std::filesystem::path& requestedPath) override {
         ++diagnosticRequests;
         snapshot.path = requestedPath;
-        snapshot.version = version;
+        snapshot.version = diagnosticVersion.value_or(version);
         return snapshot;
     }
 
@@ -105,6 +105,7 @@ class FakeAnalyzer final : public AnalyzerClient {
     std::filesystem::path path;
     std::string contents;
     std::int64_t version = 0;
+    std::optional<std::int64_t> diagnosticVersion;
     AnalyzerSnapshot snapshot;
     std::optional<flecha::lsp::AnalyzerHover> hover;
     std::optional<flecha::lsp::AnalyzerRange> definition;
@@ -276,6 +277,39 @@ TEST_F(LspProtocolTests, OpensChangesAndClosesWithPublishedDiagnostics) {
     ASSERT_EQ(closed.size(), 1u);
     EXPECT_EQ(analyzer.closes, 1);
     EXPECT_NE(closed.front().find("\"diagnostics\":[]"), std::string::npos);
+}
+
+TEST_F(LspProtocolTests, DropsDiagnosticsFromSupersededDocumentVersions) {
+    FakeAnalyzer analyzer;
+    ProtocolServer server(analyzer);
+    Initialize(server);
+    const std::filesystem::path file = root / "main.fl";
+    const std::string uri = flecha::lsp::PathToFileUri(file);
+    analyzer.snapshot.diagnostics = {
+        AnalyzerDiagnostic{"FLECHA-S0002", file, 0, 1, "error", "stale"}};
+    analyzer.diagnosticVersion = 0;
+    const std::string document =
+        "{\"textDocument\":{\"uri\":" +
+        flecha::analyzer::json::Quote(uri);
+
+    const auto stale = server.Handle(Notification(
+        "textDocument/didOpen",
+        document + ",\"version\":1,\"text\":\"x\"}}"));
+
+    EXPECT_TRUE(stale.empty());
+    EXPECT_EQ(analyzer.diagnosticRequests, 1);
+
+    analyzer.diagnosticVersion = 2;
+    analyzer.snapshot.diagnostics.clear();
+    const auto current = server.Handle(Notification(
+        "textDocument/didChange",
+        document +
+            ",\"version\":2},\"contentChanges\":[{\"text\":\"ok\"}]}"));
+
+    ASSERT_EQ(current.size(), 1u);
+    EXPECT_NE(current.front().find("\"version\":2"), std::string::npos);
+    EXPECT_NE(current.front().find("\"diagnostics\":[]"),
+              std::string::npos);
 }
 
 TEST_F(LspProtocolTests, ConvertsHoverPositionsAndRanges) {

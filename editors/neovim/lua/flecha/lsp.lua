@@ -7,6 +7,7 @@ local warned = false
 
 local defaults = {
     enabled = true,
+    debounce_text_changes = 150,
     root_markers = { "longbow.toml", ".git" },
 }
 
@@ -243,6 +244,9 @@ local function start(bufnr)
         init_options = options.init_options,
         settings = options.settings,
         on_attach = options.on_attach,
+        flags = {
+            debounce_text_changes = options.debounce_text_changes,
+        },
     }
 
     vim.lsp.start(config, {
