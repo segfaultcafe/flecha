@@ -145,6 +145,25 @@ std::optional<SemanticQueries::Match> SemanticQueries::Find(
                   ItemKind(symbol.Kind()), TargetKind::Symbol, &symbol});
     };
 
+    for (const auto& [declaration, contract] : _model._decorationContracts) {
+        consider({declaration->NameRange(), declaration->NameRange(),
+                  declaration->Name(), "decoration",
+                  SemanticItemKind::Decoration, TargetKind::Decoration,
+                  declaration});
+        for (const auto& signature : contract.applications)
+            for (const auto& parameter : signature.parameters)
+                if (parameter.syntax->type)
+                    consider({parameter.syntax->nameRange,
+                              parameter.syntax->nameRange,
+                              parameter.syntax->name, parameter.type.Name(),
+                              SemanticItemKind::Parameter});
+    }
+    for (const auto& [application, declaration] : _model._decorationBindings)
+        consider({application->pathRanges.back(), declaration->NameRange(),
+                  declaration->Name(), "decoration",
+                  SemanticItemKind::Decoration, TargetKind::Decoration,
+                  declaration});
+
     for (const auto& [expression, symbol] : _model._bindings)
         symbolMatch(expression->Range(), expression->Name(), *symbol);
 
@@ -237,6 +256,27 @@ std::vector<SemanticOccurrence> SemanticQueries::Occurrences(
             symbol.DeclarationRange());
     };
 
+    for (const auto& [declaration, contract] : _model._decorationContracts) {
+        add(declaration->NameRange(), declaration->Name(), "decoration",
+            SemanticItemKind::Decoration, declaration->NameRange());
+        for (const auto& signature : contract.applications) {
+            add(signature.syntax->applicationRange, "application", "",
+                SemanticItemKind::Keyword, {});
+            add(signature.syntax->targetKeywordRange, "target", "",
+                SemanticItemKind::Keyword, {});
+            for (const auto& range : signature.syntax->targetPathRanges)
+                add(range, "", "", SemanticItemKind::Keyword, {});
+            for (const auto& parameter : signature.parameters)
+                if (parameter.syntax->type)
+                    add(parameter.syntax->nameRange, parameter.syntax->name,
+                        parameter.type.Name(), SemanticItemKind::Parameter,
+                        parameter.syntax->nameRange);
+        }
+    }
+    for (const auto& [application, declaration] : _model._decorationBindings)
+        add(application->pathRanges.back(), declaration->Name(), "decoration",
+            SemanticItemKind::Decoration, declaration->NameRange());
+
     for (const auto& [expression, symbol] : _model._bindings)
         addSymbol(expression->Range(), expression->Name(), *symbol);
     for (const auto& [type, symbol] : _model._typeBindings)
@@ -286,6 +326,13 @@ std::vector<source::SourceRange> SemanticQueries::ReferenceRanges(
             result.push_back(range);
     };
 
+    if (match.targetKind == TargetKind::Decoration) {
+        const auto* declaration =
+            static_cast<const core::DecorationDeclaration*>(match.target);
+        if (includeDeclaration) add(declaration->NameRange());
+        for (const auto& [application, target] : _model._decorationBindings)
+            if (target == declaration) add(application->pathRanges.back());
+    }
     if (match.targetKind == TargetKind::Symbol) {
         const auto* target = static_cast<const semantic::Symbol*>(match.target);
         for (const auto& [expression, symbol] : _model._bindings)
@@ -342,6 +389,11 @@ std::vector<SemanticSymbol> SemanticQueries::Symbols(
     std::string_view query) const {
     const std::string needle = Lower(query);
     std::vector<SemanticSymbol> result;
+    for (const auto& [declaration, contract] : _model._decorationContracts)
+        if (needle.empty() || Lower(declaration->Name()).contains(needle))
+            result.push_back({declaration->Name(), "decoration",
+                              SemanticItemKind::Decoration,
+                              declaration->NameRange()});
     for (const auto& symbol : _model._symbols) {
         if (symbol->DeclarationRange().Empty() ||
             symbol->DeclarationRange().start.file.empty() ||

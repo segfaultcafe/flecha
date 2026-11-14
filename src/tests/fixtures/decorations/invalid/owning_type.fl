@@ -1,0 +1,3 @@
+module owning_type;
+decoration meta { application(string a) target structure; };
+i32 main() { return 0; }

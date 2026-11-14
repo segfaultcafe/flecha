@@ -668,10 +668,88 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         const auto [previous, inserted] =
             names.emplace(decoration.Name(), &decoration);
         if (!inserted)
-            Report(
+            _diagnostics.Report(
                 diagnostics::DiagnosticCode::DuplicateDeclaration,
                 decoration.NameRange(),
-                "duplicate decoration declaration '" + decoration.Name() + "'");
+                "duplicate decoration declaration '" + decoration.Name() + "'",
+                diagnostics::DiagnosticSeverity::Error,
+                {{previous->second->NameRange(), "previous declaration"}});
+    }
+
+    for (const auto& declaration : unit.Declarations()) {
+        if (declaration->Kind() != AstNodeKind::DecorationDeclaration) continue;
+        const auto& decoration =
+            static_cast<const DecorationDeclaration&>(*declaration);
+        SetSource(decoration.sourceId);
+        DecorationContract contract{&decoration, {}};
+        std::map<core::DecorationTarget, source::SourceRange> targets;
+        for (const auto& signature : decoration.Signatures()) {
+            DecorationApplicationContract application{&signature, {}};
+            const auto [previous, inserted] =
+                targets.emplace(signature.target, signature.targetRange);
+            if (!inserted) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::DuplicateDecorationSignature,
+                    signature.targetRange,
+                    "duplicate application signature for decoration target",
+                    diagnostics::DiagnosticSeverity::Error,
+                    {{previous->second, "previous target signature"}});
+                application.valid = false;
+                for (auto& prior : contract.applications)
+                    if (prior.syntax->target == signature.target)
+                        prior.valid = false;
+            }
+            if (signature.target == core::DecorationTarget::Invalid)
+                application.valid = false;
+            std::map<std::string, source::SourceRange> names;
+            for (const auto& parameter : signature.parameters) {
+                SemanticType type = SemanticType::Error();
+                if (!parameter.type) {
+                    if (parameter.marker != "structure") {
+                        Report(diagnostics::DiagnosticCode::
+                                   InvalidDecorationMarker,
+                               parameter.range,
+                               "unsupported literal decoration marker '" +
+                                   parameter.marker + "'");
+                        application.valid = false;
+                    }
+                } else {
+                    type = ResolveType(*parameter.type);
+                    const bool valid =
+                        type.IsNumeric() ||
+                        type.Kind() == SemanticTypeKind::Bool ||
+                        type.Kind() == SemanticTypeKind::Char ||
+                        type.Kind() == SemanticTypeKind::StringView ||
+                        type.Kind() == SemanticTypeKind::Enum ||
+                        type.IsErrorValue();
+                    if (!valid) {
+                        Report(diagnostics::DiagnosticCode::
+                                   InvalidDecorationParameter,
+                               parameter.type->Range(),
+                               "decoration parameters require a compile-time "
+                               "numeric, bool, char, stringv, enum, or "
+                               "error-value type");
+                        application.valid = false;
+                    }
+                    const auto [prior, unique] =
+                        names.emplace(parameter.name, parameter.nameRange);
+                    if (!unique) {
+                        _diagnostics.Report(
+                            diagnostics::DiagnosticCode::
+                                InvalidDecorationParameter,
+                            parameter.nameRange,
+                            "duplicate decoration parameter '" +
+                                parameter.name + "'",
+                            diagnostics::DiagnosticSeverity::Error,
+                            {{prior->second, "previous parameter"}});
+                        application.valid = false;
+                    }
+                }
+                application.parameters.push_back({&parameter, type});
+            }
+            contract.applications.push_back(std::move(application));
+        }
+        _model._decorationContracts.emplace(&decoration, std::move(contract));
     }
 
     const auto sourceModule =
@@ -707,7 +785,14 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         for (const auto& import : module->imports) {
             if (import.alias != alias) continue;
             const auto* candidate = inModule(import.resolvedModule, name);
-            if (!candidate || !candidate->exported) continue;
+            if (!candidate) continue;
+            const bool privileged =
+                module->test && module->testPair == import.resolvedModule;
+            if (!(candidate->exported ||
+                  (candidate->quiverVisible &&
+                   candidate->quiverId == module->quiverId) ||
+                  privileged))
+                continue;
             if (result && result != candidate) return nullptr;
             result = candidate;
         }
@@ -717,34 +802,183 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         [&](const DecorationApplication& application,
             const Declaration& context) -> const DecorationDeclaration* {
         const auto* result = resolve(application, context);
-        if (!result)
-            Report(diagnostics::DiagnosticCode::InvalidDecoration,
-                   application.range,
-                   "unknown or inaccessible decoration '@" +
-                       application.Name() + "'");
+        if (!result) {
+            std::vector<diagnostics::RelatedLocation> related;
+            bool typed = false;
+            if (const core::Module* module = sourceModule(context.sourceId))
+                for (const auto& import : module->imports) {
+                    if (application.path.empty() ||
+                        import.alias != application.path.front())
+                        continue;
+                    if (const auto* candidate = inModule(import.resolvedModule,
+                                                         application.Name())) {
+                        typed = typed || candidate->HasBody();
+                        related.push_back({candidate->NameRange(),
+                                           "decoration declared here"});
+                    }
+                }
+            _diagnostics.Report(
+                typed ? diagnostics::DiagnosticCode::InaccessibleDecoration
+                      : diagnostics::DiagnosticCode::InvalidDecoration,
+                application.pathRanges.back(),
+                "unknown or inaccessible decoration '@" + application.Name() +
+                    "'",
+                diagnostics::DiagnosticSeverity::Error, std::move(related));
+        }
+        if (result) _model._decorationBindings.emplace(&application, result);
         return result;
     };
     const auto requireCompilerCounterpart =
         [&](const DecorationApplication& application,
             const DecorationDeclaration* decoration) {
-            if (!decoration || decoration->Name() == "json") return;
+            if (!decoration || decoration->HasBody() ||
+                decoration->Name() == "json")
+                return;
             Report(diagnostics::DiagnosticCode::InvalidDecoration,
                    application.range,
                    "decoration '@" + decoration->Name() +
                        "' has no compiler implementation in Flecha 0.3");
         };
 
+    const auto validateTyped = [&](const DecorationApplication& application,
+                                   const DecorationDeclaration* decoration,
+                                   const Declaration& owner,
+                                   const core::AstNode& target,
+                                   core::DecorationTarget category) {
+        if (!decoration || !decoration->HasBody()) return;
+        const DecorationContract& contract = *_model.ContractFor(*decoration);
+        const auto report = [&](diagnostics::DiagnosticCode code,
+                                source::SourceRange range, std::string message,
+                                source::SourceRange related) {
+            _diagnostics.Report(
+                code, range, std::move(message),
+                diagnostics::DiagnosticSeverity::Error,
+                {{related, "decoration contract declared here"}});
+        };
+        const auto signature = std::find_if(
+            contract.applications.begin(), contract.applications.end(),
+            [&](const auto& candidate) {
+                return candidate.syntax->target == category;
+            });
+        if (category == core::DecorationTarget::Invalid ||
+            signature == contract.applications.end()) {
+            report(diagnostics::DiagnosticCode::DecorationTargetMismatch,
+                   application.range,
+                   "decoration '@" + decoration->Name() +
+                       "' does not declare this target category",
+                   decoration->Range());
+            return;
+        }
+        if (!signature->valid) return;
+        if (application.arguments.size() != signature->parameters.size()) {
+            report(diagnostics::DiagnosticCode::DecorationArgumentCount,
+                   application.range,
+                   "decoration expects " +
+                       std::to_string(signature->parameters.size()) +
+                       " argument(s)",
+                   signature->syntax->range);
+            return;
+        }
+        SetSource(owner.sourceId);
+        bool valid = true;
+        for (std::size_t i = 0; i < application.arguments.size(); ++i) {
+            const auto& argument = application.arguments[i];
+            const auto& parameter = signature->parameters[i];
+            if (!parameter.syntax->type) {
+                if (argument.kind != DecorationArgumentKind::Identifier ||
+                    argument.value != parameter.syntax->marker ||
+                    argument.expression) {
+                    report(diagnostics::DiagnosticCode::InvalidDecorationMarker,
+                           argument.range,
+                           "expected literal marker '" +
+                               parameter.syntax->marker + "'",
+                           parameter.syntax->range);
+                    valid = false;
+                }
+                continue;
+            }
+            if (!argument.expression) {
+                report(diagnostics::DiagnosticCode::DecorationArgumentType,
+                       argument.range,
+                       "expected compile-time " + parameter.type.Name() +
+                           " argument",
+                       parameter.syntax->range);
+                valid = false;
+                continue;
+            }
+            const std::size_t diagnosticsBefore =
+                _diagnostics.Diagnostics().size();
+            const SemanticType actual =
+                AnalyzeExpression(*argument.expression, parameter.type);
+            // Expression diagnostics (for example a literal outside the
+            // declared integer range) must not leave consumable metadata
+            // behind.
+            for (std::size_t diagnostic = diagnosticsBefore;
+                 diagnostic < _diagnostics.Diagnostics().size(); ++diagnostic)
+                if (_diagnostics.Diagnostics()[diagnostic].severity ==
+                    diagnostics::DiagnosticSeverity::Error)
+                    valid = false;
+            std::vector<const Symbol*> dependencies;
+            if (actual.IsError() || !IsAssignable(parameter.type, actual) ||
+                !ValidateModuleConstantExpression(*argument.expression,
+                                                  dependencies)) {
+                report(diagnostics::DiagnosticCode::DecorationArgumentType,
+                       argument.range,
+                       "expected compile-time " + parameter.type.Name() +
+                           " argument",
+                       parameter.syntax->range);
+                valid = false;
+            }
+        }
+        if (valid)
+            _model._decorations.push_back(
+                {decoration, signature->syntax, &application, &target, &owner});
+    };
+
+    const auto duplicate = [&](const DecorationApplication& application,
+                               const DecorationDeclaration* decoration,
+                               std::unordered_map<const DecorationDeclaration*,
+                                                  const DecorationApplication*>&
+                                   seen) {
+        if (!decoration) return false;
+        const auto [previous, inserted] =
+            seen.emplace(decoration, &application);
+        if (inserted) return false;
+        _diagnostics.Report(
+            decoration->HasBody()
+                ? diagnostics::DiagnosticCode::DuplicateDecorationApplication
+                : diagnostics::DiagnosticCode::InvalidDecoration,
+            application.range,
+            "duplicate decoration '@" + decoration->Name() +
+                "' on the same declaration",
+            diagnostics::DiagnosticSeverity::Error,
+            {{previous->second->range, "previous application"},
+             {decoration->NameRange(), "decoration declared here"}});
+        std::erase_if(_model._decorations, [&](const auto& metadata) {
+            return metadata.application == previous->second;
+        });
+        return true;
+    };
+
     for (const auto& declaration : unit.Declarations()) {
-        std::unordered_set<const DecorationDeclaration*> seen;
+        std::unordered_map<const DecorationDeclaration*,
+                           const DecorationApplication*>
+            seen;
         for (const auto& application : declaration->decorations) {
             const auto* decoration = resolveOrReport(application, *declaration);
             requireCompilerCounterpart(application, decoration);
-            if (decoration && !seen.insert(decoration).second)
-                Report(diagnostics::DiagnosticCode::InvalidDecoration,
-                       application.range,
-                       "duplicate decoration '@" + decoration->Name() +
-                           "' on the same declaration");
-            if (decoration && decoration->Name() == "json" &&
+            core::DecorationTarget category = core::DecorationTarget::Invalid;
+            if (declaration->Kind() == AstNodeKind::StructureDeclaration)
+                category = core::DecorationTarget::Structure;
+            else if (declaration->Kind() == AstNodeKind::EnumDeclaration)
+                category = core::DecorationTarget::Enum;
+            else if (declaration->Kind() == AstNodeKind::InterfaceDeclaration)
+                category = core::DecorationTarget::Interface;
+            if (!duplicate(application, decoration, seen))
+                validateTyped(application, decoration, *declaration,
+                              *declaration, category);
+            if (decoration && !decoration->HasBody() &&
+                decoration->Name() == "json" &&
                 declaration->Kind() != AstNodeKind::StructureDeclaration)
                 Report(diagnostics::DiagnosticCode::InvalidDecoration,
                        application.range,
@@ -759,7 +993,8 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         const DecorationApplication* jsonApplication = nullptr;
         for (const auto& application : declaration->decorations) {
             const auto* decoration = resolve(application, *declaration);
-            if (decoration && decoration->Name() == "json") {
+            if (decoration && !decoration->HasBody() &&
+                decoration->Name() == "json") {
                 structureJson = &application;
                 jsonDecoration = decoration;
                 jsonApplication = &application;
@@ -789,17 +1024,18 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         std::vector<Candidate> candidates;
         for (const auto& field : structure.Fields()) {
             const DecorationApplication* fieldJson = nullptr;
-            std::unordered_set<const DecorationDeclaration*> seen;
+            std::unordered_map<const DecorationDeclaration*,
+                               const DecorationApplication*>
+                seen;
             for (const auto& application : field->Decorations()) {
                 const auto* decoration =
                     resolveOrReport(application, *declaration);
                 requireCompilerCounterpart(application, decoration);
-                if (decoration && !seen.insert(decoration).second)
-                    Report(diagnostics::DiagnosticCode::InvalidDecoration,
-                           application.range,
-                           "duplicate decoration '@" + decoration->Name() +
-                               "' on field '" + field->Name() + "'");
-                if (decoration && decoration->Name() == "json")
+                if (!duplicate(application, decoration, seen))
+                    validateTyped(application, decoration, *declaration, *field,
+                                  core::DecorationTarget::StructureField);
+                if (decoration && !decoration->HasBody() &&
+                    decoration->Name() == "json")
                     fieldJson = &application;
             }
             if (fieldJson) {

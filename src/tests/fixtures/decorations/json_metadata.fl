@@ -1,0 +1,9 @@
+module json_metadata;
+decoration json {
+    application(structure) target structure;
+    application(stringv name) target structure::field;
+    application(stringv name) target enum;
+};
+@json(structure) structure Record { @json("value") i32 value; };
+@json("state") enum State { Ready }
+i32 main() { return 0; }

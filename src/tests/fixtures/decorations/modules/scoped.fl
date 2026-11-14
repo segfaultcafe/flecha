@@ -1,0 +1,4 @@
+module scoped;
+@imports :: root::annotations as ann;
+@ann::meta("ok") structure Record {};
+i32 main() { return 0; }

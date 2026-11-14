@@ -7,7 +7,7 @@ Status: Accepted
 Created: 2026-11-14
 Target: Flecha 0.4
 Requires: interface dispatch
-Implementation: Not Started
+Implementation: In Progress
 Release-Impact: Blocker
 
 Abstract

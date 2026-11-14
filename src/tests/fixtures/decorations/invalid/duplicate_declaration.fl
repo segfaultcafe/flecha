@@ -1,0 +1,5 @@
+module duplicate_declaration;
+decoration meta { application(stringv name) target structure; };
+decoration meta { application(stringv name) target structure; };
+
+i32 main() { return 0; }

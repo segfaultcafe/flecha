@@ -54,3 +54,17 @@ test("namespace attachment has explicit keyword and namespace scopes", () => {
   assert.doesNotMatch("i32 namespace = 22;", new RegExp(attachment.begin));
   assert.doesNotMatch(grammar.repository.control.match, /under|namespace/);
 });
+
+test("typed decoration clauses are contextual", () => {
+  const declaration = grammar.repository.decorationDeclarations.patterns[0];
+  assert.match("decoration meta {", new RegExp(declaration.begin));
+  assert.match("decoration meta\n{", new RegExp(declaration.begin));
+  assert.equal(declaration.beginCaptures["2"].name, "entity.name.type.decoration.flecha");
+  const application = declaration.patterns[1];
+  const target = declaration.patterns[2];
+  assert.match("application(stringv name)", new RegExp(application.match));
+  for (const kind of ["structure", "structure::field", "enum", "interface"]) {
+    assert.match(`target ${kind}`, new RegExp(target.match));
+  }
+  assert.doesNotMatch(grammar.repository.control.match, /application|target/);
+});

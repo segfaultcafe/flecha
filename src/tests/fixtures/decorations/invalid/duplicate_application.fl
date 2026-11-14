@@ -1,0 +1,4 @@
+module duplicate_application;
+decoration meta { application(stringv name) target structure; };
+@meta("a") @meta("b") structure Record {};
+i32 main() { return 0; }

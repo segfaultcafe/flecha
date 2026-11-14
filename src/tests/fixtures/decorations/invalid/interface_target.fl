@@ -1,0 +1,4 @@
+module interface_target;
+decoration meta { application(stringv name) target structure; };
+@meta("a") interface Protocol {};
+i32 main() { return 0; }

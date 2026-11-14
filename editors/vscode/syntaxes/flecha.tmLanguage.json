@@ -3,6 +3,7 @@
   "name": "Flecha",
   "scopeName": "source.flecha",
   "patterns": [
+    { "include": "#decorationDeclarations" },
     {"include": "#comments"},
     {"include": "#strings"},
     {"include": "#characters"},
@@ -36,6 +37,66 @@
     {"include": "#variables"}
   ],
   "repository": {
+    "decorationDeclarations": {
+      "patterns": [
+        {
+          "begin": "\\b(decoration)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\{)",
+          "end": "\\}",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.control.flecha"
+            },
+            "2": {
+              "name": "entity.name.type.decoration.flecha"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#comments"
+            },
+            {
+              "match": "\\b(application)\\s*(?=\\()",
+              "captures": {
+                "1": {
+                  "name": "keyword.control.flecha"
+                }
+              }
+            },
+            {
+              "match": "\\b(target)\\s+(structure(?:::field)?|enum|interface)\\b",
+              "captures": {
+                "1": {
+                  "name": "keyword.control.flecha"
+                },
+                "2": {
+                  "name": "keyword.control.flecha"
+                }
+              }
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#control"
+            }
+          ]
+        },
+        {
+          "match": "\\b(decoration)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.flecha"
+            },
+            "2": {
+              "name": "entity.name.type.decoration.flecha"
+            }
+          }
+        }
+      ]
+    },
     "comments": {
       "patterns": [
         {

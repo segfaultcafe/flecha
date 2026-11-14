@@ -1,0 +1,2 @@
+module tag;
+export decoration tag { application() target structure; };

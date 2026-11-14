@@ -673,3 +673,63 @@ TEST_F(AnalysisSessionTests, ExcludesInternalAndIntrinsicSymbolsFromQueries) {
 }
 
 }  // namespace
+
+TEST_F(AnalysisSessionTests, QueriesTypedDecorationContractsAndApplications) {
+    const std::string declaration =
+        "module metadata;\nexport decoration meta { application(stringv name) "
+        "target structure; };\n";
+    const std::string source =
+        "module main;\n@imports :: root::metadata as "
+        "ann;\n@ann::meta(\"wire\") structure Record {};\n";
+    Write("metadata.fl", declaration);
+    Write("main.fl", source);
+    AnalysisSession session(_root);
+    AnalysisSnapshot snapshot = session.Analyze("main.fl");
+    ASSERT_FALSE(snapshot.HasErrors());
+    const std::size_t use = source.find("meta(\"");
+    const auto hover = snapshot.Hover("main.fl", use);
+    ASSERT_TRUE(hover);
+    EXPECT_EQ(hover->kind, SemanticItemKind::Decoration);
+    const auto definition = snapshot.Definition("main.fl", use);
+    ASSERT_TRUE(definition);
+    EXPECT_EQ(definition->start.offset, declaration.find("meta {"));
+    EXPECT_TRUE(definition->start.file.ends_with("metadata.fl"));
+    const auto references = snapshot.References("main.fl", use);
+    ASSERT_TRUE(references);
+    EXPECT_EQ(references->size(), 2u);
+    const auto rename = snapshot.Rename("main.fl", use);
+    ASSERT_TRUE(rename);
+    EXPECT_EQ(rename->ranges.size(), 2u);
+    const auto tokens = snapshot.Occurrences("metadata.fl");
+    EXPECT_TRUE(
+        std::any_of(tokens.begin(), tokens.end(), [&](const auto& item) {
+            return item.range.start.offset == declaration.find("application") &&
+                   item.kind == SemanticItemKind::Keyword;
+        }));
+    const auto parameter =
+        snapshot.Hover("metadata.fl", declaration.find("name)"));
+    ASSERT_TRUE(parameter);
+    EXPECT_EQ(parameter->type, "stringv");
+}
+
+TEST_F(AnalysisSessionTests, RecoversWhileEditingTypedDecorationBody) {
+    Write("main.fl", "module main;\n");
+    AnalysisSession session(_root);
+    for (const std::string suffix :
+         {"", "application(", "application(stringv name) target structure::"}) {
+        ASSERT_EQ(session.Open("main.fl",
+                               "module main; decoration meta { " + suffix, 1),
+                  OverlayUpdateResult::Applied);
+        const AnalysisSnapshot snapshot = session.Analyze("main.fl");
+        EXPECT_TRUE(snapshot.HasErrors());
+        ASSERT_TRUE(snapshot.unit);
+        EXPECT_EQ(snapshot.unit->Declarations().size(), 1u);
+        EXPECT_TRUE(session.Close("main.fl"));
+    }
+    ASSERT_EQ(session.Open("main.fl",
+                           "module main; decoration meta { application() "
+                           "target interface; }; @meta interface Protocol {};",
+                           2),
+              OverlayUpdateResult::Applied);
+    EXPECT_FALSE(session.Analyze("main.fl").HasErrors());
+}

@@ -1,0 +1,4 @@
+module peer;
+@imports :: root::annotations as ann;
+@ann::local interface PeerProtocol {};
+i32 main() { return 0; }

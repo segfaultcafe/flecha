@@ -1,0 +1,4 @@
+module undeclared_target;
+decoration meta { application(stringv name) target structure; };
+@meta("a") enum State { Ready }
+i32 main() { return 0; }

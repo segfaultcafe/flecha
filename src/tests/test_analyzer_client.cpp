@@ -69,3 +69,24 @@ TEST_F(AnalyzerClientTests,
 }
 
 }  // namespace
+
+TEST_F(AnalyzerClientTests, PreservesRelatedDecorationLocations) {
+    const auto source = _root / "main.fl";
+    flecha::lsp::SubprocessAnalyzerClient client(FLECHA_ANALYZER_FIXTURE);
+    client.Initialize(_root, std::nullopt);
+    client.Open(source,
+                "module main; decoration meta { application(stringv name) "
+                "target structure; }; @meta(42) structure Record {};",
+                1);
+    const auto snapshot = client.Diagnostics(source);
+    const auto found =
+        std::find_if(snapshot.diagnostics.begin(), snapshot.diagnostics.end(),
+                     [](const auto& diagnostic) {
+                         return diagnostic.code == "FLECHA-S0070";
+                     });
+    ASSERT_NE(found, snapshot.diagnostics.end());
+    ASSERT_EQ(found->related.size(), 1u);
+    EXPECT_EQ(found->related[0].file, source);
+    EXPECT_EQ(found->related[0].message, "decoration contract declared here");
+    EXPECT_LT(found->related[0].startByte, found->related[0].endByte);
+}

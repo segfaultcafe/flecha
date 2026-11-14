@@ -3,6 +3,7 @@ if exists('b:current_syntax')
 endif
 
 syntax case match
+syntax sync minlines=50
 
 syntax match flechaVariable /\<[a-z_][A-Za-z0-9_]*\>/
 syntax match flechaImports /@[A-Za-z_][A-Za-z0-9_]*\%(\s*::\s*[A-Za-z_][A-Za-z0-9_]*\)*\>/
@@ -23,7 +24,7 @@ syntax match flechaTypeSetName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaTest test
 syntax keyword flechaConditional if else also match
 syntax keyword flechaRepeat while for loop range
-syntax keyword flechaStatement return yield proceed break defer enum structure interface decoration build
+syntax keyword flechaStatement return yield proceed break defer enum structure interface build
 syntax keyword flechaStatement module nextgroup=flechaModuleName skipwhite
 syntax match flechaNamespaceAttachment /\<under\>\_s\+namespace\>/
 syntax match flechaModuleName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
@@ -64,6 +65,17 @@ syntax region flechaCharacter start=/'/ skip=/\\./ end=/'/ contains=flechaCharEs
 syntax keyword flechaTodo TODO FIXME XXX NOTE contained
 syntax match flechaLineComment /\/\/.*$/ contains=flechaTodo
 syntax region flechaBlockComment start=/\/\*/ end=/\*\// contains=flechaTodo
+
+" Decoration contract words are contextual, including across line breaks.
+syntax keyword flechaStatement decoration nextgroup=flechaDecorationName skipwhite skipnl
+syntax match flechaDecorationName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained nextgroup=flechaDecorationBody skipwhite skipnl
+syntax region flechaDecorationBody transparent start=/{/ end=/}/ contained contains=ALLBUT,flechaDecorationTarget,flechaDecorationName
+syntax keyword flechaDecorationClause application contained
+syntax keyword flechaDecorationClause target contained nextgroup=flechaDecorationTarget skipwhite skipnl
+syntax match flechaDecorationTarget /\<\%(structure\%(::field\)\?\|enum\|interface\)\>/ contained
+highlight default link flechaDecorationName flechaType
+highlight default link flechaDecorationClause flechaStatement
+highlight default link flechaDecorationTarget flechaStatement
 
 " Prefer Neovim's semantic highlight groups when they exist. Traditional Vim
 " groups remain the fallback, so no color is selected by this syntax file.

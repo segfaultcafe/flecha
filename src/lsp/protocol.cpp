@@ -168,6 +168,8 @@ int CompletionKind(std::string_view kind) {
 }
 
 int SemanticTokenKind(std::string_view kind, std::string_view spelling = {}) {
+    if (kind == "keyword") return 8;
+    if (kind == "decoration") return 6;
     if (kind == "function") return 0;
     if (kind == "parameter" && spelling == "self") return 7;
     if (kind == "parameter") return 1;
@@ -317,7 +319,36 @@ std::vector<std::string> ProtocolServer::PublishDiagnostics(
                        << ",\"code\":"
                        << analyzer::json::Quote(diagnostic->code)
                        << ",\"source\":\"flecha\",\"message\":"
-                       << analyzer::json::Quote(diagnostic->message) << '}';
+                       << analyzer::json::Quote(diagnostic->message);
+            if (!diagnostic->related.empty()) {
+                serialized << ",\"relatedInformation\":[";
+                bool firstRelated = true;
+                for (const auto& related : diagnostic->related) {
+                    if (!firstRelated) serialized << ',';
+                    firstRelated = false;
+                    const auto relatedPath = Normalize(related.file);
+                    const auto open = _documents.find(relatedPath);
+                    const std::string relatedSource =
+                        open == _documents.end() ? ReadFile(relatedPath)
+                                                 : open->second.text;
+                    const Position relatedStart =
+                        ByteOffsetToPosition(relatedSource, related.startByte);
+                    const Position relatedEnd =
+                        ByteOffsetToPosition(relatedSource, related.endByte);
+                    serialized
+                        << "{\"location\":{\"uri\":"
+                        << analyzer::json::Quote(PathToFileUri(relatedPath))
+                        << ",\"range\":{\"start\":{\"line\":"
+                        << relatedStart.line
+                        << ",\"character\":" << relatedStart.character
+                        << "},\"end\":{\"line\":" << relatedEnd.line
+                        << ",\"character\":" << relatedEnd.character
+                        << "}}},\"message\":"
+                        << analyzer::json::Quote(related.message) << '}';
+                }
+                serialized << ']';
+            }
+            serialized << '}';
         }
         serialized << ']';
         const std::optional<std::int64_t> version =
@@ -393,7 +424,7 @@ std::vector<std::string> ProtocolServer::Handle(std::string_view messageText) {
                 "\"renameProvider\":true,"
                 "\"semanticTokensProvider\":{\"legend\":{"
                 "\"tokenTypes\":[\"function\",\"parameter\",\"variable\","
-                "\"property\",\"enum\",\"struct\",\"type\",\"self\"],"
+                "\"property\",\"enum\",\"struct\",\"type\",\"self\",\"keyword\"],"
                 "\"tokenModifiers\":[\"declaration\"]},\"full\":true}},"
                 "\"serverInfo\":{\"name\":\"flecha-lsp\",\"version\":" +
                 analyzer::json::Quote(compilerVersion) + "}}";

@@ -1,0 +1,4 @@
+module private_consumer;
+@imports :: root::annotations as ann;
+@ann::hidden structure Record {};
+i32 main() { return 0; }

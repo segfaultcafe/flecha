@@ -295,6 +295,11 @@ call assert_equal('flechaString', s:HighlightAt('@json string', 0))
 call s:HighlightLink('flechaImports', '@keyword.import', 'Include')
 
 call assert_equal('flechaStatement', s:HighlightAt('module integer', 0))
+call assert_equal('flechaDecorationClause', s:HighlightAt('application(stringv name)', 0))
+call assert_equal('flechaDecorationClause', s:HighlightAt('target structure::field', 0))
+call assert_equal('flechaDecorationTarget', s:HighlightAt('target structure::field', 7))
+call assert_equal('flechaDecorationName', s:HighlightAt('decoration typedMeta', 11))
+call assert_equal('flechaFunction', s:HighlightAt('i32 application(i32 target)', 4))
 call assert_equal('flechaStatement', s:HighlightAt('decoration json', 0))
 call assert_equal('flechaModuleName', s:HighlightAt('module integer', 7))
 call assert_equal('flechaModifier', s:HighlightAt('export i32', 0))
@@ -330,6 +335,12 @@ call feedkeys("ivoid test() {\<CR>value:\<Esc>", 'xt')
 call assert_equal('    value:', getline(2))
 call feedkeys("A= 42;\<CR>math::run();\<CR>part := values[0:2];\<CR>}\<Esc>", 'xt')
 call assert_equal(['void test() {', '    value:= 42;', '    math::run();', '    part := values[0:2];', '}'], getline(1, '$'))
+" Typed decoration bodies use the same formatting/indentation path.
+setlocal shiftwidth=4 expandtab
+silent %delete _
+call feedkeys("iexport decoration meta {\<CR>application(stringv name) target structure::field;\<CR>application(structure) target structure;\<CR>};\<Esc>", 'xt')
+call assert_equal(['export decoration meta {', '    application(stringv name) target structure::field;', '    application(structure) target structure;', '};'], getline(1, '$'))
+
 bwipeout!
 
 execute 'edit ' . fnameescape(s:fixture_directory . '/highlighting.fl')

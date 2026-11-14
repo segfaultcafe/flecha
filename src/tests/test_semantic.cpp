@@ -9364,3 +9364,92 @@ TEST(SemanticCastTests, StringViewsCastOnlyToConstByteSlices) {
     EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::InvalidCast),
               nullptr);
 }
+
+TEST(SemanticDecorationTests, RegistersMetadataWithoutJsonDerivation) {
+    Analysis analysis = Analyze(R"(
+        decoration json {
+            application(structure) target structure;
+            application(stringv name) target structure::field;
+            application(stringv name) target enum;
+            application(stringv name) target interface;
+        };
+        @json(structure) structure Record {
+            @json("first") i32 first;
+            @json("second") i32 second;
+        };
+        @json("state") enum State { Ready }
+        @json("protocol") interface Protocol {};
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_EQ(analysis.model.DecorationContracts().size(), 1u);
+    ASSERT_EQ(analysis.model.Decorations().size(), 5u);
+    const auto& records = analysis.model.Decorations();
+    EXPECT_NE(records[1].target, records[2].target);
+    EXPECT_EQ(records[1].owner, records[2].owner);
+    const auto& structure = static_cast<const StructureDeclaration&>(
+        *analysis.unit->Declarations()[1]);
+    EXPECT_EQ(analysis.model.JsonMetadataFor(structure), nullptr);
+    for (const auto& function : analysis.model.GeneratedFunctions()) {
+        EXPECT_NE(function->Name(), "json");
+        EXPECT_NE(function->Name(), "writeJson");
+    }
+}
+
+TEST(SemanticDecorationTests, ReportsTypedArgumentRangesAndContracts) {
+    const std::string source =
+        R"(decoration meta { application(stringv name) target structure; }; @meta(42) structure Record {};)";
+    Analysis analysis = Analyze(source);
+    const auto* diagnostic =
+        FindDiagnostic(analysis, DiagnosticCode::DecorationArgumentType);
+    ASSERT_NE(diagnostic, nullptr);
+    EXPECT_EQ(source.substr(diagnostic->range.start.offset,
+                            diagnostic->range.Length()),
+              "42");
+    ASSERT_EQ(diagnostic->related.size(), 1u);
+    EXPECT_EQ(source.substr(diagnostic->related[0].range.start.offset,
+                            diagnostic->related[0].range.Length()),
+              "stringv name");
+    EXPECT_TRUE(analysis.model.Decorations().empty());
+}
+
+TEST(SemanticDecorationTests, UsesNormalCompileTimeConstantTypes) {
+    Analysis analysis = Analyze(R"(
+        const stringv NAME = "wire";
+        decoration meta { application(stringv name, i32 version, bool enabled) target structure; };
+        @meta(NAME, 1 + 2, true) structure Record {};
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_EQ(analysis.model.Decorations().size(), 1u);
+}
+
+TEST(SemanticDecorationTests, DoesNotPublishAmbiguousMetadata) {
+    Analysis duplicateTarget = Analyze(R"(
+        decoration meta { application() target structure; application(structure) target structure; };
+        @meta structure Record {};
+    )");
+    EXPECT_NE(FindDiagnostic(duplicateTarget,
+                             DiagnosticCode::DuplicateDecorationSignature),
+              nullptr);
+    EXPECT_TRUE(duplicateTarget.model.Decorations().empty());
+    Analysis duplicateUse = Analyze(R"(
+        decoration meta { application() target structure; };
+        @meta @meta structure Record {};
+    )");
+    EXPECT_NE(FindDiagnostic(duplicateUse,
+                             DiagnosticCode::DuplicateDecorationApplication),
+              nullptr);
+    EXPECT_TRUE(duplicateUse.model.Decorations().empty());
+}
+
+TEST(SemanticDecorationTests, RejectsOutOfRangeMetadataWithoutPublishingIt) {
+    Analysis analysis = Analyze(R"(
+        decoration meta { application(u8 value) target structure; };
+        @meta(256) structure Record {};
+    )");
+    EXPECT_NE(
+        FindDiagnostic(analysis, DiagnosticCode::IntegerLiteralOutOfRange),
+        nullptr);
+    EXPECT_TRUE(analysis.model.Decorations().empty());
+}

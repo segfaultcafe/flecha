@@ -1,0 +1,3 @@
+module string_marker;
+decoration meta { application(structure) target structure; }; @meta("structure") structure Record {};
+i32 main() { return 0; }

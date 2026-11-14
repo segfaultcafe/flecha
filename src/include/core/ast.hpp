@@ -86,12 +86,16 @@ class AstNode {
     source::SourceRange _range;
 };
 
-enum class DecorationArgumentKind { Identifier, String };
+class Expression;
+
+enum class DecorationArgumentKind { Identifier, String, Expression };
 
 struct DecorationArgument final {
     DecorationArgumentKind kind;
     std::string value;
     source::SourceRange range;
+    // Shared immutable syntax preserves applications copied to specializations.
+    std::shared_ptr<const Expression> expression;
 };
 
 struct DecorationApplication final {
@@ -418,21 +422,58 @@ class TypeSetDeclaration final : public Declaration {
     std::vector<std::unique_ptr<TypeNode>> _members;
 };
 
+enum class DecorationTarget {
+    Invalid,
+    Structure,
+    StructureField,
+    Enum,
+    Interface
+};
+
+struct DecorationParameter final {
+    source::SourceRange range;
+    std::unique_ptr<TypeNode> type;
+    std::string name;
+    source::SourceRange nameRange;
+    // A missing type denotes a literal marker, currently only `structure`.
+    std::string marker;
+};
+
+struct DecorationSignature final {
+    source::SourceRange range;
+    source::SourceRange applicationRange;
+    std::vector<DecorationParameter> parameters;
+    DecorationTarget target = DecorationTarget::Invalid;
+    source::SourceRange targetKeywordRange;
+    source::SourceRange targetRange;
+    std::vector<std::string> targetPath;
+    std::vector<source::SourceRange> targetPathRanges;
+};
+
 class DecorationDeclaration final : public Declaration {
    public:
     DecorationDeclaration(source::SourceRange range, std::string name,
-                          source::SourceRange nameRange)
-        : Declaration(range), _name(std::move(name)), _nameRange(nameRange) {}
+                          source::SourceRange nameRange, bool hasBody = false,
+                          std::vector<DecorationSignature> signatures = {})
+        : Declaration(range),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _hasBody(hasBody),
+          _signatures(std::move(signatures)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::DecorationDeclaration;
     }
     [[nodiscard]] const std::string& Name() const { return _name; }
     [[nodiscard]] source::SourceRange NameRange() const { return _nameRange; }
+    [[nodiscard]] bool HasBody() const { return _hasBody; }
+    [[nodiscard]] const auto& Signatures() const { return _signatures; }
 
    private:
     std::string _name;
     source::SourceRange _nameRange;
+    bool _hasBody;
+    std::vector<DecorationSignature> _signatures;
 };
 
 class StructureField final : public AstNode {

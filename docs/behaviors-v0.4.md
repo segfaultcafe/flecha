@@ -1,6 +1,7 @@
 # Behaviors and decorations for Flecha 0.4
 
-Status: accepted by [IFG 2026-0006](IFG/IFG_2026_0006.txt); not implemented
+Status: accepted by [IFG 2026-0006](IFG/IFG_2026_0006.txt); typed decoration
+contracts implemented (LANG-01), behavior registration and expansion deferred
 
 Behaviors let a library derive an interface implementation for a structure or
 enum from typed decoration metadata. They are deliberately narrower than

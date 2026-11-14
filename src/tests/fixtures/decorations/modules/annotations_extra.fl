@@ -1,0 +1,4 @@
+module annotations;
+@meta("local") structure Local {};
+quiver decoration local { application() target interface; };
+decoration hidden { application() target structure; };

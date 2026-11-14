@@ -1,0 +1,4 @@
+module extra_argument;
+decoration meta { application(stringv name) target structure; };
+@meta("a", "b") structure Record {};
+i32 main() { return 0; }

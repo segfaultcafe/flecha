@@ -26,6 +26,8 @@ enum class SemanticItemKind {
     EnumType,
     StructureType,
     InterfaceType,
+    Decoration,
+    Keyword,
     CallableType,
     Field,
     Expression,
@@ -84,7 +86,7 @@ class SemanticQueries final {
         std::string_view query = {}) const;
 
    private:
-    enum class TargetKind { None, Symbol, Field };
+    enum class TargetKind { None, Symbol, Field, Decoration };
 
     struct Match final {
         source::SourceRange range;

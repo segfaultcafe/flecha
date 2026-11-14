@@ -27,6 +27,7 @@ target_link_libraries(process_fixture PRIVATE flecha_project_options)
 target_compile_definitions(test_flecha PRIVATE
     FLECHA_PROCESS_FIXTURE="$<TARGET_FILE:process_fixture>"
     FLECHA_ANALYZER_FIXTURE="$<TARGET_FILE:analyzer_fixture>"
+    FLECHA_DECORATION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations"
     FLECHA_INTERFACE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces"
     FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/namespace_attachment"
 )
@@ -1635,3 +1636,194 @@ add_test(NAME CompilerDiagnostics.SafeArray
         -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
         -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/safe_array_diagnostics
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_safe_array_diagnostics.cmake)
+
+# Typed decorations validate metadata without producing runtime declarations.
+foreach(fixture IN ITEMS valid json_metadata zero_args generic)
+    add_test(NAME Decorations.${fixture}
+        COMMAND $<TARGET_FILE:flecha> check "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/${fixture}.fl")
+endforeach()
+add_test(NAME Decorations.reject_unsupported_target
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/unsupported_target.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0066
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_qualified_target
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/qualified_target.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0066
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_trailing_target
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/trailing_target.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0066
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_duplicate_signature
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/duplicate_signature.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0067
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_duplicate_parameter
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/duplicate_parameter.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0068
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_unknown_type
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/unknown_type.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0042
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_invalid_type
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/invalid_type.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0068
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_owning_type
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/owning_type.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0068
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_reference_type
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/reference_type.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0068
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_argument_count
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/argument_count.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0069
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_extra_argument
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/extra_argument.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0069
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_argument_type
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/argument_type.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0070
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_nonconstant
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/nonconstant.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0070
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_undeclared_target
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/undeclared_target.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0071
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_field_target
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/field_target.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0071
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_interface_target
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/interface_target.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0071
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_function_target
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/function_target.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0071
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_duplicate_application
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/duplicate_application.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0072
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_duplicate_field
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/duplicate_field.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0072
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_duplicate_enum
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/duplicate_enum.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0072
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_duplicate_interface
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/duplicate_interface.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0072
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_invalid_marker
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/invalid_marker.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0074
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_wrong_marker
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/wrong_marker.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0074
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_string_marker
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/string_marker.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0074
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_unknown_decoration
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/unknown_decoration.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0064
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_duplicate_declaration
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/duplicate_declaration.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0001
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_malformed_declaration
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/malformed_declaration.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-P0001
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_misplaced_declaration
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/misplaced_declaration.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-P0001
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_incomplete_body
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/incomplete_body.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0066
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME Decorations.reject_empty_contract
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/invalid/empty_contract.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0071
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+foreach(fixture IN ITEMS main peer shorthand)
+    add_test(NAME Decorations.modules_${fixture}
+        COMMAND $<TARGET_FILE:flecha> check "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/modules/${fixture}.fl"
+            --root "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/modules")
+endforeach()

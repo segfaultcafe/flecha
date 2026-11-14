@@ -1,0 +1,3 @@
+module malformed_declaration;
+decoration meta { application(stringv name) structure; };
+i32 main() { return 0; }
