@@ -67,6 +67,9 @@ syntax match flechaLineComment /\/\/.*$/ contains=flechaTodo
 syntax region flechaBlockComment start=/\/\*/ end=/\*\// contains=flechaTodo
 
 " Decoration contract words are contextual, including across line breaks.
+syntax keyword flechaStatement behavior nextgroup=flechaBehaviorName skipwhite skipnl
+syntax match flechaBehaviorName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
+highlight default link flechaBehaviorName flechaType
 syntax keyword flechaStatement decoration nextgroup=flechaDecorationName skipwhite skipnl
 syntax match flechaDecorationName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained nextgroup=flechaDecorationBody skipwhite skipnl
 syntax region flechaDecorationBody transparent start=/{/ end=/}/ contained contains=ALLBUT,flechaDecorationTarget,flechaDecorationName

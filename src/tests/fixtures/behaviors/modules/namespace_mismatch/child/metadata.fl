@@ -1,0 +1,4 @@
+module metadata;
+@imports :: root::metadata as parent;
+interface Root {};
+behavior parent::stamp<T> => structure << Root {};

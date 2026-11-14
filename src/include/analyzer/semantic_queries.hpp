@@ -27,6 +27,8 @@ enum class SemanticItemKind {
     StructureType,
     InterfaceType,
     Decoration,
+    Behavior,
+    TypeParameter,
     Keyword,
     CallableType,
     Field,

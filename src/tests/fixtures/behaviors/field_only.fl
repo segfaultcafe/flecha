@@ -1,0 +1,5 @@
+module field_only;
+decoration meta { application(stringv name) target structure::field; };
+interface Root {};
+behavior meta<T> => structure << Root {};
+structure Item { @meta("one") i32 one; @meta("two") i32 two; };

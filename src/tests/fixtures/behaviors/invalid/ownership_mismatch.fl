@@ -1,0 +1,6 @@
+module ownership_mismatch;
+decoration meta { application() target structure; };
+interface Root { void consume(&self, own *i32 value) virtual; };
+behavior meta<T> => structure << Root {
+    void T::consume(&self, lend *i32 value) override {}
+};

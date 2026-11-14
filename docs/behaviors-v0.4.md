@@ -1,7 +1,23 @@
 # Behaviors and decorations for Flecha 0.4
 
 Status: accepted by [IFG 2026-0006](IFG/IFG_2026_0006.txt); typed decoration
-contracts implemented (LANG-01), behavior registration and expansion deferred
+contracts (LANG-01) and behavior declaration semantics (LANG-02) implemented;
+behavior expansion deferred
+
+The current compiler parses behavior declarations, resolves their owning typed
+decoration and interface roots, checks declared method signatures, and records
+which concrete declarations would activate each behavior. It enforces logical
+module ownership and rejects duplicate behaviors and conflicting prospective
+roots. These records are available to analyzer navigation, hover, and semantic
+tokens.
+
+LANG-02 does **not** add concrete conformance, generate methods or vtables, or
+analyze/specialize behavior bodies. An empty behavior body is accepted: whether
+all virtual requirements have concrete providers will be checked by the future
+expansion stage. Declaring a behavior does not make its interfaces usable on a
+decorated target yet. The design below describes the complete intended feature;
+field reflection, typed field iteration, expansion, and JSON migration remain
+unimplemented.
 
 Behaviors let a library derive an interface implementation for a structure or
 enum from typed decoration metadata. They are deliberately narrower than

@@ -1,0 +1,13 @@
+module closed_generic_signature;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+structure Box<A> { A value; };
+interface Boxes { i32 take(&self, &Box<i32> box) virtual; };
+behavior meta<T> => structure << Boxes {
+    i32 T::take(&self, &Box<i32> box) override { return 0; }
+};

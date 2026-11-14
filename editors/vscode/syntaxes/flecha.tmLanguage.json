@@ -4,6 +4,7 @@
   "scopeName": "source.flecha",
   "patterns": [
     { "include": "#decorationDeclarations" },
+    { "include": "#behaviorDeclarations" },
     {"include": "#comments"},
     {"include": "#strings"},
     {"include": "#characters"},
@@ -37,6 +38,13 @@
     {"include": "#variables"}
   ],
   "repository": {
+    "behaviorDeclarations": {
+      "match": "\\b(behavior)\\s+([A-Za-z_][A-Za-z0-9_:]*)",
+      "captures": {
+        "1": { "name": "keyword.control.flecha" },
+        "2": { "name": "entity.name.type.behavior.flecha" }
+      }
+    },
     "decorationDeclarations": {
       "patterns": [
         {

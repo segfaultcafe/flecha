@@ -4,6 +4,7 @@ add_executable(test_flecha
     test_analyzer_server_loop.cpp
     test_analyzer_client.cpp
     test_ast.cpp
+    test_behavior.cpp
     test_codegen.cpp
     test_diagnostics.cpp
     test_analyzer_transport.cpp
@@ -27,6 +28,7 @@ target_link_libraries(process_fixture PRIVATE flecha_project_options)
 target_compile_definitions(test_flecha PRIVATE
     FLECHA_PROCESS_FIXTURE="$<TARGET_FILE:process_fixture>"
     FLECHA_ANALYZER_FIXTURE="$<TARGET_FILE:analyzer_fixture>"
+    FLECHA_BEHAVIOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors"
     FLECHA_DECORATION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations"
     FLECHA_INTERFACE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces"
     FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/namespace_attachment"
@@ -1827,3 +1829,121 @@ foreach(fixture IN ITEMS main peer shorthand)
         COMMAND $<TARGET_FILE:flecha> check "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/modules/${fixture}.fl"
             --root "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations/modules")
 endforeach()
+
+# LANG-02 validates promises without generating conformance or methods.
+foreach(fixture IN ITEMS
+    records
+    empty_bodies
+    inherited
+    defaults
+    override_default
+    field_only
+    protected
+    overloads
+    closed_generic_signature
+    generic_targets
+    variadic_signature
+    ownership_signature
+    borrow_signature)
+    add_test(NAME Behaviors.${fixture}
+        COMMAND $<TARGET_FILE:flecha> check "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/${fixture}.fl")
+endforeach()
+foreach(fixture IN ITEMS
+    missing_parameter
+    empty_parameters
+    additional_parameter
+    constraint
+    default_parameter
+    concrete_argument
+    qualified_argument
+    reference_argument)
+    add_test(NAME Behaviors.reject_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/invalid/${fixture}.fl
+            -DEXPECTED_DIAGNOSTIC=FLECHA-S0076
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+endforeach()
+foreach(fixture IN ITEMS
+    unrelated_method
+    wrong_return
+    wrong_receiver
+    wrong_parameter
+    missing_override
+    wrong_owner
+    generic_method
+    default_argument
+    private_method
+    wrong_visibility
+    wrong_effect
+    wrong_crashable
+    no_receiver
+    pointer_receiver
+    duplicate_method
+    duplicate_argument
+    final_replacement
+    borrow_mismatch
+    variadic_mismatch
+    ownership_mismatch
+    shadowed_target_signature
+    dependent_generic_signature)
+    add_test(NAME Behaviors.reject_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/invalid/${fixture}.fl
+            -DEXPECTED_DIAGNOSTIC=FLECHA-S0078
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+endforeach()
+foreach(fixture IN ITEMS
+    duplicate_behavior)
+    add_test(NAME Behaviors.reject_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/invalid/${fixture}.fl
+            -DEXPECTED_DIAGNOSTIC=FLECHA-S0077
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+endforeach()
+foreach(fixture IN ITEMS
+    unknown_owner
+    unknown_root
+    non_interface_root
+    interface_target
+    no_roots
+    legacy_owner
+    interface_only_owner)
+    add_test(NAME Behaviors.reject_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/invalid/${fixture}.fl
+            -DEXPECTED_DIAGNOSTIC=FLECHA-S0075
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+endforeach()
+foreach(fixture IN ITEMS
+    duplicate_root
+    redundant_root
+    diamond_roots
+    colliding_methods
+    explicit_conflict
+    derived_conflict)
+    add_test(NAME Behaviors.reject_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/invalid/${fixture}.fl
+            -DEXPECTED_DIAGNOSTIC=FLECHA-S0079
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+endforeach()
+foreach(fixture IN ITEMS
+    explicit_instantiation)
+    add_test(NAME Behaviors.reject_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/invalid/${fixture}.fl
+            -DEXPECTED_DIAGNOSTIC=FLECHA-S0054
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+endforeach()
+add_test(NAME Behaviors.reject_receiver_ownership
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/invalid/receiver_ownership.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-P0001
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)

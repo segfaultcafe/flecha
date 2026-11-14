@@ -1,0 +1,2 @@
+module metadata;
+export decoration stamp { application() target structure; };

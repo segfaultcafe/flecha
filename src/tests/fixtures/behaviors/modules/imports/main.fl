@@ -1,0 +1,5 @@
+module main;
+@imports :: root::protocols as p;
+decoration stamp { application() target structure; };
+behavior stamp<T> => structure << p::Writable {};
+@stamp structure Item {};

@@ -1,0 +1,4 @@
+module main;
+@imports :: root::metadata as m;
+interface Writable {};
+behavior m::stamp<T> => structure << Writable {};

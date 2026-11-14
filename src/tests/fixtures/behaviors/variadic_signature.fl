@@ -1,0 +1,4 @@
+module variadic_signature;
+decoration meta { application() target structure; };
+interface Root { i32 call(&self, args...) virtual; };
+behavior meta<T> => structure << Root { i32 T::call(&self, args...) override { return deferred(); } };

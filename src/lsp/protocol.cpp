@@ -169,7 +169,8 @@ int CompletionKind(std::string_view kind) {
 
 int SemanticTokenKind(std::string_view kind, std::string_view spelling = {}) {
     if (kind == "keyword") return 8;
-    if (kind == "decoration") return 6;
+    if (kind == "decoration" || kind == "behavior" || kind == "typeParameter")
+        return 6;
     if (kind == "function") return 0;
     if (kind == "parameter" && spelling == "self") return 7;
     if (kind == "parameter") return 1;

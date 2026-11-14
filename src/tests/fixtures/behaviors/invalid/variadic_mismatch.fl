@@ -1,0 +1,4 @@
+module variadic_mismatch;
+decoration meta { application() target structure; };
+interface Root { i32 call(&self, i32 value) virtual; };
+behavior meta<T> => structure << Root { i32 T::call(&self, i32 value, args...) override { return 0; } };

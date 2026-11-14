@@ -1,0 +1,9 @@
+module borrow_mismatch;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+interface Borrowed { &i32 get(&self, &i32 value) virtual <- value; }; behavior meta<T> => structure << Borrowed { &i32 T::get(&self, &i32 value) override <- self { return value; } };

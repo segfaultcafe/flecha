@@ -1,0 +1,11 @@
+module override_default;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+interface Defaults { i32 choice(&const self) default; };
+i32 Defaults::choice(&const self) { return 7; }
+behavior meta<T> => structure << Defaults { i32 T::choice(&const self) override { return 9; } };

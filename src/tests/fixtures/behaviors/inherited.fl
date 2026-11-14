@@ -1,0 +1,14 @@
+module inherited;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+interface Readable { i32 read(&self) virtual; };
+interface Both << Writable, Readable {};
+behavior meta<T> => structure << Both {
+    i32 T::write(&const self, i32 value) override { return value; }
+    i32 T::read(&self) override { return 0; }
+};

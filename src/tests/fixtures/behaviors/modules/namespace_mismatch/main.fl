@@ -1,0 +1,2 @@
+module main;
+@imports :: root::metadata as m :: root::child::metadata as child;

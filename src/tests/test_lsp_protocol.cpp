@@ -445,7 +445,8 @@ TEST_F(LspProtocolTests, MapsDecorationKeywordsToAdvertisedKeywordTokenType) {
 
     const std::filesystem::path file = root / "main.fl";
     const std::string text =
-        "application\ntarget\nstructure\nenum\ninterface\nself\nvalue\n";
+        "application\ntarget\nstructure\nenum\ninterface\nbehavior\nmeta\nself"
+        "\nvalue\n";
     const std::string document =
         "{\"textDocument\":{\"uri\":" +
         flecha::analyzer::json::Quote(flecha::lsp::PathToFileUri(file));
@@ -456,12 +457,15 @@ TEST_F(LspProtocolTests, MapsDecorationKeywordsToAdvertisedKeywordTokenType) {
                                            "}}"))
                   .size(),
               1u);
-    for (const std::string word :
-         {"application", "target", "structure", "enum", "interface"}) {
+    for (const std::string word : {"application", "target", "structure", "enum",
+                                   "interface", "behavior"}) {
         const std::size_t start = text.find(word);
         analyzer.semanticTokens.push_back(
             {{file, start, start + word.size()}, "keyword", false});
     }
+    const std::size_t behaviorName = text.find("meta");
+    analyzer.semanticTokens.push_back(
+        {{file, behaviorName, behaviorName + 4}, "behavior", true});
     for (const std::string word : {"self", "value"}) {
         const std::size_t start = text.find(word);
         analyzer.semanticTokens.push_back(
@@ -474,7 +478,7 @@ TEST_F(LspProtocolTests, MapsDecorationKeywordsToAdvertisedKeywordTokenType) {
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_NE(tokens.front().find(
                   "\"data\":[0,0,11,8,0,1,0,6,8,0,1,0,9,8,0,1,0,4,8,0,"
-                  "1,0,9,8,0,1,0,4,7,1,1,0,5,1,1]"),
+                  "1,0,9,8,0,1,0,8,8,0,1,0,4,6,1,1,0,4,7,1,1,0,5,1,1]"),
               std::string::npos);
 }
 
