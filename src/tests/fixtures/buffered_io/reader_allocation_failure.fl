@@ -50,11 +50,14 @@ i32 main() {
         );
 
         _, allocationError :=
-            buffered::BufferedReader::withCapacity(reader, 4);
+            buffered::BufferedReader::withCapacity(
+                reader as &stream::Readable,
+                4
+            );
         if allocationError != AllocationError.OutOfMemory {
             return 1;
         }
-        if cleanupCount != 1 {
+        if cleanupCount != 0 {
             return 2;
         }
     }
