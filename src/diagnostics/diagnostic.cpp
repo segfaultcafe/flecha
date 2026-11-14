@@ -134,6 +134,24 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-S0063";
         case DiagnosticCode::InvalidDecoration:
             return "FLECHA-S0064";
+        case DiagnosticCode::InvalidDecorationTarget:
+            return "FLECHA-S0066";
+        case DiagnosticCode::DuplicateDecorationSignature:
+            return "FLECHA-S0067";
+        case DiagnosticCode::InvalidDecorationParameter:
+            return "FLECHA-S0068";
+        case DiagnosticCode::DecorationArgumentCount:
+            return "FLECHA-S0069";
+        case DiagnosticCode::DecorationArgumentType:
+            return "FLECHA-S0070";
+        case DiagnosticCode::DecorationTargetMismatch:
+            return "FLECHA-S0071";
+        case DiagnosticCode::DuplicateDecorationApplication:
+            return "FLECHA-S0072";
+        case DiagnosticCode::InaccessibleDecoration:
+            return "FLECHA-S0073";
+        case DiagnosticCode::InvalidDecorationMarker:
+            return "FLECHA-S0074";
         case DiagnosticCode::InvalidInterface:
             return "FLECHA-S0065";
         case DiagnosticCode::InvalidGeneric:

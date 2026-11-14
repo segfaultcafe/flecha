@@ -1288,22 +1288,30 @@ std::vector<DecorationApplication> Parser::ParseDecorations() {
         if (Match(TokenType::LParen)) {
             if (!Check(TokenType::RParen)) {
                 do {
-                    const Token* argument = nullptr;
-                    DecorationArgumentKind kind =
-                        DecorationArgumentKind::Identifier;
-                    if (Check(TokenType::Identifier) ||
-                        Check(TokenType::Structure) ||
+                    const Token& token = Current();
+                    DecorationArgument argument{
+                        DecorationArgumentKind::Expression,
+                        token.value,
+                        token.range,
+                        {}};
+                    if (Check(TokenType::Structure) || Check(TokenType::Enum) ||
+                        Check(TokenType::Interface) ||
                         Check(TokenType::Default)) {
-                        argument = &Advance();
-                    } else if (Check(TokenType::StringLiteral)) {
-                        argument = &Advance();
-                        kind = DecorationArgumentKind::String;
+                        argument.kind = DecorationArgumentKind::Identifier;
+                        Advance();
                     } else {
-                        ReportUnexpectedToken("in decoration arguments");
-                        break;
+                        auto expression = ParseExpression();
+                        if (!expression) break;
+                        argument.range = expression->Range();
+                        if (expression->Kind() == AstNodeKind::NameExpression)
+                            argument.kind = DecorationArgumentKind::Identifier;
+                        else if (expression->Kind() ==
+                                     AstNodeKind::LiteralExpression &&
+                                 token.type == TokenType::StringLiteral)
+                            argument.kind = DecorationArgumentKind::String;
+                        argument.expression = std::move(expression);
                     }
-                    decoration.arguments.push_back(
-                        {kind, argument->value, argument->range});
+                    decoration.arguments.push_back(std::move(argument));
                 } while (Match(TokenType::Comma));
             }
             if (const Token* close = Consume(TokenType::RParen,
@@ -1320,11 +1328,140 @@ std::unique_ptr<DecorationDeclaration> Parser::ParseDecorationDeclaration() {
     const source::SourceLocation start = Advance().range.start;
     const Token* name = Consume(TokenType::Identifier, "decoration name");
     if (!name) return nullptr;
+    const bool hasBody = Match(TokenType::LCurly);
+    std::vector<DecorationSignature> signatures;
+    if (hasBody) {
+        while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+            // Retain the declaration and later top-level declarations during
+            // incomplete edits. Recover each malformed signature locally.
+            if (StartsTopLevelOnlyDeclaration()) break;
+            const std::size_t before = _position;
+            const auto parseSignature = [&]() -> bool {
+                DecorationSignature signature;
+                signature.range.start = Current().range.start;
+                if (!Check(TokenType::Identifier) ||
+                    Current().value != "application") {
+                    ReportUnexpectedToken(
+                        "expected 'application' in decoration body");
+                    return false;
+                }
+                signature.applicationRange = Advance().range;
+                if (!Consume(TokenType::LParen, "'(' after application"))
+                    return false;
+                while (!Check(TokenType::RParen) && !IsAtEnd()) {
+                    if ((Check(TokenType::Structure) ||
+                         Check(TokenType::Enum) ||
+                         Check(TokenType::Interface)) &&
+                        Peek(1).type == TokenType::Identifier) {
+                        ReportUnexpectedToken(
+                            "in incomplete application parameters");
+                        return false;
+                    }
+                    DecorationParameter parameter;
+                    parameter.range.start = Current().range.start;
+                    if (Check(TokenType::Structure) || Check(TokenType::Enum) ||
+                        Check(TokenType::Interface) ||
+                        (Check(TokenType::Identifier) &&
+                         (Peek(1).type == TokenType::Comma ||
+                          Peek(1).type == TokenType::RParen))) {
+                        const Token& marker = Advance();
+                        parameter.marker = marker.value;
+                        parameter.nameRange = marker.range;
+                        parameter.range.end = marker.range.end;
+                    } else {
+                        parameter.type = ParseType();
+                        if (!parameter.type) return false;
+                        const Token* parameterName = Consume(
+                            TokenType::Identifier, "decoration parameter name");
+                        if (!parameterName) return false;
+                        parameter.name = parameterName->value;
+                        parameter.nameRange = parameterName->range;
+                        parameter.range.end = parameterName->range.end;
+                    }
+                    signature.parameters.push_back(std::move(parameter));
+                    if (!Match(TokenType::Comma)) break;
+                }
+                if (!Consume(TokenType::RParen,
+                             "')' after application parameters"))
+                    return false;
+                if (!Check(TokenType::Identifier) ||
+                    Current().value != "target") {
+                    ReportUnexpectedToken(
+                        "expected 'target' after application parameters");
+                    return false;
+                }
+                signature.targetKeywordRange = Advance().range;
+                signature.targetRange.start = Current().range.start;
+                do {
+                    if ((Check(TokenType::Structure) ||
+                         Check(TokenType::Enum) ||
+                         Check(TokenType::Interface)) &&
+                        Peek(1).type == TokenType::Identifier) {
+                        ReportUnexpectedToken(
+                            "in incomplete decoration target");
+                        return false;
+                    }
+                    if (!(Check(TokenType::Identifier) ||
+                          Check(TokenType::Structure) ||
+                          Check(TokenType::Enum) ||
+                          Check(TokenType::Interface))) {
+                        _diagnostics.Report(
+                            diagnostics::DiagnosticCode::
+                                InvalidDecorationTarget,
+                            Current().range,
+                            "malformed decoration target qualification");
+                        return false;
+                    }
+                    const Token& part = Advance();
+                    signature.targetPath.push_back(part.value);
+                    signature.targetPathRanges.push_back(part.range);
+                    signature.targetRange.end = part.range.end;
+                } while (Match(TokenType::Scope));
+                const auto& path = signature.targetPath;
+                if (path == std::vector<std::string>{"structure"})
+                    signature.target = DecorationTarget::Structure;
+                else if (path == std::vector<std::string>{"structure", "field"})
+                    signature.target = DecorationTarget::StructureField;
+                else if (path == std::vector<std::string>{"enum"})
+                    signature.target = DecorationTarget::Enum;
+                else if (path == std::vector<std::string>{"interface"})
+                    signature.target = DecorationTarget::Interface;
+                else
+                    _diagnostics.Report(
+                        diagnostics::DiagnosticCode::InvalidDecorationTarget,
+                        signature.targetRange,
+                        path.size() > 1
+                            ? "malformed decoration target qualification"
+                            : "unsupported decoration target category");
+                const Token* end = Consume(TokenType::SemiColon,
+                                           "';' after application signature");
+                signature.range.end =
+                    end ? end->range.end : signature.targetRange.end;
+                signatures.push_back(std::move(signature));
+                return end != nullptr;
+            };
+            if (!parseSignature()) {
+                while (!IsAtEnd() && !Check(TokenType::RCurly) &&
+                       !Check(TokenType::SemiColon) &&
+                       !StartsTopLevelOnlyDeclaration() &&
+                       !(Check(TokenType::Identifier) &&
+                         Current().value == "application" &&
+                         _position != before))
+                    Advance();
+                Match(TokenType::SemiColon);
+                if (_position == before && !IsAtEnd() &&
+                    !Check(TokenType::RCurly))
+                    Advance();
+            }
+        }
+        Consume(TokenType::RCurly, "'}' after decoration body");
+    }
     const Token* end =
         Consume(TokenType::SemiColon, "';' after decoration declaration");
-    if (!end) return nullptr;
     return std::make_unique<DecorationDeclaration>(
-        source::SourceRange{start, end->range.end}, name->value, name->range);
+        source::SourceRange{start,
+                            end ? end->range.end : Current().range.start},
+        name->value, name->range, hasBody, std::move(signatures));
 }
 
 std::unique_ptr<TypeSetDeclaration> Parser::ParseTypeSetDeclaration() {

@@ -97,13 +97,16 @@ TEST(ParserTests, ParsesDeclarativeDecorationsOnStructuresAndFields) {
     EXPECT_EQ(fieldDecoration.arguments[0].value, "test");
 }
 
-TEST(ParserTests, DecorationDeclarationsDoNotAcceptBodies) {
+TEST(ParserTests, DecorationDeclarationsAcceptEmptyBodies) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource("decoration json {};", diagnostics);
 
     ASSERT_NE(unit, nullptr);
-    EXPECT_TRUE(diagnostics.HasErrors());
-    EXPECT_TRUE(unit->Declarations().empty());
+    EXPECT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1u);
+    EXPECT_TRUE(
+        static_cast<const DecorationDeclaration&>(*unit->Declarations()[0])
+            .HasBody());
 }
 
 TEST(ParserTests, UsesTokenRangesForCompilationUnit) {
@@ -2547,4 +2550,52 @@ i32 shift(i32 left, i32 right) {
     const auto& bodyShift =
         static_cast<const BinaryExpression&>(*variable.Initializer());
     EXPECT_EQ(bodyShift.OperatorType(), TokenType::ShiftLeft);
+}
+
+TEST(ParserTests, TypedDecorationRangesAndContextualWords) {
+    const std::string source =
+        "export decoration meta { application(stringv name) target "
+        "structure::field; application(structure) target structure; }; i32 "
+        "application(i32 target) { return target; }";
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(source, diagnostics);
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2u);
+    const auto& declaration =
+        static_cast<const DecorationDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(declaration.Signatures().size(), 2u);
+    const auto& signature = declaration.Signatures()[0];
+    const auto text = [&](auto range) {
+        return source.substr(range.start.offset, range.Length());
+    };
+    EXPECT_EQ(text(declaration.Range()),
+              "decoration meta { application(stringv name) target "
+              "structure::field; application(structure) target structure; };");
+    EXPECT_EQ(text(signature.range),
+              "application(stringv name) target structure::field;");
+    EXPECT_EQ(text(signature.targetRange), "structure::field");
+    ASSERT_EQ(signature.parameters.size(), 1u);
+    EXPECT_EQ(text(signature.parameters[0].range), "stringv name");
+    EXPECT_EQ(text(signature.parameters[0].type->Range()), "stringv");
+    EXPECT_EQ(text(signature.parameters[0].nameRange), "name");
+    EXPECT_EQ(signature.target, DecorationTarget::StructureField);
+}
+
+TEST(ParserTests, RecoversIncompleteDecorationBodies) {
+    for (const std::string body :
+         {"application(", "application(stringv", "application(stringv name)",
+          "application(stringv name) target",
+          "application() target structure::",
+          "application() target structure;"}) {
+        SCOPED_TRACE(body);
+        DiagnosticBag diagnostics;
+        auto unit =
+            ParseSource("decoration meta { " + body + "\n structure After {};",
+                        diagnostics);
+        ASSERT_NE(unit, nullptr);
+        EXPECT_TRUE(diagnostics.HasErrors());
+        ASSERT_EQ(unit->Declarations().size(), 2u);
+        EXPECT_EQ(unit->Declarations()[1]->Kind(),
+                  AstNodeKind::StructureDeclaration);
+    }
 }
