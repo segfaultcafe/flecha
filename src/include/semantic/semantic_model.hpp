@@ -25,6 +25,32 @@ struct ClosureCapture final {
     const VariableSymbol* variable;
 };
 
+// Declaration-driven metadata. No runtime data or derived methods are created.
+struct DecorationParameterContract final {
+    const core::DecorationParameter* syntax;
+    SemanticType type;
+};
+
+struct DecorationApplicationContract final {
+    const core::DecorationSignature* syntax;
+    std::vector<DecorationParameterContract> parameters;
+    bool valid = true;
+};
+
+struct DecorationContract final {
+    const core::DecorationDeclaration* declaration;
+    std::vector<DecorationApplicationContract> applications;
+};
+
+struct DecorationMetadata final {
+    const core::DecorationDeclaration* declaration;
+    const core::DecorationSignature* signature;
+    const core::DecorationApplication* application;
+    // Field identity is preserved even when several fields have the same type.
+    const core::AstNode* target;
+    const core::Declaration* owner;
+};
+
 enum class JsonDecorationMode { Default, Explicit };
 
 struct JsonFieldMetadata final {
@@ -122,6 +148,13 @@ class SemanticModel final {
     const auto& Structures() const { return _structures; }
     const auto& Enums() const { return _enums; }
     const auto& Interfaces() const { return _interfaces; }
+    const auto& DecorationContracts() const { return _decorationContracts; }
+    const auto& Decorations() const { return _decorations; }
+    [[nodiscard]] const DecorationContract* ContractFor(
+        const core::DecorationDeclaration& declaration) const {
+        const auto found = _decorationContracts.find(&declaration);
+        return found == _decorationContracts.end() ? nullptr : &found->second;
+    }
     [[nodiscard]] const JsonStructureMetadata* JsonMetadataFor(
         const core::StructureDeclaration& structure) const {
         const auto found = _jsonMetadata.find(&structure);
@@ -138,6 +171,12 @@ class SemanticModel final {
    private:
     friend class SemanticAnalyzer;
     friend class analyzer::SemanticQueries;
+    std::unordered_map<const core::DecorationDeclaration*, DecorationContract>
+        _decorationContracts;
+    std::vector<DecorationMetadata> _decorations;
+    std::unordered_map<const core::DecorationApplication*,
+                       const core::DecorationDeclaration*>
+        _decorationBindings;
     std::vector<std::unique_ptr<StructureType>> _structures;
     std::vector<std::unique_ptr<EnumType>> _enums;
     std::vector<std::unique_ptr<InterfaceType>> _interfaces;
