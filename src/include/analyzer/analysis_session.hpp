@@ -71,6 +71,8 @@ class AnalysisSession final {
 
     [[nodiscard]] AnalysisSnapshot Analyze(
         const std::filesystem::path& entry) const;
+    [[nodiscard]] std::shared_ptr<const AnalysisSnapshot> AnalyzeCached(
+        const std::filesystem::path& entry) const;
 
     [[nodiscard]] const std::filesystem::path& WorkspaceRoot() const {
         return _workspaceRoot;
@@ -87,6 +89,9 @@ class AnalysisSession final {
     core::FilesystemSourceProvider _filesystem;
     OverlaySourceProvider _sources;
     mutable core::ModuleSourceIndex _sourceIndex;
+    mutable std::map<std::filesystem::path,
+                     std::shared_ptr<const AnalysisSnapshot>>
+        _snapshots;
 };
 
 }  // namespace flecha::analyzer

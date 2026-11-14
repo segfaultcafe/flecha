@@ -97,6 +97,7 @@ assert(starts[1].config.cmd[1] == vim.fn.fnamemodify(server, ":p"))
 assert(starts[1].config.cmd[2] == "--test-option")
 assert(starts[1].config.cmd_env.FLECHA_COMPILER == vim.fn.fnamemodify(compiler, ":p"))
 assert(starts[1].config.root_dir == vim.fn.resolve(fixture_directory))
+assert(starts[1].config.flags.debounce_text_changes == 150)
 
 active = {
     {

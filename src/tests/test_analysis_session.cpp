@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 #include "analyzer/analysis_session.hpp"
 
@@ -182,6 +183,34 @@ TEST_F(AnalysisSessionTests, TracksChangesAndReturnsToFilesystemOnClose) {
     EXPECT_FALSE(closed.HasErrors());
 }
 
+TEST_F(AnalysisSessionTests, CachesSnapshotsUntilAnySourceChanges) {
+    Write("main.fl", "module main;\nvoid main() {}\n");
+    Write("dependency.fl", "module dependency;\n");
+    AnalysisSession session(_root);
+
+    const auto first = session.AnalyzeCached("main.fl");
+    const auto reused = session.AnalyzeCached(_root / "main.fl");
+
+    EXPECT_EQ(first, reused);
+    EXPECT_FALSE(first->version);
+    ASSERT_EQ(session.Open("dependency.fl", "module dependency;\n", 1),
+              OverlayUpdateResult::Applied);
+
+    const auto invalidated = session.AnalyzeCached("main.fl");
+    EXPECT_NE(first, invalidated);
+    EXPECT_FALSE(invalidated->HasErrors());
+
+    const auto dependency = session.AnalyzeCached("dependency.fl");
+    ASSERT_TRUE(dependency->version);
+    EXPECT_EQ(*dependency->version, 1);
+    ASSERT_EQ(session.Change("dependency.fl", "module dependency;\n", 2),
+              OverlayUpdateResult::Applied);
+    const auto changed = session.AnalyzeCached("dependency.fl");
+    EXPECT_NE(dependency, changed);
+    ASSERT_TRUE(changed->version);
+    EXPECT_EQ(*changed->version, 2);
+}
+
 TEST_F(AnalysisSessionTests, AppliesOverlaysToImportedModules) {
     Write("dependency.fl",
           "module dependency;\nexport i32 value() { return 42; }\n");
@@ -266,6 +295,78 @@ TEST_F(AnalysisSessionTests,
     AnalysisSnapshot closed = session.Analyze("main.fl");
     ASSERT_FALSE(closed.HasErrors());
     EXPECT_FALSE(HasModule(closed, "renamed"));
+}
+
+TEST_F(AnalysisSessionTests,
+       RecoversAcrossEveryNamespaceAttachmentAndImportPrefix) {
+    const std::filesystem::path attached = "io/buffered/writer.fl";
+    const std::string attachment = "under namespace root::io;";
+    const std::string attachedBody = "\nexport i32 answer() { return 42; }\n";
+    const std::string validAttached =
+        "module writer;\n" + attachment + attachedBody;
+    const std::string import = "@imports :: root::io::writer;";
+    const std::string mainBody = "\ni32 main() { return writer::answer(); }\n";
+    const std::string validMain = "module main;\n" + import + mainBody;
+    Write(attached.string(), validAttached);
+    Write("main.fl", validMain);
+    AnalysisSession session(_root);
+    std::int64_t attachedVersion = 1;
+    std::int64_t mainVersion = 1;
+    ASSERT_EQ(session.Open(attached, validAttached, attachedVersion),
+              OverlayUpdateResult::Applied);
+    ASSERT_EQ(session.Open("main.fl", validMain, mainVersion),
+              OverlayUpdateResult::Applied);
+
+    for (std::size_t length = 0; length <= attachment.size(); ++length) {
+        const std::string text =
+            "module writer;\n" + attachment.substr(0, length) + attachedBody;
+        ASSERT_EQ(session.Change(attached, text, ++attachedVersion),
+                  OverlayUpdateResult::Applied);
+        AnalysisSnapshot edited = session.Analyze(attached);
+        ASSERT_TRUE(edited.version);
+        EXPECT_EQ(*edited.version, attachedVersion);
+        EXPECT_NE(edited.unit, nullptr);
+
+        // The importing document may temporarily lose the attached module,
+        // but its analysis must remain recoverable too.
+        EXPECT_NE(session.Analyze("main.fl").unit, nullptr);
+    }
+    ASSERT_EQ(session.Change(attached, validAttached, ++attachedVersion),
+              OverlayUpdateResult::Applied);
+    EXPECT_FALSE(session.Analyze("main.fl").HasErrors());
+
+    for (std::size_t length = 0; length <= import.size(); ++length) {
+        const std::string text =
+            "module main;\n" + import.substr(0, length) + mainBody;
+        ASSERT_EQ(session.Change("main.fl", text, ++mainVersion),
+                  OverlayUpdateResult::Applied);
+        AnalysisSnapshot edited = session.Analyze("main.fl");
+        ASSERT_TRUE(edited.version);
+        EXPECT_EQ(*edited.version, mainVersion);
+        EXPECT_NE(edited.unit, nullptr);
+    }
+
+    // Model a burst of full-document changes arriving faster than analysis.
+    for (const std::string_view transient :
+         {"under", "under namespace", "under namespace root::"}) {
+        const std::string text =
+            "module writer;\n" + std::string(transient) + attachedBody;
+        ASSERT_EQ(session.Change(attached, text, ++attachedVersion),
+                  OverlayUpdateResult::Applied);
+    }
+    ASSERT_EQ(session.Change(attached, validAttached, ++attachedVersion),
+              OverlayUpdateResult::Applied);
+    ASSERT_EQ(session.Change("main.fl", validMain, ++mainVersion),
+              OverlayUpdateResult::Applied);
+
+    AnalysisSnapshot recoveredAttached = session.Analyze(attached);
+    ASSERT_TRUE(recoveredAttached.version);
+    EXPECT_EQ(*recoveredAttached.version, attachedVersion);
+    EXPECT_FALSE(recoveredAttached.HasErrors());
+    AnalysisSnapshot recoveredMain = session.Analyze("main.fl");
+    ASSERT_TRUE(recoveredMain.version);
+    EXPECT_EQ(*recoveredMain.version, mainVersion);
+    EXPECT_FALSE(recoveredMain.HasErrors());
 }
 
 TEST_F(AnalysisSessionTests, RefreshesCreatedAndRemovedAttachedDiskSources) {
