@@ -131,9 +131,9 @@ The coupling is intentional and temporary. It lets v0.3 ship and exercise the
 JSON API without treating JSON's structure-and-field reflection needs as the
 design for every decoration.
 
-## Proposed v0.4 replacement
+## Accepted v0.4 replacement
 
-The proposed v0.4 design separates decoration metadata, callable contracts,
+The accepted v0.4 design separates decoration metadata, callable contracts,
 and derivation. A decoration declares typed application forms, an interface
 declares receiver methods, and a behavior derives conformance plus
 implementations from the decorated structure's fields.
@@ -170,11 +170,12 @@ Behaviors are limited to structure and enum targets. Decorations may also
 target interfaces, but those applications are non-propagating metadata and do
 not activate behavior.
 
-The complete proposal, including activation, field access, handwritten
+The complete contract, including activation, field access, handwritten
 override precedence, allowed operations, allocation, and diagnostics, is in
 [behaviors-v0.4.md](behaviors-v0.4.md). Its callable and dispatch rules come
 from [interfaces-v0.4.md](interfaces-v0.4.md), rather than defining a second
-interface model inside the behavior engine.
+interface model inside the behavior engine. The decision record and required
+completion criteria are [IFG 2026-0006](IFG/IFG_2026_0006.txt).
 
 Once the restricted behavior system can express and test JSON, the
 compiler-owned v0.3 implementation can be removed. The existing decoration

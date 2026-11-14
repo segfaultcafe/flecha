@@ -1,6 +1,6 @@
 # Behaviors and decorations for Flecha 0.4
 
-Status: proposed language design; not implemented
+Status: accepted by [IFG 2026-0006](IFG/IFG_2026_0006.txt); not implemented
 
 Behaviors let a library derive an interface implementation for a structure or
 enum from typed decoration metadata. They are deliberately narrower than

@@ -1008,7 +1008,7 @@ registry, or general reflection facility is introduced.
 
 ## Behavior-derived conformance
 
-The proposed [v0.4 behavior model](behaviors-v0.4.md) may add conformance to a
+The accepted [v0.4 behavior model](behaviors-v0.4.md) may add conformance to a
 decorated structure or enum and supply receiver implementations. Structure
 behaviors may additionally use typed field metadata. This does not create a
 second interface system.
