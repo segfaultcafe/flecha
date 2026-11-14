@@ -32,6 +32,7 @@ const KeywordMap KEYWORDS = {
     {"enum", TokenType::Enum},
     {"typeset", TokenType::TypeSet},
     {"decoration", TokenType::Decoration},
+    {"behavior", TokenType::Behavior},
     {"structure", TokenType::Structure},
     {"interface", TokenType::Interface},
     {"private", TokenType::Private},

@@ -77,13 +77,13 @@ TEST(TokenizerTests, RecognizesFunctionModifiersAndReservedWords) {
     }
 }
 
-TEST(TokenizerTests, RecognizesInterfaceStructuralKeywordsOnly) {
+TEST(TokenizerTests, RecognizesInterfaceAndBehaviorStructuralKeywordsOnly) {
     const std::vector<Token> tokens = Tokenize(
         "interface virtual default final protected behavior application "
         "target");
     const std::vector<TokenType> expected = {
         TokenType::Interface,  TokenType::Virtual,    TokenType::Default,
-        TokenType::Final,      TokenType::Protected,  TokenType::Identifier,
+        TokenType::Final,      TokenType::Protected,  TokenType::Behavior,
         TokenType::Identifier, TokenType::Identifier, TokenType::EOF_TOKEN,
     };
 

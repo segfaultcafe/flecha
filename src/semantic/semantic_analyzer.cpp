@@ -2946,6 +2946,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     GenerateJsonMethods();
     BindImports(unit);
     ValidateInterfaceConformance();
+    RegisterBehaviors(unit);
     ValidateExports(unit);
     for (const auto& structure : _model._structures)
         for (const auto& field : structure->fields)

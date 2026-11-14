@@ -26,6 +26,7 @@ enum class AstNodeKind {
     InterfaceMethod,
     TypeSetDeclaration,
     DecorationDeclaration,
+    BehaviorDeclaration,
     ModuleConstantDeclaration,
     StructureDeclaration,
     StructureField,
@@ -730,6 +731,26 @@ class FunctionDeclaration final : public Declaration {
     bool _isCrashable;
     bool _isTest = false;
     bool _isTestHarness = false;
+};
+
+// A behavior owns syntax only; its methods are never top-level functions.
+class BehaviorDeclaration final : public Declaration {
+   public:
+    explicit BehaviorDeclaration(source::SourceRange range)
+        : Declaration(range) {}
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::BehaviorDeclaration;
+    }
+
+    DecorationApplication decoration;
+    source::SourceRange keywordRange;
+    std::string targetParameter;
+    source::SourceRange parameterRange;
+    bool validParameter = false;
+    DecorationTarget target = DecorationTarget::Invalid;
+    source::SourceRange targetRange;
+    std::vector<NominalParent> roots;
+    std::vector<std::unique_ptr<FunctionDeclaration>> methods;
 };
 
 enum class MethodCategory : std::uint8_t {

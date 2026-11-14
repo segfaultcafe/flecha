@@ -74,6 +74,32 @@ void Walk(const AstNode& input, const Callback& callback) {
             optional(n.BackingType());
             break;
         }
+        case AstNodeKind::BehaviorDeclaration: {
+            NODE(BehaviorDeclaration);
+            // Only closed signature types participate in normal generic
+            // expansion. Target-dependent bodies remain opaque until LANG-03.
+            const auto dependent = [&](const auto& self,
+                                       const TypeNode& type) -> bool {
+                if (type.TypeForm() == TypeKind::Named &&
+                    type.Name() == n.targetParameter)
+                    return true;
+                if (type.Target() && self(self, *type.Target())) return true;
+                for (const auto& element : type.Elements())
+                    if (self(self, *element)) return true;
+                for (const auto& argument : type.typeArguments)
+                    if (self(self, *argument)) return true;
+                return false;
+            };
+            for (const auto& method : n.methods) {
+                if (!dependent(dependent, method->ReturnType()))
+                    visit(method->ReturnType());
+                for (const auto& parameter : method->Parameters())
+                    if (parameter->Name() != "self" &&
+                        !dependent(dependent, parameter->Type()))
+                        visit(parameter->Type());
+            }
+            break;
+        }
         case AstNodeKind::InterfaceDeclaration: {
             NODE(InterfaceDeclaration);
             list(n.Methods());
@@ -383,6 +409,9 @@ class Expander {
             modules[module.sourceId] = &module;
         auto originals = unit.TakeDeclarations();
         for (const auto& d : originals) {
+            // Behaviors are not callable or explicitly instantiable
+            // declarations.
+            if (d->Kind() == AstNodeKind::BehaviorDeclaration) continue;
             if (d->Kind() == AstNodeKind::FunctionDeclaration &&
                 !static_cast<const FunctionDeclaration&>(*d).Owner().empty()) {
                 methods.push_back(
