@@ -1,0 +1,4 @@
+module function_target;
+decoration meta { application(stringv name) target structure; };
+@meta("a") i32 value() { return 0; }
+i32 main() { return 0; }

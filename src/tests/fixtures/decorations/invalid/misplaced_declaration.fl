@@ -1,0 +1,3 @@
+module misplaced_declaration;
+void f() { decoration meta { application() target structure; }; }
+i32 main() { return 0; }

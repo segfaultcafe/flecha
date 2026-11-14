@@ -1,0 +1,6 @@
+module main;
+@imports :: root::annotations as ann;
+@ann::meta("record") structure Record { @ann::meta("first") i32 first; @ann::meta("second") i32 second; };
+@ann::meta("state") enum State { Ready }
+@ann::meta("interface") interface Protocol {};
+i32 main() { return 0; }

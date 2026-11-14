@@ -1748,3 +1748,34 @@ TEST_F(ModuleTests, PrivateMembersRequireTheExactOwningType) {
     EXPECT_NE(errors.find("field 'value' is private"), std::string::npos);
     EXPECT_NE(errors.find("hidden' is private"), std::string::npos);
 }
+
+TEST_F(ModuleTests, TypedDecorationVisibilityAndSourceScopes) {
+    const fs::path fixtures = FLECHA_DECORATION_FIXTURE_DIR;
+    for (const auto& [entry, code] : std::vector<
+             std::pair<std::string, flecha::diagnostics::DiagnosticCode>>{
+             {"private.fl",
+              flecha::diagnostics::DiagnosticCode::InaccessibleDecoration},
+             {"child/inaccessible.fl",
+              flecha::diagnostics::DiagnosticCode::InaccessibleDecoration},
+             {"scoped.fl",
+              flecha::diagnostics::DiagnosticCode::InvalidDecoration}}) {
+        SCOPED_TRACE(entry);
+        flecha::diagnostics::DiagnosticBag diagnostics;
+        flecha::core::ModuleLoader loader(diagnostics);
+        auto unit =
+            loader.Load(fixtures / "modules" / entry, fixtures / "modules");
+        ASSERT_FALSE(diagnostics.HasErrors());
+        flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+        auto model = analyzer.Analyze(*unit);
+        const auto found = std::find_if(
+            diagnostics.Diagnostics().begin(), diagnostics.Diagnostics().end(),
+            [&](const auto& diagnostic) { return diagnostic.code == code; });
+        ASSERT_NE(found, diagnostics.Diagnostics().end());
+        if (code ==
+            flecha::diagnostics::DiagnosticCode::InaccessibleDecoration) {
+            ASSERT_EQ(found->related.size(), 1u);
+            EXPECT_TRUE(found->related[0].range.start.file.ends_with(
+                "annotations_extra.fl"));
+        }
+    }
+}

@@ -131,6 +131,45 @@ The coupling is intentional and temporary. It lets v0.3 ship and exercise the
 JSON API without treating JSON's structure-and-field reflection needs as the
 design for every decoration.
 
+## Typed declarations (LANG-01)
+
+The compiler also accepts declaration-driven application contracts:
+
+```flecha
+decoration wire {
+    application(structure) target structure;
+    application(stringv name) target structure::field;
+    application(stringv name) target enum;
+    application(stringv name) target interface;
+};
+```
+
+A body declares at most one signature per target category. `application` and
+`target` are contextual words, so ordinary functions and variables can still
+use those names. `structure` is the initial literal marker. Named parameters
+use the existing module-constant value types: numeric primitives, `bool`,
+`char`, `stringv`, enums, and error values. Arguments use ordinary compile-time
+expressions and module constants; owning values and runtime expressions are
+rejected. An empty body declares no permitted targets. The legacy declaration
+without a body retains its compiler-owned validation.
+
+Imports, source-local aliases, logical modules, namespace attachments, and
+quiver visibility apply to decoration identities. Duplicate direct
+applications are rejected independently for each declaration or field.
+Interface metadata is direct and does not propagate through conformance.
+
+Typed declarations only validate metadata, including when named `json`. They
+do not invoke the compiler-owned JSON path, create methods, add conformance,
+or emit runtime metadata. Existing `export decoration json;` declarations and
+JSON derivation remain unchanged. Behavior registration, activation, field
+iteration, method generation, and the JSON library migration remain deferred
+to subsequent slices beginning with LANG-02.
+
+Contract diagnostics use stable identifiers `FLECHA-S0066` through
+`FLECHA-S0074`, alongside existing parse, unresolved-name/type, and duplicate
+declaration diagnostics. Contract errors include related declaration locations
+in CLI output and analyzer/LSP diagnostics.
+
 ## Accepted v0.4 replacement
 
 The accepted v0.4 design separates decoration metadata, callable contracts,

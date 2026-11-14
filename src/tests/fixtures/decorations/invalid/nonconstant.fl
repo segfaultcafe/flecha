@@ -1,0 +1,3 @@
+module nonconstant;
+decoration meta { application(i32 a) target structure; }; i32 number() { return 1; } @meta(number()) structure Record {};
+i32 main() { return 0; }

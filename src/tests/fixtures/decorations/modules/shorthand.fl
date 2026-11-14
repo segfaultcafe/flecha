@@ -1,0 +1,4 @@
+module shorthand;
+@imports :: root::tag;
+@tag structure Record {};
+i32 main() { return 0; }

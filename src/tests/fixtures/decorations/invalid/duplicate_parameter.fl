@@ -1,0 +1,3 @@
+module duplicate_parameter;
+decoration meta { application(stringv a, i32 a) target structure; };
+i32 main() { return 0; }

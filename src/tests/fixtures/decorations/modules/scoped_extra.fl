@@ -1,0 +1,2 @@
+module scoped;
+@ann::meta("no import") structure Other {};

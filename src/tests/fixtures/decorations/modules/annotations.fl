@@ -1,0 +1,2 @@
+module annotations;
+export decoration meta { application(stringv name) target structure; application(stringv name) target structure::field; application(stringv name) target enum; application(stringv name) target interface; };

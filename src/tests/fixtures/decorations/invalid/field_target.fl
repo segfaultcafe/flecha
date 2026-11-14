@@ -1,0 +1,4 @@
+module field_target;
+decoration meta { application(stringv name) target structure; };
+structure Record { @meta("a") i32 value; };
+i32 main() { return 0; }
