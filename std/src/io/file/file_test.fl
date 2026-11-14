@@ -1,4 +1,5 @@
 module file_test;
+under namespace root::io;
 
 @imports
     :: root::io::buffered
@@ -116,8 +117,8 @@ test closed_files_reject_every_operation(&testing::UnitTest t) {
     closed, openError := file::File::open("", file::OpenOptions::readOnly());
     asserts::is_true(t, openError == errors::IoError.InvalidPath, "the setup File is closed");
 
-    [0]u8 empty = none;
-    bytesRead, readError := closed.read(empty[:]);
+    [1]u8 byte = none;
+    bytesRead, readError := closed.read(byte[:]);
     asserts::is_true(
         t,
         bytesRead == 0 and readError == errors::IoError.Closed,
@@ -125,11 +126,11 @@ test closed_files_reject_every_operation(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
-        closed.readExact(empty[:]) == errors::IoError.Closed,
+        closed.readExact(byte[:]) == errors::IoError.Closed,
         "readExact rejects a closed File"
     );
 
-    bytesWritten, writeError := closed.write(empty[:]);
+    bytesWritten, writeError := closed.write(byte[:]);
     asserts::is_true(
         t,
         bytesWritten == 0 and writeError == errors::IoError.Closed,
@@ -137,7 +138,7 @@ test closed_files_reject_every_operation(&testing::UnitTest t) {
     );
     asserts::is_true(
         t,
-        closed.writeAll(empty[:]) == errors::IoError.Closed,
+        closed.writeAll(byte[:]) == errors::IoError.Closed,
         "writeAll rejects a closed File"
     );
     stringv emptyText = "";
@@ -186,7 +187,7 @@ test stream_adapters_round_trip_bytes_after_moves(&testing::UnitTest t) {
     if output.isOpen() {
         writer := output.writer();
         movedWriter := writer;
-        writeError := movedWriter.writeAll(source[:]);
+        writeError := movedWriter->writeAll(source[:]);
         asserts::is_true(
             t,
             writeError == none,
@@ -212,7 +213,7 @@ test stream_adapters_round_trip_bytes_after_moves(&testing::UnitTest t) {
         movedReader := reader;
 
         [5]u8 destination = none;
-        readError := movedReader.readExact(destination[:]);
+        readError := movedReader->readExact(destination[:]);
         asserts::is_true(
             t,
             readError == none,
@@ -222,7 +223,7 @@ test stream_adapters_round_trip_bytes_after_moves(&testing::UnitTest t) {
         asserts::is_true(t, destination[4] == 50, "the last byte round trips");
 
         [1]u8 extra = none;
-        bytesRead, eofError := movedReader.read(extra[:]);
+        bytesRead, eofError := movedReader->read(extra[:]);
         asserts::is_true(
             t,
             bytesRead == 0 and eofError == none,
@@ -250,7 +251,7 @@ test stream_adapters_forward_closed_file_errors(&testing::UnitTest t) {
 
     [1]u8 bytes = none;
     reader := closed.reader();
-    bytesRead, readError := reader.read(bytes[:]);
+    bytesRead, readError := reader->read(bytes[:]);
     asserts::is_true(
         t,
         bytesRead == 0 and readError == errors::IoError.Closed,
@@ -258,7 +259,7 @@ test stream_adapters_forward_closed_file_errors(&testing::UnitTest t) {
     );
 
     writer := closed.writer();
-    bytesWritten, writeError := writer.write(bytes[:]);
+    bytesWritten, writeError := writer->write(bytes[:]);
     asserts::is_true(
         t,
         bytesWritten == 0 and writeError == errors::IoError.Closed,
@@ -290,7 +291,7 @@ test copy_transfers_bytes_between_file_adapters(&testing::UnitTest t) {
         writer := output.writer();
         [2]u8 buffer = none;
 
-        copied, copyError := stream::copy(&reader, &writer, buffer[:]);
+        copied, copyError := stream::copy(reader, writer, buffer[:]);
         asserts::is_true(t, copyError == none, "copy succeeds");
         asserts::is_true(t, copied == 6, "copy reports every transferred byte");
     }

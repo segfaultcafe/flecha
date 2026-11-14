@@ -146,7 +146,7 @@ def declaration_end(masked: str, start: int) -> tuple[int, bool]:
             prefix = masked[start:index]
             block_declaration = bool(
                 re.match(
-                    r"export\s+(structure|enum|typeset|decoration)\b",
+                    r"export\s+(structure|interface|enum|typeset|decoration)\b",
                     prefix.strip(),
                 )
                 or re.match(r"export\s+error\s+[A-Z]\w*\s*$", prefix.strip())
@@ -173,7 +173,7 @@ def exported_declarations(source: str) -> tuple[tuple[str, ...], set[str]]:
         if block:
             rendered = public_structure_declaration(original)
             type_match = re.match(
-                r"export\s+(?:structure|enum|error|typeset|decoration)\s+([A-Za-z_]\w*)",
+                r"export\s+(?:structure|interface|enum|error|typeset|decoration)\s+([A-Za-z_]\w*)",
                 compact_signature(original[: original.find("{")]),
             )
             if type_match:
@@ -218,6 +218,25 @@ def public_methods(source: str, exported_types: set[str]) -> tuple[str, ...]:
     return tuple(methods)
 
 
+def logical_module_name(path: Path, source: str) -> str:
+    """Return the public module identity, honoring namespace attachment."""
+    masked = scrub(source)
+    module_match = re.search(r"(?m)^module\s+([A-Za-z_]\w*)\s*;", masked)
+    if module_match is None:
+        raise ValueError(f"{path.relative_to(ROOT)} has exports but no module declaration")
+
+    attachment_match = re.search(
+        r"(?m)^under\s+namespace\s+(root(?:::[A-Za-z_]\w*)*)\s*;",
+        masked,
+    )
+    if attachment_match is not None:
+        namespace = attachment_match.group(1).split("::")[1:]
+        return "std::" + "::".join((*namespace, module_match.group(1)))
+
+    relative = path.relative_to(STD_ROOT)
+    return "std::" + "::".join((*relative.parts[:-1], module_match.group(1)))
+
+
 def scan_modules() -> dict[str, SourceModule]:
     grouped: dict[str, list[Path]] = {}
     for path in sorted(STD_ROOT.rglob("*.fl")):
@@ -226,11 +245,8 @@ def scan_modules() -> dict[str, SourceModule]:
         source = path.read_text(encoding="utf-8")
         if not re.search(r"(?m)^export\s+", source):
             continue
-        module_match = re.search(r"(?m)^module\s+([A-Za-z_]\w*)\s*;", source)
-        if module_match is None:
-            raise ValueError(f"{path.relative_to(ROOT)} has exports but no module declaration")
         relative = path.relative_to(STD_ROOT)
-        name = "std::" + "::".join((*relative.parts[:-1], module_match.group(1)))
+        name = logical_module_name(path, source)
         grouped.setdefault(name, []).append(relative)
 
     modules: dict[str, SourceModule] = {}

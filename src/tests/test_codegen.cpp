@@ -4749,7 +4749,10 @@ TEST(CodeGeneratorTests,
     for (std::string_view name :
          {"dispatchConcrete", "dispatchEnum", "dispatchBoxI32",
           "dispatchBoxString", "dispatchReordered", "dispatchThirdRoot",
-          "dispatchFinal", "dispatchDirectFinal", "deferStep"}) {
+          "dispatchFinal", "dispatchDirectFinal", "deferStep",
+          "directInheritedDefault", "directInheritedDefaultReference",
+          "directInheritedOverload", "directInheritedEnum",
+          "directInheritedGeneric", "directInheritedFinal"}) {
         llvm::Function* function = result.module->getFunction(
             llvm::StringRef(name.data(), name.size()));
         ASSERT_NE(function, nullptr) << name;

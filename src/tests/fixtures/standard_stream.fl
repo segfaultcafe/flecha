@@ -3,7 +3,8 @@ module main;
 @imports
     :: lib::std::io::buffered
     :: lib::std::fmt
-    :: lib::std::io::stdio;
+    :: lib::std::io::stdio
+    :: lib::std::io::stream;
 
 i32 main() {
     input := stdio::standard_input();
@@ -13,8 +14,12 @@ i32 main() {
         return 1;
     }
 
+    inputReader := input.reader();
     bufferedInput, inputAllocationError :=
-        buffered::BufferedReader::withCapacity(input.reader(), 4);
+        buffered::BufferedReader::withCapacity(
+            inputReader as &stream::Readable,
+            4
+        );
     if inputAllocationError != none {
         return 2;
     }
@@ -42,10 +47,12 @@ i32 main() {
     if output.writeAll("direct output|") != none {
         return 6;
     }
-    bufferedOutput, allocationError := buffered::BufferedWriter::withCapacity(
-        output.writer(),
-        4
-    );
+    outputWriter := output.writer();
+    bufferedOutput, allocationError :=
+        buffered::BufferedWriter::withCapacity(
+            outputWriter as &stream::Writable,
+            4
+        );
     if allocationError != none {
         return 7;
     }
@@ -63,8 +70,12 @@ i32 main() {
     if errorOutput.writeAll("direct error|") != none {
         return 9;
     }
+    errorWriter := errorOutput.writer();
     bufferedError, errorAllocationError :=
-        buffered::BufferedWriter::withCapacity(errorOutput.writer(), 4);
+        buffered::BufferedWriter::withCapacity(
+            errorWriter as &stream::Writable,
+            4
+        );
     if errorAllocationError != none {
         return 10;
     }

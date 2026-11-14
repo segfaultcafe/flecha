@@ -373,6 +373,60 @@ TEST_F(LspProtocolTests, ServesSemanticFeatureRequests) {
               std::string::npos);
 }
 
+TEST_F(LspProtocolTests, MapsInterfaceSemanticTokensToType) {
+    FakeAnalyzer analyzer;
+    ProtocolServer server(analyzer);
+    Initialize(server);
+    const std::filesystem::path file = root / "main.fl";
+    const std::string uri = flecha::lsp::PathToFileUri(file);
+    const std::string text = "interface Readable {};\n";
+    const std::string document =
+        "{\"textDocument\":{\"uri\":" + flecha::analyzer::json::Quote(uri);
+    ASSERT_EQ(server
+                  .Handle(Notification("textDocument/didOpen",
+                                       document + ",\"version\":1,\"text\":" +
+                                           flecha::analyzer::json::Quote(text) +
+                                           "}}"))
+                  .size(),
+              1u);
+    analyzer.semanticTokens = {{{file, 10, 18}, "interfaceType", true}};
+
+    const auto tokens = server.Handle(
+        Request("2", "textDocument/semanticTokens/full", document + "}}"));
+
+    ASSERT_EQ(tokens.size(), 1u);
+    EXPECT_NE(tokens.front().find("\"data\":[0,10,8,6,1]"), std::string::npos);
+}
+
+TEST_F(LspProtocolTests, DistinguishesSelfFromOrdinaryParameters) {
+    FakeAnalyzer analyzer;
+    ProtocolServer server(analyzer);
+    Initialize(server);
+    const std::filesystem::path file = root / "main.fl";
+    const std::string uri = flecha::lsp::PathToFileUri(file);
+    const std::string text = "error Readable::readExact(&self, i32 value) {}\n";
+    const std::string document =
+        "{\"textDocument\":{\"uri\":" + flecha::analyzer::json::Quote(uri);
+    ASSERT_EQ(server
+                  .Handle(Notification("textDocument/didOpen",
+                                       document + ",\"version\":1,\"text\":" +
+                                           flecha::analyzer::json::Quote(text) +
+                                           "}}"))
+                  .size(),
+              1u);
+    analyzer.semanticTokens = {
+        {{file, 27, 31}, "parameter", true},
+        {{file, 37, 42}, "parameter", true},
+    };
+
+    const auto tokens = server.Handle(
+        Request("2", "textDocument/semanticTokens/full", document + "}}"));
+
+    ASSERT_EQ(tokens.size(), 1u);
+    EXPECT_NE(tokens.front().find("\"data\":[0,27,4,7,1,0,10,5,1,1]"),
+              std::string::npos);
+}
+
 TEST_F(LspProtocolTests, UsesShutdownThenExitLifecycle) {
     FakeAnalyzer analyzer;
     ProtocolServer server(analyzer);

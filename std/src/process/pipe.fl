@@ -6,7 +6,7 @@ module command;
     :: root::process::runtime;
 
 // Owns the readable parent side of the child-process pipe
-export structure PipeReader {
+export structure PipeReader << stream::Readable {
     private *void handle;
 };
 
@@ -40,7 +40,7 @@ bool PipeReader::isOpen(&const self) {
 
 // Blocks until data, EOF, or an error is available. A successful zero count
 // reports EOF. An error may be returned together with partial progress.
-(usize, error) PipeReader::read(&self, []u8 destination) {
+(usize, error) PipeReader::read(&self, []u8 destination) override {
     if !self->isOpen() {
         return (none, errors::ProcessError.Closed);
     }
@@ -70,21 +70,8 @@ PipeReader PipeReader::take(&self) {
 }
 
 // Borrows this pipe as a generic stream reader
-stream::Reader PipeReader::reader(&self) <-self {
-    return stream::Reader::init(
-        [own self](destination) => {
-            return self->read(destination);
-        }
-    );
-}
-
-error PipeReader::readExact(&self, []u8 destination) {
-    if !self->isOpen() {
-        return errors::ProcessError.Closed;
-    }
-
-    reader := self->reader();
-    return reader.readExact(destination);
+&stream::Readable PipeReader::reader(&self) <-self {
+    return self;
 }
 
 // Closes this pipe immediately. The handle is consumed even if closing fails.
@@ -102,7 +89,7 @@ error PipeReader::close(&self) {
 }
 
 // Owns the writable parent side of a child-process pipe
-export structure PipeWriter {
+export structure PipeWriter << stream::Writable {
     private *void handle;
 };
 
@@ -136,7 +123,7 @@ bool PipeWriter::isOpen(&const self) {
 
 // Blocks until data is accepted or an error occurs. An error may be returned
 // together with partial progress.
-(usize, error) PipeWriter::write(&self, []const u8 source) {
+(usize, error) PipeWriter::write(&self, []const u8 source) override {
     if !self->isOpen() {
         return (none, errors::ProcessError.Closed);
     }
@@ -163,21 +150,8 @@ bool PipeWriter::isOpen(&const self) {
 }
 
 // Borrows this pipe as a generic stream writer.
-stream::Writer PipeWriter::writer(&self) <-self {
-    return stream::Writer::init(
-        [own self](source) => {
-            return self->write(source);
-        }
-    );
-}
-
-error PipeWriter::writeAll(&self, []const u8 source) {
-    if !self->isOpen() {
-        return errors::ProcessError.Closed;
-    }
-
-    writer := self->writer();
-    return writer.writeAll(source);
+&stream::Writable PipeWriter::writer(&self) <-self {
+    return self;
 }
 
 PipeWriter PipeWriter::take(&self) {

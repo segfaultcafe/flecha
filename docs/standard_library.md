@@ -33,15 +33,15 @@ The [library API rules](library_api_style.md) govern naming and compatibility.
 | `std::encoding::base64` | Canonical padded Base64 encoding | Owning results allocate; decoding rejects malformed or noncanonical input; output is deterministic across platforms. | [guide](encoding.md#base64) | [example/test](../std/src/encoding/base64_test.fl) |
 | `std::encoding::binary` | Endian primitives, bounded readers/writers, and varints | Explicitly bounded and endian-stable; growable buffers may allocate; malformed/truncated input returns typed errors without overread. | [guide](encoding.md#binary) | [example/test](../std/src/encoding/binary_reader_test.fl) |
 | `std::encoding::hex` | Canonical hexadecimal encoding | Owning results allocate; decoding validates complete byte pairs; deterministic and nonblocking. | [guide](encoding.md#hexadecimal) | [example/test](../std/src/encoding/hex_test.fl) |
-| `std::fmt` | Typed formatting and console output facade | String formatting allocates and returns errors; console writes are blocking host I/O and preserve argument order. | [guide](formatting.md) | [example/test](../std/src/fmt_test.fl) |
+| `std::fmt` | Typed formatting and console output facade | String formatting allocates and returns errors; console writes are blocking host I/O and preserve argument order. | [guide](formatting.md) | [example/test](../std/src/fmt/fmt_test.fl) |
 | `std::hashing::hashing` | Structural non-cryptographic hashing | Borrows values, performs no allocation or blocking, and is deterministic only for the documented toolchain representation; never use for cryptography. | [guide](hashing.md) | [example/test](../std/src/hashing/hashing_test.fl) |
-| `std::io::buffered` | Buffered reader and writer adapters | Owns internal buffers, may allocate, and inherits blocking and error behavior from the wrapped stream. | [guide](filesystem.md#buffered-streams) | [example/test](../std/src/io/buffered_test.fl) |
-| `std::io::errors` | Portable I/O error family | Normalizes host failures into stable variants while preserving platform-dependent operation availability. | [guide](filesystem.md) | [example/test](../std/src/io/file_test.fl) |
-| `std::io::file` | Files, directories, and temporary resources | Owns native handles, blocks on host I/O, requires explicit close where exposed, and reports portable I/O errors. | [guide](filesystem.md#file-streams) | [example/test](../std/src/io/temporary_file_test.fl) |
-| `std::io::filesystem` | Whole-file and filesystem operations | Reads allocate owning results; operations block and can vary with host permissions/filesystem semantics; errors are explicit. | [guide](filesystem.md) | [example/test](../std/src/io/filesystem_test.fl) |
-| `std::io::path` | Lexical POSIX and Windows path manipulation | Lexical operations do not touch the filesystem; owning results may allocate; flavor selection makes platform rules explicit. | [guide](path.md) | [example/test](../std/src/io/path_test.fl) |
-| `std::io::stdio` | Standard input, output, and error streams | Borrows written data, may allocate for line reads, blocks on host streams, and returns I/O or parse failures. | [guide](filesystem.md#standard-output-and-error) | [example/test](../std/src/io/stdio_test.fl) |
-| `std::io::stream` | Reader/writer callable contracts and stream copying | Copying uses caller-visible errors and may block according to its endpoints; callables do not own endpoint storage. | [guide](filesystem.md#file-streams) | [example/test](../std/src/io/stream_test.fl) |
+| `std::io::buffered` | Buffered reader and writer adapters | Owns internal buffers, may allocate, and inherits blocking and error behavior from the wrapped stream. | [guide](filesystem.md#buffered-streams) | [example/test](../std/src/io/buffered/buffered_test.fl) |
+| `std::io::errors` | Portable I/O error family | Normalizes host failures into stable variants while preserving platform-dependent operation availability. | [guide](filesystem.md) | [example/test](../std/src/io/file/file_test.fl) |
+| `std::io::file` | Files, directories, and temporary resources | Owns native handles, blocks on host I/O, requires explicit close where exposed, and reports portable I/O errors. | [guide](filesystem.md#file-streams) | [example/test](../std/src/io/file/temporary_file_test.fl) |
+| `std::io::filesystem` | Whole-file and filesystem operations | Reads allocate owning results; operations block and can vary with host permissions/filesystem semantics; errors are explicit. | [guide](filesystem.md) | [example/test](../std/src/io/filesystem/filesystem_test.fl) |
+| `std::io::path` | Lexical POSIX and Windows path manipulation | Lexical operations do not touch the filesystem; owning results may allocate; flavor selection makes platform rules explicit. | [guide](path.md) | [example/test](../std/src/io/path/path_test.fl) |
+| `std::io::stdio` | Standard input, output, and error streams | Borrows written data, may allocate for line reads, blocks on host streams, and returns I/O or parse failures. | [guide](filesystem.md#standard-output-and-error) | [example/test](../std/src/io/stdio/stdio_test.fl) |
+| `std::io::stream` | Readable/writable interfaces, adapters, and stream copying | Interface references borrow endpoint storage; adapters preserve borrow lifetimes, and copying may block according to its endpoints. | [guide](filesystem.md#file-streams) | [example/test](../std/src/io/stream/stream_test.fl) |
 | `std::math::bits` | Unsigned bit counting, rotation, reversal, and rounding | Pure, nonallocating, nonblocking, deterministic operations with checked overflow where a result may be unrepresentable. | [guide](math.md#bit-operations) | [example/test](../std/src/math/bits_test.fl) |
 | `std::math::errors` | Arithmetic error family | Stable overflow and invalid-arithmetic variants; no allocation, blocking, or platform state. | [guide](math.md#checked-arithmetic) | [example/test](../std/src/math/integer_test.fl) |
 | `std::math::float` | Floating-point classification | Pure and nonallocating; follows IEEE classification for supported target floats and is deterministic for the same bit pattern. | [guide](math.md#floating-point-classification) | [example/test](../std/src/math/float_test.fl) |
@@ -561,7 +561,7 @@ export (own []u8, error) decode_to_bytes(stringv source);
 
 Typed formatting and console output facade.
 
-Sources: [`std/src/fmt.fl`](../std/src/fmt.fl)
+Sources: [`std/src/fmt/fmt.fl`](../std/src/fmt/fmt.fl)
 
 ```flecha
 export void print(values...);
@@ -591,23 +591,19 @@ export usize hash_string(stringv value);
 
 Buffered reader and writer adapters.
 
-Sources: [`std/src/io/buffered_reader.fl`](../std/src/io/buffered_reader.fl), [`std/src/io/buffered_writer.fl`](../std/src/io/buffered_writer.fl)
+Sources: [`std/src/io/buffered/reader.fl`](../std/src/io/buffered/reader.fl), [`std/src/io/buffered/writer.fl`](../std/src/io/buffered/writer.fl)
 
 ```flecha
-export structure BufferedReader {
+export structure BufferedReader << stream::Readable {
 };
-export structure BufferedWriter {
+export structure BufferedWriter << stream::Writable {
 };
 
 // Public methods
-BufferedReader BufferedReader::zero() override;
-(BufferedReader, error) BufferedReader::withCapacity(stream::Reader reader, usize capacity,) <-reader;
-(usize, error) BufferedReader::read(&self, []u8 destination);
-error BufferedReader::readExact(&self, []u8 destination);
-BufferedWriter BufferedWriter::zero() override;
-(BufferedWriter, error) BufferedWriter::withCapacity(stream::Writer writer, usize capacity,) <-writer;
-(usize, error) BufferedWriter::write(&self, []const u8 source);
-error BufferedWriter::writeAll(&self, []const u8 source);
+(BufferedReader, error) BufferedReader::withCapacity(&stream::Readable source, usize capacity,) <-source;
+(usize, error) BufferedReader::read(&self, []u8 destination) override;
+(BufferedWriter, error) BufferedWriter::withCapacity(&stream::Writable sink, usize capacity,) <-sink;
+(usize, error) BufferedWriter::write(&self, []const u8 source) override;
 error BufferedWriter::flush(&self);
 ```
 
@@ -693,7 +689,7 @@ export error IoError {
 
 Files, directories, and temporary resources.
 
-Sources: [`std/src/io/directory.fl`](../std/src/io/directory.fl), [`std/src/io/file.fl`](../std/src/io/file.fl), [`std/src/io/temporary_directory.fl`](../std/src/io/temporary_directory.fl), [`std/src/io/temporary_file.fl`](../std/src/io/temporary_file.fl)
+Sources: [`std/src/io/file/directory.fl`](../std/src/io/file/directory.fl), [`std/src/io/file/file.fl`](../std/src/io/file/file.fl), [`std/src/io/file/temporary_directory.fl`](../std/src/io/file/temporary_directory.fl), [`std/src/io/file/temporary_file.fl`](../std/src/io/file/temporary_file.fl)
 
 ```flecha
 export enum EntryType: u8 {
@@ -749,7 +745,7 @@ export structure OpenOptions {
     // Creates a new file and fails if the path already exists.
     bool createNew;
 };
-export structure File {
+export structure File << stream::Readable, stream::Writable {
 };
 export structure TemporaryDirectory {
 };
@@ -776,12 +772,10 @@ File File::zero() override;
 File File::fromHandle(*void handle);
 (File, error) File::open(stringv path, OpenOptions opts);
 bool File::isOpen(&const self);
-(usize, error) File::read(&self, []u8 destination);
-stream::Reader File::reader(&self) <-self;
-error File::readExact(&self, []u8 destination);
-(usize, error) File::write(&self, []const u8 source);
-stream::Writer File::writer(&self) <-self;
-error File::writeAll(&self, []const u8 source);
+(usize, error) File::read(&self, []u8 destination) override;
+&stream::Readable File::reader(&self) <-self;
+(usize, error) File::write(&self, []const u8 source) override;
+&stream::Writable File::writer(&self) <-self;
 (usize, error) File::writeString(&self, stringv source);
 error File::writeAllString(&self, stringv source);
 (u64, error) File::seek(&self, i64 offset, SeekFrom origin);
@@ -805,7 +799,7 @@ error TemporaryFile::remove(&self);
 
 Whole-file and filesystem operations.
 
-Sources: [`std/src/io/filesystem.fl`](../std/src/io/filesystem.fl)
+Sources: [`std/src/io/filesystem/filesystem.fl`](../std/src/io/filesystem/filesystem.fl)
 
 ```flecha
 export structure Metadata {
@@ -834,7 +828,7 @@ export error remove_directory(stringv path, bool force);
 
 Lexical POSIX and Windows path manipulation.
 
-Sources: [`std/src/io/path.fl`](../std/src/io/path.fl)
+Sources: [`std/src/io/path/path.fl`](../std/src/io/path/path.fl)
 
 ```flecha
 export (string, error) join(stringv base, stringv child);
@@ -849,7 +843,7 @@ export stringv extension(stringv value) <-value;
 
 Standard input, output, and error streams.
 
-Sources: [`std/src/io/stdio.fl`](../std/src/io/stdio.fl)
+Sources: [`std/src/io/stdio/stdio.fl`](../std/src/io/stdio/stdio.fl)
 
 ```flecha
 export structure StandardOutput {};
@@ -879,28 +873,36 @@ stream::Writer StandardError::writer(&const self);
 <a id="std-io-stream"></a>
 ### `std::io::stream`
 
-Reader/writer callable contracts and stream copying.
+Readable/writable interfaces, adapters, and stream copying.
 
-Sources: [`std/src/io/reader.fl`](../std/src/io/reader.fl), [`std/src/io/stream.fl`](../std/src/io/stream.fl), [`std/src/io/writer.fl`](../std/src/io/writer.fl)
+Sources: [`std/src/io/stream/readable.fl`](../std/src/io/stream/readable.fl), [`std/src/io/stream/reader.fl`](../std/src/io/stream/reader.fl), [`std/src/io/stream/stream.fl`](../std/src/io/stream/stream.fl), [`std/src/io/stream/writable.fl`](../std/src/io/stream/writable.fl), [`std/src/io/stream/writer.fl`](../std/src/io/stream/writer.fl)
 
 ```flecha
-export func Read([]u8 destination) => (usize, error);
-export structure Reader {
+export interface Readable {
+    (usize, error) read(&self, []u8 destination) virtual;
+    error readExact(&self, []u8 destination) default;
 };
-export (usize, error) copy(&Reader reader, &Writer writer, []u8 buffer);
+export func Read([]u8 destination) => (usize, error);
+export structure Reader << Readable {
+};
+export (usize, error) copy(&Readable reader, &Writable writer, []u8 buffer);
+export interface Writable {
+    (usize, error) write(&self, []const u8 source) virtual;
+    error writeAll(&self, []const u8 source) default;
+};
 export func Write([]const u8 source) => (usize, error);
-export structure Writer {
+export structure Writer << Writable {
 };
 
 // Public methods
+error Readable::readExact(&self, []u8 destination);
 Reader Reader::init(Read operation) <- operation override;
 Reader Reader::zero() override;
-(usize, error) Reader::read(&self, []u8 destination);
-error Reader::readExact(&self, []u8 destination);
+(usize, error) Reader::read(&self, []u8 destination) override;
+error Writable::writeAll(&self, []const u8 source);
 Writer Writer::init(Write operation) <- operation override;
 Writer Writer::zero() override;
-(usize, error) Writer::write(&self, []const u8 source);
-error Writer::writeAll(&self, []const u8 source);
+(usize, error) Writer::write(&self, []const u8 source) override;
 ```
 
 <a id="std-math-bits"></a>
@@ -1193,7 +1195,7 @@ export enum Shutdown: u8 {
     Write,
     ReadWrite,
 }
-export structure Stream {
+export structure Stream << stream::Readable, stream::Writable {
 };
 export structure Listener {
 };
@@ -1206,12 +1208,10 @@ Stream Stream::fromHandle(*void handle);
 (Stream, error) Stream::connect(address::SocketAddress host);
 (Stream, error) Stream::connectWithTimeout(address::SocketAddress host, duration::Duration timeout);
 bool Stream::isOpen(&const self);
-(usize, error) Stream::read(&self, []u8 destination);
-stream::Reader Stream::reader(&self) <-self;
-error Stream::readExact(&self, []u8 destination);
-(usize, error) Stream::write(&self, []const u8 source);
-stream::Writer Stream::writer(&self) <-self;
-error Stream::writeAll(&self, []const u8 source);
+(usize, error) Stream::read(&self, []u8 destination) override;
+&stream::Readable Stream::reader(&self) <-self;
+(usize, error) Stream::write(&self, []const u8 source) override;
+&stream::Writable Stream::writer(&self) <-self;
 error Stream::setReadTimeout(&self, duration::Duration timeout);
 error Stream::clearReadTimeout(&self);
 error Stream::setWriteTimeout(&self, duration::Duration timeout);
@@ -1332,9 +1332,9 @@ export enum Termination: u8 {
 // Describes a completed child process
 export structure ExitStatus {
 };
-export structure PipeReader {
+export structure PipeReader << stream::Readable {
 };
-export structure PipeWriter {
+export structure PipeWriter << stream::Writable {
 };
 
 // Public methods
@@ -1371,18 +1371,16 @@ PipeReader PipeReader::zero() override;
 void PipeReader::tear(&self) override;
 PipeReader PipeReader::fromHandle(*void handle);
 bool PipeReader::isOpen(&const self);
-(usize, error) PipeReader::read(&self, []u8 destination);
+(usize, error) PipeReader::read(&self, []u8 destination) override;
 PipeReader PipeReader::take(&self);
-stream::Reader PipeReader::reader(&self) <-self;
-error PipeReader::readExact(&self, []u8 destination);
+&stream::Readable PipeReader::reader(&self) <-self;
 error PipeReader::close(&self);
 PipeWriter PipeWriter::zero() override;
 void PipeWriter::tear(&self) override;
 PipeWriter PipeWriter::fromHandle(*void handle);
 bool PipeWriter::isOpen(&const self);
-(usize, error) PipeWriter::write(&self, []const u8 source);
-stream::Writer PipeWriter::writer(&self) <-self;
-error PipeWriter::writeAll(&self, []const u8 source);
+(usize, error) PipeWriter::write(&self, []const u8 source) override;
+&stream::Writable PipeWriter::writer(&self) <-self;
 PipeWriter PipeWriter::take(&self);
 error PipeWriter::close(&self);
 ```

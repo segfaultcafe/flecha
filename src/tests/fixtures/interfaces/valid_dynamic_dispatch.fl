@@ -276,6 +276,30 @@ i32 directConcrete(&const DispatchConcrete value) {
     return value->step(3);
 }
 
+i32 directInheritedDefault(DispatchConcrete value) {
+    return value.relay(3);
+}
+
+i32 directInheritedDefaultReference(&const DispatchConcrete value) {
+    return value->relay(4);
+}
+
+i32 directInheritedOverload(DispatchConcrete value) {
+    return value.choose(5) + value.choose("value");
+}
+
+i32 directInheritedEnum(DispatchMode value) {
+    return value.pad() + value.choose(6);
+}
+
+i32 directInheritedGeneric(DispatchBox<i32> value) {
+    return value.pad() + value.choose(7);
+}
+
+i32 directInheritedFinal(FinalConcrete value) {
+    return value.stage();
+}
+
 i32 dispatchEnum(DispatchMode value) {
     root := value as &Root;
     return root->step(4);
@@ -336,18 +360,23 @@ i32 main() {
         defer root->bump(2);
     }
     if concrete.bias != 12 { return 8; }
+    if directInheritedDefault(concrete) != 15 { return 17; }
+    if directInheritedDefaultReference(&concrete) != 16 { return 18; }
+    if directInheritedOverload(concrete) != 17 { return 19; }
 
     mode := DispatchMode.On;
     {
         root := mode as &Root;
         if root->step(30) != 30 { return 9; }
     }
+    if directInheritedEnum(mode) != 11 { return 20; }
 
     box := DispatchBox<i32>::init();
     {
         root := box as &Root;
         if root->step(31) != 31 { return 10; }
     }
+    if directInheritedGeneric(box) != 12 { return 21; }
 
     reordered := ReorderedConcrete::init();
     reordered.bias = 1;
@@ -358,6 +387,7 @@ i32 main() {
     if dispatchThirdRoot(thirdRoot) != 10 { return 16; }
 
     finalConcrete := FinalConcrete::init();
+    if directInheritedFinal(finalConcrete) != 13 { return 22; }
     {
         finalView := finalConcrete as &FinalStage;
         stageView := finalView as &Stage;

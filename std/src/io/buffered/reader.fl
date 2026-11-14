@@ -1,13 +1,14 @@
 module buffered;
+under namespace root::io;
 
 @imports
     :: root::io::errors
     :: root::io::stream;
 
-// Owns read-ahead storage and a moved stream reader.
-export structure BufferedReader {
+// Owns read-ahead storage and borrows a readable source.
+export structure BufferedReader << stream::Readable {
     private {
-        stream::Reader reader = none;
+        &stream::Readable source;
         own []u8 buffer;
         usize start;
         usize end;
@@ -16,34 +17,36 @@ export structure BufferedReader {
     }
 };
 
-// Constructs the inert representation used by failed tuple results.
-BufferedReader BufferedReader::zero() override {
-    return build BufferedReader {
-        self.reader = none;
-        self.buffer = none;
-        self.start = 0;
-        self.end = 0;
-        self.pendingError = none;
-        self.reachedEnd = true;
-    };
-}
-
-// Allocates nonempty read-ahead storage and consumes reader on every outcome.
+// Allocates nonempty read-ahead storage and borrows source on every outcome.
 (BufferedReader, error) BufferedReader::withCapacity(
-    stream::Reader reader,
+    &stream::Readable source,
     usize capacity,
-) <-reader {
+) <-source {
     if capacity == 0 {
-        return (none, errors::IoError.InvalidOptions);
+        return (build BufferedReader {
+            self.source = source;
+            self.buffer = none;
+            self.start = 0;
+            self.end = 0;
+            self.pendingError = none;
+            self.reachedEnd = false;
+        }, errors::IoError.InvalidOptions);
     }
 
     storage, allocationError := new<own []u8>(capacity);
     if allocationError != none {
-        return (none, allocationError);
+        return (build BufferedReader {
+            self.source = source;
+            self.buffer = none;
+            self.start = 0;
+            self.end = 0;
+            self.pendingError = none;
+            self.reachedEnd = false;
+        }, allocationError);
     }
 
     return (build BufferedReader {
-        self.reader = reader;
+        self.source = source;
         self.buffer = storage;
         self.start = 0;
         self.end = 0;
@@ -53,7 +56,7 @@ BufferedReader BufferedReader::zero() override {
 }
 
 // Reads available bytes, using read-ahead only for destinations below capacity.
-(usize, error) BufferedReader::read(&self, []u8 destination) {
+(usize, error) BufferedReader::read(&self, []u8 destination) override {
     if destination.len() == 0 {
         return (none, none);
     }
@@ -67,7 +70,7 @@ BufferedReader BufferedReader::zero() override {
     }
 
     if destination.len() >= self->buffer.len() {
-        count, readError := self->reader.read(destination);
+        count, readError := self->source->read(destination);
         if count > destination.len() {
             return (none, errors::IoError.ReadFailed);
         }
@@ -78,7 +81,7 @@ BufferedReader BufferedReader::zero() override {
         return (count, readError);
     }
 
-    count, readError := self->reader.read(self->buffer[:]);
+    count, readError := self->source->read(self->buffer[:]);
     if count > self->buffer.len() {
         return (none, errors::IoError.ReadFailed);
     }
@@ -93,27 +96,6 @@ BufferedReader BufferedReader::zero() override {
     self->end = count;
     self->pendingError = readError;
     return self->consumeBuffered(destination);
-}
-
-// Fills destination or returns the first error or IoError.UnexpectedEof.
-error BufferedReader::readExact(&self, []u8 destination) {
-    usize offset = 0;
-    while offset < destination.len() {
-        count, readError := self->read(destination[offset:]);
-        if count > destination.len() - offset {
-            return errors::IoError.ReadFailed;
-        }
-
-        offset = offset + count;
-        if readError != none {
-            return readError;
-        }
-        if count == 0 {
-            return errors::IoError.UnexpectedEof;
-        }
-    }
-
-    return none;
 }
 
 private (usize, error) BufferedReader::consumeBuffered(

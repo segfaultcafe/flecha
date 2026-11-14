@@ -46,8 +46,11 @@ i32 main() {
     if writer.flush() != none or writer.close() != none or writer.isOpen() {
         return 3;
     }
-    if writer.writeAll(empty[:]) != errors::IoError.Closed {
+    if writer.writeAll(prefix[:]) != errors::IoError.Closed {
         return 12;
+    }
+    if writer.writeAll(empty[:]) != none {
+        return 21;
     }
 
     exclusiveOptions := build file::OpenOptions {
@@ -105,8 +108,11 @@ i32 main() {
     if reader.close() != none {
         return 9;
     }
-    if reader.readExact(emptyRead[:]) != errors::IoError.Closed {
+    if reader.readExact(pastEnd[:]) != errors::IoError.Closed {
         return 15;
+    }
+    if reader.readExact(emptyRead[:]) != none {
+        return 22;
     }
     return 42;
 }

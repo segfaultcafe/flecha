@@ -23,7 +23,7 @@ u8 Shutdown::number(&const self) {
 }
 
 // Owns one connected TCP socket.
-export structure Stream {
+export structure Stream << stream::Readable, stream::Writable {
     private *void handle;
 };
 
@@ -74,7 +74,7 @@ bool Stream::isOpen(&const self) {
 // Reads at most destination.len() bytes.
 //
 // A successful zero-byte result means orderly peer EOF.
-(usize, error) Stream::read(&self, []u8 destination) {
+(usize, error) Stream::read(&self, []u8 destination) override {
     if !self->isOpen() {
         return (none, errors::NetworkError.Closed);
     }
@@ -101,27 +101,12 @@ bool Stream::isOpen(&const self) {
 }
 
 // Creates a reader that mutably borrows this stream.
-stream::Reader Stream::reader(&self) <-self {
-    return stream::Reader::init(
-        [own self](destination) => {
-            return self->read(destination);
-        }
-    );
-}
-
-// Reads exactly destination.len() bytes or returns an error. 
-// A successful zero-byte result means orderly peer EOF.
-error Stream::readExact(&self, []u8 destination) {
-    if !self->isOpen() {
-        return errors::NetworkError.Closed;
-    }
-
-    reader := self->reader();
-    return reader.readExact(destination);
+&stream::Readable Stream::reader(&self) <-self {
+    return self;
 }
 
 // Writes at most source.len() bytes.
-(usize, error) Stream::write(&self, []const u8 source) {
+(usize, error) Stream::write(&self, []const u8 source) override {
     if !self->isOpen() {
         return (none, errors::NetworkError.Closed);
     }
@@ -148,21 +133,8 @@ error Stream::readExact(&self, []u8 destination) {
 }
 
 // Creates a writer that mutably borrows this stream.
-stream::Writer Stream::writer(&self) <-self {
-    return stream::Writer::init(
-        [own self](source) => {
-            return self->write(source);
-        }
-    );
-}
-
-error Stream::writeAll(&self, []const u8 source) {
-    if !self->isOpen() {
-        return errors::NetworkError.Closed;
-    }
-
-    writer := self->writer();
-    return writer.writeAll(source);
+&stream::Writable Stream::writer(&self) <-self {
+    return self;
 }
 
 // Sets the read timeout. Zero means an immediate, non-waiting attempt.

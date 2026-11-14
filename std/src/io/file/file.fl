@@ -1,4 +1,5 @@
 module file;
+under namespace root::io;
 
 @imports
     :: root::io::errors
@@ -74,7 +75,7 @@ OpenOptions OpenOptions::appendOnly() {
 }
 
 // Owns an operating-system file handle and closes it on destruction.
-export structure File {
+export structure File << stream::Readable, stream::Writable {
     private *void handle;
 };
 
@@ -144,7 +145,7 @@ bool File::isOpen(&const self) {
 }
 
 // Reads up to destination.len() bytes and reports the partial byte count.
-(usize, error) File::read(&self, []u8 destination) {
+(usize, error) File::read(&self, []u8 destination) override {
     if self->handle == null {
         return (none, errors::IoError.Closed);
     }
@@ -168,26 +169,12 @@ bool File::isOpen(&const self) {
 }
 
 // Creates a stream reader that mutably borrows this file.
-stream::Reader File::reader(&self) <-self {
-    return stream::Reader::init(
-        [own self](destination) => {
-            return self->read(destination);
-        }
-    );
-}
-
-// Fills destination or returns an error, including IoError.UnexpectedEof.
-error File::readExact(&self, []u8 destination) {
-    if self->handle == null {
-        return errors::IoError.Closed;
-    }
-
-    reader := self->reader();
-    return reader.readExact(destination);
+&stream::Readable File::reader(&self) <-self {
+    return self;
 }
 
 // Writes up to source.len() bytes and reports the partial byte count.
-(usize, error) File::write(&self, []const u8 source) {
+(usize, error) File::write(&self, []const u8 source) override {
     if self->handle == null {
         return (none, errors::IoError.Closed);
     }
@@ -211,22 +198,8 @@ error File::readExact(&self, []u8 destination) {
 }
 
 // Creates a stream writer that mutably borrows this file.
-stream::Writer File::writer(&self) <-self {
-    return stream::Writer::init(
-        [own self](source) => {
-            return self->write(source);
-        }
-    );
-}
-
-// Writes every source byte or returns the first write failure.
-error File::writeAll(&self, []const u8 source) {
-    if self->handle == null {
-        return errors::IoError.Closed;
-    }
-
-    writer := self->writer();
-    return writer.writeAll(source);
+&stream::Writable File::writer(&self) <-self {
+    return self;
 }
 
 // Writes bytes from source without interpreting or validating text.
