@@ -1,0 +1,9 @@
+module final_replacement;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+interface Fixed { i32 fixed(&self) final; }; i32 Fixed::fixed(&self) { return 0; } behavior meta<T> => structure << Fixed { i32 T::fixed(&self) override { return 1; } };

@@ -1,0 +1,6 @@
+module generic_targets;
+decoration meta { application() target structure; application(stringv name) target structure::field; };
+interface Root {};
+behavior meta<T> => structure << Root {};
+@meta structure Box<A> { @meta("value") A value; };
+void use(Box<i32> first, Box<bool> second) {}

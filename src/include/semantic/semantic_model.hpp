@@ -51,6 +51,28 @@ struct DecorationMetadata final {
     const core::Declaration* owner;
 };
 
+struct BehaviorMethodContract final {
+    const core::FunctionDeclaration* declaration;
+    MethodContract signature;
+    const MethodContract* requirement = nullptr;
+};
+
+struct BehaviorContract final {
+    const core::BehaviorDeclaration* declaration;
+    const core::DecorationDeclaration* decoration = nullptr;
+    std::vector<InterfaceReference> roots;
+    std::vector<BehaviorMethodContract> methods;
+    bool valid = true;
+};
+
+struct BehaviorActivationCandidate final {
+    const BehaviorContract* behavior;
+    const core::Declaration* target;
+    // Multiple direct fields and a declaration application activate once.
+    std::vector<const DecorationMetadata*> applications;
+    bool valid = true;
+};
+
 enum class JsonDecorationMode { Default, Explicit };
 
 struct JsonFieldMetadata final {
@@ -148,6 +170,8 @@ class SemanticModel final {
     const auto& Structures() const { return _structures; }
     const auto& Enums() const { return _enums; }
     const auto& Interfaces() const { return _interfaces; }
+    const auto& Behaviors() const { return _behaviors; }
+    const auto& BehaviorActivations() const { return _behaviorActivations; }
     const auto& DecorationContracts() const { return _decorationContracts; }
     const auto& Decorations() const { return _decorations; }
     [[nodiscard]] const DecorationContract* ContractFor(
@@ -171,6 +195,8 @@ class SemanticModel final {
    private:
     friend class SemanticAnalyzer;
     friend class analyzer::SemanticQueries;
+    std::vector<BehaviorContract> _behaviors;
+    std::vector<BehaviorActivationCandidate> _behaviorActivations;
     std::unordered_map<const core::DecorationDeclaration*, DecorationContract>
         _decorationContracts;
     std::vector<DecorationMetadata> _decorations;

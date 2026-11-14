@@ -341,6 +341,12 @@ silent %delete _
 call feedkeys("iexport decoration meta {\<CR>application(stringv name) target structure::field;\<CR>application(structure) target structure;\<CR>};\<Esc>", 'xt')
 call assert_equal(['export decoration meta {', '    application(stringv name) target structure::field;', '    application(structure) target structure;', '};'], getline(1, '$'))
 
+silent %delete _
+call feedkeys("ibehavior meta<T> => structure << Writable {\<CR>i32 T::write(&const self) override {\<CR>return 0;\<CR>}\<CR>};\<Esc>", 'xt')
+call assert_equal(['behavior meta<T> => structure << Writable {', '    i32 T::write(&const self) override {', '        return 0;', '    }', '};'], getline(1, '$'))
+call assert_equal('flechaStatement', synIDattr(synID(1, 1, 1), 'name'))
+call assert_equal('flechaBehaviorName', synIDattr(synID(1, 10, 1), 'name'))
+
 bwipeout!
 
 execute 'edit ' . fnameescape(s:fixture_directory . '/highlighting.fl')

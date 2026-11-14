@@ -1,0 +1,10 @@
+module non_interface_root;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+structure Root {};
+behavior meta<T> => structure << Root {};

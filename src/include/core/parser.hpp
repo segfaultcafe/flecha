@@ -72,6 +72,7 @@ class Parser {
         const std::string& owner);
     std::unique_ptr<TypeSetDeclaration> ParseTypeSetDeclaration();
     std::unique_ptr<DecorationDeclaration> ParseDecorationDeclaration();
+    std::unique_ptr<BehaviorDeclaration> ParseBehaviorDeclaration();
     std::vector<DecorationApplication> ParseDecorations();
     std::unique_ptr<ModuleConstantDeclaration> ParseModuleConstantDeclaration();
     std::unique_ptr<ErrorDeclaration> ParseErrorDeclaration();

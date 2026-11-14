@@ -68,3 +68,12 @@ test("typed decoration clauses are contextual", () => {
   }
   assert.doesNotMatch(grammar.repository.control.match, /application|target/);
 });
+
+test("behavior headers distinguish the keyword and owning decoration", () => {
+  const behavior = grammar.repository.behaviorDeclarations;
+  for (const header of ["behavior json<T> => structure", "behavior json<T> => enum"]) {
+    assert.match(header, new RegExp(behavior.match));
+  }
+  assert.equal(behavior.captures["1"].name, "keyword.control.flecha");
+  assert.equal(behavior.captures["2"].name, "entity.name.type.behavior.flecha");
+});

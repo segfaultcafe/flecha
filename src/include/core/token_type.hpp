@@ -84,6 +84,7 @@ enum class TokenType {
     Enum,
     TypeSet,
     Decoration,
+    Behavior,
     Structure,
     Interface,
     Private,

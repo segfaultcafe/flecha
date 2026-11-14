@@ -1,0 +1,3 @@
+module main;
+@imports :: root::protocols as p;
+decoration stamp { application() target structure; };

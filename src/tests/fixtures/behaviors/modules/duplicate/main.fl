@@ -1,0 +1,4 @@
+module main;
+decoration stamp { application() target structure; };
+interface Writable {};
+behavior stamp<T> => structure << Writable {};

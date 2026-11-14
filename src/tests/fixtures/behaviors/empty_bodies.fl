@@ -1,0 +1,10 @@
+module empty_bodies;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+behavior meta<T> => structure << Writable {};
+behavior meta<U> => enum << Writable {};

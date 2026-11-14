@@ -161,9 +161,9 @@ Interface metadata is direct and does not propagate through conformance.
 Typed declarations only validate metadata, including when named `json`. They
 do not invoke the compiler-owned JSON path, create methods, add conformance,
 or emit runtime metadata. Existing `export decoration json;` declarations and
-JSON derivation remain unchanged. Behavior registration, activation, field
-iteration, method generation, and the JSON library migration remain deferred
-to subsequent slices beginning with LANG-02.
+JSON derivation remain unchanged. LANG-02 registers behavior contracts and
+activation candidates as described below. Field iteration, method generation, concrete conformance, and the JSON
+library migration remain deferred.
 
 Contract diagnostics use stable identifiers `FLECHA-S0066` through
 `FLECHA-S0074`, alongside existing parse, unresolved-name/type, and duplicate
@@ -226,3 +226,42 @@ should classify them as method-contract modifiers and render them in the same
 dark-blue family, not the orange style used for crashable operators. Neovim and
 Visual Studio Code highlighting should land with the parser feature rather
 than reserving unsupported keywords early.
+
+## Behavior declaration semantics (LANG-02)
+
+A typed decoration can own one behavior for structures and one for enums in
+its logical module. A declaration accepts one unconstrained target binder:
+
+```flecha
+behavior meta<T> => structure << Writable {
+    i32 T::write(&const self, i32 value) override {
+        return value;
+    }
+};
+```
+
+The compiler records the owner, interface roots, and checked signatures in a
+`BehaviorContract`. Matching structure applications and direct-field
+applications are collected into one `BehaviorActivationCandidate` per behavior
+and concrete owner. Enum applications activate only enum behaviors;
+interface-target metadata never activates one. Imported applications can
+activate an owning module's behavior, but another module cannot declare it.
+Files attached to the same logical namespace/module share ownership.
+
+Declared methods must exactly match reachable interface requirements, including
+receiver, parameters, result, visibility, effects, variadics, borrowing and
+ownership. They must use `override`; unrelated methods and final replacement
+are errors. Duplicate roots, related roots, shared ancestors and colliding
+method keys are rejected, including the prospective union with explicit
+conformance and other active behaviors. Repeated field applications activate
+a behavior once and preserve all field metadata.
+
+This stage produces semantic records only. It does not add concrete conformance,
+generate methods or vtables, specialize/check bodies, or change compiler-owned
+JSON derivation. Missing virtual implementations are deferred until expansion;
+empty behavior bodies can therefore be registered. `T::fields()`, `Field<T,F>`,
+`for<F>`, JSON migration and runtime representation changes remain deferred.
+
+Behavior diagnostics use `FLECHA-S0075` (invalid declaration/owner/root),
+`FLECHA-S0076` (target parameter), `FLECHA-S0077` (duplicate behavior),
+`FLECHA-S0078` (method contract), and `FLECHA-S0079` (conflicting roots).

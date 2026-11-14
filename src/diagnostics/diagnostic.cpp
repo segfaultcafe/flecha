@@ -152,6 +152,16 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-S0073";
         case DiagnosticCode::InvalidDecorationMarker:
             return "FLECHA-S0074";
+        case DiagnosticCode::InvalidBehavior:
+            return "FLECHA-S0075";
+        case DiagnosticCode::InvalidBehaviorParameter:
+            return "FLECHA-S0076";
+        case DiagnosticCode::DuplicateBehavior:
+            return "FLECHA-S0077";
+        case DiagnosticCode::InvalidBehaviorMethod:
+            return "FLECHA-S0078";
+        case DiagnosticCode::ConflictingBehaviorRoots:
+            return "FLECHA-S0079";
         case DiagnosticCode::InvalidInterface:
             return "FLECHA-S0065";
         case DiagnosticCode::InvalidGeneric:

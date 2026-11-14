@@ -123,6 +123,73 @@ std::string Lower(std::string_view value) {
     return result;
 }
 
+std::vector<SemanticOccurrence> BehaviorOccurrences(
+    const semantic::SemanticModel& model) {
+    std::vector<SemanticOccurrence> result;
+    const auto add = [&](source::SourceRange range, std::string name,
+                         std::string type, SemanticItemKind kind,
+                         source::SourceRange definition = {}) {
+        result.push_back({range, std::move(name), std::move(type), kind,
+                          definition, range == definition});
+    };
+    for (const auto& contract : model.Behaviors()) {
+        const auto& syntax = *contract.declaration;
+        std::string description =
+            "behavior " + syntax.decoration.Name() + "<" +
+            syntax.targetParameter + "> => " +
+            (syntax.target == core::DecorationTarget::Enum ? "enum"
+                                                           : "structure") +
+            " << ";
+        for (std::size_t i = 0; i < syntax.roots.size(); ++i) {
+            if (i) description += ", ";
+            description += syntax.roots[i].name;
+        }
+        add(syntax.keywordRange, "behavior", "", SemanticItemKind::Keyword);
+        add(syntax.targetRange, "", "", SemanticItemKind::Keyword);
+        add(syntax.decoration.pathRanges.back(), syntax.decoration.Name(),
+            description, SemanticItemKind::Behavior,
+            contract.decoration ? contract.decoration->NameRange()
+                                : source::SourceRange{});
+        add(syntax.parameterRange, syntax.targetParameter,
+            "behavior target parameter", SemanticItemKind::TypeParameter,
+            syntax.parameterRange);
+        for (const auto& root : contract.roots)
+            add(IdentifierRange(root.range, root.type->displayName),
+                root.type->displayName, "interface",
+                SemanticItemKind::InterfaceType,
+                root.type->syntax->NameRange());
+        for (const auto& method : contract.methods) {
+            const auto& function = *method.declaration;
+            add(function.NameRange(), function.Name(),
+                method.signature.result.Name(), SemanticItemKind::Function,
+                method.requirement
+                    ? method.requirement->syntax->Signature().NameRange()
+                    : function.NameRange());
+            if (function.ownerTokenIndex < function.templateTokens.size()) {
+                const auto& owner =
+                    function.templateTokens[function.ownerTokenIndex];
+                if (owner.value == syntax.targetParameter)
+                    add(owner.range, owner.value, "behavior target parameter",
+                        SemanticItemKind::TypeParameter, syntax.parameterRange);
+            }
+            for (std::size_t i = 0; i < function.Parameters().size(); ++i) {
+                const auto& parameter = *function.Parameters()[i];
+                std::string type =
+                    (method.signature.key.receiver ==
+                             semantic::MethodReceiverKind::ConstReference
+                         ? "&const "
+                         : "&") +
+                    syntax.targetParameter;
+                if (i > 0 && i - 1 < method.signature.key.parameters.size())
+                    type = method.signature.key.parameters[i - 1].Name();
+                add(parameter.NameRange(), parameter.Name(), type,
+                    SemanticItemKind::Parameter, parameter.NameRange());
+            }
+        }
+    }
+    return result;
+}
+
 }  // namespace
 
 std::optional<SemanticQueries::Match> SemanticQueries::Find(
@@ -144,6 +211,31 @@ std::optional<SemanticQueries::Match> SemanticQueries::Find(
                   symbol.DeclarationRange(), displayName, symbol.Type().Name(),
                   ItemKind(symbol.Kind()), TargetKind::Symbol, &symbol});
     };
+
+    for (const auto& item : BehaviorOccurrences(_model)) {
+        if (item.kind == SemanticItemKind::Keyword) continue;
+        TargetKind targetKind = TargetKind::None;
+        const void* target = nullptr;
+        if (item.kind == SemanticItemKind::Behavior) {
+            for (const auto& behavior : _model.Behaviors())
+                if (behavior.declaration->decoration.pathRanges.back() ==
+                        item.range &&
+                    behavior.decoration) {
+                    targetKind = TargetKind::Decoration;
+                    target = behavior.decoration;
+                }
+        } else {
+            for (const auto& symbol : _model.Symbols())
+                if (!item.declarationRange.Empty() && Queryable(*symbol) &&
+                    symbol->DeclarationRange() == item.declarationRange) {
+                    targetKind = TargetKind::Symbol;
+                    target = symbol.get();
+                    break;
+                }
+        }
+        consider({item.range, item.declarationRange, item.name, item.type,
+                  item.kind, targetKind, target});
+    }
 
     for (const auto& [declaration, contract] : _model._decorationContracts) {
         consider({declaration->NameRange(), declaration->NameRange(),
@@ -256,6 +348,9 @@ std::vector<SemanticOccurrence> SemanticQueries::Occurrences(
             symbol.DeclarationRange());
     };
 
+    for (const auto& item : BehaviorOccurrences(_model))
+        add(item.range, item.name, item.type, item.kind, item.declarationRange);
+
     for (const auto& [declaration, contract] : _model._decorationContracts) {
         add(declaration->NameRange(), declaration->Name(), "decoration",
             SemanticItemKind::Decoration, declaration->NameRange());
@@ -273,9 +368,17 @@ std::vector<SemanticOccurrence> SemanticQueries::Occurrences(
                         parameter.syntax->nameRange);
         }
     }
-    for (const auto& [application, declaration] : _model._decorationBindings)
-        add(application->pathRanges.back(), declaration->Name(), "decoration",
-            SemanticItemKind::Decoration, declaration->NameRange());
+    for (const auto& [application, declaration] : _model._decorationBindings) {
+        const bool behaviorName = std::any_of(
+            _model.Behaviors().begin(), _model.Behaviors().end(),
+            [&](const auto& behavior) {
+                return &behavior.declaration->decoration == application;
+            });
+        if (!behaviorName)
+            add(application->pathRanges.back(), declaration->Name(),
+                "decoration", SemanticItemKind::Decoration,
+                declaration->NameRange());
+    }
 
     for (const auto& [expression, symbol] : _model._bindings)
         addSymbol(expression->Range(), expression->Name(), *symbol);
@@ -344,6 +447,10 @@ std::vector<source::SourceRange> SemanticQueries::ReferenceRanges(
         for (const auto& [expression, method] : _model._methods)
             if (Queryable(*method) && SameSymbolKey(*method, *target))
                 add(expression->MemberRange());
+        for (const auto& item : BehaviorOccurrences(_model))
+            if (item.declarationRange == target->DeclarationRange() &&
+                (includeDeclaration || item.range != item.declarationRange))
+                add(item.range);
         if (includeDeclaration) add(target->DeclarationRange());
     } else if (match.targetKind == TargetKind::Field) {
         const auto* target =
@@ -389,6 +496,20 @@ std::vector<SemanticSymbol> SemanticQueries::Symbols(
     std::string_view query) const {
     const std::string needle = Lower(query);
     std::vector<SemanticSymbol> result;
+    for (const auto& behavior : _model.Behaviors()) {
+        const auto& syntax = *behavior.declaration;
+        const std::string name = syntax.decoration.Name();
+        if (needle.empty() || Lower(name).contains(needle))
+            result.push_back({name, "behavior", SemanticItemKind::Behavior,
+                              syntax.decoration.pathRanges.back()});
+        for (const auto& method : behavior.methods)
+            if (needle.empty() ||
+                Lower(method.declaration->Name()).contains(needle))
+                result.push_back({method.declaration->Name(),
+                                  method.signature.result.Name(),
+                                  SemanticItemKind::Function,
+                                  method.declaration->NameRange()});
+    }
     for (const auto& [declaration, contract] : _model._decorationContracts)
         if (needle.empty() || Lower(declaration->Name()).contains(needle))
             result.push_back({declaration->Name(), "decoration",

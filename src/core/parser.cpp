@@ -75,6 +75,7 @@ bool Parser::StartsTopLevelOnlyDeclaration() const {
         case TokenType::Test:
         case TokenType::Enum:
         case TokenType::TypeSet:
+        case TokenType::Behavior:
         case TokenType::Decoration:
         case TokenType::Structure:
         case TokenType::Interface:
@@ -1324,6 +1325,95 @@ std::vector<DecorationApplication> Parser::ParseDecorations() {
     return decorations;
 }
 
+std::unique_ptr<BehaviorDeclaration> Parser::ParseBehaviorDeclaration() {
+    const Token keyword = Advance();
+    DecorationApplication decoration;
+    const Token* name =
+        Consume(TokenType::Identifier, "owning decoration name");
+    if (!name) return nullptr;
+    decoration.path.push_back(name->value);
+    decoration.pathRanges.push_back(name->range);
+    while (Match(TokenType::Scope)) {
+        name = Consume(TokenType::Identifier, "decoration name after '::'");
+        if (!name) return nullptr;
+        decoration.path.push_back(name->value);
+        decoration.pathRanges.push_back(name->range);
+    }
+    decoration.range = {decoration.pathRanges.front().start, name->range.end};
+    std::string parameter;
+    source::SourceRange parameterRange = Current().range;
+    bool validParameter = false;
+    if (Match(TokenType::Less)) {
+        if (Check(TokenType::Identifier)) {
+            const Token& binder = Advance();
+            parameter = binder.value;
+            parameterRange = binder.range;
+            validParameter = Check(TokenType::Greater);
+        }
+        if (!validParameter) {
+            while (!IsAtEnd() && !Check(TokenType::Greater) &&
+                   !Check(TokenType::FatArrow) && !Check(TokenType::LCurly))
+                Advance();
+        }
+        Match(TokenType::Greater);
+    }
+    if (!validParameter)
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::InvalidBehaviorParameter,
+            parameterRange,
+            "a behavior requires exactly one unconstrained "
+            "target parameter; type arguments, constraints, "
+            "defaults and additional parameters are forbidden");
+    if (!Consume(TokenType::FatArrow, "'=>' after behavior target parameter"))
+        return nullptr;
+    const Token target = Advance();
+    const DecorationTarget targetKind =
+        target.type == TokenType::Structure ? DecorationTarget::Structure
+        : target.type == TokenType::Enum    ? DecorationTarget::Enum
+                                            : DecorationTarget::Invalid;
+    if (targetKind == DecorationTarget::Invalid)
+        _diagnostics.Report(diagnostics::DiagnosticCode::InvalidBehavior,
+                            target.range,
+                            "behavior target must be structure or enum");
+    if (!Check(TokenType::ShiftLeft))
+        _diagnostics.Report(diagnostics::DiagnosticCode::InvalidBehavior,
+                            Current().range,
+                            "behavior requires interface roots after '<<'");
+    auto roots = ParseNominalParents("behavior");
+    if (!Consume(TokenType::LCurly, "'{' after behavior header"))
+        return nullptr;
+    std::vector<std::unique_ptr<FunctionDeclaration>> methods;
+    while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+        const std::size_t before = _position;
+        auto method = ParseFunctionDeclaration(parameter);
+        if (method)
+            methods.push_back(std::move(method));
+        else {
+            while (!IsAtEnd() && !Check(TokenType::RCurly) &&
+                   !Check(TokenType::SemiColon))
+                Advance();
+            Match(TokenType::SemiColon);
+        }
+        if (_position == before && !IsAtEnd()) Advance();
+    }
+    const Token* close = Consume(TokenType::RCurly, "'}' after behavior body");
+    if (!close) return nullptr;
+    const Token* end =
+        Consume(TokenType::SemiColon, "';' after behavior declaration");
+    auto result = std::make_unique<BehaviorDeclaration>(source::SourceRange{
+        keyword.range.start, end ? end->range.end : close->range.end});
+    result->keywordRange = keyword.range;
+    result->decoration = std::move(decoration);
+    result->targetParameter = std::move(parameter);
+    result->parameterRange = parameterRange;
+    result->validParameter = validParameter;
+    result->target = targetKind;
+    result->targetRange = target.range;
+    result->roots = std::move(roots);
+    result->methods = std::move(methods);
+    return result;
+}
+
 std::unique_ptr<DecorationDeclaration> Parser::ParseDecorationDeclaration() {
     const source::SourceLocation start = Advance().range.start;
     const Token* name = Consume(TokenType::Identifier, "decoration name");
@@ -1537,6 +1627,7 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
     if (IsModuleConstantDeclaration()) return ParseModuleConstantDeclaration();
     if (Check(TokenType::TypeSet)) return ParseTypeSetDeclaration();
     if (Check(TokenType::Decoration)) return ParseDecorationDeclaration();
+    if (Check(TokenType::Behavior)) return ParseBehaviorDeclaration();
     if (Check(TokenType::Structure)) return ParseStructureDeclaration();
     if (Check(TokenType::Interface)) return ParseInterfaceDeclaration();
     if (Check(TokenType::Enum)) return ParseEnumDeclaration();

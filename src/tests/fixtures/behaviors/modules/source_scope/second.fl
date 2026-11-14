@@ -1,0 +1,2 @@
+module main;
+behavior stamp<T> => structure << p::Writable {};

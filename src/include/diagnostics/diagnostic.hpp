@@ -95,6 +95,11 @@ enum class DiagnosticCode {
     DuplicateDecorationApplication,
     InaccessibleDecoration,
     InvalidDecorationMarker,
+    InvalidBehavior,
+    InvalidBehaviorParameter,
+    DuplicateBehavior,
+    InvalidBehaviorMethod,
+    ConflictingBehaviorRoots,
 
     NativeTargetUnavailable,
     ObjectEmissionFailed,

@@ -193,6 +193,10 @@ std::string_view SemanticKindName(SemanticItemKind kind) {
             return "enumType";
         case SemanticItemKind::StructureType:
             return "structureType";
+        case SemanticItemKind::TypeParameter:
+            return "typeParameter";
+        case SemanticItemKind::Behavior:
+            return "behavior";
         case SemanticItemKind::Decoration:
             return "decoration";
         case SemanticItemKind::Keyword:

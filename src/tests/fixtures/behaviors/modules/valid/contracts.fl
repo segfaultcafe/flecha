@@ -1,0 +1,5 @@
+module metadata;
+interface Writable { i32 write(&const self) virtual; };
+behavior stamp<T> => structure << Writable {
+    i32 T::write(&const self) override { return unexpanded(); }
+};
