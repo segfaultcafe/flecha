@@ -432,6 +432,52 @@ TEST_F(LspProtocolTests, MapsInterfaceSemanticTokensToType) {
     EXPECT_NE(tokens.front().find("\"data\":[0,10,8,6,1]"), std::string::npos);
 }
 
+TEST_F(LspProtocolTests, MapsDecorationKeywordsToAdvertisedKeywordTokenType) {
+    FakeAnalyzer analyzer;
+    ProtocolServer server(analyzer);
+    const auto initialized =
+        server.Handle(Request("1", "initialize", InitializeParams()));
+    ASSERT_EQ(initialized.size(), 1u);
+    EXPECT_NE(initialized.front().find(
+                  "\"tokenTypes\":[\"function\",\"parameter\",\"variable\","
+                  "\"property\",\"enum\",\"struct\",\"type\",\"self\",\"keyword\"]"),
+              std::string::npos);
+
+    const std::filesystem::path file = root / "main.fl";
+    const std::string text =
+        "application\ntarget\nstructure\nenum\ninterface\nself\nvalue\n";
+    const std::string document =
+        "{\"textDocument\":{\"uri\":" +
+        flecha::analyzer::json::Quote(flecha::lsp::PathToFileUri(file));
+    ASSERT_EQ(server
+                  .Handle(Notification("textDocument/didOpen",
+                                       document + ",\"version\":1,\"text\":" +
+                                           flecha::analyzer::json::Quote(text) +
+                                           "}}"))
+                  .size(),
+              1u);
+    for (const std::string word :
+         {"application", "target", "structure", "enum", "interface"}) {
+        const std::size_t start = text.find(word);
+        analyzer.semanticTokens.push_back(
+            {{file, start, start + word.size()}, "keyword", false});
+    }
+    for (const std::string word : {"self", "value"}) {
+        const std::size_t start = text.find(word);
+        analyzer.semanticTokens.push_back(
+            {{file, start, start + word.size()}, "parameter", true});
+    }
+
+    const auto tokens = server.Handle(
+        Request("2", "textDocument/semanticTokens/full", document + "}}"));
+
+    ASSERT_EQ(tokens.size(), 1u);
+    EXPECT_NE(tokens.front().find(
+                  "\"data\":[0,0,11,8,0,1,0,6,8,0,1,0,9,8,0,1,0,4,8,0,"
+                  "1,0,9,8,0,1,0,4,7,1,1,0,5,1,1]"),
+              std::string::npos);
+}
+
 TEST_F(LspProtocolTests, DistinguishesSelfFromOrdinaryParameters) {
     FakeAnalyzer analyzer;
     ProtocolServer server(analyzer);

@@ -168,7 +168,7 @@ int CompletionKind(std::string_view kind) {
 }
 
 int SemanticTokenKind(std::string_view kind, std::string_view spelling = {}) {
-    if (kind == "keyword") return 7;
+    if (kind == "keyword") return 8;
     if (kind == "decoration") return 6;
     if (kind == "function") return 0;
     if (kind == "parameter" && spelling == "self") return 7;
@@ -424,7 +424,7 @@ std::vector<std::string> ProtocolServer::Handle(std::string_view messageText) {
                 "\"renameProvider\":true,"
                 "\"semanticTokensProvider\":{\"legend\":{"
                 "\"tokenTypes\":[\"function\",\"parameter\",\"variable\","
-                "\"property\",\"enum\",\"struct\",\"type\",\"self\"],"
+                "\"property\",\"enum\",\"struct\",\"type\",\"self\",\"keyword\"],"
                 "\"tokenModifiers\":[\"declaration\"]},\"full\":true}},"
                 "\"serverInfo\":{\"name\":\"flecha-lsp\",\"version\":" +
                 analyzer::json::Quote(compilerVersion) + "}}";
