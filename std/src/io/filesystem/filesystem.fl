@@ -1,4 +1,5 @@
 module filesystem;
+under namespace root::io;
 
 @imports
     :: root::io::errors
@@ -65,7 +66,8 @@ export error write_bytes(stringv path, []const u8 contents) {
         return err;
     }
 
-    err = output.writeAll(contents);
+    writer := output.writer();
+    err = writer->writeAll(contents);
     if err != none {
         return err;
     }
@@ -289,7 +291,7 @@ error copy_regular_file(
     {
         reader := input.reader();
         writer := output.writer();
-        _, copyError = stream::copy(&reader, &writer, buffer);
+        _, copyError = stream::copy(reader, writer, buffer);
     }
     if copyError != none {
         return copyError;

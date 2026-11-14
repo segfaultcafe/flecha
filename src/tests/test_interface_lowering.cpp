@@ -148,6 +148,53 @@ TEST(InterfaceDispatchTests, MovesNoncopyableVariadicPackArguments) {
     EXPECT_EQ(call.Arguments().front()->Kind(), BoundNodeKind::MoveExpression);
 }
 
+TEST(InterfaceDispatchTests,
+     LowersInheritedConcreteDefaultAndFinalCallsThroughInterfaceSlots) {
+    AnalyzedFixture fixture = AnalyzeFixtureFile("valid_dynamic_dispatch.fl");
+
+    ASSERT_FALSE(fixture.diagnostics.HasErrors());
+    std::unique_ptr<BoundProgram> program = LowerFixture(fixture);
+    ASSERT_NE(program, nullptr);
+
+    const auto inheritedCall = [&](std::string_view functionName)
+        -> const BoundInterfaceCallExpression* {
+        const BoundFunction& function = FindFunction(*program, functionName);
+        if (function.Body().Statements().size() != 1) {
+            ADD_FAILURE() << functionName;
+            return nullptr;
+        }
+        const auto& result = static_cast<const BoundReturnStatement&>(
+            *function.Body().Statements().front());
+        if (result.Expression() == nullptr ||
+            result.Expression()->Kind() !=
+                BoundNodeKind::InterfaceCallExpression) {
+            ADD_FAILURE() << functionName;
+            return nullptr;
+        }
+        return &static_cast<const BoundInterfaceCallExpression&>(
+            *result.Expression());
+    };
+
+    const BoundInterfaceCallExpression* defaultValue =
+        inheritedCall("directInheritedDefault");
+    ASSERT_NE(defaultValue, nullptr);
+    EXPECT_EQ(defaultValue->Contract().category, MethodCategory::Default);
+    EXPECT_EQ(defaultValue->Receiver().Kind(), BoundNodeKind::CastExpression);
+
+    const BoundInterfaceCallExpression* defaultReference =
+        inheritedCall("directInheritedDefaultReference");
+    ASSERT_NE(defaultReference, nullptr);
+    EXPECT_EQ(defaultReference->Contract().category, MethodCategory::Default);
+    EXPECT_EQ(defaultReference->Receiver().Kind(),
+              BoundNodeKind::CastExpression);
+
+    const BoundInterfaceCallExpression* finalValue =
+        inheritedCall("directInheritedFinal");
+    ASSERT_NE(finalValue, nullptr);
+    EXPECT_EQ(finalValue->Contract().category, MethodCategory::Final);
+    EXPECT_EQ(finalValue->Receiver().Kind(), BoundNodeKind::CastExpression);
+}
+
 TEST(InterfaceCastTests, RejectsEveryCastThatWouldNeedDynamicKnowledge) {
     AnalyzedFixture fixture = AnalyzeFixtureFile("invalid_casts_upcasts.fl");
 

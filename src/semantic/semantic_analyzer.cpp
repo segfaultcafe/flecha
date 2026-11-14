@@ -9042,15 +9042,57 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
                                       : nullptr;
     const std::string methodName =
         EffectName(expression.Member(), expression.IsCrashable());
-    std::vector<const FunctionSymbol*> interfaceOverloads;
-    if (interfaceOwner)
+    std::vector<const FunctionSymbol*> overloads;
+    std::vector<std::pair<const FunctionSymbol*, const MethodContract*>>
+        inheritedInterfaceOverloads;
+    if (methods) {
+        const auto concrete = methods->find(methodName);
+        if (concrete != methods->end())
+            overloads.insert(overloads.end(), concrete->second.begin(),
+                             concrete->second.end());
+    }
+    const std::size_t concreteOverloadCount = overloads.size();
+    if (interfaceOwner) {
         for (const MethodContract* contract : interfaceOwner->methods)
             if (contract->key.name == expression.Member() &&
                 contract->isCrashable == expression.IsCrashable() &&
                 contract->callable)
-                interfaceOverloads.push_back(contract->callable);
-    if ((!methods || !methods->contains(methodName)) &&
-        interfaceOverloads.empty()) {
+                overloads.push_back(contract->callable);
+    } else if (owner || enumOwner) {
+        const auto& conformances =
+            owner ? owner->conformances : enumOwner->conformances;
+        for (const InterfaceReference& conformance : conformances) {
+            for (const MethodContract* contract : conformance.type->methods) {
+                if (contract->key.name != expression.Member() ||
+                    contract->isCrashable != expression.IsCrashable() ||
+                    contract->callable == nullptr ||
+                    contract->provider == nullptr ||
+                    (contract->category != core::MethodCategory::Default &&
+                     contract->category != core::MethodCategory::Final))
+                    continue;
+
+                bool shadowed = false;
+                for (std::size_t index = 0;
+                     index < concreteOverloadCount && !shadowed; ++index) {
+                    const FunctionSymbol* candidate = overloads[index];
+                    shadowed = MethodContractOf(
+                                   *candidate, candidate->IsProtected()
+                                                   ? MethodVisibility::Protected
+                                                   : MethodVisibility::Public)
+                                   .key == contract->key;
+                }
+                const bool duplicate = std::ranges::any_of(
+                    inheritedInterfaceOverloads, [&](const auto& inherited) {
+                        return inherited.second->key == contract->key;
+                    });
+                if (shadowed || duplicate) continue;
+                overloads.push_back(contract->callable);
+                inheritedInterfaceOverloads.emplace_back(contract->callable,
+                                                         contract);
+            }
+        }
+    }
+    if (overloads.empty()) {
         if (owner && expression.Member() == "tear") {
             Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                    expression.MemberRange(),
@@ -9061,8 +9103,6 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
                expression.MemberRange(), "unknown method '" + methodName + "'");
         return SemanticType::Error();
     }
-    const auto& overloads =
-        interfaceOwner ? interfaceOverloads : methods->at(methodName);
     const FunctionSymbol* function =
         overloads.size() == 1
             ? overloads.front()
@@ -9071,13 +9111,27 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
     if (!function) return SemanticType::Error();
     _model._methods[&expression] = function;
     const MethodContract* interfaceContract = nullptr;
-    if (interfaceOwner)
+    if (interfaceOwner) {
         for (const MethodContract* contract : interfaceOwner->methods)
             if (contract->callable == function) {
                 _model._interfaceMethods[&expression] = contract;
                 interfaceContract = contract;
                 break;
             }
+    } else {
+        const auto inherited = std::ranges::find_if(
+            inheritedInterfaceOverloads,
+            [&](const auto& candidate) { return candidate.first == function; });
+        if (inherited != inheritedInterfaceOverloads.end()) {
+            interfaceContract = inherited->second;
+            _model._interfaceMethods[&expression] = interfaceContract;
+            if (receiver.Kind() == SemanticTypeKind::Pointer)
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       expression.Receiver().Range(),
+                       "inherited interface methods require a value or "
+                       "checked-reference receiver");
+        }
+    }
     ValidateCrashableCall(expression.IsCrashable(), function->Signature(),
                           function, expression.Range());
     if (_currentFunction) _functionCalls[_currentFunction].insert(function);

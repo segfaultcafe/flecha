@@ -52,6 +52,18 @@ error execute(&Runnable runnable) {
     return value->name();
 }
 
+error directRun(Record value) {
+    return value.run();
+}
+
+error directEnsure(&const Record value) {
+    return value->ensure();
+}
+
+&const i32 directName(&const Record value) <-value {
+    return value->name();
+}
+
 interface WritableI32 {
     error write(&self, i32 value) virtual;
 };
@@ -79,3 +91,7 @@ protected error GenericRecord<T>::validate(&const self) override {
 }
 
 void instantiate(GenericRecord<i32> value) {}
+
+error validateGenericDefault(GenericRecord<i32> value) {
+    return value.ensure();
+}

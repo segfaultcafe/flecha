@@ -731,9 +731,38 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     }
                     const semantic::VariadicShape* shape =
                         _semanticModel->InterfaceVariadicShapeFor(member);
+                    const semantic::SemanticType receiverType =
+                        _semanticModel->TypeOf(member.Receiver());
+                    std::unique_ptr<BoundExpression> receiver;
+                    if (receiverType.Kind() ==
+                            semantic::SemanticTypeKind::Structure ||
+                        receiverType.Kind() ==
+                            semantic::SemanticTypeKind::Enum) {
+                        const semantic::SemanticType interfaceReference =
+                            method->ParameterTypes().front();
+                        semantic::SemanticType borrowed = receiverType;
+                        if (interfaceReference.Target()->IsConst())
+                            borrowed = borrowed.WithConst();
+                        receiver = std::make_unique<BoundCastExpression>(
+                            member.Receiver().Range(), interfaceReference,
+                            std::make_unique<BoundAddressExpression>(
+                                member.Receiver().Range(),
+                                semantic::SemanticType(
+                                    semantic::SemanticTypeKind::Reference,
+                                    borrowed),
+                                LowerPlace(member.Receiver())));
+                    } else if (receiverType.Kind() ==
+                                   semantic::SemanticTypeKind::Reference &&
+                               receiverType.Target()->Kind() !=
+                                   semantic::SemanticTypeKind::Interface) {
+                        receiver =
+                            LowerExpression(member.Receiver(),
+                                            method->ParameterTypes().front());
+                    } else {
+                        receiver = LowerExpression(member.Receiver());
+                    }
                     return std::make_unique<BoundInterfaceCallExpression>(
-                        expression.Range(), *contract,
-                        LowerExpression(member.Receiver()),
+                        expression.Range(), *contract, std::move(receiver),
                         std::move(arguments),
                         shape == nullptr
                             ? std::optional<semantic::VariadicShape>{}

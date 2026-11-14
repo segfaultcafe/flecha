@@ -1,4 +1,5 @@
 module buffered_test;
+under namespace root::io;
 
 @imports
     :: root::io::buffered
@@ -37,7 +38,7 @@ test constructors_reject_zero_capacity(&testing::UnitTest t) {
             return (none, none);
         }
     );
-    _, readError := buffered::BufferedReader::withCapacity(reader, 0);
+    _, readError := buffered::BufferedReader::withCapacity(&reader, 0);
     asserts::is_true(
         t,
         readError == errors::IoError.InvalidOptions,
@@ -49,7 +50,7 @@ test constructors_reject_zero_capacity(&testing::UnitTest t) {
             return (source.len(), none);
         }
     );
-    _, writeError := buffered::BufferedWriter::withCapacity(writer, 0);
+    _, writeError := buffered::BufferedWriter::withCapacity(&writer, 0);
     asserts::is_true(
         t,
         writeError == errors::IoError.InvalidOptions,
@@ -66,7 +67,7 @@ test empty_reads_do_not_touch_the_underlying_reader(&testing::UnitTest t) {
         }
     );
     value, allocationError :=
-        buffered::BufferedReader::withCapacity(reader, 4);
+        buffered::BufferedReader::withCapacity(&reader, 4);
     asserts::is_true(t, allocationError == none, "reader allocation succeeds");
     if allocationError != none {
         return;
@@ -105,7 +106,7 @@ test small_reads_use_read_ahead_and_consume_it_in_order(
         }
     );
     value, allocationError :=
-        buffered::BufferedReader::withCapacity(reader, 4);
+        buffered::BufferedReader::withCapacity(&reader, 4);
     asserts::is_true(t, allocationError == none, "reader allocation succeeds");
     if allocationError != none {
         return;
@@ -161,7 +162,7 @@ test equal_and_large_reads_bypass_the_internal_buffer(
         }
     );
     equalValue, equalAllocationError :=
-        buffered::BufferedReader::withCapacity(equalReader, 4);
+        buffered::BufferedReader::withCapacity(&equalReader, 4);
     asserts::is_true(
         t,
         equalAllocationError == none,
@@ -188,7 +189,7 @@ test equal_and_large_reads_bypass_the_internal_buffer(
         }
     );
     largeValue, largeAllocationError :=
-        buffered::BufferedReader::withCapacity(largeReader, 4);
+        buffered::BufferedReader::withCapacity(&largeReader, 4);
     asserts::is_true(
         t,
         largeAllocationError == none,
@@ -236,7 +237,7 @@ test read_exact_crosses_boundaries_and_collects_short_reads(
         }
     );
     value, allocationError :=
-        buffered::BufferedReader::withCapacity(reader, 3);
+        buffered::BufferedReader::withCapacity(&reader, 3);
     asserts::is_true(t, allocationError == none, "reader allocation succeeds");
     if allocationError != none {
         return;
@@ -272,7 +273,7 @@ test eof_is_reported_after_buffered_data_is_consumed(&testing::UnitTest t) {
         }
     );
     value, allocationError :=
-        buffered::BufferedReader::withCapacity(reader, 4);
+        buffered::BufferedReader::withCapacity(&reader, 4);
     asserts::is_true(t, allocationError == none, "reader allocation succeeds");
     if allocationError != none {
         return;
@@ -318,7 +319,7 @@ test partial_read_errors_follow_the_final_buffered_byte(
         }
     );
     value, allocationError :=
-        buffered::BufferedReader::withCapacity(reader, 4);
+        buffered::BufferedReader::withCapacity(&reader, 4);
     asserts::is_true(t, allocationError == none, "reader allocation succeeds");
     if allocationError != none {
         return;
@@ -353,7 +354,7 @@ test impossible_read_counts_are_rejected(&testing::UnitTest t) {
         }
     );
     value, allocationError :=
-        buffered::BufferedReader::withCapacity(reader, 2);
+        buffered::BufferedReader::withCapacity(&reader, 2);
     asserts::is_true(t, allocationError == none, "reader allocation succeeds");
     if allocationError != none {
         return;
@@ -385,7 +386,7 @@ test small_writes_buffer_until_flush_and_empty_flush_is_a_no_op(
         }
     );
     value, allocationError :=
-        buffered::BufferedWriter::withCapacity(writer, 4);
+        buffered::BufferedWriter::withCapacity(&writer, 4);
     asserts::is_true(t, allocationError == none, "writer allocation succeeds");
     if allocationError != none {
         return;
@@ -422,7 +423,7 @@ test equal_sized_writes_bypass_the_internal_buffer(&testing::UnitTest t) {
         }
     );
     value, allocationError :=
-        buffered::BufferedWriter::withCapacity(writer, 4);
+        buffered::BufferedWriter::withCapacity(&writer, 4);
     asserts::is_true(t, allocationError == none, "writer allocation succeeds");
     if allocationError != none {
         return;
@@ -452,7 +453,7 @@ test writes_cross_buffer_boundaries_without_reordering(
         }
     );
     value, allocationError :=
-        buffered::BufferedWriter::withCapacity(writer, 4);
+        buffered::BufferedWriter::withCapacity(&writer, 4);
     asserts::is_true(t, allocationError == none, "writer allocation succeeds");
     if allocationError != none {
         return;
@@ -498,7 +499,7 @@ test write_all_and_flush_complete_short_underlying_writes(
         }
     );
     value, allocationError :=
-        buffered::BufferedWriter::withCapacity(writer, 3);
+        buffered::BufferedWriter::withCapacity(&writer, 3);
     asserts::is_true(t, allocationError == none, "writer allocation succeeds");
     if allocationError != none {
         return;
@@ -547,7 +548,7 @@ test flush_errors_preserve_the_unwritten_suffix_for_retry(
         }
     );
     value, allocationError :=
-        buffered::BufferedWriter::withCapacity(writer, 4);
+        buffered::BufferedWriter::withCapacity(&writer, 4);
     asserts::is_true(t, allocationError == none, "writer allocation succeeds");
     if allocationError != none {
         return;
@@ -598,7 +599,7 @@ test zero_progress_flushes_fail_without_discarding_data(
         }
     );
     value, allocationError :=
-        buffered::BufferedWriter::withCapacity(writer, 3);
+        buffered::BufferedWriter::withCapacity(&writer, 3);
     asserts::is_true(t, allocationError == none, "writer allocation succeeds");
     if allocationError != none {
         return;
@@ -629,7 +630,7 @@ test direct_write_errors_preserve_partial_counts(&testing::UnitTest t) {
         }
     );
     value, allocationError :=
-        buffered::BufferedWriter::withCapacity(writer, 4);
+        buffered::BufferedWriter::withCapacity(&writer, 4);
     asserts::is_true(t, allocationError == none, "writer allocation succeeds");
     if allocationError != none {
         return;
@@ -661,7 +662,7 @@ test movement_cleans_stream_owners_once_and_destruction_does_not_flush(
             }
         );
         value, allocationError :=
-            buffered::BufferedWriter::withCapacity(writer, 4);
+            buffered::BufferedWriter::withCapacity(&writer, 4);
         asserts::is_true(
             t,
             allocationError == none,
