@@ -477,3 +477,29 @@ TEST_F(LspProtocolTests, UsesShutdownThenExitLifecycle) {
 }
 
 }  // namespace
+
+TEST_F(LspProtocolTests, PublishesRelatedDecorationLocationsFromOpenDocuments) {
+    FakeAnalyzer analyzer;
+    ProtocolServer server(analyzer);
+    Initialize(server);
+    const std::filesystem::path file = root / "main.fl";
+    const std::string uri = flecha::lsp::PathToFileUri(file);
+    analyzer.snapshot.diagnostics = {
+        AnalyzerDiagnostic{"FLECHA-S0070",
+                           file,
+                           5,
+                           6,
+                           "error",
+                           "wrong argument",
+                           {{file, 0, 1, "contract parameter"}}}};
+    const auto result = server.Handle(Notification(
+        "textDocument/didOpen",
+        "{\"textDocument\":{\"uri\":" + flecha::analyzer::json::Quote(uri) +
+            ",\"languageId\":\"flecha\",\"version\":1,\"text\":\"a😀b\"}}"));
+    ASSERT_EQ(result.size(), 1u);
+    EXPECT_NE(result.front().find("\"relatedInformation\":[{\"location\":"),
+              std::string::npos);
+    EXPECT_NE(result.front().find("contract parameter"), std::string::npos);
+    EXPECT_NE(result.front().find("\"start\":{\"line\":0,\"character\":3}"),
+              std::string::npos);
+}

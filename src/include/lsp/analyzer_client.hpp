@@ -11,6 +11,13 @@
 
 namespace flecha::lsp {
 
+struct AnalyzerRelatedLocation final {
+    std::filesystem::path file;
+    std::size_t startByte = 0;
+    std::size_t endByte = 0;
+    std::string message;
+};
+
 struct AnalyzerDiagnostic final {
     std::string code;
     std::filesystem::path file;
@@ -18,6 +25,7 @@ struct AnalyzerDiagnostic final {
     std::size_t endByte = 0;
     std::string severity;
     std::string message;
+    std::vector<AnalyzerRelatedLocation> related;
 };
 
 struct AnalyzerSnapshot final {

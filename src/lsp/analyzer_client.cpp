@@ -461,6 +461,23 @@ AnalyzerSnapshot SubprocessAnalyzerClient::Diagnostics(
              RequiredOffset(*diagnostic, "endByte"),
              RequiredString(*diagnostic, "severity"),
              RequiredString(*diagnostic, "message")});
+        if (const auto* relatedValue =
+                analyzer::json::Field(*diagnostic, "related")) {
+            const auto* related = analyzer::json::AsArray(*relatedValue);
+            if (!related)
+                throw std::runtime_error("invalid analyzer related locations");
+            for (const auto& item : *related) {
+                const auto* location = analyzer::json::AsObject(item);
+                if (!location)
+                    throw std::runtime_error(
+                        "invalid analyzer related location");
+                snapshot.diagnostics.back().related.push_back(
+                    {RequiredString(*location, "file"),
+                     RequiredOffset(*location, "startByte"),
+                     RequiredOffset(*location, "endByte"),
+                     RequiredString(*location, "message")});
+            }
+        }
     }
     return snapshot;
 }

@@ -160,7 +160,18 @@ std::string DiagnosticsResult(const AnalysisSnapshot& snapshot) {
                << ",\"endByte\":" << diagnostic.range.end.offset
                << ",\"severity\":"
                << json::Quote(SeverityName(diagnostic.severity))
-               << ",\"message\":" << json::Quote(diagnostic.message) << '}';
+               << ",\"message\":" << json::Quote(diagnostic.message)
+               << ",\"related\":[";
+        bool firstRelated = true;
+        for (const auto& related : diagnostic.related) {
+            if (!firstRelated) result << ',';
+            firstRelated = false;
+            result << "{\"file\":" << json::Quote(related.range.start.file)
+                   << ",\"startByte\":" << related.range.start.offset
+                   << ",\"endByte\":" << related.range.end.offset
+                   << ",\"message\":" << json::Quote(related.message) << '}';
+        }
+        result << "]}";
     }
     result << "]}";
     return result.str();
@@ -182,6 +193,10 @@ std::string_view SemanticKindName(SemanticItemKind kind) {
             return "enumType";
         case SemanticItemKind::StructureType:
             return "structureType";
+        case SemanticItemKind::Decoration:
+            return "decoration";
+        case SemanticItemKind::Keyword:
+            return "keyword";
         case SemanticItemKind::InterfaceType:
             return "interfaceType";
         case SemanticItemKind::CallableType:
@@ -432,8 +447,7 @@ std::string ProtocolServer::Handle(std::string_view message) {
                                      "includeDeclaration must be a boolean");
             if (request->method == "document/references") {
                 const auto references =
-                    snapshot->References(path, byteOffset,
-                                         includeDeclaration);
+                    snapshot->References(path, byteOffset, includeDeclaration);
                 if (!references)
                     return SuccessResponse(request->id,
                                            "{\"references\":null}");

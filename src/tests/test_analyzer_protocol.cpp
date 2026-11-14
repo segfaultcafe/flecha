@@ -528,3 +528,17 @@ TEST_F(AnalyzerProtocolTests, ShutsDownAndRejectsFurtherRequests) {
 }
 
 }  // namespace
+
+TEST_F(AnalyzerProtocolTests, SerializesDecorationContractRelatedLocations) {
+    Write("main.fl",
+          "module main; decoration meta { application(stringv name) target "
+          "structure; }; @meta(42) structure Record {};");
+    ProtocolServer server("test-compiler");
+    Initialize(server);
+    const std::string response = server.Handle(
+        Request("2", "document/diagnostics", "{\"path\":\"main.fl\"}"));
+    EXPECT_NE(response.find("FLECHA-S0070"), std::string::npos);
+    EXPECT_NE(response.find("\"related\":[{\"file\":"), std::string::npos);
+    EXPECT_NE(response.find("decoration contract declared here"),
+              std::string::npos);
+}
