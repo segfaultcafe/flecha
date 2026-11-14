@@ -3,11 +3,11 @@ Title: Capability Interfaces and Explicit Ownership
 Author: Flecha Project
 Type: Guideline
 Topic: Idiom
-Status: Draft
+Status: Accepted
 Created: 2026-11-12
 Target: Flecha 0.4
 Requires: interface dispatch
-Implementation: Not Started
+Implementation: Implemented
 
 Abstract
 --------
@@ -63,10 +63,28 @@ Reader, Writer, or BufferedReader.
 Validation
 ----------
 
-The first validation target is std::io. The initial experiment should keep the
-existing closure-owning reader and writer structures as adapters, introduce
-capability interfaces, make copy depend on those interfaces, and then let
-files, buffers, pipes, and sockets conform directly where ownership permits.
+The first validation target is std::io. The accepted implementation keeps the
+closure-owning Reader and Writer structures as concrete adapters, introduces
+Readable and Writable capability interfaces, makes copy depend on interface
+references, and lets files, process pipes, and TCP streams conform directly.
 
-The experiment must record dispatch, allocation, ownership, borrow, aggregate
-return, and compatibility consequences before this IFG can become Accepted.
+Readable::readExact and Writable::writeAll are default algorithms over the
+minimal virtual operations. Direct resources inherit those algorithms without
+duplicating their bodies. Concrete Reader and Writer adapters remain available
+when an operation must be owned independently of its original resource.
+
+BufferedReader and BufferedWriter store checked interface references because
+they borrow their endpoints. Their constructors expose that borrow, their
+reference-bearing fields require direct initialization, and the borrow checker
+prevents either adapter from outliving or conflicting with its endpoint.
+
+Interface-reference formation and dispatch introduce no hidden allocation.
+The existing allocation behavior remains visible in concrete owning adapters
+and buffers. Aggregate returns, allocation failures, partial reads and writes,
+closed resources, inherited defaults, and adjacent-field borrows are covered
+by compiler and standard-library fixtures.
+
+The migration intentionally generalizes some public signatures from concrete
+Reader or Writer values to borrowed Readable or Writable references. Logical
+module names remain unchanged. Code that needs ownership must keep or create a
+concrete adapter instead of attempting to own an interface value.

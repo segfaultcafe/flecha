@@ -3,11 +3,11 @@ Title: Physical and Logical Module Organization
 Author: Flecha Project
 Type: Guideline
 Topic: Idiom
-Status: Draft
+Status: Accepted
 Created: 2026-11-12
 Target: Flecha 0.4
 Requires: 2026-0001
-Implementation: Not Started
+Implementation: Implemented
 
 Abstract
 --------
@@ -77,6 +77,22 @@ anchor source, or warn merely because the target is root.
 Standard-library trial
 ----------------------
 
-The first structural trial begins only after interface dispatch and
-IFG 2026-0001 are implemented. It should reorganize one coherent subsystem
-instead of moving the complete standard library at once.
+The accepted trial reorganizes focused standard-library contexts without
+changing their logical imports. The fmt implementation now lives below a fmt
+submodule folder and attaches to root. The io buffered, file, filesystem, path,
+stdio, and stream implementations and their tests live below matching physical
+folders and attach to root::io.
+
+The stream context also validates conceptual ownership. Readable and Writable
+interfaces, concrete closure-owning adapters, default algorithms, and stream
+copying compose one logical root::io::stream module even though their sources
+are physically separated. Buffered I/O remains a distinct logical module
+because it owns allocation and lifetime policy rather than merely extending
+the stream declarations.
+
+Existing imports continue to name root::fmt and root::io modules. Longbow test
+pairing, compiler discovery, editor analysis, and generated API documentation
+all operate on those logical identities while diagnostics retain physical file
+locations. This trial is sufficient evidence to accept the organizational
+guideline; it does not require every standard-library directory to adopt an
+attachment.

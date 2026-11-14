@@ -6,7 +6,7 @@ Topic: Language
 Status: Accepted
 Created: 2026-11-12
 Target: Flecha 0.4
-Implementation: Not Started
+Implementation: Implemented
 Release-Impact: Blocker
 
 Abstract
@@ -287,3 +287,24 @@ submodule folders.
         -> reorganize one standard-library subsystem as the first IFG trial
 
 Behavior and decoration work is not a prerequisite.
+
+Implementation evidence
+-----------------------
+
+The Flecha 0.4 reference compiler implements the complete namespace attachment
+path described by this IFG. The implementation includes header parsing, source
+indexing, canonical logical identity, direct and attached multifile assembly,
+imports, visibility, test pairing, diagnostics, analyzer overlays, and editor
+highlighting.
+
+Positive and negative fixtures cover application and library source roots,
+direct, wildcard, and brace imports, deep attachments, root attachment,
+multifile composition, duplicate declarations, invalid ancestors, source-root
+isolation, and unsaved analyzer changes. Sources without an attachment retain
+their previous module identity and discovery behavior.
+
+The standard library provides the first architectural trial. Its fmt sources
+and the io buffered, file, filesystem, path, stdio, and stream contexts now
+live in physical submodule folders while preserving their existing logical
+module names. The generated API reference and Longbow test suite resolve those
+logical identities independently of the physical layout.
