@@ -138,6 +138,10 @@ class Declaration : public AstNode {
     // Stable, qualified identity for generated closed specializations. Unlike
     // specializationName, this is compiler-internal and never user-facing.
     std::string specializationIdentity;
+    // Retain canonical arguments so later compiler-owned bodies can reuse
+    // existing specializations without re-expanding source templates.
+    const Declaration* specializationOrigin = nullptr;
+    std::vector<std::vector<Token>> specializationArguments;
     std::vector<DecorationApplication> decorations;
 };
 
@@ -300,6 +304,7 @@ class TypeNode final : public AstNode {
     OwnershipContract Contract() const { return _contract; }
     void SetContract(OwnershipContract contract) { _contract = contract; }
     [[nodiscard]] const TypeNode* Target() const { return _target.get(); }
+    [[nodiscard]] TypeNode* Target() { return _target.get(); }
     [[nodiscard]] bool IsConst() const { return _isConst; }
     [[nodiscard]] const source::SourceRange& QualifierRange() const {
         return _qualifierRange;
@@ -688,6 +693,9 @@ class FunctionDeclaration final : public Declaration {
         return _parameters;
     }
     [[nodiscard]] const BlockStatement& Body() const { return *_body; }
+    void ReplaceBody(FunctionDeclaration& materialized) {
+        _body = std::move(materialized._body);
+    }
     [[nodiscard]] bool HasBorrowSources() const {
         return !_borrowSources.empty() || _borrowsVariadicPack;
     }
