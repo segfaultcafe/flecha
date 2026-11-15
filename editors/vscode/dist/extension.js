@@ -7,9 +7,9 @@ var __commonJS = (cb, mod) => function __require() {
   }
 };
 
-// node_modules/vscode-languageclient/lib/common/utils/is.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/utils/is.js
 var require_is = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/utils/is.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/utils/is.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.asPromise = exports2.thenable = exports2.typedArray = exports2.stringArray = exports2.array = exports2.func = exports2.error = exports2.number = exports2.string = exports2.boolean = void 0;
@@ -64,9 +64,9 @@ var require_is = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/is.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/is.js
 var require_is2 = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/is.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/is.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.stringArray = exports2.array = exports2.func = exports2.error = exports2.number = exports2.string = exports2.boolean = void 0;
@@ -101,9 +101,9 @@ var require_is2 = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/messages.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/messages.js
 var require_messages = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/messages.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/messages.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Message = exports2.NotificationType9 = exports2.NotificationType8 = exports2.NotificationType7 = exports2.NotificationType6 = exports2.NotificationType5 = exports2.NotificationType4 = exports2.NotificationType3 = exports2.NotificationType2 = exports2.NotificationType1 = exports2.NotificationType0 = exports2.NotificationType = exports2.RequestType9 = exports2.RequestType8 = exports2.RequestType7 = exports2.RequestType6 = exports2.RequestType5 = exports2.RequestType4 = exports2.RequestType3 = exports2.RequestType2 = exports2.RequestType1 = exports2.RequestType = exports2.RequestType0 = exports2.AbstractMessageSignature = exports2.ParameterStructures = exports2.ResponseError = exports2.ErrorCodes = void 0;
@@ -339,9 +339,9 @@ var require_messages = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/linkedMap.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/linkedMap.js
 var require_linkedMap = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/linkedMap.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/linkedMap.js"(exports2) {
     "use strict";
     var _a;
     Object.defineProperty(exports2, "__esModule", { value: true });
@@ -709,9 +709,9 @@ var require_linkedMap = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/disposable.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/disposable.js
 var require_disposable = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/disposable.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/disposable.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Disposable = void 0;
@@ -727,9 +727,9 @@ var require_disposable = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/ral.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/ral.js
 var require_ral = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/ral.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/ral.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var _ral;
@@ -752,9 +752,9 @@ var require_ral = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/events.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/events.js
 var require_events = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/events.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/events.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Emitter = exports2.Event = void 0;
@@ -881,9 +881,9 @@ var require_events = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/cancellation.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/cancellation.js
 var require_cancellation = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/cancellation.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/cancellation.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CancellationTokenSource = exports2.CancellationToken = void 0;
@@ -970,9 +970,9 @@ var require_cancellation = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/sharedArrayCancellation.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/sharedArrayCancellation.js
 var require_sharedArrayCancellation = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/sharedArrayCancellation.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/sharedArrayCancellation.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SharedArrayReceiverStrategy = exports2.SharedArraySenderStrategy = void 0;
@@ -1048,9 +1048,9 @@ var require_sharedArrayCancellation = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/semaphore.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/semaphore.js
 var require_semaphore = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/semaphore.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/semaphore.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Semaphore = void 0;
@@ -1116,9 +1116,9 @@ var require_semaphore = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/messageReader.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/messageReader.js
 var require_messageReader = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/messageReader.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/messageReader.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ReadableStreamMessageReader = exports2.AbstractMessageReader = exports2.MessageReader = void 0;
@@ -1305,9 +1305,9 @@ ${JSON.stringify(Object.fromEntries(headers))}`));
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/messageWriter.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/messageWriter.js
 var require_messageWriter = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/messageWriter.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/messageWriter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WriteableStreamMessageWriter = exports2.AbstractMessageWriter = exports2.MessageWriter = void 0;
@@ -1417,9 +1417,9 @@ var require_messageWriter = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/messageBuffer.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/messageBuffer.js
 var require_messageBuffer = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/messageBuffer.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/messageBuffer.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.AbstractMessageBuffer = void 0;
@@ -1565,9 +1565,9 @@ ${header}`);
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/connection.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/connection.js
 var require_connection = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/connection.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/connection.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.createMessageConnection = exports2.ConnectionOptions = exports2.MessageStrategy = exports2.CancellationStrategy = exports2.CancellationSenderStrategy = exports2.CancellationReceiverStrategy = exports2.RequestCancellationReceiverStrategy = exports2.IdCancellationReceiverStrategy = exports2.ConnectionStrategy = exports2.ConnectionError = exports2.ConnectionErrors = exports2.LogTraceNotification = exports2.SetTraceNotification = exports2.TraceFormat = exports2.TraceValues = exports2.Trace = exports2.NullLogger = exports2.ProgressType = exports2.ProgressToken = void 0;
@@ -2693,9 +2693,9 @@ ${JSON.stringify(message, null, 4)}`);
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/common/api.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/api.js
 var require_api = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/common/api.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/common/api.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProgressType = exports2.ProgressToken = exports2.createMessageConnection = exports2.NullLogger = exports2.ConnectionOptions = exports2.ConnectionStrategy = exports2.AbstractMessageBuffer = exports2.WriteableStreamMessageWriter = exports2.AbstractMessageWriter = exports2.MessageWriter = exports2.ReadableStreamMessageReader = exports2.AbstractMessageReader = exports2.MessageReader = exports2.SharedArrayReceiverStrategy = exports2.SharedArraySenderStrategy = exports2.CancellationToken = exports2.CancellationTokenSource = exports2.Emitter = exports2.Event = exports2.Disposable = exports2.LRUCache = exports2.Touch = exports2.LinkedMap = exports2.ParameterStructures = exports2.NotificationType9 = exports2.NotificationType8 = exports2.NotificationType7 = exports2.NotificationType6 = exports2.NotificationType5 = exports2.NotificationType4 = exports2.NotificationType3 = exports2.NotificationType2 = exports2.NotificationType1 = exports2.NotificationType0 = exports2.NotificationType = exports2.ErrorCodes = exports2.ResponseError = exports2.RequestType9 = exports2.RequestType8 = exports2.RequestType7 = exports2.RequestType6 = exports2.RequestType5 = exports2.RequestType4 = exports2.RequestType3 = exports2.RequestType2 = exports2.RequestType1 = exports2.RequestType0 = exports2.RequestType = exports2.Message = exports2.RAL = void 0;
@@ -2895,9 +2895,9 @@ var require_api = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/node/ril.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/node/ril.js
 var require_ril = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/node/ril.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/node/ril.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var util_1 = require("util");
@@ -3051,9 +3051,9 @@ var require_ril = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/lib/node/main.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/node/main.js
 var require_main = __commonJS({
-  "node_modules/vscode-jsonrpc/lib/node/main.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/lib/node/main.js"(exports2) {
     "use strict";
     var __createBinding = exports2 && exports2.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -3311,17 +3311,17 @@ var require_main = __commonJS({
   }
 });
 
-// node_modules/vscode-jsonrpc/node.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/node.js
 var require_node = __commonJS({
-  "node_modules/vscode-jsonrpc/node.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-jsonrpc/node.js"(exports2, module2) {
     "use strict";
     module2.exports = require_main();
   }
 });
 
-// node_modules/vscode-languageserver-types/lib/umd/main.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-types/lib/umd/main.js
 var require_main2 = __commonJS({
-  "node_modules/vscode-languageserver-types/lib/umd/main.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-types/lib/umd/main.js"(exports2, module2) {
     (function(factory) {
       if (typeof module2 === "object" && typeof module2.exports === "object") {
         var v = factory(require, exports2);
@@ -4836,9 +4836,9 @@ var require_main2 = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/messages.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/messages.js
 var require_messages2 = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/messages.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/messages.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProtocolNotificationType = exports2.ProtocolNotificationType0 = exports2.ProtocolRequestType = exports2.ProtocolRequestType0 = exports2.RegistrationType = exports2.MessageDirection = void 0;
@@ -4882,9 +4882,9 @@ var require_messages2 = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/utils/is.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/utils/is.js
 var require_is3 = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/utils/is.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/utils/is.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.objectLiteral = exports2.typedArray = exports2.stringArray = exports2.array = exports2.func = exports2.error = exports2.number = exports2.string = exports2.boolean = void 0;
@@ -4927,9 +4927,9 @@ var require_is3 = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.implementation.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.implementation.js
 var require_protocol_implementation = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.implementation.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.implementation.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ImplementationRequest = void 0;
@@ -4943,9 +4943,9 @@ var require_protocol_implementation = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.typeDefinition.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.typeDefinition.js
 var require_protocol_typeDefinition = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.typeDefinition.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.typeDefinition.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.TypeDefinitionRequest = void 0;
@@ -4959,9 +4959,9 @@ var require_protocol_typeDefinition = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.workspaceFolder.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.workspaceFolder.js
 var require_protocol_workspaceFolder = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.workspaceFolder.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.workspaceFolder.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DidChangeWorkspaceFoldersNotification = exports2.WorkspaceFoldersRequest = void 0;
@@ -4981,9 +4981,9 @@ var require_protocol_workspaceFolder = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.configuration.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.configuration.js
 var require_protocol_configuration = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.configuration.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.configuration.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ConfigurationRequest = void 0;
@@ -4997,9 +4997,9 @@ var require_protocol_configuration = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.colorProvider.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.colorProvider.js
 var require_protocol_colorProvider = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.colorProvider.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.colorProvider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ColorPresentationRequest = exports2.DocumentColorRequest = void 0;
@@ -5019,9 +5019,9 @@ var require_protocol_colorProvider = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.foldingRange.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.foldingRange.js
 var require_protocol_foldingRange = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.foldingRange.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.foldingRange.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FoldingRangeRefreshRequest = exports2.FoldingRangeRequest = void 0;
@@ -5041,9 +5041,9 @@ var require_protocol_foldingRange = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.declaration.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.declaration.js
 var require_protocol_declaration = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.declaration.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.declaration.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DeclarationRequest = void 0;
@@ -5057,9 +5057,9 @@ var require_protocol_declaration = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.selectionRange.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.selectionRange.js
 var require_protocol_selectionRange = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.selectionRange.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.selectionRange.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SelectionRangeRequest = void 0;
@@ -5073,9 +5073,9 @@ var require_protocol_selectionRange = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.progress.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.progress.js
 var require_protocol_progress = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.progress.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.progress.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WorkDoneProgressCancelNotification = exports2.WorkDoneProgressCreateRequest = exports2.WorkDoneProgress = void 0;
@@ -5104,9 +5104,9 @@ var require_protocol_progress = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.callHierarchy.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.callHierarchy.js
 var require_protocol_callHierarchy = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.callHierarchy.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.callHierarchy.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CallHierarchyOutgoingCallsRequest = exports2.CallHierarchyIncomingCallsRequest = exports2.CallHierarchyPrepareRequest = void 0;
@@ -5132,9 +5132,9 @@ var require_protocol_callHierarchy = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.semanticTokens.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.semanticTokens.js
 var require_protocol_semanticTokens = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.semanticTokens.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.semanticTokens.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SemanticTokensRefreshRequest = exports2.SemanticTokensRangeRequest = exports2.SemanticTokensDeltaRequest = exports2.SemanticTokensRequest = exports2.SemanticTokensRegistrationType = exports2.TokenFormat = void 0;
@@ -5178,9 +5178,9 @@ var require_protocol_semanticTokens = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.showDocument.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.showDocument.js
 var require_protocol_showDocument = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.showDocument.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.showDocument.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ShowDocumentRequest = void 0;
@@ -5194,9 +5194,9 @@ var require_protocol_showDocument = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.linkedEditingRange.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.linkedEditingRange.js
 var require_protocol_linkedEditingRange = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.linkedEditingRange.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.linkedEditingRange.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.LinkedEditingRangeRequest = void 0;
@@ -5210,9 +5210,9 @@ var require_protocol_linkedEditingRange = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.fileOperations.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.fileOperations.js
 var require_protocol_fileOperations = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.fileOperations.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.fileOperations.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WillDeleteFilesRequest = exports2.DidDeleteFilesNotification = exports2.DidRenameFilesNotification = exports2.WillRenameFilesRequest = exports2.DidCreateFilesNotification = exports2.WillCreateFilesRequest = exports2.FileOperationPatternKind = void 0;
@@ -5261,9 +5261,9 @@ var require_protocol_fileOperations = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.moniker.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.moniker.js
 var require_protocol_moniker = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.moniker.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.moniker.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.MonikerRequest = exports2.MonikerKind = exports2.UniquenessLevel = void 0;
@@ -5291,9 +5291,9 @@ var require_protocol_moniker = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.typeHierarchy.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.typeHierarchy.js
 var require_protocol_typeHierarchy = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.typeHierarchy.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.typeHierarchy.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.TypeHierarchySubtypesRequest = exports2.TypeHierarchySupertypesRequest = exports2.TypeHierarchyPrepareRequest = void 0;
@@ -5319,9 +5319,9 @@ var require_protocol_typeHierarchy = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.inlineValue.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.inlineValue.js
 var require_protocol_inlineValue = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.inlineValue.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.inlineValue.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.InlineValueRefreshRequest = exports2.InlineValueRequest = void 0;
@@ -5341,9 +5341,9 @@ var require_protocol_inlineValue = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.inlayHint.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.inlayHint.js
 var require_protocol_inlayHint = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.inlayHint.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.inlayHint.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.InlayHintRefreshRequest = exports2.InlayHintResolveRequest = exports2.InlayHintRequest = void 0;
@@ -5369,9 +5369,9 @@ var require_protocol_inlayHint = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.diagnostic.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.diagnostic.js
 var require_protocol_diagnostic = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.diagnostic.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.diagnostic.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DiagnosticRefreshRequest = exports2.WorkspaceDiagnosticRequest = exports2.DocumentDiagnosticRequest = exports2.DocumentDiagnosticReportKind = exports2.DiagnosticServerCancellationData = void 0;
@@ -5414,9 +5414,9 @@ var require_protocol_diagnostic = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.notebook.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.notebook.js
 var require_protocol_notebook = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.notebook.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.notebook.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DidCloseNotebookDocumentNotification = exports2.DidSaveNotebookDocumentNotification = exports2.DidChangeNotebookDocumentNotification = exports2.NotebookCellArrayChange = exports2.DidOpenNotebookDocumentNotification = exports2.NotebookDocumentSyncRegistrationType = exports2.NotebookDocument = exports2.NotebookCell = exports2.ExecutionSummary = exports2.NotebookCellKind = void 0;
@@ -5603,9 +5603,9 @@ var require_protocol_notebook = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.inlineCompletion.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.inlineCompletion.js
 var require_protocol_inlineCompletion = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.inlineCompletion.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.inlineCompletion.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.InlineCompletionRequest = void 0;
@@ -5619,9 +5619,9 @@ var require_protocol_inlineCompletion = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/protocol.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.js
 var require_protocol = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/protocol.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/protocol.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WorkspaceSymbolRequest = exports2.CodeActionResolveRequest = exports2.CodeActionRequest = exports2.DocumentSymbolRequest = exports2.DocumentHighlightRequest = exports2.ReferencesRequest = exports2.DefinitionRequest = exports2.SignatureHelpRequest = exports2.SignatureHelpTriggerKind = exports2.HoverRequest = exports2.CompletionResolveRequest = exports2.CompletionRequest = exports2.CompletionTriggerKind = exports2.PublishDiagnosticsNotification = exports2.WatchKind = exports2.RelativePattern = exports2.FileChangeType = exports2.DidChangeWatchedFilesNotification = exports2.WillSaveTextDocumentWaitUntilRequest = exports2.WillSaveTextDocumentNotification = exports2.TextDocumentSaveReason = exports2.DidSaveTextDocumentNotification = exports2.DidCloseTextDocumentNotification = exports2.DidChangeTextDocumentNotification = exports2.TextDocumentContentChangeEvent = exports2.DidOpenTextDocumentNotification = exports2.TextDocumentSyncKind = exports2.TelemetryEventNotification = exports2.LogMessageNotification = exports2.ShowMessageRequest = exports2.ShowMessageNotification = exports2.MessageType = exports2.DidChangeConfigurationNotification = exports2.ExitNotification = exports2.ShutdownRequest = exports2.InitializedNotification = exports2.InitializeErrorCodes = exports2.InitializeRequest = exports2.WorkDoneProgressOptions = exports2.TextDocumentRegistrationOptions = exports2.StaticRegistrationOptions = exports2.PositionEncodingKind = exports2.FailureHandlingKind = exports2.ResourceOperationKind = exports2.UnregistrationRequest = exports2.RegistrationRequest = exports2.DocumentSelector = exports2.NotebookCellTextDocumentFilter = exports2.NotebookDocumentFilter = exports2.TextDocumentFilter = void 0;
@@ -6255,9 +6255,9 @@ var require_protocol = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/connection.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/connection.js
 var require_connection2 = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/connection.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/connection.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.createProtocolConnection = void 0;
@@ -6272,9 +6272,9 @@ var require_connection2 = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/common/api.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/api.js
 var require_api2 = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/common/api.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/common/api.js"(exports2) {
     "use strict";
     var __createBinding = exports2 && exports2.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -6314,9 +6314,9 @@ var require_api2 = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/lib/node/main.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/node/main.js
 var require_main3 = __commonJS({
-  "node_modules/vscode-languageserver-protocol/lib/node/main.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/lib/node/main.js"(exports2) {
     "use strict";
     var __createBinding = exports2 && exports2.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -6346,9 +6346,9 @@ var require_main3 = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/utils/async.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/utils/async.js
 var require_async = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/utils/async.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/utils/async.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.forEach = exports2.mapAsync = exports2.map = exports2.clearTestMode = exports2.setTestMode = exports2.Semaphore = exports2.Delayer = void 0;
@@ -6609,9 +6609,9 @@ var require_async = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolCompletionItem.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolCompletionItem.js
 var require_protocolCompletionItem = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolCompletionItem.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolCompletionItem.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code = require("vscode");
@@ -6624,9 +6624,9 @@ var require_protocolCompletionItem = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolCodeLens.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolCodeLens.js
 var require_protocolCodeLens = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolCodeLens.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolCodeLens.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code = require("vscode");
@@ -6639,9 +6639,9 @@ var require_protocolCodeLens = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolDocumentLink.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolDocumentLink.js
 var require_protocolDocumentLink = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolDocumentLink.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolDocumentLink.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code = require("vscode");
@@ -6654,9 +6654,9 @@ var require_protocolDocumentLink = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolCodeAction.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolCodeAction.js
 var require_protocolCodeAction = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolCodeAction.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolCodeAction.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var vscode2 = require("vscode");
@@ -6670,9 +6670,9 @@ var require_protocolCodeAction = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolDiagnostic.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolDiagnostic.js
 var require_protocolDiagnostic = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolDiagnostic.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolDiagnostic.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProtocolDiagnostic = exports2.DiagnosticCode = void 0;
@@ -6697,9 +6697,9 @@ var require_protocolDiagnostic = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolCallHierarchyItem.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolCallHierarchyItem.js
 var require_protocolCallHierarchyItem = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolCallHierarchyItem.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolCallHierarchyItem.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code = require("vscode");
@@ -6715,9 +6715,9 @@ var require_protocolCallHierarchyItem = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolTypeHierarchyItem.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolTypeHierarchyItem.js
 var require_protocolTypeHierarchyItem = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolTypeHierarchyItem.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolTypeHierarchyItem.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code = require("vscode");
@@ -6733,9 +6733,9 @@ var require_protocolTypeHierarchyItem = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolWorkspaceSymbol.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolWorkspaceSymbol.js
 var require_protocolWorkspaceSymbol = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolWorkspaceSymbol.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolWorkspaceSymbol.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code = require("vscode");
@@ -6753,9 +6753,9 @@ var require_protocolWorkspaceSymbol = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolInlayHint.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolInlayHint.js
 var require_protocolInlayHint = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolInlayHint.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolInlayHint.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code = require("vscode");
@@ -6768,9 +6768,9 @@ var require_protocolInlayHint = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/codeConverter.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/codeConverter.js
 var require_codeConverter = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/codeConverter.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/codeConverter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.createConverter = void 0;
@@ -7628,9 +7628,9 @@ var require_codeConverter = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/protocolConverter.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolConverter.js
 var require_protocolConverter = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/protocolConverter.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/protocolConverter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.createConverter = void 0;
@@ -8708,9 +8708,9 @@ ${JSON.stringify(change, void 0, 4)}`);
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/utils/uuid.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/utils/uuid.js
 var require_uuid = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/utils/uuid.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/utils/uuid.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.generateUuid = exports2.parse = exports2.isUUID = exports2.v4 = exports2.empty = void 0;
@@ -8799,9 +8799,9 @@ var require_uuid = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/progressPart.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/progressPart.js
 var require_progressPart = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/progressPart.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/progressPart.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProgressPart = void 0;
@@ -8893,9 +8893,9 @@ var require_progressPart = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/features.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/features.js
 var require_features = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/features.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/features.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WorkspaceFeature = exports2.TextDocumentLanguageFeature = exports2.TextDocumentEventFeature = exports2.DynamicDocumentFeature = exports2.DynamicFeature = exports2.StaticFeature = exports2.ensure = exports2.LSPCancellationError = void 0;
@@ -9167,17 +9167,17 @@ var require_features = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/node_modules/minimatch/lib/path.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node_modules/minimatch/lib/path.js
 var require_path = __commonJS({
-  "node_modules/vscode-languageclient/node_modules/minimatch/lib/path.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node_modules/minimatch/lib/path.js"(exports2, module2) {
     var isWindows = typeof process === "object" && process && process.platform === "win32";
     module2.exports = isWindows ? { sep: "\\" } : { sep: "/" };
   }
 });
 
-// node_modules/vscode-languageclient/node_modules/balanced-match/index.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node_modules/balanced-match/index.js
 var require_balanced_match = __commonJS({
-  "node_modules/vscode-languageclient/node_modules/balanced-match/index.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node_modules/balanced-match/index.js"(exports2, module2) {
     "use strict";
     module2.exports = balanced;
     function balanced(a, b, str) {
@@ -9233,9 +9233,9 @@ var require_balanced_match = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/node_modules/brace-expansion/index.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node_modules/brace-expansion/index.js
 var require_brace_expansion = __commonJS({
-  "node_modules/vscode-languageclient/node_modules/brace-expansion/index.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node_modules/brace-expansion/index.js"(exports2, module2) {
     var balanced = require_balanced_match();
     module2.exports = expandTop;
     var escSlash = "\0SLASH" + Math.random() + "\0";
@@ -9475,9 +9475,9 @@ var require_brace_expansion = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/node_modules/minimatch/minimatch.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node_modules/minimatch/minimatch.js
 var require_minimatch = __commonJS({
-  "node_modules/vscode-languageclient/node_modules/minimatch/minimatch.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node_modules/minimatch/minimatch.js"(exports2, module2) {
     var minimatch = module2.exports = (p, pattern, options = {}) => {
       assertValidPattern(pattern);
       if (!options.nocomment && pattern.charAt(0) === "#") {
@@ -10128,9 +10128,9 @@ var require_minimatch = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/diagnostic.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/diagnostic.js
 var require_diagnostic = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/diagnostic.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/diagnostic.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DiagnosticFeature = exports2.DiagnosticPullMode = exports2.vsdiag = void 0;
@@ -10873,9 +10873,9 @@ var require_diagnostic = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/notebook.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/notebook.js
 var require_notebook = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/notebook.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/notebook.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NotebookDocumentSyncFeature = void 0;
@@ -11656,9 +11656,9 @@ var require_notebook = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/configuration.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/configuration.js
 var require_configuration = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/configuration.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/configuration.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SyncConfigurationFeature = exports2.toJSONObject = exports2.ConfigurationFeature = void 0;
@@ -11854,9 +11854,9 @@ var require_configuration = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/textSynchronization.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/textSynchronization.js
 var require_textSynchronization = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/textSynchronization.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/textSynchronization.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DidSaveTextDocumentFeature = exports2.WillSaveWaitUntilFeature = exports2.WillSaveFeature = exports2.DidChangeTextDocumentFeature = exports2.DidCloseTextDocumentFeature = exports2.DidOpenTextDocumentFeature = void 0;
@@ -12244,9 +12244,9 @@ var require_textSynchronization = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/completion.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/completion.js
 var require_completion = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/completion.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/completion.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CompletionItemFeature = void 0;
@@ -12370,9 +12370,9 @@ var require_completion = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/hover.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/hover.js
 var require_hover = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/hover.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/hover.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.HoverFeature = void 0;
@@ -12428,9 +12428,9 @@ var require_hover = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/definition.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/definition.js
 var require_definition = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/definition.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/definition.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DefinitionFeature = void 0;
@@ -12483,9 +12483,9 @@ var require_definition = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/signatureHelp.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/signatureHelp.js
 var require_signatureHelp = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/signatureHelp.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/signatureHelp.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SignatureHelpFeature = void 0;
@@ -12553,9 +12553,9 @@ var require_signatureHelp = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/documentHighlight.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/documentHighlight.js
 var require_documentHighlight = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/documentHighlight.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/documentHighlight.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DocumentHighlightFeature = void 0;
@@ -12603,9 +12603,9 @@ var require_documentHighlight = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/documentSymbol.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/documentSymbol.js
 var require_documentSymbol = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/documentSymbol.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/documentSymbol.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DocumentSymbolFeature = exports2.SupportedSymbolTags = exports2.SupportedSymbolKinds = void 0;
@@ -12704,9 +12704,9 @@ var require_documentSymbol = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/workspaceSymbol.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/workspaceSymbol.js
 var require_workspaceSymbol = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/workspaceSymbol.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/workspaceSymbol.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WorkspaceSymbolFeature = void 0;
@@ -12779,9 +12779,9 @@ var require_workspaceSymbol = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/reference.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/reference.js
 var require_reference = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/reference.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/reference.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ReferencesFeature = void 0;
@@ -12832,9 +12832,9 @@ var require_reference = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/codeAction.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/codeAction.js
 var require_codeAction = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/codeAction.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/codeAction.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CodeActionFeature = void 0;
@@ -12924,9 +12924,9 @@ var require_codeAction = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/codeLens.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/codeLens.js
 var require_codeLens = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/codeLens.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/codeLens.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CodeLensFeature = void 0;
@@ -12998,9 +12998,9 @@ var require_codeLens = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/formatting.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/formatting.js
 var require_formatting = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/formatting.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/formatting.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DocumentOnTypeFormattingFeature = exports2.DocumentRangeFormattingFeature = exports2.DocumentFormattingFeature = void 0;
@@ -13174,9 +13174,9 @@ var require_formatting = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/rename.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/rename.js
 var require_rename = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/rename.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/rename.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.RenameFeature = void 0;
@@ -13277,9 +13277,9 @@ var require_rename = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/documentLink.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/documentLink.js
 var require_documentLink = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/documentLink.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/documentLink.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DocumentLinkFeature = void 0;
@@ -13344,9 +13344,9 @@ var require_documentLink = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/executeCommand.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/executeCommand.js
 var require_executeCommand = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/executeCommand.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/executeCommand.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ExecuteCommandFeature = void 0;
@@ -13416,9 +13416,9 @@ var require_executeCommand = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/fileSystemWatcher.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/fileSystemWatcher.js
 var require_fileSystemWatcher = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/fileSystemWatcher.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/fileSystemWatcher.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSystemWatcherFeature = void 0;
@@ -13513,9 +13513,9 @@ var require_fileSystemWatcher = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/colorProvider.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/colorProvider.js
 var require_colorProvider = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/colorProvider.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/colorProvider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ColorProviderFeature = void 0;
@@ -13585,9 +13585,9 @@ var require_colorProvider = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/implementation.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/implementation.js
 var require_implementation = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/implementation.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/implementation.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ImplementationFeature = void 0;
@@ -13639,9 +13639,9 @@ var require_implementation = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/typeDefinition.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/typeDefinition.js
 var require_typeDefinition = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/typeDefinition.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/typeDefinition.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.TypeDefinitionFeature = void 0;
@@ -13694,9 +13694,9 @@ var require_typeDefinition = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/workspaceFolder.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/workspaceFolder.js
 var require_workspaceFolder = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/workspaceFolder.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/workspaceFolder.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WorkspaceFoldersFeature = exports2.arrayDiff = void 0;
@@ -13836,9 +13836,9 @@ var require_workspaceFolder = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/foldingRange.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/foldingRange.js
 var require_foldingRange = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/foldingRange.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/foldingRange.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FoldingRangeFeature = void 0;
@@ -13901,9 +13901,9 @@ var require_foldingRange = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/declaration.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/declaration.js
 var require_declaration = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/declaration.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/declaration.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DeclarationFeature = void 0;
@@ -13955,9 +13955,9 @@ var require_declaration = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/selectionRange.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/selectionRange.js
 var require_selectionRange = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/selectionRange.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/selectionRange.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SelectionRangeFeature = void 0;
@@ -14012,9 +14012,9 @@ var require_selectionRange = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/progress.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/progress.js
 var require_progress = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/progress.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/progress.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProgressFeature = void 0;
@@ -14058,9 +14058,9 @@ var require_progress = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/callHierarchy.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/callHierarchy.js
 var require_callHierarchy = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/callHierarchy.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/callHierarchy.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CallHierarchyFeature = void 0;
@@ -14151,9 +14151,9 @@ var require_callHierarchy = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/semanticTokens.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/semanticTokens.js
 var require_semanticTokens = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/semanticTokens.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/semanticTokens.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SemanticTokensFeature = void 0;
@@ -14319,9 +14319,9 @@ var require_semanticTokens = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/fileOperations.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/fileOperations.js
 var require_fileOperations = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/fileOperations.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/fileOperations.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WillDeleteFilesFeature = exports2.WillRenameFilesFeature = exports2.WillCreateFilesFeature = exports2.DidDeleteFilesFeature = exports2.DidRenameFilesFeature = exports2.DidCreateFilesFeature = void 0;
@@ -14617,9 +14617,9 @@ var require_fileOperations = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/linkedEditingRange.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/linkedEditingRange.js
 var require_linkedEditingRange = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/linkedEditingRange.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/linkedEditingRange.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.LinkedEditingFeature = void 0;
@@ -14670,9 +14670,9 @@ var require_linkedEditingRange = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/typeHierarchy.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/typeHierarchy.js
 var require_typeHierarchy = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/typeHierarchy.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/typeHierarchy.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.TypeHierarchyFeature = void 0;
@@ -14762,9 +14762,9 @@ var require_typeHierarchy = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/inlineValue.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/inlineValue.js
 var require_inlineValue = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/inlineValue.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/inlineValue.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.InlineValueFeature = void 0;
@@ -14827,9 +14827,9 @@ var require_inlineValue = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/inlayHint.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/inlayHint.js
 var require_inlayHint = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/inlayHint.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/inlayHint.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.InlayHintsFeature = void 0;
@@ -14913,9 +14913,9 @@ var require_inlayHint = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/inlineCompletion.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/inlineCompletion.js
 var require_inlineCompletion = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/inlineCompletion.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/inlineCompletion.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.InlineCompletionItemFeature = void 0;
@@ -14967,9 +14967,9 @@ var require_inlineCompletion = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/client.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/client.js
 var require_client = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/client.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/client.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProposedFeatures = exports2.BaseLanguageClient = exports2.MessageTransports = exports2.SuspendMode = exports2.State = exports2.CloseAction = exports2.ErrorAction = exports2.RevealOutputChannelOn = void 0;
@@ -16409,9 +16409,9 @@ ${error.message}`, void 0, handlerResult.handled === true ? false : "force");
   }
 });
 
-// node_modules/vscode-languageclient/lib/node/processes.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/node/processes.js
 var require_processes = __commonJS({
-  "node_modules/vscode-languageclient/lib/node/processes.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/node/processes.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.terminate = void 0;
@@ -16451,17 +16451,17 @@ var require_processes = __commonJS({
   }
 });
 
-// node_modules/vscode-languageserver-protocol/node.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/node.js
 var require_node2 = __commonJS({
-  "node_modules/vscode-languageserver-protocol/node.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageserver-protocol/node.js"(exports2, module2) {
     "use strict";
     module2.exports = require_main3();
   }
 });
 
-// node_modules/semver/internal/debug.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/debug.js
 var require_debug = __commonJS({
-  "node_modules/semver/internal/debug.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/debug.js"(exports2, module2) {
     "use strict";
     var debug = typeof process === "object" && process.env && process.env.NODE_DEBUG && /\bsemver\b/i.test(process.env.NODE_DEBUG) ? (...args) => console.error("SEMVER", ...args) : () => {
     };
@@ -16469,9 +16469,9 @@ var require_debug = __commonJS({
   }
 });
 
-// node_modules/semver/internal/constants.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/constants.js
 var require_constants = __commonJS({
-  "node_modules/semver/internal/constants.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/constants.js"(exports2, module2) {
     "use strict";
     var SEMVER_SPEC_VERSION = "2.0.0";
     var MAX_LENGTH = 256;
@@ -16501,9 +16501,9 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/semver/internal/re.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/re.js
 var require_re = __commonJS({
-  "node_modules/semver/internal/re.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/re.js"(exports2, module2) {
     "use strict";
     var {
       MAX_SAFE_COMPONENT_LENGTH,
@@ -16589,9 +16589,9 @@ var require_re = __commonJS({
   }
 });
 
-// node_modules/semver/internal/parse-options.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/parse-options.js
 var require_parse_options = __commonJS({
-  "node_modules/semver/internal/parse-options.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/parse-options.js"(exports2, module2) {
     "use strict";
     var looseOption = Object.freeze({ loose: true });
     var emptyOpts = Object.freeze({});
@@ -16608,9 +16608,9 @@ var require_parse_options = __commonJS({
   }
 });
 
-// node_modules/semver/internal/identifiers.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/identifiers.js
 var require_identifiers = __commonJS({
-  "node_modules/semver/internal/identifiers.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/identifiers.js"(exports2, module2) {
     "use strict";
     var numeric = /^[0-9]+$/;
     var compareIdentifiers = (a, b) => {
@@ -16633,9 +16633,9 @@ var require_identifiers = __commonJS({
   }
 });
 
-// node_modules/semver/classes/semver.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/classes/semver.js
 var require_semver = __commonJS({
-  "node_modules/semver/classes/semver.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/classes/semver.js"(exports2, module2) {
     "use strict";
     var debug = require_debug();
     var { MAX_LENGTH, MAX_SAFE_INTEGER } = require_constants();
@@ -16925,9 +16925,9 @@ var require_semver = __commonJS({
   }
 });
 
-// node_modules/semver/functions/parse.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/parse.js
 var require_parse = __commonJS({
-  "node_modules/semver/functions/parse.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/parse.js"(exports2, module2) {
     "use strict";
     var SemVer = require_semver();
     var parse = (version, options, throwErrors = false) => {
@@ -16947,9 +16947,9 @@ var require_parse = __commonJS({
   }
 });
 
-// node_modules/semver/internal/lrucache.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/lrucache.js
 var require_lrucache = __commonJS({
-  "node_modules/semver/internal/lrucache.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/internal/lrucache.js"(exports2, module2) {
     "use strict";
     var LRUCache = class {
       constructor() {
@@ -16985,9 +16985,9 @@ var require_lrucache = __commonJS({
   }
 });
 
-// node_modules/semver/functions/compare.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/compare.js
 var require_compare = __commonJS({
-  "node_modules/semver/functions/compare.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/compare.js"(exports2, module2) {
     "use strict";
     var SemVer = require_semver();
     var compare = (a, b, loose) => new SemVer(a, loose).compare(new SemVer(b, loose));
@@ -16995,9 +16995,9 @@ var require_compare = __commonJS({
   }
 });
 
-// node_modules/semver/functions/eq.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/eq.js
 var require_eq = __commonJS({
-  "node_modules/semver/functions/eq.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/eq.js"(exports2, module2) {
     "use strict";
     var compare = require_compare();
     var eq = (a, b, loose) => compare(a, b, loose) === 0;
@@ -17005,9 +17005,9 @@ var require_eq = __commonJS({
   }
 });
 
-// node_modules/semver/functions/neq.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/neq.js
 var require_neq = __commonJS({
-  "node_modules/semver/functions/neq.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/neq.js"(exports2, module2) {
     "use strict";
     var compare = require_compare();
     var neq = (a, b, loose) => compare(a, b, loose) !== 0;
@@ -17015,9 +17015,9 @@ var require_neq = __commonJS({
   }
 });
 
-// node_modules/semver/functions/gt.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/gt.js
 var require_gt = __commonJS({
-  "node_modules/semver/functions/gt.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/gt.js"(exports2, module2) {
     "use strict";
     var compare = require_compare();
     var gt = (a, b, loose) => compare(a, b, loose) > 0;
@@ -17025,9 +17025,9 @@ var require_gt = __commonJS({
   }
 });
 
-// node_modules/semver/functions/gte.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/gte.js
 var require_gte = __commonJS({
-  "node_modules/semver/functions/gte.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/gte.js"(exports2, module2) {
     "use strict";
     var compare = require_compare();
     var gte = (a, b, loose) => compare(a, b, loose) >= 0;
@@ -17035,9 +17035,9 @@ var require_gte = __commonJS({
   }
 });
 
-// node_modules/semver/functions/lt.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/lt.js
 var require_lt = __commonJS({
-  "node_modules/semver/functions/lt.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/lt.js"(exports2, module2) {
     "use strict";
     var compare = require_compare();
     var lt = (a, b, loose) => compare(a, b, loose) < 0;
@@ -17045,9 +17045,9 @@ var require_lt = __commonJS({
   }
 });
 
-// node_modules/semver/functions/lte.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/lte.js
 var require_lte = __commonJS({
-  "node_modules/semver/functions/lte.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/lte.js"(exports2, module2) {
     "use strict";
     var compare = require_compare();
     var lte = (a, b, loose) => compare(a, b, loose) <= 0;
@@ -17055,9 +17055,9 @@ var require_lte = __commonJS({
   }
 });
 
-// node_modules/semver/functions/cmp.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/cmp.js
 var require_cmp = __commonJS({
-  "node_modules/semver/functions/cmp.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/cmp.js"(exports2, module2) {
     "use strict";
     var eq = require_eq();
     var neq = require_neq();
@@ -17105,9 +17105,9 @@ var require_cmp = __commonJS({
   }
 });
 
-// node_modules/semver/classes/comparator.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/classes/comparator.js
 var require_comparator = __commonJS({
-  "node_modules/semver/classes/comparator.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/classes/comparator.js"(exports2, module2) {
     "use strict";
     var ANY = /* @__PURE__ */ Symbol("SemVer ANY");
     var Comparator = class _Comparator {
@@ -17218,9 +17218,9 @@ var require_comparator = __commonJS({
   }
 });
 
-// node_modules/semver/classes/range.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/classes/range.js
 var require_range = __commonJS({
-  "node_modules/semver/classes/range.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/classes/range.js"(exports2, module2) {
     "use strict";
     var SPACE_CHARACTERS = /\s+/g;
     var Range = class _Range {
@@ -17603,9 +17603,9 @@ var require_range = __commonJS({
   }
 });
 
-// node_modules/semver/functions/satisfies.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/satisfies.js
 var require_satisfies = __commonJS({
-  "node_modules/semver/functions/satisfies.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/semver/functions/satisfies.js"(exports2, module2) {
     "use strict";
     var Range = require_range();
     var satisfies = (version, range, options) => {
@@ -17620,9 +17620,9 @@ var require_satisfies = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/common/api.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/api.js
 var require_api3 = __commonJS({
-  "node_modules/vscode-languageclient/lib/common/api.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/common/api.js"(exports2) {
     "use strict";
     var __createBinding = exports2 && exports2.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -17655,9 +17655,9 @@ var require_api3 = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/lib/node/main.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/node/main.js
 var require_main4 = __commonJS({
-  "node_modules/vscode-languageclient/lib/node/main.js"(exports2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/lib/node/main.js"(exports2) {
     "use strict";
     var __createBinding = exports2 && exports2.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -18184,11 +18184,177 @@ var require_main4 = __commonJS({
   }
 });
 
-// node_modules/vscode-languageclient/node.js
+// ../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node.js
 var require_node3 = __commonJS({
-  "node_modules/vscode-languageclient/node.js"(exports2, module2) {
+  "../../../../home/alexbsec/Projects/flecha/editors/vscode/node_modules/vscode-languageclient/node.js"(exports2, module2) {
     "use strict";
     module2.exports = require_main4();
+  }
+});
+
+// tool-paths.js
+var require_tool_paths = __commonJS({
+  "tool-paths.js"(exports2, module2) {
+    var fs = require("fs");
+    var path = require("path");
+    var FLECHA_BUNDLED_SUPPORT_LAYOUT = ["share", "flecha", "editors", "vscode"];
+    var FLECHA_BUNDLED_TOOL_LAYOUT = ["..", "..", "..", "..", "bin"];
+    function pathImplementation(platform = process.platform) {
+      return platform === "win32" ? path.win32 : path.posix;
+    }
+    function executableName(name, platform = process.platform) {
+      return platform === "win32" ? `${name}.exe` : name;
+    }
+    function installedToolCandidate(extensionPath, name, platform = process.platform) {
+      const platformPath = pathImplementation(platform);
+      return platformPath.resolve(
+        extensionPath,
+        ...FLECHA_BUNDLED_TOOL_LAYOUT,
+        executableName(name, platform)
+      );
+    }
+    function isBundledExtensionPath(extensionPath, platform = process.platform) {
+      const platformPath = pathImplementation(platform);
+      if (!platformPath.isAbsolute(extensionPath)) {
+        return false;
+      }
+      const normalized = platformPath.normalize(extensionPath);
+      const suffix = platformPath.join(...FLECHA_BUNDLED_SUPPORT_LAYOUT);
+      const comparable = platform === "win32" ? normalized.toLowerCase() : normalized;
+      const comparableSuffix = platform === "win32" ? suffix.toLowerCase() : suffix;
+      return comparable.endsWith(`${platformPath.sep}${comparableSuffix}`);
+    }
+    function isExecutable(candidate, platform = process.platform) {
+      try {
+        if (!fs.statSync(candidate).isFile()) {
+          return false;
+        }
+        fs.accessSync(
+          candidate,
+          platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function configuredPath(configuration, setting) {
+      const configured = configuration.get(setting);
+      return typeof configured === "string" && configured.trim().length > 0 ? configured.trim() : void 0;
+    }
+    function siblingTool(candidate, name, platform, usable) {
+      const platformPath = pathImplementation(platform);
+      if (!candidate || platformPath.dirname(candidate) === ".") {
+        return void 0;
+      }
+      const sibling = platformPath.join(
+        platformPath.dirname(candidate),
+        executableName(name, platform)
+      );
+      return usable(sibling) ? sibling : void 0;
+    }
+    function toolOnPath(name, platform, environmentPath, usable) {
+      const platformPath = pathImplementation(platform);
+      for (const entry of environmentPath.split(platformPath.delimiter)) {
+        const directory = entry.replace(/^"|"$/g, "").trim();
+        if (!directory) {
+          continue;
+        }
+        const candidate = platformPath.join(
+          directory,
+          executableName(name, platform)
+        );
+        if (usable(candidate)) {
+          return candidate;
+        }
+      }
+      return void 0;
+    }
+    function resolveTools2({
+      configuration,
+      extensionPath,
+      platform = process.platform,
+      environmentPath = process.env.PATH ?? "",
+      usable = (candidate) => isExecutable(candidate, platform)
+    }) {
+      const configuredServer = configuredPath(configuration, "server.path");
+      const configuredCompiler = configuredPath(configuration, "compiler.path");
+      if (configuredServer && configuredCompiler) {
+        return { serverPath: configuredServer, compilerPath: configuredCompiler };
+      }
+      if (configuredCompiler) {
+        const siblingServer = siblingTool(
+          configuredCompiler,
+          "flecha-lsp",
+          platform,
+          usable
+        );
+        if (siblingServer) {
+          return { serverPath: siblingServer, compilerPath: configuredCompiler };
+        }
+      }
+      if (configuredServer) {
+        const siblingCompiler = siblingTool(
+          configuredServer,
+          "flecha",
+          platform,
+          usable
+        );
+        if (siblingCompiler) {
+          return { serverPath: configuredServer, compilerPath: siblingCompiler };
+        }
+      }
+      const installedServer = installedToolCandidate(
+        extensionPath,
+        "flecha-lsp",
+        platform
+      );
+      const installedCompiler = installedToolCandidate(
+        extensionPath,
+        "flecha",
+        platform
+      );
+      const useBundle = isBundledExtensionPath(extensionPath, platform) && usable(installedServer) && usable(installedCompiler);
+      if (useBundle) {
+        return { serverPath: installedServer, compilerPath: installedCompiler };
+      }
+      const pathCompiler = toolOnPath(
+        "flecha",
+        platform,
+        environmentPath,
+        usable
+      );
+      const compilerServer = siblingTool(
+        pathCompiler,
+        "flecha-lsp",
+        platform,
+        usable
+      );
+      if (compilerServer) {
+        return { serverPath: compilerServer, compilerPath: pathCompiler };
+      }
+      const pathServer = toolOnPath(
+        "flecha-lsp",
+        platform,
+        environmentPath,
+        usable
+      );
+      const serverCompiler = siblingTool(pathServer, "flecha", platform, usable);
+      if (serverCompiler) {
+        return { serverPath: pathServer, compilerPath: serverCompiler };
+      }
+      throw new Error(
+        "Flecha could not find a matching flecha/flecha-lsp installation; install a release bundle or configure both executable paths"
+      );
+    }
+    module2.exports = {
+      executableName,
+      installedToolCandidate,
+      isBundledExtensionPath,
+      isExecutable,
+      resolveTools: resolveTools2,
+      toolOnPath
+    };
   }
 });
 
@@ -18198,15 +18364,15 @@ var {
   LanguageClient,
   TransportKind
 } = require_node3();
+var { resolveTools } = require_tool_paths();
 var client;
 var restartQueue = Promise.resolve();
-function configuredPath(name, fallback) {
-  const value = vscode.workspace.getConfiguration("flecha").get(name);
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
-}
-function createClient() {
-  const serverPath = configuredPath("server.path", "flecha-lsp");
-  const compilerPath = configuredPath("compiler.path", "flecha");
+function createClient(context) {
+  const configuration = vscode.workspace.getConfiguration("flecha");
+  const { serverPath, compilerPath } = resolveTools({
+    configuration,
+    extensionPath: context.extensionPath
+  });
   const serverOptions = {
     command: serverPath,
     args: [],
@@ -18230,8 +18396,8 @@ function createClient() {
     clientOptions
   );
 }
-async function startClient() {
-  client = createClient();
+async function startClient(context) {
+  client = createClient(context);
   await client.start();
 }
 async function stopClient() {
@@ -18247,10 +18413,10 @@ function reportStartFailure(error) {
     `Flecha language server failed to start: ${detail}`
   );
 }
-function restartClient() {
+function restartClient(context) {
   restartQueue = restartQueue.catch(() => void 0).then(async () => {
     await stopClient();
-    await startClient();
+    await startClient(context);
   });
   restartQueue.catch(reportStartFailure);
   return restartQueue;
@@ -18259,18 +18425,18 @@ async function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "flecha.restartLanguageServer",
-      restartClient
+      () => restartClient(context)
     )
   );
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("flecha.server.path") || event.affectsConfiguration("flecha.compiler.path")) {
-        void restartClient();
+        void restartClient(context);
       }
     })
   );
   try {
-    await startClient();
+    await startClient(context);
   } catch (error) {
     reportStartFailure(error);
   }

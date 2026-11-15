@@ -1,5 +1,6 @@
 #include "semantic/semantic_type.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <unordered_set>
 #include <utility>
@@ -150,7 +151,9 @@ bool SemanticType::IsTriviallyZeroable() const {
 }
 
 bool SemanticType::IsCopyable() const {
-    if (_kind == SemanticTypeKind::Function) return false;
+    if (_kind == SemanticTypeKind::Function ||
+        _kind == SemanticTypeKind::Interface)
+        return false;
     if (_kind == SemanticTypeKind::OwnedBuffer ||
         _kind == SemanticTypeKind::OwnedSlice)
         return false;
@@ -196,7 +199,8 @@ bool SemanticType::OwnsStorage() const {
 bool SemanticType::operator==(const SemanticType& other) const {
     return _kind == other._kind && _isConst == other._isConst &&
            _family == other._family && _structure == other._structure &&
-           _enum == other._enum && _length == other._length &&
+           _enum == other._enum && _interface == other._interface &&
+           _length == other._length &&
            ((_signature == nullptr && other._signature == nullptr) ||
             (_signature != nullptr && other._signature != nullptr &&
              *_signature == *other._signature)) &&
@@ -259,6 +263,9 @@ std::string SemanticType::Name() const {
         case SemanticTypeKind::Structure:
             return _structure->displayName.empty() ? _structure->name
                                                    : _structure->displayName;
+        case SemanticTypeKind::Interface:
+            return _interface->displayName.empty() ? _interface->name
+                                                   : _interface->displayName;
         case SemanticTypeKind::ErrorValue:
             return "error";
         case SemanticTypeKind::NamedError:
@@ -433,6 +440,8 @@ SemanticType SemanticType::FromSyntax(core::PrimitiveType type) {
 bool IsAssignable(SemanticType destination, SemanticType source) {
     if (destination.IsError() || source.IsError()) return true;
     if (destination.WithoutConst() == source.WithoutConst()) return true;
+    if (CanImplicitlyConvertInterfaceReference(source, destination))
+        return true;
     if (destination.Kind() == SemanticTypeKind::Function &&
         source.Kind() == SemanticTypeKind::Function &&
         destination.Signature().isOnce && !source.Signature().isOnce) {
@@ -509,6 +518,7 @@ bool IsAssignable(SemanticType destination, SemanticType source) {
     return source.Kind() == SemanticTypeKind::None &&
            destination.Kind() != SemanticTypeKind::Void &&
            destination.Kind() != SemanticTypeKind::Function &&
+           destination.Kind() != SemanticTypeKind::Interface &&
            !destination.IsBorrowed();
 }
 
@@ -532,8 +542,51 @@ bool CanReborrow(SemanticType destination, SemanticType source) {
            (destination.Target()->IsConst() || !source.Target()->IsConst());
 }
 
+bool CanImplicitlyConvertInterfaceReference(SemanticType source,
+                                            SemanticType destination) {
+    if (source.Kind() != SemanticTypeKind::Reference ||
+        destination.Kind() != SemanticTypeKind::Reference ||
+        destination.Target()->Kind() != SemanticTypeKind::Interface ||
+        (!destination.Target()->IsConst() && source.Target()->IsConst()))
+        return false;
+
+    const InterfaceType* target = destination.Target()->Interface();
+    const auto contains = [target](const auto& interfaces) {
+        return std::find(interfaces.begin(), interfaces.end(), target) !=
+               interfaces.end();
+    };
+    const SemanticType origin = *source.Target();
+    if (origin.Kind() == SemanticTypeKind::Structure)
+        return contains(origin.Structure()->conformanceClosure);
+    if (origin.Kind() == SemanticTypeKind::Enum)
+        return contains(origin.Enum()->conformanceClosure);
+    if (origin.Kind() != SemanticTypeKind::Interface) return false;
+    const InterfaceType* sourceInterface = origin.Interface();
+    return sourceInterface == target || contains(sourceInterface->ancestors);
+}
+
 bool CanExplicitlyCast(SemanticType source, SemanticType destination) {
     if (source.IsError() || destination.IsError()) return true;
+    if (destination.Kind() == SemanticTypeKind::Reference &&
+        destination.Target()->Kind() == SemanticTypeKind::Interface) {
+        const InterfaceType* target = destination.Target()->Interface();
+        const auto contains = [target](const auto& interfaces) {
+            return std::find(interfaces.begin(), interfaces.end(), target) !=
+                   interfaces.end();
+        };
+        if (source.Kind() == SemanticTypeKind::Structure)
+            return (destination.Target()->IsConst() || !source.IsConst()) &&
+                   contains(source.Structure()->conformanceClosure);
+        if (source.Kind() == SemanticTypeKind::Enum)
+            return (destination.Target()->IsConst() || !source.IsConst()) &&
+                   contains(source.Enum()->conformanceClosure);
+        if (source.Kind() != SemanticTypeKind::Reference ||
+            source.Target()->Kind() != SemanticTypeKind::Interface ||
+            (!destination.Target()->IsConst() && source.Target()->IsConst()))
+            return false;
+        const InterfaceType* origin = source.Target()->Interface();
+        return origin == target || contains(origin->ancestors);
+    }
     if (source.Kind() == SemanticTypeKind::Slice &&
         source.Target()->WithoutConst().Kind() == SemanticTypeKind::U8 &&
         destination.Kind() == SemanticTypeKind::StringView)

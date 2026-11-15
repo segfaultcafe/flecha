@@ -75,7 +75,7 @@
       "summary": "Typed formatting and console output facade",
       "contract": "String formatting allocates and returns errors; console writes are blocking host I/O and preserve argument order.",
       "reference": "docs/formatting.md",
-      "example": "std/src/fmt_test.fl"
+      "example": "std/src/fmt/fmt_test.fl"
     },
     {
       "name": "std::hashing::hashing",
@@ -89,49 +89,49 @@
       "summary": "Buffered reader and writer adapters",
       "contract": "Owns internal buffers, may allocate, and inherits blocking and error behavior from the wrapped stream.",
       "reference": "docs/filesystem.md#buffered-streams",
-      "example": "std/src/io/buffered_test.fl"
+      "example": "std/src/io/buffered/buffered_test.fl"
     },
     {
       "name": "std::io::errors",
       "summary": "Portable I/O error family",
       "contract": "Normalizes host failures into stable variants while preserving platform-dependent operation availability.",
       "reference": "docs/filesystem.md",
-      "example": "std/src/io/file_test.fl"
+      "example": "std/src/io/file/file_test.fl"
     },
     {
       "name": "std::io::file",
       "summary": "Files, directories, and temporary resources",
       "contract": "Owns native handles, blocks on host I/O, requires explicit close where exposed, and reports portable I/O errors.",
       "reference": "docs/filesystem.md#file-streams",
-      "example": "std/src/io/temporary_file_test.fl"
+      "example": "std/src/io/file/temporary_file_test.fl"
     },
     {
       "name": "std::io::filesystem",
       "summary": "Whole-file and filesystem operations",
       "contract": "Reads allocate owning results; operations block and can vary with host permissions/filesystem semantics; errors are explicit.",
       "reference": "docs/filesystem.md",
-      "example": "std/src/io/filesystem_test.fl"
+      "example": "std/src/io/filesystem/filesystem_test.fl"
     },
     {
       "name": "std::io::path",
       "summary": "Lexical POSIX and Windows path manipulation",
       "contract": "Lexical operations do not touch the filesystem; owning results may allocate; flavor selection makes platform rules explicit.",
       "reference": "docs/path.md",
-      "example": "std/src/io/path_test.fl"
+      "example": "std/src/io/path/path_test.fl"
     },
     {
       "name": "std::io::stdio",
       "summary": "Standard input, output, and error streams",
       "contract": "Borrows written data, may allocate for line reads, blocks on host streams, and returns I/O or parse failures.",
       "reference": "docs/filesystem.md#standard-output-and-error",
-      "example": "std/src/io/stdio_test.fl"
+      "example": "std/src/io/stdio/stdio_test.fl"
     },
     {
       "name": "std::io::stream",
-      "summary": "Reader/writer callable contracts and stream copying",
-      "contract": "Copying uses caller-visible errors and may block according to its endpoints; callables do not own endpoint storage.",
+      "summary": "Readable/writable interfaces, adapters, and stream copying",
+      "contract": "Interface references borrow endpoint storage; adapters preserve borrow lifetimes, and copying may block according to its endpoints.",
       "reference": "docs/filesystem.md#file-streams",
-      "example": "std/src/io/stream_test.fl"
+      "example": "std/src/io/stream/stream_test.fl"
     },
     {
       "name": "std::math::bits",

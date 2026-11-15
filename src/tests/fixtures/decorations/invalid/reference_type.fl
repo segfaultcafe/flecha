@@ -1,0 +1,3 @@
+module reference_type;
+decoration meta { application(&i32 a) target structure; };
+i32 main() { return 0; }

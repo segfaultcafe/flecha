@@ -1,0 +1,3 @@
+module reflection_ordinary;
+// expect FLECHA-S0081
+void inspect() { for<F> Field<T, F> field = T::fields() {  } }

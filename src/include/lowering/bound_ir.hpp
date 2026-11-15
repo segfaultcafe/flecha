@@ -5,10 +5,12 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "core/token_type.hpp"
+#include "lowering/interface_layout.hpp"
 #include "semantic/symbol.hpp"
 #include "source/source_range.hpp"
 
@@ -52,6 +54,7 @@ enum class BoundNodeKind {
     OverflowingArithmeticExpression,
     AssignmentExpression,
     CallExpression,
+    InterfaceCallExpression,
     IndirectCallExpression,
     AllocationExpression,
     StringViewOperationExpression,
@@ -675,6 +678,40 @@ class BoundCallExpression final : public BoundExpression {
     std::vector<std::unique_ptr<BoundExpression>> _arguments;
 };
 
+class BoundInterfaceCallExpression final : public BoundExpression {
+   public:
+    BoundInterfaceCallExpression(
+        source::SourceRange range, const semantic::MethodContract& contract,
+        std::unique_ptr<BoundExpression> receiver,
+        std::vector<std::unique_ptr<BoundExpression>> arguments,
+        std::optional<semantic::VariadicShape> variadicShape = std::nullopt)
+        : BoundExpression(range, contract.result.WithoutConst()),
+          _contract(contract),
+          _receiver(std::move(receiver)),
+          _arguments(std::move(arguments)),
+          _variadicShape(std::move(variadicShape)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::InterfaceCallExpression;
+    }
+    [[nodiscard]] const semantic::MethodContract& Contract() const {
+        return _contract;
+    }
+    [[nodiscard]] const BoundExpression& Receiver() const { return *_receiver; }
+    [[nodiscard]] const std::vector<std::unique_ptr<BoundExpression>>&
+    Arguments() const {
+        return _arguments;
+    }
+    [[nodiscard]] const semantic::VariadicShape* Shape() const {
+        return _variadicShape ? &*_variadicShape : nullptr;
+    }
+
+   private:
+    const semantic::MethodContract& _contract;
+    std::unique_ptr<BoundExpression> _receiver;
+    std::vector<std::unique_ptr<BoundExpression>> _arguments;
+    std::optional<semantic::VariadicShape> _variadicShape;
+};
+
 class BoundIndirectCallExpression final : public BoundExpression {
    public:
     BoundIndirectCallExpression(
@@ -974,10 +1011,29 @@ struct BoundForeignSource final {
 
 class BoundProgram final {
    public:
-    explicit BoundProgram(std::vector<std::unique_ptr<BoundFunction>> functions,
-                          std::vector<BoundForeignSource> foreignSources = {})
+    explicit BoundProgram(
+        std::vector<std::unique_ptr<BoundFunction>> functions,
+        std::vector<BoundForeignSource> foreignSources = {},
+        std::vector<InterfaceTablePlan> interfaceTables = {},
+        std::vector<InterfaceTableLayout> interfaceLayouts = {},
+        std::unordered_map<const semantic::MethodContract*,
+                           std::vector<semantic::VariadicShape>>
+            interfaceVariadicShapes = {},
+        std::unordered_map<const semantic::FunctionSymbol*,
+                           const semantic::FunctionSymbol*>
+            variadicTargets = {},
+        std::unordered_map<
+            const semantic::FunctionSymbol*,
+            std::unordered_map<std::string, const semantic::FunctionSymbol*>>
+            interfaceVariadicShapeTargets = {})
         : _functions(std::move(functions)),
-          _foreignSources(std::move(foreignSources)) {}
+          _foreignSources(std::move(foreignSources)),
+          _interfaceTables(std::move(interfaceTables)),
+          _interfaceLayouts(std::move(interfaceLayouts)),
+          _interfaceVariadicShapes(std::move(interfaceVariadicShapes)),
+          _variadicTargets(std::move(variadicTargets)),
+          _interfaceVariadicShapeTargets(
+              std::move(interfaceVariadicShapeTargets)) {}
     BoundProgram(const BoundProgram&) = delete;
     BoundProgram& operator=(const BoundProgram&) = delete;
     BoundProgram(BoundProgram&&) = default;
@@ -990,10 +1046,39 @@ class BoundProgram final {
         const {
         return _foreignSources;
     }
+    [[nodiscard]] const std::vector<InterfaceTablePlan>& InterfaceTables()
+        const {
+        return _interfaceTables;
+    }
+    [[nodiscard]] const std::vector<InterfaceTableLayout>& InterfaceLayouts()
+        const {
+        return _interfaceLayouts;
+    }
+    [[nodiscard]] const auto& InterfaceVariadicShapes() const {
+        return _interfaceVariadicShapes;
+    }
+    [[nodiscard]] const auto& VariadicTargets() const {
+        return _variadicTargets;
+    }
+    [[nodiscard]] const auto& InterfaceVariadicShapeTargets() const {
+        return _interfaceVariadicShapeTargets;
+    }
 
    private:
     std::vector<std::unique_ptr<BoundFunction>> _functions;
     std::vector<BoundForeignSource> _foreignSources;
+    std::vector<InterfaceTablePlan> _interfaceTables;
+    std::vector<InterfaceTableLayout> _interfaceLayouts;
+    std::unordered_map<const semantic::MethodContract*,
+                       std::vector<semantic::VariadicShape>>
+        _interfaceVariadicShapes;
+    std::unordered_map<const semantic::FunctionSymbol*,
+                       const semantic::FunctionSymbol*>
+        _variadicTargets;
+    std::unordered_map<
+        const semantic::FunctionSymbol*,
+        std::unordered_map<std::string, const semantic::FunctionSymbol*>>
+        _interfaceVariadicShapeTargets;
 };
 
 }  // namespace flecha::lowering

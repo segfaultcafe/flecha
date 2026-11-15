@@ -1,0 +1,21 @@
+module records;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+behavior meta<T> => structure << Writable {
+    i32 T::write(&const self, i32 value) override {
+        return deferred_until_specialization();
+    }
+};
+behavior meta<T> => enum << Writable {};
+@meta structure Direct { @meta("a") i32 a; @meta("b") i32 b; };
+structure FieldsOnly { @meta("c") i32 c; };
+@meta enum Choice { A, B }
+@meta interface Metadata {};
+interface Child << Metadata {};
+structure Ordinary << Child {};
+i32 main() { return 0; }

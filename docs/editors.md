@@ -2,8 +2,8 @@
 
 Flecha releases provide a ready-to-install Visual Studio Code extension and a
 Neovim runtime plugin. Both provide syntax highlighting, filetype detection,
-comments, brackets, and indentation support. The Visual Studio Code extension
-also starts `flecha-lsp` for live compiler diagnostics.
+comments, brackets, indentation support, and automatic `flecha-lsp` startup
+for live compiler diagnostics and semantic language features.
 
 Both editors render the `!` in a crashable declaration or call, such as
 `load!()`, in orange. Logical negation such as `!ready` keeps the ordinary
@@ -41,7 +41,12 @@ code --uninstall-extension flecha.flecha-language
 When `code` is not on `PATH`, open the Extensions view, choose **Views and More
 Actions**, select **Install from VSIX**, and select the downloaded file.
 
-The language-server client expects `flecha-lsp` and `flecha` on `PATH`. Custom
+The language-server client automatically uses `flecha-lsp` and `flecha` from a
+matching compiler bundle when the extension is loaded from
+`share/flecha/editors/vscode`. The lookup is relative to that directory, so the
+bundle can be moved after extraction. A separately installed VSIX resolves
+`flecha` on `PATH` and selects the sibling `flecha-lsp` from the same directory,
+so an obsolete standalone server cannot shadow the matching compiler. Custom
 development builds can be selected in user settings:
 
 ```json
@@ -55,6 +60,12 @@ Run **Flecha: Restart Language Server** after changing or rebuilding either
 executable. Set `flecha.trace.server` to `messages` or `verbose` when debugging
 the LSP connection.
 
+The server uses full-document synchronization and provides compiler
+diagnostics, hover information, go to definition, references, completion,
+rename, and semantic tokens. Semantic queries operate over the entry module and
+the modules it imports; workspace-wide indexing and incremental analysis are
+not yet implemented.
+
 ### Package a checkout
 
 Install Node.js 22 or newer, then run this from the repository root:
@@ -63,8 +74,9 @@ Install Node.js 22 or newer, then run this from the repository root:
 make package-vscode
 ```
 
-This uses `npm ci` and the checked-in lockfile to package the extension with the
-pinned official `@vscode/vsce` release. It writes
+This uses `npm ci` and the checked-in lockfile, tests relocatable bundle and
+`PATH` discovery, and packages the extension with the pinned official
+`@vscode/vsce` release. It writes
 `editors/vscode/flecha-language-VERSION.vsix` and verifies the archive's
 identity, version, installation manifest, grammar, and development-file
 exclusions, including the bundled language-client entry point. CI performs the
@@ -98,6 +110,24 @@ Neovim configuration:
 filetype plugin indent on
 ```
 
+On Neovim 0.8 or newer, the plugin automatically starts `flecha-lsp` and
+enables diagnostics, hover, definition, references, completion, and rename.
+Semantic-token highlighting requires Neovim 0.9 or newer. When the plugin is
+copied into Neovim's package directory, put the release's `bin` directory on
+`PATH`; the plugin resolves `flecha` first and selects its sibling
+`flecha-lsp`. Alternatively, configure their absolute paths before plugins
+load:
+
+```lua
+vim.g.flecha_lsp_cmd = { "/path/to/flecha-lsp" }
+vim.g.flecha_compiler_path = "/path/to/flecha"
+```
+
+The nearest enclosing `longbow.toml` or `.git` directory becomes the workspace
+root. Use `:FlechaLspInfo` to inspect the resolved configuration. Set
+`vim.g.flecha_lsp_autostart = 0` before plugin loading to retain only syntax,
+indentation, and Longbow commands.
+
 In a Longbow project, `<leader>rr` runs `longbow run` and opens its output in
 the quickfix window. It is available immediately after starting Neovim at the
 project root, even with no file open. A named buffer is saved first and its
@@ -121,5 +151,6 @@ ln -s /path/to/flecha/editors/neovim \
     ~/.local/share/nvim/site/pack/flecha/start/flecha.nvim
 ```
 
-Run `make test-neovim` from a checkout to exercise filetype detection, syntax
-groups, buffer settings, and indentation headlessly.
+Run `make test-neovim` from a checkout to exercise language-server discovery
+and reuse, filetype detection, syntax groups, buffer settings, and indentation
+headlessly.

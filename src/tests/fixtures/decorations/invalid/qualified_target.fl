@@ -1,0 +1,3 @@
+module qualified_target;
+decoration meta { application() target enum::field; };
+i32 main() { return 0; }

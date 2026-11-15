@@ -22,8 +22,11 @@ enum class AstNodeKind {
     CallableTypeDeclaration,
     ErrorDeclaration,
     EnumDeclaration,
+    InterfaceDeclaration,
+    InterfaceMethod,
     TypeSetDeclaration,
     DecorationDeclaration,
+    BehaviorDeclaration,
     ModuleConstantDeclaration,
     StructureDeclaration,
     StructureField,
@@ -38,6 +41,7 @@ enum class AstNodeKind {
     IfStatement,
     WhileStatement,
     RangeStatement,
+    FieldIterationStatement,
     ProceedStatement,
     BreakStatement,
     JumpToStatement,
@@ -84,12 +88,16 @@ class AstNode {
     source::SourceRange _range;
 };
 
-enum class DecorationArgumentKind { Identifier, String };
+class Expression;
+
+enum class DecorationArgumentKind { Identifier, String, Expression };
 
 struct DecorationArgument final {
     DecorationArgumentKind kind;
     std::string value;
     source::SourceRange range;
+    // Shared immutable syntax preserves applications copied to specializations.
+    std::shared_ptr<const Expression> expression;
 };
 
 struct DecorationApplication final {
@@ -127,6 +135,9 @@ class Declaration : public AstNode {
     std::size_t ownerTokenIndex = 0;
     std::vector<source::SourceRange> instantiationOrigins;
     std::string specializationName;
+    // Stable, qualified identity for generated closed specializations. Unlike
+    // specializationName, this is compiler-internal and never user-facing.
+    std::string specializationIdentity;
     std::vector<DecorationApplication> decorations;
 };
 
@@ -345,17 +356,24 @@ struct EnumVariant final {
     source::SourceRange discriminantRange;
 };
 
+struct NominalParent final {
+    std::string name;
+    source::SourceRange range;
+};
+
 class EnumDeclaration final : public Declaration {
    public:
     EnumDeclaration(source::SourceRange range, std::string name,
                     source::SourceRange nameRange,
                     std::unique_ptr<TypeNode> backingType,
-                    std::vector<EnumVariant> variants)
+                    std::vector<EnumVariant> variants,
+                    std::vector<NominalParent> conformances = {})
         : Declaration(range),
           _name(std::move(name)),
           _nameRange(nameRange),
           _backingType(std::move(backingType)),
-          _variants(std::move(variants)) {}
+          _variants(std::move(variants)),
+          _conformances(std::move(conformances)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::EnumDeclaration;
@@ -368,12 +386,16 @@ class EnumDeclaration final : public Declaration {
     [[nodiscard]] const std::vector<EnumVariant>& Variants() const {
         return _variants;
     }
+    [[nodiscard]] const std::vector<NominalParent>& Conformances() const {
+        return _conformances;
+    }
 
    private:
     std::string _name;
     source::SourceRange _nameRange;
     std::unique_ptr<TypeNode> _backingType;
     std::vector<EnumVariant> _variants;
+    std::vector<NominalParent> _conformances;
 };
 
 class TypeSetDeclaration final : public Declaration {
@@ -402,21 +424,58 @@ class TypeSetDeclaration final : public Declaration {
     std::vector<std::unique_ptr<TypeNode>> _members;
 };
 
+enum class DecorationTarget {
+    Invalid,
+    Structure,
+    StructureField,
+    Enum,
+    Interface
+};
+
+struct DecorationParameter final {
+    source::SourceRange range;
+    std::unique_ptr<TypeNode> type;
+    std::string name;
+    source::SourceRange nameRange;
+    // A missing type denotes a literal marker, currently only `structure`.
+    std::string marker;
+};
+
+struct DecorationSignature final {
+    source::SourceRange range;
+    source::SourceRange applicationRange;
+    std::vector<DecorationParameter> parameters;
+    DecorationTarget target = DecorationTarget::Invalid;
+    source::SourceRange targetKeywordRange;
+    source::SourceRange targetRange;
+    std::vector<std::string> targetPath;
+    std::vector<source::SourceRange> targetPathRanges;
+};
+
 class DecorationDeclaration final : public Declaration {
    public:
     DecorationDeclaration(source::SourceRange range, std::string name,
-                          source::SourceRange nameRange)
-        : Declaration(range), _name(std::move(name)), _nameRange(nameRange) {}
+                          source::SourceRange nameRange, bool hasBody = false,
+                          std::vector<DecorationSignature> signatures = {})
+        : Declaration(range),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _hasBody(hasBody),
+          _signatures(std::move(signatures)) {}
 
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::DecorationDeclaration;
     }
     [[nodiscard]] const std::string& Name() const { return _name; }
     [[nodiscard]] source::SourceRange NameRange() const { return _nameRange; }
+    [[nodiscard]] bool HasBody() const { return _hasBody; }
+    [[nodiscard]] const auto& Signatures() const { return _signatures; }
 
    private:
     std::string _name;
     source::SourceRange _nameRange;
+    bool _hasBody;
+    std::vector<DecorationSignature> _signatures;
 };
 
 class StructureField final : public AstNode {
@@ -455,22 +514,28 @@ class StructureDeclaration final : public Declaration {
    public:
     StructureDeclaration(source::SourceRange range, std::string name,
                          source::SourceRange nameRange,
-                         std::vector<std::unique_ptr<StructureField>> fields)
+                         std::vector<std::unique_ptr<StructureField>> fields,
+                         std::vector<NominalParent> conformances = {})
         : Declaration(range),
           _name(std::move(name)),
           _nameRange(nameRange),
-          _fields(std::move(fields)) {}
+          _fields(std::move(fields)),
+          _conformances(std::move(conformances)) {}
     AstNodeKind Kind() const override {
         return AstNodeKind::StructureDeclaration;
     }
     const std::string& Name() const { return _name; }
     source::SourceRange NameRange() const { return _nameRange; }
     const auto& Fields() const { return _fields; }
+    [[nodiscard]] const std::vector<NominalParent>& Conformances() const {
+        return _conformances;
+    }
 
    private:
     std::string _name;
     source::SourceRange _nameRange;
     std::vector<std::unique_ptr<StructureField>> _fields;
+    std::vector<NominalParent> _conformances;
 };
 
 class Parameter final : public AstNode {
@@ -506,6 +571,7 @@ class Parameter final : public AstNode {
 
 enum class FunctionModifier : std::uint8_t {
     Private,
+    Protected,
     Override,
     Unsafe,
     Once,
@@ -668,6 +734,96 @@ class FunctionDeclaration final : public Declaration {
     bool _isTestHarness = false;
 };
 
+// A behavior owns syntax only; its methods are never top-level functions.
+class BehaviorDeclaration final : public Declaration {
+   public:
+    explicit BehaviorDeclaration(source::SourceRange range)
+        : Declaration(range) {}
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::BehaviorDeclaration;
+    }
+
+    DecorationApplication decoration;
+    source::SourceRange keywordRange;
+    std::string targetParameter;
+    source::SourceRange parameterRange;
+    bool validParameter = false;
+    DecorationTarget target = DecorationTarget::Invalid;
+    source::SourceRange targetRange;
+    std::vector<NominalParent> roots;
+    std::vector<std::unique_ptr<FunctionDeclaration>> methods;
+};
+
+enum class MethodCategory : std::uint8_t {
+    Missing,
+    Virtual,
+    Default,
+    Final,
+    Invalid,
+};
+
+class InterfaceMethod final : public AstNode {
+   public:
+    InterfaceMethod(source::SourceRange range,
+                    std::unique_ptr<FunctionDeclaration> signature,
+                    MethodCategory category,
+                    source::SourceRange categoryRange = {})
+        : AstNode(range),
+          _signature(std::move(signature)),
+          _category(category),
+          _categoryRange(categoryRange) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::InterfaceMethod;
+    }
+    [[nodiscard]] const FunctionDeclaration& Signature() const {
+        return *_signature;
+    }
+    [[nodiscard]] MethodCategory Category() const { return _category; }
+    [[nodiscard]] const source::SourceRange& CategoryRange() const {
+        return _categoryRange;
+    }
+
+   private:
+    std::unique_ptr<FunctionDeclaration> _signature;
+    MethodCategory _category;
+    source::SourceRange _categoryRange;
+};
+
+class InterfaceDeclaration final : public Declaration {
+   public:
+    InterfaceDeclaration(source::SourceRange range, std::string name,
+                         source::SourceRange nameRange,
+                         std::vector<NominalParent> parents,
+                         std::vector<std::unique_ptr<InterfaceMethod>> methods)
+        : Declaration(range),
+          _name(std::move(name)),
+          _nameRange(nameRange),
+          _parents(std::move(parents)),
+          _methods(std::move(methods)) {}
+
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::InterfaceDeclaration;
+    }
+    [[nodiscard]] const std::string& Name() const { return _name; }
+    [[nodiscard]] const source::SourceRange& NameRange() const {
+        return _nameRange;
+    }
+    [[nodiscard]] const std::vector<NominalParent>& Parents() const {
+        return _parents;
+    }
+    [[nodiscard]] const std::vector<std::unique_ptr<InterfaceMethod>>& Methods()
+        const {
+        return _methods;
+    }
+
+   private:
+    std::string _name;
+    source::SourceRange _nameRange;
+    std::vector<NominalParent> _parents;
+    std::vector<std::unique_ptr<InterfaceMethod>> _methods;
+};
+
 class AnonymousFunctionExpression final : public Expression {
    public:
     enum class CaptureMode { Copy, Reference, ConstReference, Lend, Own };
@@ -802,6 +958,11 @@ struct Import final {
     std::string resolvedModule;
     source::SourceRange range;
 };
+struct NamespaceAttachment final {
+    std::vector<std::string> path;
+    std::vector<source::SourceRange> segmentRanges;
+    source::SourceRange range;
+};
 struct Module final {
     std::string id;
     std::string sourceId;
@@ -814,6 +975,11 @@ struct Module final {
     bool test = false;
     std::string testPair;
     std::vector<Import> imports;
+    // Attached modules keep their physical source namespace for diagnostics
+    // and tooling while quiverId/quiverName describe logical ownership.
+    std::string physicalQuiverId;
+    std::string physicalQuiverName;
+    std::optional<NamespaceAttachment> namespaceAttachment;
 };
 
 enum class ForeignLanguage { C, Assembly };
@@ -840,6 +1006,7 @@ class CompilationUnit final : public AstNode {
     }
     std::string moduleName;
     bool privateModule = false;
+    std::optional<NamespaceAttachment> namespaceAttachment;
     std::vector<Import> imports;
     std::vector<Module> modules;
     std::vector<ForeignSource> foreignSources;
@@ -1264,6 +1431,21 @@ class RangeStatement final : public Statement {
     std::unique_ptr<BlockStatement> _expansion;
     const VariableDeclarationStatement* _source;
     const VariableDeclarationStatement* _indexBinding;
+};
+
+// A bounded compiler-only field pack iteration; never a runtime loop.
+class FieldIterationStatement final : public Statement {
+   public:
+    explicit FieldIterationStatement(source::SourceRange range)
+        : Statement(range) {}
+    AstNodeKind Kind() const override {
+        return AstNodeKind::FieldIterationStatement;
+    }
+    source::SourceRange keywordRange, binderRange, fieldRange, targetRange,
+        valueTypeRange, descriptorRange, packRange;
+    std::string binder, target, valueType, descriptor;
+    std::unique_ptr<Expression> pack;
+    std::unique_ptr<BlockStatement> body;
 };
 
 class LiteralExpression final : public Expression {

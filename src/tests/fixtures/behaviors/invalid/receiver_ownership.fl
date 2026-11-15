@@ -1,0 +1,4 @@
+module receiver_ownership;
+decoration meta { application() target structure; };
+interface Root { i32 call(&self, i32 value) virtual; };
+behavior meta<T> => structure << Root { i32 T::call(own &T self, i32 value) override { return 0; } };

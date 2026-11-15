@@ -1,0 +1,6 @@
+module main;
+@imports :: root::metadata as m;
+const stringv LABEL = "consumer";
+@m::meta(LABEL) structure Item { @m::meta(LABEL) private i32 value; };
+@m::meta(LABEL) enum State { Ready }
+i32 main() { return 0; }

@@ -3,20 +3,17 @@ const {
   LanguageClient,
   TransportKind,
 } = require("vscode-languageclient/node");
+const { resolveTools } = require("./tool-paths");
 
 let client;
 let restartQueue = Promise.resolve();
 
-function configuredPath(name, fallback) {
-  const value = vscode.workspace.getConfiguration("flecha").get(name);
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : fallback;
-}
-
-function createClient() {
-  const serverPath = configuredPath("server.path", "flecha-lsp");
-  const compilerPath = configuredPath("compiler.path", "flecha");
+function createClient(context) {
+  const configuration = vscode.workspace.getConfiguration("flecha");
+  const { serverPath, compilerPath } = resolveTools({
+    configuration,
+    extensionPath: context.extensionPath,
+  });
   const serverOptions = {
     command: serverPath,
     args: [],
@@ -41,8 +38,8 @@ function createClient() {
   );
 }
 
-async function startClient() {
-  client = createClient();
+async function startClient(context) {
+  client = createClient(context);
   await client.start();
 }
 
@@ -61,12 +58,12 @@ function reportStartFailure(error) {
   );
 }
 
-function restartClient() {
+function restartClient(context) {
   restartQueue = restartQueue
     .catch(() => undefined)
     .then(async () => {
       await stopClient();
-      await startClient();
+      await startClient(context);
     });
   restartQueue.catch(reportStartFailure);
   return restartQueue;
@@ -76,7 +73,7 @@ async function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "flecha.restartLanguageServer",
-      restartClient,
+      () => restartClient(context),
     ),
   );
   context.subscriptions.push(
@@ -85,13 +82,13 @@ async function activate(context) {
         event.affectsConfiguration("flecha.server.path") ||
         event.affectsConfiguration("flecha.compiler.path")
       ) {
-        void restartClient();
+        void restartClient(context);
       }
     }),
   );
 
   try {
-    await startClient();
+    await startClient(context);
   } catch (error) {
     reportStartFailure(error);
   }

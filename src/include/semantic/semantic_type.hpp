@@ -44,6 +44,7 @@ enum class SemanticTypeKind {
     NamedError,
     Enum,
     Structure,
+    Interface,
 };
 
 struct ErrorFamily final {
@@ -54,6 +55,7 @@ struct ErrorFamily final {
 
 struct StructureType;
 struct EnumType;
+struct InterfaceType;
 struct CallableSignature;
 
 class SemanticType final {
@@ -94,6 +96,12 @@ class SemanticType final {
           _isConst(isConst),
           _enum(enumeration) {}
     const EnumType* Enum() const { return _enum; }
+    explicit SemanticType(const InterfaceType* interfaceType,
+                          bool isConst = false)
+        : _kind(SemanticTypeKind::Interface),
+          _isConst(isConst),
+          _interface(interfaceType) {}
+    const InterfaceType* Interface() const { return _interface; }
     explicit SemanticType(std::shared_ptr<const CallableSignature> signature,
                           bool isConst = false)
         : _kind(SemanticTypeKind::Function),
@@ -165,6 +173,7 @@ class SemanticType final {
     std::shared_ptr<const ErrorFamily> _family;
     const StructureType* _structure = nullptr;
     const EnumType* _enum = nullptr;
+    const InterfaceType* _interface = nullptr;
     std::shared_ptr<const CallableSignature> _signature;
     std::uint64_t _length = 0;
     std::shared_ptr<const SemanticType> _target;
@@ -188,6 +197,8 @@ struct CallableSignature final {
 [[nodiscard]] bool IsExternAssignable(SemanticType destination,
                                       SemanticType source);
 [[nodiscard]] bool CanReborrow(SemanticType destination, SemanticType source);
+[[nodiscard]] bool CanImplicitlyConvertInterfaceReference(
+    SemanticType source, SemanticType destination);
 [[nodiscard]] bool CanExplicitlyCast(SemanticType source,
                                      SemanticType destination);
 

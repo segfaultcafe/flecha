@@ -1,0 +1,4 @@
+module annotations;
+under namespace root;
+@meta("attached") structure Attached {};
+@local interface LocalProtocol {};

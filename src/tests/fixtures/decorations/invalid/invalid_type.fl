@@ -1,0 +1,3 @@
+module invalid_type;
+decoration meta { application(void a) target structure; };
+i32 main() { return 0; }

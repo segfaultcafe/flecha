@@ -1,0 +1,18 @@
+structure Concrete {};
+
+interface UnknownParent << Missing {};
+interface WrongParent << Concrete {};
+interface Recursive << Recursive {};
+
+interface First << Second {};
+interface Second << First {};
+
+interface Root {};
+interface Child << Root {};
+interface Related << Root, Child {};
+
+interface Left << Root {};
+interface Right << Root {};
+interface Diamond << Left, Right {};
+
+structure Duplicate << Root, Root {};

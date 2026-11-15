@@ -1,0 +1,4 @@
+module bar;
+under namespace root::foo;
+
+export i32 same() { return 2; }

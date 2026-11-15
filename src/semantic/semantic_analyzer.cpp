@@ -19,6 +19,7 @@
 #include "semantic/borrow_checker.hpp"
 #include "semantic/definite_assignment.hpp"
 #include "semantic/generic_expander.hpp"
+#include "semantic/method_contract.hpp"
 
 namespace flecha::semantic {
 namespace {
@@ -32,36 +33,10 @@ std::string TypeMismatch(SemanticType expected, SemanticType actual) {
            std::string(actual.Name()) + "'";
 }
 
-std::string MangleType(SemanticType type) {
-    std::string result = type.IsConst() ? "K" : "N";
-    result += std::to_string(static_cast<int>(type.Kind()));
-    if (type.Kind() == SemanticTypeKind::Structure ||
-        type.Kind() == SemanticTypeKind::Enum ||
-        type.Kind() == SemanticTypeKind::NamedError) {
-        const std::string name(type.Name());
-        result += "_" + std::to_string(name.size()) + name;
-    }
-    if (type.Target()) result += "T" + MangleType(*type.Target());
-    if (type.Kind() == SemanticTypeKind::Array)
-        result += "L" + std::to_string(type.Length());
-    if (type.Kind() == SemanticTypeKind::Tuple) {
-        result += "E" + std::to_string(type.Elements().size());
-        for (const SemanticType element : type.Elements())
-            result += MangleType(element);
-    }
-    if (type.Kind() == SemanticTypeKind::Function) {
-        result += "R" + MangleType(type.Signature().result);
-        result += "P" + std::to_string(type.Signature().parameters.size());
-        for (const SemanticType parameter : type.Signature().parameters)
-            result += MangleType(parameter);
-    }
-    return result;
-}
-
 std::string OverloadLinkName(const FunctionSymbol& function) {
     std::string result = function.Name() + "$overload$";
     for (const SemanticType parameter : function.ParameterTypes())
-        result += MangleType(parameter);
+        result += CanonicalTypeIdentity(parameter);
     return result;
 }
 
@@ -602,6 +577,11 @@ void SemanticAnalyzer::BindImports(const core::CompilationUnit& unit) {
                                *declaration)
                                .Name();
                 else if (declaration->Kind() ==
+                         core::AstNodeKind::InterfaceDeclaration)
+                    name = static_cast<const core::InterfaceDeclaration&>(
+                               *declaration)
+                               .Name();
+                else if (declaration->Kind() ==
                          core::AstNodeKind::EnumDeclaration)
                     name =
                         static_cast<const core::EnumDeclaration&>(*declaration)
@@ -688,10 +668,88 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         const auto [previous, inserted] =
             names.emplace(decoration.Name(), &decoration);
         if (!inserted)
-            Report(
+            _diagnostics.Report(
                 diagnostics::DiagnosticCode::DuplicateDeclaration,
                 decoration.NameRange(),
-                "duplicate decoration declaration '" + decoration.Name() + "'");
+                "duplicate decoration declaration '" + decoration.Name() + "'",
+                diagnostics::DiagnosticSeverity::Error,
+                {{previous->second->NameRange(), "previous declaration"}});
+    }
+
+    for (const auto& declaration : unit.Declarations()) {
+        if (declaration->Kind() != AstNodeKind::DecorationDeclaration) continue;
+        const auto& decoration =
+            static_cast<const DecorationDeclaration&>(*declaration);
+        SetSource(decoration.sourceId);
+        DecorationContract contract{&decoration, {}};
+        std::map<core::DecorationTarget, source::SourceRange> targets;
+        for (const auto& signature : decoration.Signatures()) {
+            DecorationApplicationContract application{&signature, {}};
+            const auto [previous, inserted] =
+                targets.emplace(signature.target, signature.targetRange);
+            if (!inserted) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::DuplicateDecorationSignature,
+                    signature.targetRange,
+                    "duplicate application signature for decoration target",
+                    diagnostics::DiagnosticSeverity::Error,
+                    {{previous->second, "previous target signature"}});
+                application.valid = false;
+                for (auto& prior : contract.applications)
+                    if (prior.syntax->target == signature.target)
+                        prior.valid = false;
+            }
+            if (signature.target == core::DecorationTarget::Invalid)
+                application.valid = false;
+            std::map<std::string, source::SourceRange> names;
+            for (const auto& parameter : signature.parameters) {
+                SemanticType type = SemanticType::Error();
+                if (!parameter.type) {
+                    if (parameter.marker != "structure") {
+                        Report(diagnostics::DiagnosticCode::
+                                   InvalidDecorationMarker,
+                               parameter.range,
+                               "unsupported literal decoration marker '" +
+                                   parameter.marker + "'");
+                        application.valid = false;
+                    }
+                } else {
+                    type = ResolveType(*parameter.type);
+                    const bool valid =
+                        type.IsNumeric() ||
+                        type.Kind() == SemanticTypeKind::Bool ||
+                        type.Kind() == SemanticTypeKind::Char ||
+                        type.Kind() == SemanticTypeKind::StringView ||
+                        type.Kind() == SemanticTypeKind::Enum ||
+                        type.IsErrorValue();
+                    if (!valid) {
+                        Report(diagnostics::DiagnosticCode::
+                                   InvalidDecorationParameter,
+                               parameter.type->Range(),
+                               "decoration parameters require a compile-time "
+                               "numeric, bool, char, stringv, enum, or "
+                               "error-value type");
+                        application.valid = false;
+                    }
+                    const auto [prior, unique] =
+                        names.emplace(parameter.name, parameter.nameRange);
+                    if (!unique) {
+                        _diagnostics.Report(
+                            diagnostics::DiagnosticCode::
+                                InvalidDecorationParameter,
+                            parameter.nameRange,
+                            "duplicate decoration parameter '" +
+                                parameter.name + "'",
+                            diagnostics::DiagnosticSeverity::Error,
+                            {{prior->second, "previous parameter"}});
+                        application.valid = false;
+                    }
+                }
+                application.parameters.push_back({&parameter, type});
+            }
+            contract.applications.push_back(std::move(application));
+        }
+        _model._decorationContracts.emplace(&decoration, std::move(contract));
     }
 
     const auto sourceModule =
@@ -727,7 +785,14 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         for (const auto& import : module->imports) {
             if (import.alias != alias) continue;
             const auto* candidate = inModule(import.resolvedModule, name);
-            if (!candidate || !candidate->exported) continue;
+            if (!candidate) continue;
+            const bool privileged =
+                module->test && module->testPair == import.resolvedModule;
+            if (!(candidate->exported ||
+                  (candidate->quiverVisible &&
+                   candidate->quiverId == module->quiverId) ||
+                  privileged))
+                continue;
             if (result && result != candidate) return nullptr;
             result = candidate;
         }
@@ -737,34 +802,183 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         [&](const DecorationApplication& application,
             const Declaration& context) -> const DecorationDeclaration* {
         const auto* result = resolve(application, context);
-        if (!result)
-            Report(diagnostics::DiagnosticCode::InvalidDecoration,
-                   application.range,
-                   "unknown or inaccessible decoration '@" +
-                       application.Name() + "'");
+        if (!result) {
+            std::vector<diagnostics::RelatedLocation> related;
+            bool typed = false;
+            if (const core::Module* module = sourceModule(context.sourceId))
+                for (const auto& import : module->imports) {
+                    if (application.path.empty() ||
+                        import.alias != application.path.front())
+                        continue;
+                    if (const auto* candidate = inModule(import.resolvedModule,
+                                                         application.Name())) {
+                        typed = typed || candidate->HasBody();
+                        related.push_back({candidate->NameRange(),
+                                           "decoration declared here"});
+                    }
+                }
+            _diagnostics.Report(
+                typed ? diagnostics::DiagnosticCode::InaccessibleDecoration
+                      : diagnostics::DiagnosticCode::InvalidDecoration,
+                application.pathRanges.back(),
+                "unknown or inaccessible decoration '@" + application.Name() +
+                    "'",
+                diagnostics::DiagnosticSeverity::Error, std::move(related));
+        }
+        if (result) _model._decorationBindings.emplace(&application, result);
         return result;
     };
     const auto requireCompilerCounterpart =
         [&](const DecorationApplication& application,
             const DecorationDeclaration* decoration) {
-            if (!decoration || decoration->Name() == "json") return;
+            if (!decoration || decoration->HasBody() ||
+                decoration->Name() == "json")
+                return;
             Report(diagnostics::DiagnosticCode::InvalidDecoration,
                    application.range,
                    "decoration '@" + decoration->Name() +
                        "' has no compiler implementation in Flecha 0.3");
         };
 
+    const auto validateTyped = [&](const DecorationApplication& application,
+                                   const DecorationDeclaration* decoration,
+                                   const Declaration& owner,
+                                   const core::AstNode& target,
+                                   core::DecorationTarget category) {
+        if (!decoration || !decoration->HasBody()) return;
+        const DecorationContract& contract = *_model.ContractFor(*decoration);
+        const auto report = [&](diagnostics::DiagnosticCode code,
+                                source::SourceRange range, std::string message,
+                                source::SourceRange related) {
+            _diagnostics.Report(
+                code, range, std::move(message),
+                diagnostics::DiagnosticSeverity::Error,
+                {{related, "decoration contract declared here"}});
+        };
+        const auto signature = std::find_if(
+            contract.applications.begin(), contract.applications.end(),
+            [&](const auto& candidate) {
+                return candidate.syntax->target == category;
+            });
+        if (category == core::DecorationTarget::Invalid ||
+            signature == contract.applications.end()) {
+            report(diagnostics::DiagnosticCode::DecorationTargetMismatch,
+                   application.range,
+                   "decoration '@" + decoration->Name() +
+                       "' does not declare this target category",
+                   decoration->Range());
+            return;
+        }
+        if (!signature->valid) return;
+        if (application.arguments.size() != signature->parameters.size()) {
+            report(diagnostics::DiagnosticCode::DecorationArgumentCount,
+                   application.range,
+                   "decoration expects " +
+                       std::to_string(signature->parameters.size()) +
+                       " argument(s)",
+                   signature->syntax->range);
+            return;
+        }
+        SetSource(owner.sourceId);
+        bool valid = true;
+        for (std::size_t i = 0; i < application.arguments.size(); ++i) {
+            const auto& argument = application.arguments[i];
+            const auto& parameter = signature->parameters[i];
+            if (!parameter.syntax->type) {
+                if (argument.kind != DecorationArgumentKind::Identifier ||
+                    argument.value != parameter.syntax->marker ||
+                    argument.expression) {
+                    report(diagnostics::DiagnosticCode::InvalidDecorationMarker,
+                           argument.range,
+                           "expected literal marker '" +
+                               parameter.syntax->marker + "'",
+                           parameter.syntax->range);
+                    valid = false;
+                }
+                continue;
+            }
+            if (!argument.expression) {
+                report(diagnostics::DiagnosticCode::DecorationArgumentType,
+                       argument.range,
+                       "expected compile-time " + parameter.type.Name() +
+                           " argument",
+                       parameter.syntax->range);
+                valid = false;
+                continue;
+            }
+            const std::size_t diagnosticsBefore =
+                _diagnostics.Diagnostics().size();
+            const SemanticType actual =
+                AnalyzeExpression(*argument.expression, parameter.type);
+            // Expression diagnostics (for example a literal outside the
+            // declared integer range) must not leave consumable metadata
+            // behind.
+            for (std::size_t diagnostic = diagnosticsBefore;
+                 diagnostic < _diagnostics.Diagnostics().size(); ++diagnostic)
+                if (_diagnostics.Diagnostics()[diagnostic].severity ==
+                    diagnostics::DiagnosticSeverity::Error)
+                    valid = false;
+            std::vector<const Symbol*> dependencies;
+            if (actual.IsError() || !IsAssignable(parameter.type, actual) ||
+                !ValidateModuleConstantExpression(*argument.expression,
+                                                  dependencies)) {
+                report(diagnostics::DiagnosticCode::DecorationArgumentType,
+                       argument.range,
+                       "expected compile-time " + parameter.type.Name() +
+                           " argument",
+                       parameter.syntax->range);
+                valid = false;
+            }
+        }
+        if (valid)
+            _model._decorations.push_back(
+                {decoration, signature->syntax, &application, &target, &owner});
+    };
+
+    const auto duplicate = [&](const DecorationApplication& application,
+                               const DecorationDeclaration* decoration,
+                               std::unordered_map<const DecorationDeclaration*,
+                                                  const DecorationApplication*>&
+                                   seen) {
+        if (!decoration) return false;
+        const auto [previous, inserted] =
+            seen.emplace(decoration, &application);
+        if (inserted) return false;
+        _diagnostics.Report(
+            decoration->HasBody()
+                ? diagnostics::DiagnosticCode::DuplicateDecorationApplication
+                : diagnostics::DiagnosticCode::InvalidDecoration,
+            application.range,
+            "duplicate decoration '@" + decoration->Name() +
+                "' on the same declaration",
+            diagnostics::DiagnosticSeverity::Error,
+            {{previous->second->range, "previous application"},
+             {decoration->NameRange(), "decoration declared here"}});
+        std::erase_if(_model._decorations, [&](const auto& metadata) {
+            return metadata.application == previous->second;
+        });
+        return true;
+    };
+
     for (const auto& declaration : unit.Declarations()) {
-        std::unordered_set<const DecorationDeclaration*> seen;
+        std::unordered_map<const DecorationDeclaration*,
+                           const DecorationApplication*>
+            seen;
         for (const auto& application : declaration->decorations) {
             const auto* decoration = resolveOrReport(application, *declaration);
             requireCompilerCounterpart(application, decoration);
-            if (decoration && !seen.insert(decoration).second)
-                Report(diagnostics::DiagnosticCode::InvalidDecoration,
-                       application.range,
-                       "duplicate decoration '@" + decoration->Name() +
-                           "' on the same declaration");
-            if (decoration && decoration->Name() == "json" &&
+            core::DecorationTarget category = core::DecorationTarget::Invalid;
+            if (declaration->Kind() == AstNodeKind::StructureDeclaration)
+                category = core::DecorationTarget::Structure;
+            else if (declaration->Kind() == AstNodeKind::EnumDeclaration)
+                category = core::DecorationTarget::Enum;
+            else if (declaration->Kind() == AstNodeKind::InterfaceDeclaration)
+                category = core::DecorationTarget::Interface;
+            if (!duplicate(application, decoration, seen))
+                validateTyped(application, decoration, *declaration,
+                              *declaration, category);
+            if (decoration && !decoration->HasBody() &&
+                decoration->Name() == "json" &&
                 declaration->Kind() != AstNodeKind::StructureDeclaration)
                 Report(diagnostics::DiagnosticCode::InvalidDecoration,
                        application.range,
@@ -779,7 +993,8 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         const DecorationApplication* jsonApplication = nullptr;
         for (const auto& application : declaration->decorations) {
             const auto* decoration = resolve(application, *declaration);
-            if (decoration && decoration->Name() == "json") {
+            if (decoration && !decoration->HasBody() &&
+                decoration->Name() == "json") {
                 structureJson = &application;
                 jsonDecoration = decoration;
                 jsonApplication = &application;
@@ -809,17 +1024,18 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
         std::vector<Candidate> candidates;
         for (const auto& field : structure.Fields()) {
             const DecorationApplication* fieldJson = nullptr;
-            std::unordered_set<const DecorationDeclaration*> seen;
+            std::unordered_map<const DecorationDeclaration*,
+                               const DecorationApplication*>
+                seen;
             for (const auto& application : field->Decorations()) {
                 const auto* decoration =
                     resolveOrReport(application, *declaration);
                 requireCompilerCounterpart(application, decoration);
-                if (decoration && !seen.insert(decoration).second)
-                    Report(diagnostics::DiagnosticCode::InvalidDecoration,
-                           application.range,
-                           "duplicate decoration '@" + decoration->Name() +
-                               "' on field '" + field->Name() + "'");
-                if (decoration && decoration->Name() == "json")
+                if (!duplicate(application, decoration, seen))
+                    validateTyped(application, decoration, *declaration, *field,
+                                  core::DecorationTarget::StructureField);
+                if (decoration && !decoration->HasBody() &&
+                    decoration->Name() == "json")
                     fieldJson = &application;
             }
             if (fieldJson) {
@@ -941,6 +1157,8 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
         [&](SemanticType type, const core::Declaration& api) {
             if (type.Kind() == SemanticTypeKind::Structure)
                 return declarationVisible(api, *type.Structure()->syntax);
+            if (type.Kind() == SemanticTypeKind::Interface)
+                return declarationVisible(api, *type.Interface()->syntax);
             if (type.Kind() == SemanticTypeKind::NamedError) {
                 const auto found = errors.find(&type.Family());
                 return found == errors.end() ||
@@ -975,9 +1193,20 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
             Report(diagnostics::DiagnosticCode::PrivateAccess, range, message);
         }
     };
+    for (const auto& interfaceType : _model._interfaces) {
+        if (!interfaceType->syntax->exported &&
+            !interfaceType->syntax->quiverVisible)
+            continue;
+        for (const auto& parent : interfaceType->parents)
+            check(SemanticType(parent.type), parent.range,
+                  *interfaceType->syntax);
+    }
     for (const auto& structure : _model._structures) {
         if (!structure->syntax->exported && !structure->syntax->quiverVisible)
             continue;
+        for (const auto& conformance : structure->conformances)
+            check(SemanticType(conformance.type), conformance.range,
+                  *structure->syntax);
         for (const auto& field : structure->fields)
             if (!field.syntax->IsPrivate())
                 check(field.type, field.syntax->Range(), *structure->syntax);
@@ -997,6 +1226,9 @@ void SemanticAnalyzer::ValidateExports(const core::CompilationUnit& unit) {
         if (!enumeration->syntax->exported &&
             !enumeration->syntax->quiverVisible)
             continue;
+        for (const auto& conformance : enumeration->conformances)
+            check(SemanticType(conformance.type), conformance.range,
+                  *enumeration->syntax);
         for (const auto& [name, methods] : enumeration->methods)
             for (const FunctionSymbol* method : methods) {
                 if (method->IsPrivate()) continue;
@@ -1048,6 +1280,9 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
     if (declaration.Kind() == core::AstNodeKind::StructureDeclaration)
         localName =
             static_cast<const core::StructureDeclaration&>(declaration).Name();
+    else if (declaration.Kind() == core::AstNodeKind::InterfaceDeclaration)
+        localName =
+            static_cast<const core::InterfaceDeclaration&>(declaration).Name();
     else if (declaration.Kind() == core::AstNodeKind::EnumDeclaration)
         localName =
             static_cast<const core::EnumDeclaration&>(declaration).Name();
@@ -1072,6 +1307,7 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
     const bool topLevel =
         declaration.Kind() == core::AstNodeKind::FunctionDeclaration ||
         declaration.Kind() == core::AstNodeKind::StructureDeclaration ||
+        declaration.Kind() == core::AstNodeKind::InterfaceDeclaration ||
         declaration.Kind() == core::AstNodeKind::EnumDeclaration ||
         declaration.Kind() == core::AstNodeKind::ErrorDeclaration ||
         declaration.Kind() == core::AstNodeKind::CallableTypeDeclaration ||
@@ -1166,12 +1402,20 @@ SemanticType SemanticAnalyzer::ResolveTypeSyntax(const core::TypeNode& type) {
         if (symbol == nullptr || (symbol->Kind() != SymbolKind::ErrorType &&
                                   symbol->Kind() != SymbolKind::EnumType &&
                                   symbol->Kind() != SymbolKind::StructureType &&
-                                  symbol->Kind() != SymbolKind::CallableType)) {
+                                  symbol->Kind() != SymbolKind::InterfaceType &&
+                                  symbol->Kind() != SymbolKind::CallableType &&
+                                  symbol->Kind() != SymbolKind::TypeBinding)) {
             if (!ReportInaccessibleImport(type.Name(), type.Range()))
                 Report(diagnostics::DiagnosticCode::UnknownType, type.Range(),
                        "unknown type '" + type.Name() + "'");
             return SemanticType::Error();
         }
+        const std::size_t textualLength =
+            type.Name().size() + (type.IsConst() ? 6 : 0);
+        // Compiler-generated type syntax reuses the enclosing source range.
+        // Only index ranges that can represent the actual written type name.
+        if (type.Range().Length() == textualLength)
+            _model._typeBindings.emplace(&type, symbol);
         return type.IsConst() ? symbol->Type().WithConst() : symbol->Type();
     }
     if (type.TypeForm() == core::TypeKind::Primitive)
@@ -1844,6 +2088,27 @@ void SemanticAnalyzer::RegisterErrorTypes(const core::CompilationUnit& unit) {
     }
 }
 
+void SemanticAnalyzer::RegisterInterfaces(const core::CompilationUnit& unit) {
+    for (const auto& declaration : unit.Declarations()) {
+        if (declaration->Kind() != core::AstNodeKind::InterfaceDeclaration)
+            continue;
+        const auto& syntax =
+            static_cast<const core::InterfaceDeclaration&>(*declaration);
+        SetSource(syntax.sourceId);
+        auto interfaceType = std::make_unique<InterfaceType>();
+        interfaceType->name = TopName(syntax, syntax.Name());
+        interfaceType->displayName = syntax.specializationName.empty()
+                                         ? syntax.Name()
+                                         : syntax.specializationName;
+        interfaceType->syntax = &syntax;
+        AddSymbol(std::make_unique<InterfaceSymbol>(
+                      TopName(syntax, syntax.Name()), interfaceType.get(),
+                      syntax.NameRange()),
+                  syntax);
+        _model._interfaces.push_back(std::move(interfaceType));
+    }
+}
+
 void SemanticAnalyzer::RegisterEnums(const core::CompilationUnit& unit) {
     const auto width = [](SemanticType type) -> unsigned {
         switch (type.Kind()) {
@@ -2025,11 +2290,6 @@ void SemanticAnalyzer::RegisterFunction(
             Report(diagnostics::DiagnosticCode::InvalidVariadic,
                    function.VariadicPackRange(),
                    "variadic forwarding functions cannot be generic");
-        if (!function.Owner().empty())
-            Report(diagnostics::DiagnosticCode::InvalidVariadic,
-                   function.VariadicPackRange(),
-                   "variadic forwarding is currently limited to free "
-                   "functions");
         if (function.IsExtern())
             Report(diagnostics::DiagnosticCode::InvalidVariadic,
                    function.VariadicPackRange(),
@@ -2049,17 +2309,23 @@ void SemanticAnalyzer::RegisterFunction(
     }
     StructureType* owner = nullptr;
     EnumType* enumOwner = nullptr;
+    InterfaceType* interfaceOwner = nullptr;
     if (!function.Owner().empty()) {
         const Symbol* type = _currentScope->Lookup(function.Owner());
         if (!type || (type->Kind() != SymbolKind::StructureType &&
-                      type->Kind() != SymbolKind::EnumType)) {
+                      type->Kind() != SymbolKind::EnumType &&
+                      type->Kind() != SymbolKind::InterfaceType)) {
             Report(diagnostics::DiagnosticCode::UnknownType,
                    function.NameRange(),
-                   "unknown structure or enum '" + function.Owner() + "'");
+                   "unknown structure, enum, or interface '" +
+                       function.Owner() + "'");
         } else if (type->Kind() == SymbolKind::StructureType)
             owner = const_cast<StructureType*>(type->Type().Structure());
-        else
+        else if (type->Kind() == SymbolKind::EnumType)
             enumOwner = const_cast<EnumType*>(type->Type().Enum());
+        else
+            interfaceOwner =
+                const_cast<InterfaceType*>(type->Type().Interface());
     }
     std::vector<SemanticType> parameterTypes;
     std::vector<core::OwnershipContract> parameterContracts;
@@ -2095,10 +2361,15 @@ void SemanticAnalyzer::RegisterFunction(
                  receiverTarget.Kind() == SemanticTypeKind::Structure &&
                  receiverTarget.Structure() == owner) ||
                 (enumOwner && receiverTarget.Kind() == SemanticTypeKind::Enum &&
-                 receiverTarget.Enum() == enumOwner);
-            receiver = (owner || enumOwner) && parameterTypes.empty() &&
+                 receiverTarget.Enum() == enumOwner) ||
+                (interfaceOwner &&
+                 receiverTarget.Kind() == SemanticTypeKind::Interface &&
+                 receiverTarget.Interface() == interfaceOwner);
+            receiver = (owner || enumOwner || interfaceOwner) &&
+                       parameterTypes.empty() &&
                        (type.Kind() == SemanticTypeKind::Structure ||
                         type.Kind() == SemanticTypeKind::Enum ||
+                        type.Kind() == SemanticTypeKind::Interface ||
                         type.Kind() == SemanticTypeKind::Reference ||
                         type.Kind() == SemanticTypeKind::Pointer) &&
                        matchingOwner;
@@ -2106,7 +2377,7 @@ void SemanticAnalyzer::RegisterFunction(
                 Report(diagnostics::DiagnosticCode::InvalidMember,
                        parameter->Range(),
                        "self must be the first parameter and own, borrow, or "
-                       "point to the owning structure or enum");
+                       "point to the owning structure, enum, or interface");
         }
         parameterTypes.push_back(type);
         parameterContracts.push_back(parameter->Type().Contract());
@@ -2247,6 +2518,88 @@ void SemanticAnalyzer::RegisterFunction(
                    function.NameRange(),
                    "extern declarations using raw pointers must be unsafe");
     }
+    CallableSignature callableSignature{
+        returnType,
+        parameterTypes,
+        parameterContracts,
+        ResultContracts(function.ReturnType()),
+        borrowSourceIndices,
+        function.IsUnsafe(),
+        function.HasModifier(core::FunctionModifier::Once),
+        function.IsCrashable()};
+    const MethodVisibility methodVisibility =
+        function.HasModifier(core::FunctionModifier::Protected)
+            ? MethodVisibility::Protected
+            : MethodVisibility::Public;
+    const MethodContract candidate = NormalizeMethodContract(
+        function.Name(), callableSignature, receiver,
+        function.HasVariadicPack(), function.BorrowsVariadicPack(),
+        methodVisibility);
+    MethodContract* interfaceDeclaration = nullptr;
+    const MethodContract* inheritedContract = nullptr;
+    if (interfaceOwner) {
+        for (MethodContract& contract : interfaceOwner->declaredMethods)
+            if (contract.key == candidate.key) {
+                interfaceDeclaration = &contract;
+                inheritedContract = &contract;
+                break;
+            }
+    } else {
+        const auto findContract = [&](const auto& conformances) {
+            const MethodContract* result = nullptr;
+            for (const auto& conformance : conformances)
+                for (const MethodContract* contract : conformance.type->methods)
+                    if (contract->key == candidate.key && result == nullptr)
+                        result = contract;
+            return result;
+        };
+        if (owner)
+            inheritedContract = findContract(owner->conformances);
+        else if (enumOwner)
+            inheritedContract = findContract(enumOwner->conformances);
+    }
+
+    if (function.HasModifier(core::FunctionModifier::Private) &&
+        function.HasModifier(core::FunctionModifier::Protected))
+        Report(diagnostics::DiagnosticCode::InvalidMember, function.NameRange(),
+               "a method cannot be both private and protected");
+    if (function.HasModifier(core::FunctionModifier::Protected) &&
+        inheritedContract == nullptr)
+        Report(diagnostics::DiagnosticCode::InvalidInterface,
+               function.NameRange(),
+               "protected concrete methods must continue a protected "
+               "interface method");
+    if (interfaceOwner && interfaceDeclaration == nullptr)
+        Report(diagnostics::DiagnosticCode::InvalidInterface,
+               function.NameRange(),
+               "interface method body has no matching declaration on '" +
+                   interfaceOwner->displayName + "'");
+    if (inheritedContract != nullptr) {
+        if (!candidate.SameContract(*inheritedContract) ||
+            function.HasModifier(core::FunctionModifier::Private))
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   function.NameRange(),
+                   "method '" + function.Name() +
+                       "' does not match the complete interface contract");
+        if (!function.genericParameters.empty())
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   function.NameRange(),
+                   "an interface method implementation cannot introduce "
+                   "generic parameters");
+        if (!interfaceOwner &&
+            inheritedContract->category == core::MethodCategory::Final)
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   function.NameRange(),
+                   "final interface method '" + function.Name() +
+                       "' cannot be overridden");
+        if (interfaceOwner &&
+            interfaceDeclaration->category == core::MethodCategory::Virtual)
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   function.NameRange(),
+                   "virtual interface method '" + function.Name() +
+                       "' cannot have a body");
+    }
+
     const bool lifecycle =
         !function.IsCrashable() && owner &&
         (function.Name() == "init" || function.Name() == "zero" ||
@@ -2263,15 +2616,26 @@ void SemanticAnalyzer::RegisterFunction(
     const bool jsonFactory = !function.IsCrashable() && jsonMetadata &&
                              jsonMetadata->reader &&
                              function.Name() == "fromJson";
+    const bool compilerOverride =
+        (lifecycle || jsonWriter || jsonFacade || jsonReader || jsonFactory) &&
+        !generated;
+    const bool interfaceOverride =
+        inheritedContract != nullptr &&
+        ((!interfaceOwner) ||
+         (interfaceOwner && interfaceDeclaration->inherited != nullptr));
     if (function.HasModifier(core::FunctionModifier::Override) !=
-        ((lifecycle || jsonWriter || jsonFacade || jsonReader || jsonFactory) &&
-         !generated))
-        Report(diagnostics::DiagnosticCode::InvalidLifecycle,
+        (compilerOverride || interfaceOverride))
+        Report(inheritedContract || interfaceOwner
+                   ? diagnostics::DiagnosticCode::InvalidInterface
+                   : diagnostics::DiagnosticCode::InvalidLifecycle,
                function.NameRange(),
-               "override is required exactly when replacing a "
-               "compiler-generated method");
+               inheritedContract || interfaceOwner
+                   ? "override is required exactly when implementing or "
+                     "replacing an inherited interface method"
+                   : "override is required exactly when replacing a "
+                     "compiler-generated method");
     if (function.HasModifier(core::FunctionModifier::Private) && !owner &&
-        !enumOwner)
+        !enumOwner && !interfaceOwner)
         Report(diagnostics::DiagnosticCode::InvalidMember, function.NameRange(),
                "private requires a structure or enum method");
     if (lifecycle && function.Name() == "init" &&
@@ -2381,10 +2745,10 @@ void SemanticAnalyzer::RegisterFunction(
         Report(diagnostics::DiagnosticCode::InvalidLifecycle, function.Range(),
                "enum lifecycle is compiler-defined; init, zero, and tear are "
                "reserved");
-    if ((owner || enumOwner) && function.exported)
+    if ((owner || enumOwner || interfaceOwner) && function.exported)
         Report(diagnostics::DiagnosticCode::InvalidMember, function.Range(),
                "export the owning type, not individual member functions");
-    if ((owner || enumOwner) && function.quiverVisible)
+    if ((owner || enumOwner || interfaceOwner) && function.quiverVisible)
         Report(diagnostics::DiagnosticCode::InvalidMember, function.Range(),
                "member functions cannot be marked quiver; visibility comes "
                "from the owning type");
@@ -2394,24 +2758,27 @@ void SemanticAnalyzer::RegisterFunction(
     if (enumOwner && enumOwner->syntax->moduleId != function.moduleId)
         Report(diagnostics::DiagnosticCode::PrivateAccess, function.Range(),
                "methods must be defined in their enum's module");
+    if (interfaceOwner && interfaceOwner->syntax->moduleId != function.moduleId)
+        Report(diagnostics::DiagnosticCode::PrivateAccess, function.Range(),
+               "methods must be defined in their interface's module");
     std::string name = owner       ? owner->name + "::" + function.Name()
                        : enumOwner ? enumOwner->name + "::" + function.Name()
-                                   : TopName(function, function.Name());
+                       : interfaceOwner
+                           ? interfaceOwner->name + "::" + function.Name()
+                           : TopName(function, function.Name());
     if (function.IsCrashable() && name != "main") name += "!";
-    auto signature = std::make_shared<const CallableSignature>(
-        CallableSignature{returnType, parameterTypes, parameterContracts,
-                          ResultContracts(function.ReturnType()),
-                          borrowSourceIndices, function.IsUnsafe(),
-                          function.HasModifier(core::FunctionModifier::Once),
-                          function.IsCrashable()});
-    const auto* symbol = static_cast<const FunctionSymbol*>(AddSymbol(
-        std::make_unique<FunctionSymbol>(
-            name, std::move(signature), function.NameRange(),
-            BuiltInFunction::None, owner,
-            function.HasModifier(core::FunctionModifier::Private), receiver,
-            function.IsExtern(), function.IsExtern() ? function.Name() : "",
-            enumOwner, &function, function.BorrowsVariadicPack()),
-        function));
+    auto signature =
+        std::make_shared<const CallableSignature>(callableSignature);
+    const auto* symbol = static_cast<const FunctionSymbol*>(
+        AddSymbol(std::make_unique<FunctionSymbol>(
+                      name, std::move(signature), function.NameRange(),
+                      BuiltInFunction::None, owner,
+                      function.HasModifier(core::FunctionModifier::Private),
+                      receiver, function.IsExtern(),
+                      function.IsExtern() ? function.Name() : "", enumOwner,
+                      &function, function.BorrowsVariadicPack(), interfaceOwner,
+                      function.HasModifier(core::FunctionModifier::Protected)),
+                  function));
     if (symbol && function.HasModifier(core::FunctionModifier::Extern))
         _forbiddenZeroEffects.insert(symbol);
     if (owner && symbol) {
@@ -2439,6 +2806,7 @@ void SemanticAnalyzer::RegisterFunction(
                        "method conflicts with enum variant '" + variant.name +
                            "'");
     }
+    if (interfaceDeclaration && symbol) interfaceDeclaration->provider = symbol;
 }
 
 SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
@@ -2511,6 +2879,11 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                     name = static_cast<const core::StructureDeclaration&>(
                                *declaration)
                                .Name();
+                if (declaration->Kind() ==
+                    core::AstNodeKind::InterfaceDeclaration)
+                    name = static_cast<const core::InterfaceDeclaration&>(
+                               *declaration)
+                               .Name();
                 if (declaration->Kind() == core::AstNodeKind::EnumDeclaration)
                     name =
                         static_cast<const core::EnumDeclaration&>(*declaration)
@@ -2554,12 +2927,15 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
             }
     };
     RegisterErrorTypes(unit);
+    RegisterInterfaces(unit);
     RegisterEnums(unit);
     RegisterStructures(unit);
     DeclareCallableTypes(unit);
     RegisterModuleConstants(unit);
     bindGenericAliases();
     BindImports(unit);
+    ResolveNominalRelations();
+    ResolveInterfaceMethods();
     ResolveStructureFields();
     ValidateDecorations(unit);
     ResolveCallableTypes(unit);
@@ -2570,6 +2946,8 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     GenerateInitializers();
     GenerateJsonMethods();
     BindImports(unit);
+    ValidateInterfaceConformance();
+    RegisterBehaviors(unit);
     ValidateExports(unit);
     for (const auto& structure : _model._structures)
         for (const auto& field : structure->fields)
@@ -2660,6 +3038,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     for (std::size_t index = 0; index < _model._anonymousFunctions.size();
          ++index)
         AnalyzeFunction(*_model._anonymousFunctions[index]);
+    ResolveInterfaceVariadicShapeTargets();
     ClassifyTrivialZeros(unit);
     _zeroTrivialityKnown = true;
     for (const auto& [declaration, type] : _implicitDefaults) {
@@ -2678,6 +3057,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     WarnForCrashlessFunctions();
     if (!_diagnostics.HasErrors())
         AnalyzeAllocations(unit, _model, _diagnostics);
+    PlanBehaviors(unit);
     ReportGenericOrigins(unit, _diagnostics);
     _currentScope = nullptr;
     _currentFunction = nullptr;
@@ -2883,14 +3263,16 @@ void SemanticAnalyzer::AnalyzeVariadicFunction(
 
     const auto& callee =
         static_cast<const core::NameExpression&>(call.Callee());
-    const Symbol* targetBase =
-        _currentScope->Lookup(EffectName(callee.Name(), call.IsCrashable()));
-    if (targetBase == nullptr || targetBase->Kind() != SymbolKind::Function) {
+    const std::vector<const FunctionSymbol*> targets =
+        LookupFunctions(EffectName(callee.Name(), call.IsCrashable()));
+    if (targets.empty()) {
         invalid(callee.Range(), "variadic forwarding target '" + callee.Name() +
                                     "' is not a function");
         return;
     }
-    const auto* target = static_cast<const FunctionSymbol*>(targetBase);
+    _model._variadicTargetCandidates.insert_or_assign(_currentFunction,
+                                                      targets);
+    const FunctionSymbol* target = targets.front();
     ValidateCrashableCall(call.IsCrashable(), target->Signature(), target,
                           call.Range());
     if (target == _currentFunction) {
@@ -2965,6 +3347,177 @@ void SemanticAnalyzer::AnalyzeVariadicFunction(
     _model._types.insert_or_assign(&call, target->ReturnType().WithoutConst());
     _model._variadicTargets.insert_or_assign(_currentFunction, target);
     _functionCalls[_currentFunction].insert(target);
+}
+
+void SemanticAnalyzer::ResolveInterfaceVariadicShapeTargets() {
+    if (_model._interfaceVariadicShapes.empty()) return;
+
+    const auto canonicalOrigin = [](const MethodContract* contract) {
+        while (contract != nullptr && contract->inherited != nullptr)
+            contract = contract->inherited;
+        return contract;
+    };
+    const auto compatible = [](SemanticType expected, SemanticType actual,
+                               std::size_t& score) {
+        if (expected == actual ||
+            expected.WithoutConst() == actual.WithoutConst())
+            return true;
+        if (CanImplicitlyConvertInterfaceReference(actual, expected)) {
+            score += 2;
+            return true;
+        }
+        if (IsAssignable(expected, actual) || CanReborrow(expected, actual)) {
+            ++score;
+            return true;
+        }
+        return false;
+    };
+
+    using Active = std::unordered_set<const FunctionSymbol*>;
+    std::function<const FunctionSymbol*(
+        const FunctionSymbol&, const std::vector<SemanticType>&,
+        const std::vector<core::OwnershipContract>&, Active&)>
+        resolve;
+    resolve = [&](const FunctionSymbol& forwarding,
+                  const std::vector<SemanticType>& actualTypes,
+                  const std::vector<core::OwnershipContract>& actualContracts,
+                  Active& active) -> const FunctionSymbol* {
+        if (!active.insert(&forwarding).second) return nullptr;
+        const auto family = _model._variadicTargetCandidates.find(&forwarding);
+        if (family == _model._variadicTargetCandidates.end()) {
+            active.erase(&forwarding);
+            return nullptr;
+        }
+
+        struct Match final {
+            const FunctionSymbol* function;
+            std::size_t score;
+        };
+        std::vector<Match> matches;
+        for (const FunctionSymbol* candidate : family->second) {
+            if (candidate == &forwarding) continue;
+            const bool variadic = candidate->Declaration() != nullptr &&
+                                  candidate->Declaration()->HasVariadicPack();
+            const std::size_t fixed = candidate->ParameterTypes().size();
+            if (actualTypes.size() < fixed ||
+                (!variadic && actualTypes.size() != fixed))
+                continue;
+            if (candidate->IsUnsafe() && !forwarding.IsUnsafe()) continue;
+            if (!IsAssignable(forwarding.ReturnType(),
+                              candidate->ReturnType()) ||
+                !IsAssignable(candidate->ReturnType(), forwarding.ReturnType()))
+                continue;
+
+            std::size_t score = variadic ? 1 : 0;
+            bool viable = true;
+            for (std::size_t index = 0; index < fixed; ++index) {
+                if (!compatible(candidate->ParameterTypes()[index],
+                                actualTypes[index], score) ||
+                    candidate->ParameterContract(index) !=
+                        actualContracts[index]) {
+                    viable = false;
+                    break;
+                }
+            }
+            if (viable) matches.push_back({candidate, score});
+        }
+        if (matches.empty()) {
+            active.erase(&forwarding);
+            return nullptr;
+        }
+        const auto best = std::ranges::min_element(
+            matches, {}, [](const Match& match) { return match.score; });
+        if (std::ranges::count_if(matches, [&](const Match& match) {
+                return match.score == best->score;
+            }) != 1) {
+            active.erase(&forwarding);
+            return nullptr;
+        }
+        const FunctionSymbol* target = best->function;
+        if (target->Declaration() != nullptr &&
+            target->Declaration()->HasVariadicPack())
+            target = resolve(*target, actualTypes, actualContracts, active);
+        active.erase(&forwarding);
+        return target;
+    };
+
+    std::set<std::pair<const FunctionSymbol*, std::string>> seen;
+    const auto registerProvider = [&](const FunctionSymbol* provider,
+                                      const MethodContract* origin) {
+        if (provider == nullptr || origin == nullptr ||
+            provider->Declaration() == nullptr ||
+            !provider->Declaration()->HasVariadicPack())
+            return;
+        const auto family = _model._interfaceVariadicShapes.find(origin);
+        if (family == _model._interfaceVariadicShapes.end()) return;
+        for (const VariadicShape& shape : family->second) {
+            if (!seen.emplace(provider, shape.key).second) continue;
+            std::vector<SemanticType> actualTypes;
+            actualTypes.reserve(shape.parameters.size() + 1);
+            actualTypes.push_back(provider->ParameterTypes().front());
+            actualTypes.insert(actualTypes.end(), shape.parameters.begin(),
+                               shape.parameters.end());
+            std::vector<core::OwnershipContract> actualContracts;
+            actualContracts.reserve(actualTypes.size());
+            actualContracts.push_back(provider->ParameterContract(0));
+            actualContracts.insert(actualContracts.end(),
+                                   shape.parameterContracts.begin(),
+                                   shape.parameterContracts.end());
+            Active active;
+            const FunctionSymbol* target =
+                resolve(*provider, actualTypes, actualContracts, active);
+            if (target == nullptr) {
+                std::string arguments;
+                for (std::size_t index = 0; index < shape.parameters.size();
+                     ++index) {
+                    if (index != 0) arguments += ", ";
+                    arguments += shape.parameters[index].Name();
+                }
+                Report(diagnostics::DiagnosticCode::InvalidVariadic,
+                       provider->Declaration()->VariadicPackRange(),
+                       "variadic interface provider '" + provider->Name() +
+                           "' has no unique forwarding target for closed "
+                           "shape (" +
+                           arguments + ")");
+                continue;
+            }
+            _model._interfaceVariadicShapeTargets[provider].insert_or_assign(
+                shape.key, target);
+        }
+    };
+
+    for (const std::unique_ptr<InterfaceType>& interfaceType :
+         _model._interfaces)
+        for (const MethodContract& contract : interfaceType->declaredMethods)
+            if (contract.provider != nullptr)
+                registerProvider(contract.provider, canonicalOrigin(&contract));
+
+    const auto registerConcrete = [&](const auto& concrete) {
+        for (const InterfaceReference& conformance : concrete.conformances) {
+            for (const MethodContract* effective : conformance.type->methods) {
+                const MethodContract* origin = canonicalOrigin(effective);
+                if (!_model._interfaceVariadicShapes.contains(origin)) continue;
+                const std::string name =
+                    effective->key.name + (effective->isCrashable ? "!" : "");
+                const auto methods = concrete.methods.find(name);
+                if (methods == concrete.methods.end()) continue;
+                for (const FunctionSymbol* candidate : methods->second) {
+                    const MethodContract contract = MethodContractOf(
+                        *candidate, candidate->IsProtected()
+                                        ? MethodVisibility::Protected
+                                        : MethodVisibility::Public);
+                    if (contract.key == effective->key &&
+                        !candidate->IsPrivate() &&
+                        contract.SameContract(*effective))
+                        registerProvider(candidate, origin);
+                }
+            }
+        }
+    };
+    for (const std::unique_ptr<StructureType>& concrete : _model._structures)
+        registerConcrete(*concrete);
+    for (const std::unique_ptr<EnumType>& concrete : _model._enums)
+        registerConcrete(*concrete);
 }
 
 void SemanticAnalyzer::CollectPositions(const core::BlockStatement& block,
@@ -3064,6 +3617,12 @@ void SemanticAnalyzer::AnalyzeBranch(const core::ConditionalBranch& branch) {
 
 void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
     switch (statement.Kind()) {
+        case core::AstNodeKind::FieldIterationStatement:
+            Report(diagnostics::DiagnosticCode::InvalidReflectionContext,
+                   statement.Range(),
+                   "field iteration requires a structure behavior method");
+            break;
+
         case core::AstNodeKind::BlockStatement: {
             const auto& block =
                 static_cast<const core::BlockStatement&>(statement);
@@ -3240,7 +3799,10 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                            "defer requires a structure method call");
                     break;
                 }
-                const std::size_t offset = function->HasReceiver() ? 1 : 0;
+                const bool qualified =
+                    _model.IsQualifiedInterfaceProviderCall(call);
+                const std::size_t offset =
+                    function->HasReceiver() && !qualified ? 1 : 0;
                 if (offset != 0 && !function->ParameterTypes().empty())
                     operands.emplace_back(&call.Receiver(),
                                           function->ParameterTypes()[0]);
@@ -3585,6 +4147,10 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
             break;
     }
     _model._types.insert_or_assign(&expression, type);
+    if (!expected.IsError() &&
+        CanImplicitlyConvertInterfaceReference(type, expected))
+        _model._implicitInterfaceConversions.insert_or_assign(&expression,
+                                                              expected);
     if (!_directConstructions.contains(&expression) && type.OwnsStorage() &&
         (expression.Kind() == core::AstNodeKind::CallExpression ||
          expression.Kind() == core::AstNodeKind::MemberCallExpression ||
@@ -3603,7 +4169,26 @@ SemanticType SemanticAnalyzer::AnalyzeIsOf(
             value = value.WithoutConst();
             candidate = candidate.WithoutConst();
         }
-        if (value == candidate) {
+        SemanticType staticValue = value;
+        if (staticValue.Kind() == SemanticTypeKind::Reference)
+            staticValue = *staticValue.Target();
+        bool conforms = false;
+        if (candidate.Kind() == SemanticTypeKind::Interface) {
+            const InterfaceType* target = candidate.Interface();
+            const auto contains = [target](const auto& interfaces) {
+                return std::find(interfaces.begin(), interfaces.end(),
+                                 target) != interfaces.end();
+            };
+            if (staticValue.Kind() == SemanticTypeKind::Structure)
+                conforms =
+                    contains(staticValue.Structure()->conformanceClosure);
+            else if (staticValue.Kind() == SemanticTypeKind::Enum)
+                conforms = contains(staticValue.Enum()->conformanceClosure);
+            else if (staticValue.Kind() == SemanticTypeKind::Interface)
+                conforms = staticValue.Interface() == target ||
+                           contains(staticValue.Interface()->ancestors);
+        }
+        if (value == candidate || conforms) {
             result = true;
             break;
         }
@@ -3695,6 +4280,10 @@ std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
         case SemanticTypeKind::Structure:
             result = std::make_unique<core::TypeNode>(
                 range, visibleName(SymbolKind::StructureType), type.IsConst());
+            break;
+        case SemanticTypeKind::Interface:
+            result = std::make_unique<core::TypeNode>(
+                range, visibleName(SymbolKind::InterfaceType), type.IsConst());
             break;
         case SemanticTypeKind::Function:
             result = std::make_unique<core::TypeNode>(
@@ -4525,6 +5114,16 @@ SemanticType SemanticAnalyzer::AnalyzeCast(
                    std::string(target.Name()) + "'");
         return SemanticType::Error();
     }
+    if (target.Kind() == SemanticTypeKind::Reference &&
+        target.Target()->Kind() == SemanticTypeKind::Interface &&
+        (source.Kind() == SemanticTypeKind::Structure ||
+         source.Kind() == SemanticTypeKind::Enum) &&
+        !IsSafePlace(expression.Value())) {
+        Report(diagnostics::DiagnosticCode::InvalidCast, expression.Range(),
+               "casting concrete storage to an interface reference requires "
+               "an addressable value");
+        return SemanticType::Error();
+    }
     if (_currentFunction && target.Kind() == SemanticTypeKind::String &&
         source.Kind() != SemanticTypeKind::String)
         _forbiddenZeroEffects.insert(_currentFunction);
@@ -4558,7 +5157,8 @@ SemanticType SemanticAnalyzer::AnalyzeName(
     if (symbol->Kind() == SymbolKind::ErrorType ||
         symbol->Kind() == SymbolKind::StructureType ||
         symbol->Kind() == SymbolKind::EnumType ||
-        symbol->Kind() == SymbolKind::CallableType) {
+        symbol->Kind() == SymbolKind::CallableType ||
+        symbol->Kind() == SymbolKind::TypeBinding) {
         Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
                "type '" + expression.Name() + "' is not a value");
         return SemanticType::Error();
@@ -5782,6 +6382,7 @@ void SemanticAnalyzer::WarnForCrashlessFunctions() {
         const auto* function = static_cast<const FunctionSymbol*>(symbol.get());
         if (!function->IsCrashable() || function->Declaration() == nullptr ||
             !function->Declaration()->IsCrashable() ||
+            function->InterfaceOwner() != nullptr ||
             canCrash.contains(function))
             continue;
         _diagnostics.Report(
@@ -5812,10 +6413,25 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
     const std::vector<std::unique_ptr<core::Expression>>& arguments,
     source::SourceRange range, bool isStatic, SemanticType receiver) {
     std::vector<SemanticType> actualTypes;
+    std::vector<const core::Expression*> argumentExpressions;
     actualTypes.reserve(arguments.size());
-    for (const auto& argument : arguments)
+    argumentExpressions.reserve(arguments.size());
+    for (const auto& argument : arguments) {
         actualTypes.push_back(AnalyzeExpression(*argument));
+        argumentExpressions.push_back(argument.get());
+    }
 
+    return ResolveOverloadFromTypes(displayName, candidates,
+                                    argumentExpressions, actualTypes, range,
+                                    isStatic, receiver);
+}
+
+const FunctionSymbol* SemanticAnalyzer::ResolveOverloadFromTypes(
+    std::string_view displayName,
+    const std::vector<const FunctionSymbol*>& candidates,
+    const std::vector<const core::Expression*>& arguments,
+    const std::vector<SemanticType>& actualTypes, source::SourceRange range,
+    bool isStatic, SemanticType receiver) {
     const auto isNumericLiteral = [](const core::Expression& expression) {
         const core::Expression* value = &expression;
         while (value->Kind() == core::AstNodeKind::ParenthesizedExpression)
@@ -5853,6 +6469,8 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
         const auto& parameters = candidate->ParameterTypes();
         const std::size_t maximum = parameters.size() - offset;
         std::size_t minimum = maximum;
+        const bool variadic = candidate->Declaration() != nullptr &&
+                              candidate->Declaration()->HasVariadicPack();
         if (const auto* declaration = candidate->Declaration()) {
             for (std::size_t index = offset;
                  index < declaration->Parameters().size(); ++index) {
@@ -5862,16 +6480,36 @@ const FunctionSymbol* SemanticAnalyzer::ResolveOverload(
                 }
             }
         }
-        if (arguments.size() < minimum || arguments.size() > maximum) continue;
+        if (arguments.size() < minimum ||
+            (!variadic && arguments.size() > maximum))
+            continue;
 
-        std::size_t score = 0;
+        // Prefer an equally good fixed overload to a variadic family.
+        std::size_t score = variadic ? 1 : 0;
         bool viable = true;
+        if (candidate->HasReceiver()) {
+            const SemanticType expected = parameters.front();
+            const SemanticType expectedTarget =
+                expected.Target() ? *expected.Target() : expected;
+            const SemanticType actualTarget =
+                receiver.Target() ? *receiver.Target() : receiver;
+            if (actualTarget.IsConst() && !expectedTarget.IsConst())
+                viable = false;
+            else if (!actualTarget.IsConst() && expectedTarget.IsConst())
+                ++score;
+        }
+        if (!viable) continue;
         for (std::size_t index = 0; index < actualTypes.size(); ++index) {
+            if (index + offset >= parameters.size()) continue;
             const SemanticType expected = parameters[index + offset];
             const SemanticType actual = actualTypes[index];
             if (actual == expected ||
                 actual.WithoutConst() == expected.WithoutConst())
                 continue;
+            if (CanImplicitlyConvertInterfaceReference(actual, expected)) {
+                score += 2;
+                continue;
+            }
             if (IsAssignable(expected, actual) ||
                 CanReborrow(expected, actual)) {
                 ++score;
@@ -6363,7 +7001,7 @@ bool IsOverflowingArithmeticMember(const std::string& member) {
 SemanticType SemanticAnalyzer::AnalyzeMemberCall(
     const core::MemberCallExpression& expression) {
     if (expression.Access() == TokenType::Scope)
-        return AnalyzeStructureCall(expression, SemanticType::Error());
+        return AnalyzeMethodCall(expression, SemanticType::Error());
     const SemanticType receiver = AnalyzeExpression(expression.Receiver());
     if (expression.Member() == "$range_index") {
         if (expression.Arguments().size() != 1) {
@@ -6389,11 +7027,13 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
     }
     if (receiver.Kind() == SemanticTypeKind::Structure ||
         receiver.Kind() == SemanticTypeKind::Enum ||
+        receiver.Kind() == SemanticTypeKind::Interface ||
         ((receiver.Kind() == SemanticTypeKind::Pointer ||
           receiver.Kind() == SemanticTypeKind::Reference) &&
          (receiver.Target()->Kind() == SemanticTypeKind::Structure ||
-          receiver.Target()->Kind() == SemanticTypeKind::Enum)))
-        return AnalyzeStructureCall(expression, receiver);
+          receiver.Target()->Kind() == SemanticTypeKind::Enum ||
+          receiver.Target()->Kind() == SemanticTypeKind::Interface)))
+        return AnalyzeMethodCall(expression, receiver);
     if (expression.Access() != TokenType::Dot)
         Report(diagnostics::DiagnosticCode::InvalidMember, expression.Range(),
                "this member requires '.'");
@@ -6644,6 +7284,10 @@ const EnumType* SemanticAnalyzer::CurrentEnumOwner() const {
     return _currentFunction ? _currentFunction->EnumOwner() : nullptr;
 }
 
+const InterfaceType* SemanticAnalyzer::CurrentInterfaceOwner() const {
+    return _currentFunction ? _currentFunction->InterfaceOwner() : nullptr;
+}
+
 void SemanticAnalyzer::RegisterStructures(const core::CompilationUnit& unit) {
     for (const auto& declaration : unit.Declarations()) {
         if (declaration->Kind() != core::AstNodeKind::StructureDeclaration)
@@ -6663,6 +7307,505 @@ void SemanticAnalyzer::RegisterStructures(const core::CompilationUnit& unit) {
                   syntax);
         _model._structures.push_back(std::move(structure));
     }
+}
+
+void SemanticAnalyzer::ResolveNominalRelations() {
+    const auto resolve = [&](const std::vector<core::NominalParent>& syntax,
+                             std::vector<InterfaceReference>& result,
+                             std::string_view relation,
+                             const InterfaceType* owner = nullptr) {
+        std::unordered_set<const InterfaceType*> seen;
+        for (const auto& parent : syntax) {
+            if (ReportAmbiguousImport(parent.name, parent.range)) continue;
+            const Symbol* symbol = _currentScope->Lookup(parent.name);
+            if (!symbol) {
+                if (!ReportInaccessibleImport(parent.name, parent.range))
+                    Report(diagnostics::DiagnosticCode::UnknownType,
+                           parent.range,
+                           "unknown interface '" + parent.name + "'");
+                continue;
+            }
+            if (symbol->Kind() != SymbolKind::InterfaceType) {
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       parent.range,
+                       "'" + parent.name + "' is not an interface");
+                continue;
+            }
+            const InterfaceType* interfaceType = symbol->Type().Interface();
+            if (interfaceType == owner) {
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       parent.range,
+                       "interface '" + owner->displayName +
+                           "' cannot inherit from itself");
+                continue;
+            }
+            if (!seen.insert(interfaceType).second) {
+                Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                       parent.range,
+                       "duplicate interface " + std::string(relation) + " '" +
+                           parent.name + "'");
+                continue;
+            }
+            result.push_back({interfaceType, parent.range});
+        }
+    };
+
+    for (const auto& interfaceType : _model._interfaces) {
+        SetSource(interfaceType->syntax->sourceId);
+        resolve(interfaceType->syntax->Parents(), interfaceType->parents,
+                "parent", interfaceType.get());
+    }
+    for (const auto& structure : _model._structures) {
+        SetSource(structure->syntax->sourceId);
+        resolve(structure->syntax->Conformances(), structure->conformances,
+                "conformance");
+    }
+    for (const auto& enumeration : _model._enums) {
+        SetSource(enumeration->syntax->sourceId);
+        resolve(enumeration->syntax->Conformances(), enumeration->conformances,
+                "conformance");
+    }
+
+    enum class VisitState { Unvisited, Visiting, Visited };
+    std::unordered_map<const InterfaceType*, VisitState> states;
+    std::vector<const InterfaceType*> stack;
+    std::unordered_set<const InterfaceType*> cyclic;
+    std::function<void(const InterfaceType&)> visit =
+        [&](const InterfaceType& interfaceType) {
+            states[&interfaceType] = VisitState::Visiting;
+            stack.push_back(&interfaceType);
+            for (const auto& parent : interfaceType.parents) {
+                const VisitState state = states[parent.type];
+                if (state == VisitState::Visiting) {
+                    Report(diagnostics::DiagnosticCode::InvalidInterface,
+                           parent.range,
+                           "interface inheritance cycle involving '" +
+                               parent.type->displayName + "'");
+                    const auto first =
+                        std::find(stack.begin(), stack.end(), parent.type);
+                    cyclic.insert(first, stack.end());
+                    continue;
+                }
+                if (state == VisitState::Unvisited) visit(*parent.type);
+            }
+            stack.pop_back();
+            states[&interfaceType] = VisitState::Visited;
+        };
+    for (const auto& interfaceType : _model._interfaces)
+        if (states[interfaceType.get()] == VisitState::Unvisited)
+            visit(*interfaceType);
+
+    const auto closure = [](const InterfaceType& root) {
+        std::vector<const InterfaceType*> result;
+        std::unordered_set<const InterfaceType*> seen;
+        std::unordered_set<const InterfaceType*> active{&root};
+        const auto append = [&](const auto& self,
+                                const InterfaceType& current) -> void {
+            for (const auto& parent : current.parents) {
+                if (active.contains(parent.type)) continue;
+                if (seen.insert(parent.type).second)
+                    result.push_back(parent.type);
+                active.insert(parent.type);
+                self(self, *parent.type);
+                active.erase(parent.type);
+            }
+        };
+        append(append, root);
+        return result;
+    };
+    for (const auto& interfaceType : _model._interfaces)
+        interfaceType->ancestors = closure(*interfaceType);
+
+    const auto extends = [](const InterfaceType& type,
+                            const InterfaceType& candidate) {
+        return std::find(type.ancestors.begin(), type.ancestors.end(),
+                         &candidate) != type.ancestors.end();
+    };
+    const auto validateComposition =
+        [&](const std::vector<InterfaceReference>& direct,
+            std::string_view declarationKind) {
+            for (std::size_t rightIndex = 1; rightIndex < direct.size();
+                 ++rightIndex) {
+                const auto& right = direct[rightIndex];
+                for (std::size_t leftIndex = 0; leftIndex < rightIndex;
+                     ++leftIndex) {
+                    const auto& left = direct[leftIndex];
+                    if (cyclic.contains(left.type) ||
+                        cyclic.contains(right.type))
+                        continue;
+                    if (extends(*left.type, *right.type) ||
+                        extends(*right.type, *left.type)) {
+                        const auto* derived = extends(*left.type, *right.type)
+                                                  ? left.type
+                                                  : right.type;
+                        const auto* base =
+                            derived == left.type ? right.type : left.type;
+                        Report(diagnostics::DiagnosticCode::InvalidInterface,
+                               right.range,
+                               "interface '" + derived->displayName +
+                                   "' already extends '" + base->displayName +
+                                   "' in " + std::string(declarationKind) +
+                                   " composition");
+                        continue;
+                    }
+                    const InterfaceType* shared = nullptr;
+                    for (const InterfaceType* ancestor : left.type->ancestors)
+                        if (ancestor == right.type ||
+                            std::find(right.type->ancestors.begin(),
+                                      right.type->ancestors.end(), ancestor) !=
+                                right.type->ancestors.end()) {
+                            shared = ancestor;
+                            break;
+                        }
+                    if (shared)
+                        Report(diagnostics::DiagnosticCode::InvalidInterface,
+                               right.range,
+                               "interface composition has a diamond through '" +
+                                   shared->displayName + "'");
+                }
+            }
+        };
+
+    for (const auto& interfaceType : _model._interfaces)
+        validateComposition(interfaceType->parents, "interface");
+    for (const auto& structure : _model._structures)
+        validateComposition(structure->conformances, "structure");
+    for (const auto& enumeration : _model._enums)
+        validateComposition(enumeration->conformances, "enum");
+
+    const auto conformanceClosure = [](const auto& direct) {
+        std::vector<const InterfaceType*> result;
+        std::unordered_set<const InterfaceType*> seen;
+        for (const auto& reference : direct) {
+            if (seen.insert(reference.type).second)
+                result.push_back(reference.type);
+            for (const InterfaceType* ancestor : reference.type->ancestors)
+                if (seen.insert(ancestor).second) result.push_back(ancestor);
+        }
+        return result;
+    };
+    for (const auto& structure : _model._structures)
+        structure->conformanceClosure =
+            conformanceClosure(structure->conformances);
+    for (const auto& enumeration : _model._enums)
+        enumeration->conformanceClosure =
+            conformanceClosure(enumeration->conformances);
+}
+
+void SemanticAnalyzer::ResolveInterfaceMethods() {
+    const auto resolveContract = [&](const InterfaceType& owner,
+                                     const core::InterfaceMethod& method) {
+        const core::FunctionDeclaration& function = method.Signature();
+        // Interface signatures are nested AST nodes, so module loading stamps
+        // their owning declaration rather than the embedded function. Resolve
+        // names in the interface declaration's source/module scope.
+        SetSource(owner.syntax->sourceId);
+
+        if (!function.genericParameters.empty())
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   function.NameRange(),
+                   "interface methods cannot declare generic parameters");
+        if (function.Name() == "init" || function.Name() == "zero" ||
+            function.Name() == "tear")
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   function.NameRange(),
+                   "interface methods cannot use lifecycle names");
+        if (function.HasModifier(core::FunctionModifier::Private))
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   function.NameRange(), "interface methods cannot be private");
+
+        std::vector<SemanticType> parameterTypes;
+        std::vector<core::OwnershipContract> parameterContracts;
+        bool receiver = false;
+        std::unordered_set<std::string> names;
+        for (std::size_t index = 0; index < function.Parameters().size();
+             ++index) {
+            const auto& parameter = function.Parameters()[index];
+            const SemanticType type = ResolveType(parameter->Type());
+            if (!names.insert(parameter->Name()).second)
+                Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                       parameter->NameRange(),
+                       "duplicate interface method parameter '" +
+                           parameter->Name() + "'");
+            if (parameter->DefaultValue() != nullptr)
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       parameter->DefaultValue()->Range(),
+                       "interface method parameters cannot have default "
+                       "arguments");
+            if (parameter->Name() == "self") {
+                const bool valid =
+                    index == 0 && type.Kind() == SemanticTypeKind::Reference &&
+                    type.Target()->Kind() == SemanticTypeKind::Interface &&
+                    type.Target()->Interface() == &owner;
+                if (!valid)
+                    Report(diagnostics::DiagnosticCode::InvalidInterface,
+                           parameter->Range(),
+                           "interface receiver must be the first parameter "
+                           "and spelled '&self' or '&const self'");
+                receiver = valid;
+            }
+            parameterTypes.push_back(type);
+            parameterContracts.push_back(parameter->Type().Contract());
+        }
+        if (!receiver)
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   function.NameRange(),
+                   "interface methods require an '&self' or '&const self' "
+                   "receiver");
+
+        const SemanticType returnType =
+            ResolveType(function.ReturnType(), true);
+        std::vector<std::size_t> borrowSources;
+        if (RequiresBorrowSource(returnType) && !function.HasBorrowSources())
+            Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                   function.ReturnType().Range(),
+                   "reference and slice results require a '<- source>' "
+                   "borrow contract");
+        else if (!CanCarryBorrow(returnType) && function.HasBorrowSources())
+            Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                   function.BorrowSourceRanges().empty()
+                       ? function.VariadicPackRange()
+                       : function.BorrowSourceRanges().front(),
+                   "a borrow contract requires a result that can carry a "
+                   "borrow");
+        else {
+            for (std::size_t source = 0;
+                 source < function.BorrowSources().size(); ++source) {
+                const auto found = std::find_if(
+                    function.Parameters().begin(), function.Parameters().end(),
+                    [&](const auto& parameter) {
+                        return parameter->Name() ==
+                               function.BorrowSources()[source];
+                    });
+                if (found == function.Parameters().end()) {
+                    Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                           function.BorrowSourceRanges()[source],
+                           "borrow source '" +
+                               function.BorrowSources()[source] +
+                               "' is not a parameter");
+                    continue;
+                }
+                const std::size_t index = static_cast<std::size_t>(
+                    found - function.Parameters().begin());
+                if (!CanCarryBorrow(parameterTypes[index])) {
+                    Report(diagnostics::DiagnosticCode::InvalidBorrowContract,
+                           function.BorrowSourceRanges()[source],
+                           "borrow source '" +
+                               function.BorrowSources()[source] +
+                               "' cannot carry a borrow");
+                    continue;
+                }
+                borrowSources.push_back(index);
+            }
+        }
+
+        CallableSignature signature{
+            returnType,
+            std::move(parameterTypes),
+            std::move(parameterContracts),
+            ResultContracts(function.ReturnType()),
+            std::move(borrowSources),
+            function.IsUnsafe(),
+            function.HasModifier(core::FunctionModifier::Once),
+            function.IsCrashable()};
+        auto callableSignature =
+            std::make_shared<const CallableSignature>(signature);
+        MethodContract contract = NormalizeMethodContract(
+            function.Name(), std::move(signature), receiver,
+            function.HasVariadicPack(), function.BorrowsVariadicPack(),
+            function.HasModifier(core::FunctionModifier::Protected)
+                ? MethodVisibility::Protected
+                : MethodVisibility::Public,
+            method.Category());
+        contract.declaredBy = &owner;
+        contract.syntax = &method;
+        auto callable = std::make_unique<FunctionSymbol>(
+            owner.name +
+                "::" + EffectName(function.Name(), function.IsCrashable()),
+            std::move(callableSignature), function.NameRange(),
+            BuiltInFunction::None, nullptr, false, true, false, "", nullptr,
+            &function, function.BorrowsVariadicPack(), &owner,
+            function.HasModifier(core::FunctionModifier::Protected));
+        contract.callable = callable.get();
+        _model._declarations.emplace(&function, contract.callable);
+        _model._symbols.push_back(std::move(callable));
+        return contract;
+    };
+
+    std::unordered_set<const InterfaceType*> resolving;
+    std::unordered_set<const InterfaceType*> resolved;
+    const auto resolve = [&](const auto& self,
+                             InterfaceType& interfaceType) -> void {
+        if (resolved.contains(&interfaceType) ||
+            !resolving.insert(&interfaceType).second)
+            return;
+        for (const auto& parent : interfaceType.parents)
+            self(self, *const_cast<InterfaceType*>(parent.type));
+
+        for (const auto& parent : interfaceType.parents) {
+            for (const MethodContract* inherited : parent.type->methods) {
+                const auto collision = std::find_if(
+                    interfaceType.methods.begin(), interfaceType.methods.end(),
+                    [&](const MethodContract* candidate) {
+                        return candidate->key == inherited->key;
+                    });
+                if (collision != interfaceType.methods.end()) {
+                    Report(diagnostics::DiagnosticCode::InvalidInterface,
+                           parent.range,
+                           "interface composition has conflicting method '" +
+                               inherited->key.name + "' from '" +
+                               (*collision)->declaredBy->displayName +
+                               "' and '" + parent.type->displayName + "'");
+                    continue;
+                }
+                interfaceType.methods.push_back(inherited);
+            }
+        }
+
+        interfaceType.declaredMethods.reserve(
+            interfaceType.syntax->Methods().size());
+        for (const auto& syntax : interfaceType.syntax->Methods()) {
+            MethodContract contract = resolveContract(interfaceType, *syntax);
+            const auto inherited = std::find_if(
+                interfaceType.methods.begin(), interfaceType.methods.end(),
+                [&](const MethodContract* candidate) {
+                    return candidate->key == contract.key;
+                });
+            if (inherited != interfaceType.methods.end()) {
+                contract.inherited = *inherited;
+                if ((*inherited)->declaredBy == &interfaceType) {
+                    Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
+                           syntax->Signature().NameRange(),
+                           "duplicate interface method overload '" +
+                               contract.key.name + "'");
+                } else {
+                    if (!contract.SameContract(**inherited))
+                        Report(diagnostics::DiagnosticCode::InvalidInterface,
+                               syntax->Signature().NameRange(),
+                               "method '" + contract.key.name +
+                                   "' changes the inherited contract from '" +
+                                   (*inherited)->declaredBy->displayName + "'");
+                    if ((*inherited)->category == core::MethodCategory::Final)
+                        Report(diagnostics::DiagnosticCode::InvalidInterface,
+                               syntax->CategoryRange(),
+                               "final method '" + contract.key.name +
+                                   "' cannot be redeclared");
+                    if ((*inherited)->category ==
+                            core::MethodCategory::Default &&
+                        contract.category == core::MethodCategory::Virtual)
+                        Report(diagnostics::DiagnosticCode::InvalidInterface,
+                               syntax->CategoryRange(),
+                               "default method '" + contract.key.name +
+                                   "' cannot become virtual again");
+                }
+            }
+
+            interfaceType.declaredMethods.push_back(std::move(contract));
+            const MethodContract* declared =
+                &interfaceType.declaredMethods.back();
+            if (inherited == interfaceType.methods.end())
+                interfaceType.methods.push_back(declared);
+            else
+                *inherited = declared;
+        }
+        resolving.erase(&interfaceType);
+        resolved.insert(&interfaceType);
+    };
+
+    for (const auto& interfaceType : _model._interfaces)
+        resolve(resolve, *interfaceType);
+
+    const auto validateConcreteComposition =
+        [&](const std::vector<InterfaceReference>& conformances,
+            std::string_view declarationKind) {
+            std::vector<const MethodContract*> methods;
+            for (const auto& conformance : conformances)
+                for (const MethodContract* method : conformance.type->methods) {
+                    const auto collision =
+                        std::find_if(methods.begin(), methods.end(),
+                                     [&](const MethodContract* candidate) {
+                                         return candidate->key == method->key;
+                                     });
+                    if (collision != methods.end()) {
+                        Report(
+                            diagnostics::DiagnosticCode::InvalidInterface,
+                            conformance.range,
+                            "interface composition has conflicting method '" +
+                                method->key.name + "' in " +
+                                std::string(declarationKind));
+                        continue;
+                    }
+                    methods.push_back(method);
+                }
+        };
+    for (const auto& structure : _model._structures)
+        validateConcreteComposition(structure->conformances, "structure");
+    for (const auto& enumeration : _model._enums)
+        validateConcreteComposition(enumeration->conformances, "enum");
+}
+
+void SemanticAnalyzer::ValidateInterfaceConformance() {
+    for (const auto& interfaceType : _model._interfaces)
+        for (const MethodContract& contract : interfaceType->declaredMethods) {
+            const bool requiresBody =
+                contract.category == core::MethodCategory::Default ||
+                contract.category == core::MethodCategory::Final;
+            if (requiresBody && contract.provider == nullptr)
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       contract.syntax->CategoryRange(),
+                       (contract.category == core::MethodCategory::Default
+                            ? "default"
+                            : "final") +
+                           std::string(" interface method '") +
+                           contract.key.name +
+                           "' requires exactly one out-of-line body");
+        }
+
+    const auto validate = [&](const auto& concrete,
+                              std::string_view concreteKind) {
+        std::vector<const MethodContract*> seen;
+        for (const auto& conformance : concrete.conformances) {
+            for (const MethodContract* required : conformance.type->methods) {
+                if (std::ranges::any_of(
+                        seen, [&](const MethodContract* existing) {
+                            return existing->key == required->key;
+                        }))
+                    continue;
+                seen.push_back(required);
+
+                bool implemented = false;
+                const auto methods = concrete.methods.find(
+                    EffectName(required->key.name, required->isCrashable));
+                if (methods != concrete.methods.end())
+                    for (const FunctionSymbol* method : methods->second) {
+                        const MethodContract candidate = MethodContractOf(
+                            *method, method->IsProtected()
+                                         ? MethodVisibility::Protected
+                                         : MethodVisibility::Public);
+                        if (candidate.key == required->key &&
+                            !method->IsPrivate() &&
+                            candidate.SameContract(*required)) {
+                            implemented = true;
+                            break;
+                        }
+                    }
+                if (!implemented &&
+                    required->category == core::MethodCategory::Virtual)
+                    Report(diagnostics::DiagnosticCode::InvalidInterface,
+                           conformance.range,
+                           std::string(concreteKind) + " '" +
+                               concrete.displayName + "' does not implement '" +
+                               required->key.name +
+                               "' required by interface '" +
+                               required->declaredBy->displayName + "'");
+            }
+        }
+    };
+
+    for (const auto& structure : _model._structures)
+        validate(*structure, "structure");
+    for (const auto& enumeration : _model._enums)
+        validate(*enumeration, "enum");
 }
 
 void SemanticAnalyzer::ResolveStructureFields() {
@@ -7634,6 +8777,52 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
          (function.EnumOwner() && CurrentEnumOwner() != function.EnumOwner())))
         Report(diagnostics::DiagnosticCode::PrivateAccess, range,
                "method '" + function.Name() + "' is private");
+    const bool prospectiveAccess =
+        std::ranges::find(_prospectiveMethods, &function) !=
+            _prospectiveMethods.end() &&
+        ((function.Owner() && CurrentOwner() == function.Owner()) ||
+         (function.EnumOwner() && CurrentEnumOwner() == function.EnumOwner()));
+    if (function.IsProtected() && !prospectiveAccess) {
+        const InterfaceType* declaringInterface = function.InterfaceOwner();
+        const MethodKey key = MethodKeyOf(function);
+        const auto findDeclaration = [&](const auto& conformances) {
+            for (const auto& conformance : conformances)
+                for (const MethodContract* contract : conformance.type->methods)
+                    if (contract->key == key &&
+                        contract->visibility == MethodVisibility::Protected)
+                        return contract->declaredBy;
+            return static_cast<const InterfaceType*>(nullptr);
+        };
+        if (declaringInterface == nullptr && function.Owner())
+            declaringInterface =
+                findDeclaration(function.Owner()->conformances);
+        if (declaringInterface == nullptr && function.EnumOwner())
+            declaringInterface =
+                findDeclaration(function.EnumOwner()->conformances);
+
+        bool accessible = false;
+        if (const InterfaceType* caller = CurrentInterfaceOwner())
+            accessible =
+                caller == declaringInterface ||
+                std::ranges::find(caller->ancestors, declaringInterface) !=
+                    caller->ancestors.end();
+        if (CurrentOwner())
+            accessible = std::ranges::find(CurrentOwner()->conformanceClosure,
+                                           declaringInterface) !=
+                         CurrentOwner()->conformanceClosure.end();
+        if (CurrentEnumOwner())
+            accessible =
+                std::ranges::find(CurrentEnumOwner()->conformanceClosure,
+                                  declaringInterface) !=
+                CurrentEnumOwner()->conformanceClosure.end();
+        if (!accessible) {
+            const std::string name = function.Declaration()
+                                         ? function.Declaration()->Name()
+                                         : function.Name();
+            Report(diagnostics::DiagnosticCode::PrivateAccess, range,
+                   "method '" + name + "' is protected");
+        }
+    }
     if (function.IsUnsafe() ||
         (function.ReturnType().IsImmovable() && !_inZero))
         RequireUnsafe(range);
@@ -7648,6 +8837,8 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
             &static_cast<const core::ParenthesizedExpression&>(*source).Inner();
     const bool semanticDefault = IsNoneLiteral(*source);
     const SemanticType sourceType = _model.TypeOf(expression);
+    if (CanImplicitlyConvertInterfaceReference(sourceType, type))
+        type = sourceType;
     if (sourceType.ContainsOwnedBuffer()) type = sourceType;
     const Symbol* sourceSymbol =
         source->Kind() == core::AstNodeKind::NameExpression
@@ -7935,11 +9126,12 @@ SemanticType SemanticAnalyzer::AnalyzeBuild(
     return type;
 }
 
-SemanticType SemanticAnalyzer::AnalyzeStructureCall(
+SemanticType SemanticAnalyzer::AnalyzeMethodCall(
     const core::MemberCallExpression& expression, SemanticType receiver) {
     const bool isStatic = expression.Access() == TokenType::Scope;
     const StructureType* owner = nullptr;
     const EnumType* enumOwner = nullptr;
+    const InterfaceType* interfaceOwner = nullptr;
     if (isStatic) {
         if (expression.Receiver().Kind() == core::AstNodeKind::NameExpression) {
             const Symbol* type = _currentScope->Lookup(
@@ -7949,17 +9141,27 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                 owner = type->Type().Structure();
             if (type && type->Kind() == SymbolKind::EnumType)
                 enumOwner = type->Type().Enum();
+            if (type && type->Kind() == SymbolKind::InterfaceType)
+                interfaceOwner = type->Type().Interface();
         }
     } else {
         if (receiver.Kind() == SemanticTypeKind::Structure ||
-            receiver.Kind() == SemanticTypeKind::Enum) {
+            receiver.Kind() == SemanticTypeKind::Enum ||
+            receiver.Kind() == SemanticTypeKind::Interface) {
             if (expression.Access() != TokenType::Dot)
                 Report(diagnostics::DiagnosticCode::InvalidMember,
                        expression.Range(), "value receivers use '.'");
             if (receiver.Kind() == SemanticTypeKind::Structure)
                 owner = receiver.Structure();
-            else
+            else if (receiver.Kind() == SemanticTypeKind::Enum)
                 enumOwner = receiver.Enum();
+            else {
+                interfaceOwner = receiver.Interface();
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       expression.Receiver().Range(),
+                       "interface methods require a checked-reference "
+                       "receiver");
+            }
         } else if (receiver.Kind() == SemanticTypeKind::Pointer ||
                    receiver.Kind() == SemanticTypeKind::Reference) {
             if (expression.Access() != TokenType::Arrow)
@@ -7970,16 +9172,195 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                 owner = receiver.Target()->Structure();
             else if (receiver.Target()->Kind() == SemanticTypeKind::Enum)
                 enumOwner = receiver.Target()->Enum();
+            else if (receiver.Target()->Kind() == SemanticTypeKind::Interface)
+                interfaceOwner = receiver.Target()->Interface();
             if (receiver.Kind() == SemanticTypeKind::Pointer)
                 RequireUnsafe(expression.Range());
         }
     }
+
+    if (isStatic && interfaceOwner) {
+        std::vector<const MethodContract*> contracts;
+        std::vector<const FunctionSymbol*> providers;
+        for (const MethodContract* contract : interfaceOwner->methods)
+            if (contract->key.name == expression.Member() &&
+                contract->isCrashable == expression.IsCrashable() &&
+                contract->provider != nullptr) {
+                contracts.push_back(contract);
+                providers.push_back(contract->provider);
+            }
+        if (providers.empty()) {
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   expression.MemberRange(),
+                   "interface provider '" + interfaceOwner->displayName +
+                       "::" + expression.Member() + "' does not exist");
+            for (const auto& argument : expression.Arguments())
+                AnalyzeExpression(*argument);
+            return SemanticType::Error();
+        }
+        if (expression.Arguments().empty()) {
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "a qualified interface provider call requires an explicit "
+                   "receiver");
+            return SemanticType::Error();
+        }
+
+        const SemanticType explicitReceiver =
+            AnalyzeExpression(*expression.Arguments().front());
+        std::vector<const core::Expression*> trailing;
+        std::vector<SemanticType> trailingTypes;
+        trailing.reserve(expression.Arguments().size() - 1);
+        trailingTypes.reserve(expression.Arguments().size() - 1);
+        for (std::size_t index = 1; index < expression.Arguments().size();
+             ++index) {
+            trailing.push_back(expression.Arguments()[index].get());
+            trailingTypes.push_back(
+                AnalyzeExpression(*expression.Arguments()[index]));
+        }
+
+        std::vector<const FunctionSymbol*> receiverCompatible;
+        for (const FunctionSymbol* candidate : providers) {
+            if (candidate->ParameterTypes().empty()) continue;
+            const SemanticType expectedReceiver =
+                candidate->ParameterTypes().front();
+            if (IsAssignable(expectedReceiver, explicitReceiver) ||
+                CanReborrow(expectedReceiver, explicitReceiver))
+                receiverCompatible.push_back(candidate);
+        }
+        const std::string qualifiedName =
+            interfaceOwner->displayName + "::" + expression.Member();
+        const FunctionSymbol* provider = ResolveOverloadFromTypes(
+            qualifiedName, receiverCompatible, trailing, trailingTypes,
+            expression.Range(), false, explicitReceiver);
+        if (provider == nullptr) {
+            return SemanticType::Error();
+        }
+
+        const auto selected = std::ranges::find(providers, provider);
+        if (selected == providers.end()) return SemanticType::Error();
+        const MethodContract* qualified = contracts[static_cast<std::size_t>(
+            std::distance(providers.begin(), selected))];
+        const auto origin = [](const MethodContract* contract) {
+            while (contract != nullptr && contract->inherited != nullptr)
+                contract = contract->inherited;
+            return contract;
+        };
+        const MethodContract* callerContract = nullptr;
+        const MethodKey callerKey =
+            _currentFunction ? MethodKeyOf(*_currentFunction) : MethodKey{};
+        if (const InterfaceType* caller = CurrentInterfaceOwner())
+            for (const MethodContract* method : caller->methods)
+                if (method->key == callerKey) callerContract = method;
+        const auto findConcreteContract = [&](const auto* concrete) {
+            if (concrete == nullptr) return;
+            for (const auto& conformance : concrete->conformances)
+                for (const MethodContract* method : conformance.type->methods)
+                    if (method->key == callerKey && callerContract == nullptr)
+                        callerContract = method;
+        };
+        findConcreteContract(CurrentOwner());
+        findConcreteContract(CurrentEnumOwner());
+        if (_currentFunction == nullptr || callerContract == nullptr ||
+            origin(callerContract) != origin(qualified)) {
+            Report(diagnostics::DiagnosticCode::InvalidInterface,
+                   expression.Range(),
+                   "qualified interface providers may only be called from an "
+                   "override in the same method lineage");
+            return SemanticType::Error();
+        }
+
+        for (std::size_t index = 0; index < trailing.size(); ++index)
+            AnalyzeExpression(*trailing[index],
+                              provider->ParameterTypes()[index + 1]);
+        for (std::size_t index = 0; index < expression.Arguments().size();
+             ++index)
+            CheckTransfer(*expression.Arguments()[index],
+                          provider->ParameterTypes()[index],
+                          provider->ParameterContract(index) ==
+                              core::OwnershipContract::Own);
+        ValidateCrashableCall(expression.IsCrashable(), provider->Signature(),
+                              provider, expression.Range());
+        CheckMethodAccess(*provider, expression.MemberRange());
+        if (_currentFunction) _functionCalls[_currentFunction].insert(provider);
+        _model._methods[&expression] = provider;
+        _model._qualifiedInterfaceProviderCalls.insert(&expression);
+        return provider->ReturnType().WithoutConst();
+    }
+
     const auto* methods = owner       ? &owner->methods
                           : enumOwner ? &enumOwner->methods
                                       : nullptr;
     const std::string methodName =
         EffectName(expression.Member(), expression.IsCrashable());
-    if (!methods || !methods->contains(methodName)) {
+    std::vector<const FunctionSymbol*> overloads;
+    std::vector<std::pair<const FunctionSymbol*, const MethodContract*>>
+        inheritedInterfaceOverloads;
+    if (methods) {
+        const auto concrete = methods->find(methodName);
+        if (concrete != methods->end())
+            overloads.insert(overloads.end(), concrete->second.begin(),
+                             concrete->second.end());
+    }
+    // A detached behavior sees its declared signatures as a provisional
+    // method surface. Same-key concrete methods do not create a second
+    // overload here; selecting an implementation remains a later stage.
+    for (const FunctionSymbol* prospective : _prospectiveMethods) {
+        if ((!owner || prospective->Owner() != owner) &&
+            (!enumOwner || prospective->EnumOwner() != enumOwner))
+            continue;
+        const MethodKey key = MethodKeyOf(*prospective);
+        if (key.name != expression.Member() ||
+            prospective->IsCrashable() != expression.IsCrashable())
+            continue;
+        std::erase_if(overloads, [&](const FunctionSymbol* candidate) {
+            return candidate->IsCrashable() == prospective->IsCrashable() &&
+                   MethodKeyOf(*candidate) == key;
+        });
+        overloads.push_back(prospective);
+    }
+    const std::size_t concreteOverloadCount = overloads.size();
+    if (interfaceOwner) {
+        for (const MethodContract* contract : interfaceOwner->methods)
+            if (contract->key.name == expression.Member() &&
+                contract->isCrashable == expression.IsCrashable() &&
+                contract->callable)
+                overloads.push_back(contract->callable);
+    } else if (owner || enumOwner) {
+        const auto& conformances =
+            owner ? owner->conformances : enumOwner->conformances;
+        for (const InterfaceReference& conformance : conformances) {
+            for (const MethodContract* contract : conformance.type->methods) {
+                if (contract->key.name != expression.Member() ||
+                    contract->isCrashable != expression.IsCrashable() ||
+                    contract->callable == nullptr ||
+                    contract->provider == nullptr ||
+                    (contract->category != core::MethodCategory::Default &&
+                     contract->category != core::MethodCategory::Final))
+                    continue;
+
+                bool shadowed = false;
+                for (std::size_t index = 0;
+                     index < concreteOverloadCount && !shadowed; ++index) {
+                    const FunctionSymbol* candidate = overloads[index];
+                    shadowed = MethodContractOf(
+                                   *candidate, candidate->IsProtected()
+                                                   ? MethodVisibility::Protected
+                                                   : MethodVisibility::Public)
+                                   .key == contract->key;
+                }
+                const bool duplicate = std::ranges::any_of(
+                    inheritedInterfaceOverloads, [&](const auto& inherited) {
+                        return inherited.second->key == contract->key;
+                    });
+                if (shadowed || duplicate) continue;
+                overloads.push_back(contract->callable);
+                inheritedInterfaceOverloads.emplace_back(contract->callable,
+                                                         contract);
+            }
+        }
+    }
+    if (overloads.empty()) {
         if (owner && expression.Member() == "tear") {
             Report(diagnostics::DiagnosticCode::InvalidLifecycle,
                    expression.MemberRange(),
@@ -7990,7 +9371,6 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                expression.MemberRange(), "unknown method '" + methodName + "'");
         return SemanticType::Error();
     }
-    const auto& overloads = methods->at(methodName);
     const FunctionSymbol* function =
         overloads.size() == 1
             ? overloads.front()
@@ -7998,6 +9378,33 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                               expression.Range(), isStatic, receiver);
     if (!function) return SemanticType::Error();
     _model._methods[&expression] = function;
+    const MethodContract* interfaceContract = nullptr;
+    if (const auto prospective = _prospectiveContracts.find(function);
+        prospective != _prospectiveContracts.end()) {
+        interfaceContract = prospective->second;
+        _model._interfaceMethods[&expression] = interfaceContract;
+    }
+    if (interfaceOwner) {
+        for (const MethodContract* contract : interfaceOwner->methods)
+            if (contract->callable == function) {
+                _model._interfaceMethods[&expression] = contract;
+                interfaceContract = contract;
+                break;
+            }
+    } else {
+        const auto inherited = std::ranges::find_if(
+            inheritedInterfaceOverloads,
+            [&](const auto& candidate) { return candidate.first == function; });
+        if (inherited != inheritedInterfaceOverloads.end()) {
+            interfaceContract = inherited->second;
+            _model._interfaceMethods[&expression] = interfaceContract;
+            if (receiver.Kind() == SemanticTypeKind::Pointer)
+                Report(diagnostics::DiagnosticCode::InvalidInterface,
+                       expression.Receiver().Range(),
+                       "inherited interface methods require a value or "
+                       "checked-reference receiver");
+        }
+    }
     ValidateCrashableCall(expression.IsCrashable(), function->Signature(),
                           function, expression.Range());
     if (_currentFunction) _functionCalls[_currentFunction].insert(function);
@@ -8025,7 +9432,8 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
         } else {
             SemanticType target =
                 receiver.Kind() == SemanticTypeKind::Structure ||
-                        receiver.Kind() == SemanticTypeKind::Enum
+                        receiver.Kind() == SemanticTypeKind::Enum ||
+                        receiver.Kind() == SemanticTypeKind::Interface
                     ? PlaceType(expression.Receiver())
                     : *receiver.Target();
             if (target.IsError())
@@ -8050,7 +9458,11 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
     arguments.reserve(expression.Arguments().size());
     for (const auto& argument : expression.Arguments())
         arguments.push_back(argument.get());
-    std::size_t required = function->ParameterTypes().size() - offset;
+    const bool variadic = function->Declaration() != nullptr &&
+                          function->Declaration()->HasVariadicPack();
+    const std::size_t fixedArgumentCount =
+        function->ParameterTypes().size() - offset;
+    std::size_t required = fixedArgumentCount;
     if (const auto* declaration = function->Declaration()) {
         for (std::size_t index = offset;
              index < declaration->Parameters().size(); ++index)
@@ -8058,7 +9470,7 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                 required = index - offset;
                 break;
             }
-        if (arguments.size() >= required &&
+        if (!variadic && arguments.size() >= required &&
             arguments.size() + offset <= declaration->Parameters().size()) {
             for (std::size_t index = arguments.size() + offset;
                  index < declaration->Parameters().size(); ++index)
@@ -8068,35 +9480,65 @@ SemanticType SemanticAnalyzer::AnalyzeStructureCall(
                 _model._callArguments[&expression] = arguments;
         }
     }
-    if (arguments.size() + offset != function->ParameterTypes().size())
+    if ((!variadic &&
+         arguments.size() + offset != function->ParameterTypes().size()) ||
+        (variadic && arguments.size() < required))
         Report(diagnostics::DiagnosticCode::WrongArgumentCount,
                expression.Range(),
                "method expects " +
-                   (required != function->ParameterTypes().size() - offset
+                   (variadic ? "at least " + std::to_string(required)
+                    : required != fixedArgumentCount
                         ? "between " + std::to_string(required) + " and " +
-                              std::to_string(function->ParameterTypes().size() -
-                                             offset)
-                        : std::to_string(function->ParameterTypes().size() -
-                                         offset)) +
+                              std::to_string(fixedArgumentCount)
+                        : std::to_string(fixedArgumentCount)) +
                    " argument(s), found " +
                    std::to_string(expression.Arguments().size()));
+    std::vector<SemanticType> shapeTypes;
+    std::vector<core::OwnershipContract> shapeContracts;
+    if (variadic && interfaceContract != nullptr) {
+        shapeTypes.reserve(arguments.size());
+        shapeContracts.reserve(arguments.size());
+    }
     for (std::size_t i = 0; i < arguments.size(); ++i) {
+        const bool fixed = i + offset < function->ParameterTypes().size();
         const SemanticType expected =
-            i + offset < function->ParameterTypes().size()
-                ? function->ParameterTypes()[i + offset]
-                : SemanticType::Error();
+            fixed ? function->ParameterTypes()[i + offset]
+                  : SemanticType::Error();
         const bool provided = i < expression.Arguments().size();
         const SemanticType actual =
-            provided ? AnalyzeExpression(*arguments[i], expected)
+            provided ? (fixed ? AnalyzeExpression(*arguments[i], expected)
+                              : AnalyzeExpression(*arguments[i]))
                      : _model.TypeOf(*arguments[i]);
+        const core::OwnershipContract contract =
+            fixed ? function->ParameterContract(i + offset)
+                  : core::OwnershipContract::None;
         if (provided)
-            CheckTransfer(*arguments[i], expected,
-                          i + offset < function->ParameterTypes().size() &&
-                              function->ParameterContract(i + offset) ==
-                                  core::OwnershipContract::Own);
-        if (!IsAssignable(expected, actual) && !CanReborrow(expected, actual))
+            CheckTransfer(*arguments[i], fixed ? expected : actual,
+                          contract == core::OwnershipContract::Own);
+        if (fixed && !IsAssignable(expected, actual) &&
+            !CanReborrow(expected, actual))
             Report(diagnostics::DiagnosticCode::IncompatibleArgument,
                    arguments[i]->Range(), TypeMismatch(expected, actual));
+        if (variadic && interfaceContract != nullptr) {
+            shapeTypes.push_back(actual);
+            shapeContracts.push_back(contract);
+        }
+    }
+    if (variadic && interfaceContract != nullptr &&
+        std::ranges::none_of(
+            shapeTypes, [](SemanticType type) { return type.IsError(); })) {
+        const MethodContract* origin = interfaceContract;
+        while (origin->inherited != nullptr) origin = origin->inherited;
+        VariadicShape shape = NormalizeVariadicShape(std::move(shapeTypes),
+                                                     std::move(shapeContracts));
+        _model._interfaceVariadicCallShapes.insert_or_assign(&expression,
+                                                             shape);
+        std::vector<VariadicShape>& family =
+            _model._interfaceVariadicShapes[origin];
+        const auto position = std::ranges::lower_bound(family, shape.key, {},
+                                                       &VariadicShape::key);
+        if (position == family.end() || position->key != shape.key)
+            family.insert(position, std::move(shape));
     }
     return function->ReturnType().WithoutConst();
 }

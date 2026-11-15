@@ -71,6 +71,15 @@ bool IntegerField(const JsonObject& object, std::string_view name,
     return value && ParseInteger(*value, result);
 }
 
+bool BoolField(const JsonObject& object, std::string_view name, bool& result) {
+    const json::Value* value = json::Field(object, name);
+    if (!value) return false;
+    const bool* boolean = std::get_if<bool>(&value->value);
+    if (!boolean) return false;
+    result = *boolean;
+    return true;
+}
+
 std::optional<Request> ParseRequest(const json::Value& document,
                                     std::string& error) {
     const JsonObject* object = json::AsObject(document);
@@ -151,10 +160,87 @@ std::string DiagnosticsResult(const AnalysisSnapshot& snapshot) {
                << ",\"endByte\":" << diagnostic.range.end.offset
                << ",\"severity\":"
                << json::Quote(SeverityName(diagnostic.severity))
-               << ",\"message\":" << json::Quote(diagnostic.message) << '}';
+               << ",\"message\":" << json::Quote(diagnostic.message)
+               << ",\"related\":[";
+        bool firstRelated = true;
+        for (const auto& related : diagnostic.related) {
+            if (!firstRelated) result << ',';
+            firstRelated = false;
+            result << "{\"file\":" << json::Quote(related.range.start.file)
+                   << ",\"startByte\":" << related.range.start.offset
+                   << ",\"endByte\":" << related.range.end.offset
+                   << ",\"message\":" << json::Quote(related.message) << '}';
+        }
+        result << "]}";
     }
     result << "]}";
     return result.str();
+}
+
+std::string_view SemanticKindName(SemanticItemKind kind) {
+    switch (kind) {
+        case SemanticItemKind::Function:
+            return "function";
+        case SemanticItemKind::Parameter:
+            return "parameter";
+        case SemanticItemKind::LocalVariable:
+            return "localVariable";
+        case SemanticItemKind::ModuleConstant:
+            return "moduleConstant";
+        case SemanticItemKind::ErrorType:
+            return "errorType";
+        case SemanticItemKind::EnumType:
+            return "enumType";
+        case SemanticItemKind::StructureType:
+            return "structureType";
+        case SemanticItemKind::TypeParameter:
+            return "typeParameter";
+        case SemanticItemKind::Behavior:
+            return "behavior";
+        case SemanticItemKind::Decoration:
+            return "decoration";
+        case SemanticItemKind::Keyword:
+            return "keyword";
+        case SemanticItemKind::InterfaceType:
+            return "interfaceType";
+        case SemanticItemKind::CallableType:
+            return "callableType";
+        case SemanticItemKind::Field:
+            return "field";
+        case SemanticItemKind::Expression:
+            return "expression";
+    }
+    return "expression";
+}
+
+std::string RangeResult(const source::SourceRange& range) {
+    return "{\"file\":" + json::Quote(range.start.file) +
+           ",\"startByte\":" + std::to_string(range.start.offset) +
+           ",\"endByte\":" + std::to_string(range.end.offset) + "}";
+}
+
+std::string SemanticItemResult(const SemanticHover& hover) {
+    return "{\"range\":" + RangeResult(hover.range) +
+           ",\"name\":" + json::Quote(hover.name) +
+           ",\"type\":" + json::Quote(hover.type) +
+           ",\"kind\":" + json::Quote(SemanticKindName(hover.kind)) + "}";
+}
+
+std::string SemanticSymbolResult(const SemanticSymbol& symbol) {
+    return "{\"name\":" + json::Quote(symbol.name) +
+           ",\"type\":" + json::Quote(symbol.type) +
+           ",\"kind\":" + json::Quote(SemanticKindName(symbol.kind)) +
+           ",\"declaration\":" + RangeResult(symbol.declarationRange) + "}";
+}
+
+std::string SemanticOccurrenceResult(const SemanticOccurrence& occurrence) {
+    return "{\"range\":" + RangeResult(occurrence.range) +
+           ",\"name\":" + json::Quote(occurrence.name) +
+           ",\"type\":" + json::Quote(occurrence.type) +
+           ",\"kind\":" + json::Quote(SemanticKindName(occurrence.kind)) +
+           ",\"declaration\":" + RangeResult(occurrence.declarationRange) +
+           ",\"isDeclaration\":" +
+           (occurrence.isDeclaration ? "true" : "false") + "}";
 }
 
 std::string UpdateError(std::string_view id, OverlayUpdateResult result) {
@@ -227,7 +313,10 @@ std::string ProtocolServer::Handle(std::string_view message) {
                 ",\"protocolMinor\":" + std::to_string(PROTOCOL_MINOR) +
                 ",\"compilerVersion\":" + json::Quote(_compilerVersion) +
                 ",\"capabilities\":{\"diagnostics\":true,"
-                "\"fullDocumentSync\":true}}";
+                "\"fullDocumentSync\":true,\"hover\":true,"
+                "\"definition\":true,\"references\":true,"
+                "\"completion\":true,\"rename\":true,"
+                "\"semanticTokens\":true}}";
             return SuccessResponse(request->id, result);
         }
 
@@ -269,7 +358,13 @@ std::string ProtocolServer::Handle(std::string_view message) {
         }
 
         if (request->method == "document/close" ||
-            request->method == "document/diagnostics") {
+            request->method == "document/diagnostics" ||
+            request->method == "document/hover" ||
+            request->method == "document/definition" ||
+            request->method == "document/references" ||
+            request->method == "document/completion" ||
+            request->method == "document/rename" ||
+            request->method == "document/semanticTokens") {
             if (!request->params)
                 return ErrorResponse(request->id, INVALID_PARAMS,
                                      "document params are required");
@@ -284,8 +379,105 @@ std::string ProtocolServer::Handle(std::string_view message) {
                                                         ? "{\"closed\":true}"
                                                         : "{\"closed\":false}");
             }
-            const AnalysisSnapshot snapshot = _session->Analyze(path);
-            return SuccessResponse(request->id, DiagnosticsResult(snapshot));
+            const std::shared_ptr<const AnalysisSnapshot> snapshot =
+                _session->AnalyzeCached(path);
+            if (request->method == "document/diagnostics")
+                return SuccessResponse(request->id,
+                                       DiagnosticsResult(*snapshot));
+
+            if (request->method == "document/completion") {
+                std::string query;
+                const json::Value* queryValue =
+                    json::Field(*request->params, "query");
+                if (queryValue &&
+                    !StringField(*request->params, "query", query))
+                    return ErrorResponse(request->id, INVALID_PARAMS,
+                                         "completion query must be a string");
+                const std::vector<SemanticSymbol> symbols =
+                    snapshot->Symbols(query);
+                std::string result = "{\"items\":[";
+                for (std::size_t index = 0; index < symbols.size(); ++index) {
+                    if (index != 0) result += ',';
+                    result += SemanticSymbolResult(symbols[index]);
+                }
+                result += "]}";
+                return SuccessResponse(request->id, result);
+            }
+
+            if (request->method == "document/semanticTokens") {
+                const std::vector<SemanticOccurrence> occurrences =
+                    snapshot->Occurrences(path);
+                std::string result = "{\"tokens\":[";
+                for (std::size_t index = 0; index < occurrences.size();
+                     ++index) {
+                    if (index != 0) result += ',';
+                    result += SemanticOccurrenceResult(occurrences[index]);
+                }
+                result += "]}";
+                return SuccessResponse(request->id, result);
+            }
+
+            std::int64_t offset = -1;
+            if (!IntegerField(*request->params, "offset", offset) || offset < 0)
+                return ErrorResponse(
+                    request->id, INVALID_PARAMS,
+                    "semantic query requires a nonnegative offset");
+            const std::size_t byteOffset = static_cast<std::size_t>(offset);
+            if (request->method == "document/hover") {
+                const std::optional<SemanticHover> hover =
+                    snapshot->Hover(path, byteOffset);
+                return SuccessResponse(
+                    request->id,
+                    hover ? "{\"hover\":" + SemanticItemResult(*hover) + "}"
+                          : "{\"hover\":null}");
+            }
+            if (request->method == "document/definition") {
+                const std::optional<source::SourceRange> definition =
+                    snapshot->Definition(path, byteOffset);
+                return SuccessResponse(
+                    request->id,
+                    definition
+                        ? "{\"definition\":" + RangeResult(*definition) + "}"
+                        : "{\"definition\":null}");
+            }
+
+            bool includeDeclaration = true;
+            const json::Value* includeValue =
+                json::Field(*request->params, "includeDeclaration");
+            if (includeValue &&
+                !BoolField(*request->params, "includeDeclaration",
+                           includeDeclaration))
+                return ErrorResponse(request->id, INVALID_PARAMS,
+                                     "includeDeclaration must be a boolean");
+            if (request->method == "document/references") {
+                const auto references =
+                    snapshot->References(path, byteOffset, includeDeclaration);
+                if (!references)
+                    return SuccessResponse(request->id,
+                                           "{\"references\":null}");
+                std::string result = "{\"references\":[";
+                for (std::size_t index = 0; index < references->size();
+                     ++index) {
+                    if (index != 0) result += ',';
+                    result += RangeResult((*references)[index]);
+                }
+                result += "]}";
+                return SuccessResponse(request->id, result);
+            }
+            const std::optional<SemanticRename> rename =
+                snapshot->Rename(path, byteOffset, includeDeclaration);
+            if (!rename)
+                return SuccessResponse(request->id, "{\"rename\":null}");
+            std::string result =
+                "{\"rename\":{\"name\":" + json::Quote(rename->name) +
+                ",\"ranges\":[";
+            for (std::size_t index = 0; index < rename->ranges.size();
+                 ++index) {
+                if (index != 0) result += ',';
+                result += RangeResult(rename->ranges[index]);
+            }
+            result += "]}}";
+            return SuccessResponse(request->id, result);
         }
 
         return ErrorResponse(request->id, METHOD_NOT_FOUND,

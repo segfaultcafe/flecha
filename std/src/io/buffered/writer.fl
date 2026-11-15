@@ -1,0 +1,111 @@
+module buffered;
+under namespace root::io;
+
+@imports
+    :: root::io::errors
+    :: root::io::stream;
+
+export structure BufferedWriter << stream::Writable {
+    private &stream::Writable sink;
+    private own []u8 buffer;
+    private usize length;
+};
+
+(BufferedWriter, error) BufferedWriter::withCapacity(
+    &stream::Writable sink,
+    usize capacity,
+) <-sink {
+    if capacity == 0 {
+        return (build BufferedWriter {
+            self.sink = sink;
+            self.buffer = none;
+            self.length = 0;
+        }, errors::IoError.InvalidOptions);
+    }
+
+    storage, allocationError := new<own []u8>(capacity);
+    if allocationError != none {
+        return (build BufferedWriter {
+            self.sink = sink;
+            self.buffer = none;
+            self.length = 0;
+        }, allocationError);
+    }
+
+    return (build BufferedWriter {
+        self.sink = sink;
+        self.buffer = storage;
+        self.length = 0;
+    }, none);
+}
+
+(usize, error) BufferedWriter::write(&self, []const u8 source) override {
+    if source.len() == 0 {
+        return (none, none);
+    }
+
+    if self->length == 0 and source.len() >= self->buffer.len() {
+        count, writeError := self->sink->write(source);
+        if count > source.len() {
+            return (none, errors::IoError.WriteFailed);
+        }
+        return (count, writeError);
+    }
+
+    const usize AVAILABLE = self->buffer.len() - self->length;
+    if source.len() > AVAILABLE {
+        flushError := self->flush();
+        if flushError != none {
+            return (none, flushError);
+        }
+    } also source.len() >= self->buffer.len() {
+        count, writeError := self->sink->write(source);
+        if count > source.len() {
+            return (none, errors::IoError.WriteFailed);
+        }
+        return (count, writeError);
+    }
+
+    loop usize index = 0; index < source.len(); index++ {
+        self->buffer[self->length + index] = source[index];
+    }
+    self->length = self->length + source.len();
+    return (source.len(), none);
+}
+
+error BufferedWriter::flush(&self) {
+    usize offset = 0;
+    while offset < self->length {
+        count, writeError := self->sink->write(
+            self->buffer[offset:self->length]
+        );
+        if count > self->length - offset {
+            self->preserveUnwritten(offset);
+            return errors::IoError.WriteFailed;
+        }
+
+        offset = offset + count;
+        if writeError != none {
+            self->preserveUnwritten(offset);
+            return writeError;
+        }
+        if count == 0 {
+            self->preserveUnwritten(offset);
+            return errors::IoError.WriteFailed;
+        }
+    }
+
+    self->length = 0;
+    return none;
+}
+
+private void BufferedWriter::preserveUnwritten(
+    &self,
+    usize offset,
+) {
+    const usize REMAINING = self->length - offset;
+    loop usize index = 0; index < REMAINING; index++ {
+        self->buffer[index] = self->buffer[offset + index];
+    }
+    self->length = REMAINING;
+}

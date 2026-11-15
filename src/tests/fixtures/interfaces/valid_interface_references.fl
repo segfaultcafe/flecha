@@ -1,0 +1,56 @@
+interface EmptyReference {};
+
+structure EmptyReferenceStructure << EmptyReference {};
+
+enum EmptyReferenceEnum << EmptyReference {
+    default First,
+    Second,
+}
+
+interface ReadableReference {
+    error read(&const self) virtual;
+};
+
+structure ReadableStructure << ReadableReference {};
+
+error ReadableStructure::read(&const self) override {
+    return none;
+}
+
+enum ReadableEnum << ReadableReference {
+    default First,
+    Second,
+}
+
+error ReadableEnum::read(&const self) override {
+    return none;
+}
+
+structure InterfaceReferenceFields {
+    &EmptyReference mutableReference;
+    &const ReadableReference constReference;
+};
+
+InterfaceReferenceFields InterfaceReferenceFields::init(
+    &EmptyReference mutableReference,
+    &const ReadableReference constReference
+) <- (mutableReference, constReference) override {
+    return build InterfaceReferenceFields {
+        self.mutableReference = mutableReference;
+        self.constReference = constReference;
+    };
+}
+
+&EmptyReference relayMutableReference(
+    &EmptyReference value
+) <- value {
+    local := value;
+    return local;
+}
+
+&const ReadableReference relayConstReference(
+    &const ReadableReference value
+) <- value {
+    local := value;
+    return local;
+}

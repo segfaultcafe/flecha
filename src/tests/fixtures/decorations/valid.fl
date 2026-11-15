@@ -1,0 +1,26 @@
+module valid;
+export decoration legacy;
+decoration empty {};
+decoration meta {
+    application(structure) target structure;
+    application(stringv name) target structure::field;
+    application(stringv name) target enum;
+    application(stringv name) target interface;
+};
+const stringv LABEL = "wire";
+@meta(structure)
+structure Record {
+    @meta(LABEL) i32 first;
+    @meta("second") i32 second;
+    @meta("secret") private i32 secret;
+};
+@meta("state") enum State { Ready }
+@meta("protocol") interface Protocol {};
+interface Child << Protocol {};
+structure Plain << Protocol {};
+decoration numbers {
+    application(i32 version, bool enabled, char letter, f64 weight, State state) target structure;
+};
+@numbers(1 + 2, true, 'a', 1.5, State.Ready) structure Numeric {};
+i32 application(i32 target) { return target; }
+i32 main() { return application(0); }

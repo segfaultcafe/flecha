@@ -1,0 +1,12 @@
+module protected_fixture;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+interface Protected { protected i32 value(&self) virtual; };
+behavior meta<T> => structure << Protected {
+    protected i32 T::value(&self) override { return 1; }
+};

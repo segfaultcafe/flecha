@@ -14,7 +14,8 @@ class DiagnosticBag {
 
     void Report(DiagnosticCode code, source::SourceRange range,
                 std::string message,
-                DiagnosticSeverity severity = DiagnosticSeverity::Error);
+                DiagnosticSeverity severity = DiagnosticSeverity::Error,
+                std::vector<RelatedLocation> related = {});
 
     [[nodiscard]] bool Empty() const { return _diagnostics.empty(); }
     [[nodiscard]] bool HasErrors() const;

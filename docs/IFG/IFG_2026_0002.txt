@@ -1,0 +1,90 @@
+IFG: 2026-0002
+Title: Capability Interfaces and Explicit Ownership
+Author: Flecha Project
+Type: Guideline
+Topic: Idiom
+Status: Accepted
+Created: 2026-11-12
+Target: Flecha 0.4
+Requires: interface dispatch
+Implementation: Implemented
+
+Abstract
+--------
+
+An API should accept an interface reference when it needs only a capability.
+Ownership should remain explicit in a concrete type, owning adapter, or generic
+parameter.
+
+Rule
+----
+
+Capability interfaces should be minimal and orthogonal. Primitive operations
+belong in virtual slots. Algorithms derived from those primitives may be
+default methods when their meaning belongs to every implementation.
+
+Concrete values should normally be returned from constructors and factories.
+An interface reference may be returned only when its data identity and borrow
+origin remain valid under the declared contract.
+
+A structure should not store a borrowed interface reference merely to erase a
+type when doing so obscures the owner or extends the required lifetime.
+
+Dynamic dispatch belongs at an abstraction boundary. Calls within a concrete
+implementation should remain direct unless dynamic redispatch is part of the
+contract.
+
+Example
+-------
+
+    interface Readable {
+        (usize, error) read(&self, []u8 destination) virtual;
+        error readExact(&self, []u8 destination) default;
+    };
+
+    interface Writable {
+        (usize, error) write(&self, []const u8 source) virtual;
+        error writeAll(&self, []const u8 source) default;
+    };
+
+    (usize, error) copy(
+        &Readable source,
+        &Writable destination,
+        []u8 buffer,
+    );
+
+Naming
+------
+
+Capability interfaces should use adjectives when natural, such as Readable and
+Writable. Concrete resources and owning adapters should use nouns such as File,
+Reader, Writer, or BufferedReader.
+
+Validation
+----------
+
+The first validation target is std::io. The accepted implementation keeps the
+closure-owning Reader and Writer structures as concrete adapters, introduces
+Readable and Writable capability interfaces, makes copy depend on interface
+references, and lets files, process pipes, and TCP streams conform directly.
+
+Readable::readExact and Writable::writeAll are default algorithms over the
+minimal virtual operations. Direct resources inherit those algorithms without
+duplicating their bodies. Concrete Reader and Writer adapters remain available
+when an operation must be owned independently of its original resource.
+
+BufferedReader and BufferedWriter store checked interface references because
+they borrow their endpoints. Their constructors expose that borrow, their
+reference-bearing fields require direct initialization, and the borrow checker
+prevents either adapter from outliving or conflicting with its endpoint.
+
+Interface-reference formation and dispatch introduce no hidden allocation.
+The existing allocation behavior remains visible in concrete owning adapters
+and buffers. Aggregate returns, allocation failures, partial reads and writes,
+closed resources, inherited defaults, and adjacent-field borrows are covered
+by compiler and standard-library fixtures.
+
+The migration intentionally generalizes some public signatures from concrete
+Reader or Writer values to borrowed Readable or Writable references. Logical
+module names remain unchanged. Code that needs ownership must keep or create a
+concrete adapter instead of attempting to own an interface value.

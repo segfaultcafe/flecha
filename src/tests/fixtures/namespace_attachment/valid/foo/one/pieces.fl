@@ -1,0 +1,4 @@
+module pieces;
+under namespace root::foo;
+
+export i32 one() { return 13; }

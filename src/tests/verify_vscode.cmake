@@ -20,9 +20,9 @@ endif()
 string(JSON packageCommand GET "${manifest}" scripts package)
 string(JSON vsceVersion GET "${manifest}" devDependencies "@vscode/vsce")
 if(NOT packageCommand STREQUAL
-       "npm run compile && vsce package --no-dependencies")
+       "npm test && npm run compile && vsce package --no-dependencies")
     message(FATAL_ERROR
-        "VS Code packaging must compile the extension before creating the VSIX"
+        "VS Code packaging must test and compile the extension before creating the VSIX"
     )
 endif()
 if(NOT vsceVersion STREQUAL "4.0.0")
@@ -66,17 +66,28 @@ endif()
 
 file(READ "${EDITOR_ROOT}/syntaxes/flecha.tmLanguage.json" grammar)
 foreach(required IN ITEMS
-        enum match test func once copy own lend quiver typeset isof
+        enum interface match test func once copy own lend quiver typeset isof
+        protected virtual default final
         min_value max_value
         nan infinity negative_infinity min_positive epsilon
         signed_integer unsigned_integer integer floating_point numeric
         borrowAllArguments
+        nominalDeclarations
         "keyword.operator.crashable.flecha"
-        "support.function.crash.flecha"
+        "keyword.declaration.type.flecha"
+        "keyword.operator.inheritance.flecha"
+        "entity.other.inherited-class.flecha"
+        "support.function.builtin.flecha"
         "storage.type.function.flecha"
         "storage.type.typeset.flecha"
         "entity.name.type.typeset.flecha"
         "support.type.typeset.builtin.flecha"
+        "entity.name.function.flecha"
+        "variable.function.member.flecha"
+        "variable.parameter.flecha"
+        "variable.other.readwrite.flecha"
+        "constant.other.named.flecha"
+        "constant.other.enum.member.flecha"
         "constant.numeric.integer.bound.flecha"
         "0[xX][0-9A-Fa-f]+" "=>" "<<" ">>" "~")
     string(FIND "${grammar}" "${required}" position)
@@ -85,17 +96,13 @@ foreach(required IN ITEMS
     endif()
 endforeach()
 
-foreach(required IN ITEMS
-        "keyword.other.test.flecha" "#FFD700"
-        "storage.type.function.flecha" "#569CD6"
-        "support.function.crash.flecha" "#87CEFA"
-        "support.type.typeset.builtin.flecha" "#87CEFA"
-        "constant.numeric.integer.bound.flecha" "#C49A00"
-        "constant.numeric.float.property.flecha" "#C49A00"
-        "keyword.operator.crashable.flecha" "#FF8C00")
-    string(FIND "${manifest}" "${required}" position)
-    if(position EQUAL -1)
-        message(FATAL_ERROR "VS Code manifest does not style ${required}")
+foreach(forbidden IN ITEMS
+        "editor.tokenColorCustomizations"
+        "#FFD700" "#569CD6" "#87CEFA" "#C49A00" "#FF8C00")
+    string(FIND "${manifest}" "${forbidden}" position)
+    if(NOT position EQUAL -1)
+        message(FATAL_ERROR
+            "VS Code manifest must not impose theme color ${forbidden}")
     endif()
 endforeach()
 

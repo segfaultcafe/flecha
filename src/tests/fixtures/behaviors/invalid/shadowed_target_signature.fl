@@ -1,0 +1,4 @@
+module shadowed_target_signature;
+decoration meta { application() target structure; };
+interface Root { i32 call(&self, i32 value) virtual; };
+structure T {}; interface Other { T get(&self) virtual; }; behavior meta<T> => structure << Other { T T::get(&self) override { return T::zero(); } };

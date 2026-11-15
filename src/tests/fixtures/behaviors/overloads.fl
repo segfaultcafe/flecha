@@ -1,0 +1,13 @@
+module overloads;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+interface Overloads { i32 pick(&self, i32 n) virtual; i32 pick(&self, bool n) virtual; };
+behavior meta<T> => structure << Overloads {
+    i32 T::pick(&self, i32 n) override { return n; }
+    i32 T::pick(&self, bool n) override { return 0; }
+};

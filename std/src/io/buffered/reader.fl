@@ -1,0 +1,125 @@
+module buffered;
+under namespace root::io;
+
+@imports
+    :: root::io::errors
+    :: root::io::stream;
+
+// Owns read-ahead storage and borrows a readable source.
+export structure BufferedReader << stream::Readable {
+    private {
+        &stream::Readable source;
+        own []u8 buffer;
+        usize start;
+        usize end;
+        error pendingError;
+        bool reachedEnd;
+    }
+};
+
+// Allocates nonempty read-ahead storage and borrows source on every outcome.
+(BufferedReader, error) BufferedReader::withCapacity(
+    &stream::Readable source,
+    usize capacity,
+) <-source {
+    if capacity == 0 {
+        return (build BufferedReader {
+            self.source = source;
+            self.buffer = none;
+            self.start = 0;
+            self.end = 0;
+            self.pendingError = none;
+            self.reachedEnd = false;
+        }, errors::IoError.InvalidOptions);
+    }
+
+    storage, allocationError := new<own []u8>(capacity);
+    if allocationError != none {
+        return (build BufferedReader {
+            self.source = source;
+            self.buffer = none;
+            self.start = 0;
+            self.end = 0;
+            self.pendingError = none;
+            self.reachedEnd = false;
+        }, allocationError);
+    }
+
+    return (build BufferedReader {
+        self.source = source;
+        self.buffer = storage;
+        self.start = 0;
+        self.end = 0;
+        self.pendingError = none;
+        self.reachedEnd = false;
+    }, none);
+}
+
+// Reads available bytes, using read-ahead only for destinations below capacity.
+(usize, error) BufferedReader::read(&self, []u8 destination) override {
+    if destination.len() == 0 {
+        return (none, none);
+    }
+
+    if self->start < self->end {
+        return self->consumeBuffered(destination);
+    }
+
+    if self->reachedEnd {
+        return (none, none);
+    }
+
+    if destination.len() >= self->buffer.len() {
+        count, readError := self->source->read(destination);
+        if count > destination.len() {
+            return (none, errors::IoError.ReadFailed);
+        }
+        if count == 0 and readError == none {
+            self->reachedEnd = true;
+        }
+
+        return (count, readError);
+    }
+
+    count, readError := self->source->read(self->buffer[:]);
+    if count > self->buffer.len() {
+        return (none, errors::IoError.ReadFailed);
+    }
+    if count == 0 {
+        if readError == none {
+            self->reachedEnd = true;
+        }
+        return (none, readError);
+    }
+
+    self->start = 0;
+    self->end = count;
+    self->pendingError = readError;
+    return self->consumeBuffered(destination);
+}
+
+private (usize, error) BufferedReader::consumeBuffered(
+    &self,
+    []u8 destination,
+) {
+    const usize AVAILABLE = self->end - self->start;
+    usize count = destination.len();
+    if count > AVAILABLE {
+        count = AVAILABLE;
+    }
+
+    loop usize index = 0; index < count; index++ {
+        destination[index] = self->buffer[self->start + index];
+    }
+    self->start = self->start + count;
+
+    if self->start < self->end {
+        return (count, none);
+    }
+
+    self->start = 0;
+    self->end = 0;
+    error result = self->pendingError;
+    self->pendingError = none;
+    return (count, result);
+}

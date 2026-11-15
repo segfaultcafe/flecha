@@ -1,0 +1,3 @@
+module incomplete_body;
+decoration meta { application(stringv name) target
+i32 main() { return 0; }

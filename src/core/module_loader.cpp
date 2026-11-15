@@ -13,26 +13,11 @@
 namespace flecha::core {
 namespace fs = std::filesystem;
 namespace {
-struct ModuleHeader final {
-    std::string name;
-    bool privateModule = false;
-};
-
 struct ParsedSource final {
     fs::path file;
     std::string sourceId;
     std::unique_ptr<CompilationUnit> unit;
 };
-
-ModuleHeader ReadHeader(const fs::path& file,
-                        const SourceProvider& sourceProvider) {
-    const auto source = sourceProvider.Read(file);
-    if (!source) return {};
-    diagnostics::DiagnosticBag ignored;
-    Parser parser(Tokenizer(*source, ignored).Tokenize(), ignored);
-    parser.ParseHeader();
-    return {parser.ModuleName(), parser.PrivateModule()};
-}
 
 bool IsTestModule(std::string_view name) { return name.ends_with("_test"); }
 
@@ -45,6 +30,15 @@ std::string LogicalKey(const std::string& sourceIdentity, const fs::path& root,
                        const fs::path& directory, const std::string& name) {
     return sourceIdentity + "\n" + root.generic_string() + "\n" +
            directory.generic_string() + "\n" + name;
+}
+
+std::string AttachmentName(const NamespaceAttachment& attachment) {
+    std::string result;
+    for (const std::string& segment : attachment.path) {
+        if (!result.empty()) result += "::";
+        result += segment;
+    }
+    return result;
 }
 
 std::string DotLeader(std::string label) {
@@ -197,12 +191,27 @@ std::unique_ptr<CompilationUnit> ModuleLoader::LoadConfigured(
         return std::make_unique<CompilationUnit>(
             source::SourceRange{}, std::vector<std::unique_ptr<Declaration>>{});
     }
-    const ModuleHeader header = ReadHeader(file, Sources());
+    if (_ownedSourceIndex || !_sourceIndex) {
+        _ownedSourceIndex = std::make_unique<ModuleSourceIndex>(Sources());
+        _sourceIndex = _ownedSourceIndex.get();
+    }
+    const IndexedModuleSource header = SourceIndex().Read(file);
     if (header.name.empty())
         LoadLegacyEntry(file, root, rootIdentity);
-    else
-        VisitModule(file.parent_path(), header.name, root, true, file, {},
+    else {
+        fs::path logicalDirectory = file.parent_path();
+        if (header.namespaceAttachment) {
+            const auto attached = ResolveNamespaceAttachment(
+                file, *header.namespaceAttachment, root);
+            if (!attached)
+                return std::make_unique<CompilationUnit>(
+                    source::SourceRange{},
+                    std::vector<std::unique_ptr<Declaration>>{});
+            logicalDirectory = *attached;
+        }
+        VisitModule(logicalDirectory, header.name, root, true, file, {},
                     std::move(rootIdentity));
+    }
 
     auto unit = std::make_unique<CompilationUnit>(source::SourceRange{},
                                                   std::move(_declarations));
@@ -249,6 +258,44 @@ std::optional<ModuleLoader::LibrarySource> ModuleLoader::ResolveLibrary(
                          fs::weakly_canonical(library->second)};
 }
 
+std::optional<fs::path> ModuleLoader::ResolveNamespaceAttachment(
+    const fs::path& file, const NamespaceAttachment& attachment,
+    const fs::path& root, bool reportErrors) {
+    const auto reject =
+        [&](source::SourceRange range,
+            const std::string& message) -> std::optional<fs::path> {
+        if (reportErrors) Report(range, message);
+        return std::nullopt;
+    };
+    const NamespaceAttachmentResolution resolution =
+        ModuleSourceIndex::ResolveAttachment(file, attachment, root);
+    if (resolution.status == NamespaceAttachmentStatus::Empty)
+        return reject(attachment.range,
+                      "namespace attachment path cannot be empty");
+    if (resolution.status == NamespaceAttachmentStatus::NonRoot)
+        return reject(attachment.segmentRanges.empty()
+                          ? attachment.range
+                          : attachment.segmentRanges.front(),
+                      "namespace attachment must start with 'root'");
+    if (resolution.status == NamespaceAttachmentStatus::MissingTarget)
+        return reject(attachment.range,
+                      "namespace attachment target '" +
+                          AttachmentName(attachment) +
+                          "' is not an existing directory in this source root");
+    if (resolution.status == NamespaceAttachmentStatus::EscapesRoot)
+        return reject(attachment.range,
+                      "namespace attachment target escapes its source root");
+    if (resolution.status == NamespaceAttachmentStatus::NotAncestor) {
+        const fs::path physical = fs::weakly_canonical(file).parent_path();
+        return reject(
+            attachment.range,
+            "namespace attachment target '" + AttachmentName(attachment) +
+                "' is not an ancestor of physical namespace '" +
+                physical.lexically_relative(root).generic_string() + "'");
+    }
+    return resolution.target;
+}
+
 std::string ModuleLoader::SourceName(const std::string& sourceIdentity) const {
     if (!_packageGraph) return sourceIdentity;
     const PackageGraphNode* node = _packageGraph->Find(sourceIdentity);
@@ -260,6 +307,8 @@ const SourceProvider& ModuleLoader::Sources() const {
     static const FilesystemSourceProvider filesystem;
     return _sourceProvider ? *_sourceProvider : filesystem;
 }
+
+ModuleSourceIndex& ModuleLoader::SourceIndex() { return *_sourceIndex; }
 
 void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root,
                                    const std::string& sourceIdentity) {
@@ -287,18 +336,23 @@ void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root,
         Report(fileRange,
                "'flecha test' requires a declared '<name>_test' module");
     const std::string sourceId = "$legacy$";
-    _modules.push_back(
-        Module{"",
-               sourceId,
-               "",
-               file.string(),
-               sourceIdentity + "\n" + root.generic_string() + "\n.",
-               SourceName(sourceIdentity),
-               false,
-               true,
-               false,
-               {},
-               {}});
+    const std::string legacyQuiverId =
+        sourceIdentity + "\n" + root.generic_string() + "\n.";
+    const std::string legacyQuiverName = SourceName(sourceIdentity);
+    _modules.push_back(Module{"",
+                              sourceId,
+                              "",
+                              file.string(),
+                              legacyQuiverId,
+                              legacyQuiverName,
+                              false,
+                              true,
+                              false,
+                              {},
+                              {},
+                              legacyQuiverId,
+                              legacyQuiverName,
+                              std::nullopt});
     for (auto& declaration : unit->TakeDeclarations()) {
         declaration->sourceId = sourceId;
         _declarations.push_back(std::move(declaration));
@@ -350,21 +404,26 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
         return {};
     }
 
-    std::vector<fs::path> sourceFiles;
-    for (const auto& item : fs::directory_iterator(directory)) {
-        if (!item.is_regular_file() || item.path().extension() != ".fl" ||
-            ReadHeader(item.path(), Sources()).name != name)
-            continue;
-        const fs::path sourceFile = fs::weakly_canonical(item.path());
+    std::set<fs::path> discoveredFiles;
+    for (const IndexedModuleSource& source :
+         SourceIndex().Discover(root, directory)) {
+        if (source.name != name) continue;
+        const fs::path sourceFile = fs::weakly_canonical(source.file);
         const fs::path relative = sourceFile.lexically_relative(root);
         if (relative.empty() || *relative.begin() == "..") {
             Report(importRange, "module source escapes its source root: " +
                                     sourceFile.string());
             continue;
         }
-        sourceFiles.push_back(sourceFile);
+        if (source.namespaceAttachment) {
+            const auto attached = ResolveNamespaceAttachment(
+                sourceFile, *source.namespaceAttachment, root);
+            if (!attached || *attached != directory) continue;
+        }
+        discoveredFiles.insert(sourceFile);
     }
-    std::sort(sourceFiles.begin(), sourceFiles.end());
+    std::vector<fs::path> sourceFiles(discoveredFiles.begin(),
+                                      discoveredFiles.end());
     if (sourceFiles.empty()) {
         Report(importRange, "cannot open module '" + name + "' in namespace '" +
                                 quiverName + "'");
@@ -374,7 +433,9 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
     const bool testModule = IsTestModule(name);
     const source::SourceLocation namespaceOrigin{0, 1, 1, directory.string()};
     const source::SourceRange namespaceRange{namespaceOrigin, namespaceOrigin};
-    if (testModule && (_mode != ModuleLoadMode::Test || !entry))
+    const bool acceptsTestEntry =
+        _mode == ModuleLoadMode::Test || _mode == ModuleLoadMode::Analysis;
+    if (testModule && (!acceptsTestEntry || !entry))
         Report(
             namespaceRange,
             "test modules can only be compiled as the entry of 'flecha test'");
@@ -448,14 +509,10 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
                 continue;
             }
             std::set<std::string> names;
-            for (const auto& item : fs::directory_iterator(selectedDirectory)) {
-                if (!item.is_regular_file() || item.path().extension() != ".fl")
-                    continue;
-                const std::string selected =
-                    ReadHeader(item.path(), Sources()).name;
-                if (!selected.empty() && !IsTestModule(selected))
-                    names.insert(selected);
-            }
+            for (const IndexedModuleSource& selected :
+                 SourceIndex().Discover(sourceRoot, selectedDirectory))
+                if (!selected.name.empty() && !IsTestModule(selected.name))
+                    names.insert(selected.name);
             for (const auto& selected : names) {
                 Import choice = import;
                 choice.wildcard = false;
@@ -499,6 +556,15 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
             ? name.substr(0, name.size() - std::string_view("_test").size())
             : "";
     for (auto& source : sources) {
+        const fs::path physicalDirectory = source.file.parent_path();
+        const fs::path physicalRelative =
+            physicalDirectory.lexically_relative(root);
+        const std::string physicalQuiverId = sourceIdentity + "\n" +
+                                             root.generic_string() + "\n" +
+                                             physicalRelative.generic_string();
+        std::string physicalQuiverName = SourceName(sourceIdentity);
+        for (const auto& segment : physicalRelative)
+            if (segment != ".") physicalQuiverName += "::" + segment.string();
         Module module{id,
                       source.sourceId,
                       name,
@@ -509,7 +575,10 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
                       entry,
                       testModule,
                       {},
-                      std::move(source.unit->imports)};
+                      std::move(source.unit->imports),
+                      physicalQuiverId,
+                      physicalQuiverName,
+                      source.unit->namespaceAttachment};
         for (auto& import : module.imports) {
             if (import.path.empty()) continue;
             fs::path sourceRoot = root;
@@ -587,6 +656,16 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
             _diagnostics.Report(diagnostic.code, diagnostic.range,
                                 diagnostic.message, diagnostic.severity);
         const std::string harnessSource = id + "harness$";
+        const fs::path harnessDirectory =
+            fs::weakly_canonical(entrySource).parent_path();
+        const fs::path harnessRelative =
+            harnessDirectory.lexically_relative(root);
+        const std::string harnessPhysicalId = sourceIdentity + "\n" +
+                                              root.generic_string() + "\n" +
+                                              harnessRelative.generic_string();
+        std::string harnessPhysicalName = SourceName(sourceIdentity);
+        for (const auto& segment : harnessRelative)
+            if (segment != ".") harnessPhysicalName += "::" + segment.string();
         _modules.push_back(Module{id,
                                   harnessSource,
                                   name,
@@ -597,7 +676,10 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
                                   true,
                                   true,
                                   testPair,
-                                  {std::move(testingImport)}});
+                                  {std::move(testingImport)},
+                                  harnessPhysicalId,
+                                  harnessPhysicalName,
+                                  std::nullopt});
         for (auto& declaration : generated->TakeDeclarations()) {
             if (declaration->Kind() == AstNodeKind::FunctionDeclaration)
                 static_cast<FunctionDeclaration&>(*declaration)

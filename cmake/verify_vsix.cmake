@@ -55,6 +55,23 @@ foreach(field IN ITEMS name publisher version)
     endif()
 endforeach()
 
+foreach(setting IN ITEMS flecha.server.path flecha.compiler.path)
+    string(JSON configuredDefault GET "${packagedManifest}"
+        contributes configuration properties "${setting}" default)
+    if(NOT configuredDefault STREQUAL "")
+        message(FATAL_ERROR
+            "Packaged ${setting} must use automatic bundle/PATH discovery")
+    endif()
+endforeach()
+
+file(READ "${OUTPUT_ROOT}/extension/dist/extension.js" packagedClient)
+string(FIND "${packagedClient}"
+    "FLECHA_BUNDLED_TOOL_LAYOUT" bundledLayoutMarker)
+if(bundledLayoutMarker EQUAL -1)
+    message(FATAL_ERROR
+        "Packaged extension is missing relocatable tool discovery")
+endif()
+
 file(READ "${OUTPUT_ROOT}/extension.vsixmanifest" installManifest)
 foreach(required IN ITEMS
         "Id=\"${sourceName}\""
@@ -72,7 +89,12 @@ file(GLOB_RECURSE packagedFiles
     RELATIVE "${OUTPUT_ROOT}/extension"
     "${OUTPUT_ROOT}/extension/*"
 )
-foreach(forbidden IN ITEMS node_modules package-lock.json)
+foreach(forbidden IN ITEMS
+        node_modules
+        package-lock.json
+        extension.js
+        tool-paths.js
+        tests)
     foreach(packagedFile IN LISTS packagedFiles)
         if(packagedFile STREQUAL forbidden OR
            packagedFile MATCHES "^${forbidden}/")

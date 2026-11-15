@@ -1,0 +1,3 @@
+module duplicate_interface;
+decoration meta { application(stringv a) target interface; }; @meta("a") @meta("b") interface Protocol {};
+i32 main() { return 0; }

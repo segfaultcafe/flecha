@@ -1,0 +1,4 @@
+module dependent_generic_signature;
+decoration meta { application() target structure; };
+interface Root { i32 call(&self, i32 value) virtual; };
+structure Box<A> { A value; }; interface Other { i32 get(&self, &Box<i32> box) virtual; }; behavior meta<T> => structure << Other { i32 T::get(&self, &Box<T> box) override { return 0; } };

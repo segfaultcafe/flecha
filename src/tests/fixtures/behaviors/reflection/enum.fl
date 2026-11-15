@@ -1,0 +1,6 @@
+module reflection_enum;
+decoration meta { application(stringv name) target structure; application(stringv name) target structure::field; application(stringv name) target enum; application(stringv name) target interface; };
+interface Inspect { void inspect(&self) virtual; };
+behavior meta<T> => enum << Inspect { void T::inspect(&self) override { if T::decorated() { stringv name = T::decorator().name; } } };
+@meta("state") enum State { Ready }
+@meta("metadata") interface Metadata {};

@@ -1,0 +1,3 @@
+module duplicate_field;
+decoration meta { application(stringv a) target structure::field; }; structure Record { @meta("a") @meta("b") i32 value; };
+i32 main() { return 0; }

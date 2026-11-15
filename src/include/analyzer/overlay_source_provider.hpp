@@ -18,6 +18,8 @@ class OverlaySourceProvider final : public core::SourceProvider {
 
     [[nodiscard]] std::optional<std::string> Read(
         const std::filesystem::path& path) const override;
+    [[nodiscard]] std::vector<std::filesystem::path> KnownSources(
+        const std::filesystem::path& root) const override;
 
    private:
     const SourceOverlays& _overlays;

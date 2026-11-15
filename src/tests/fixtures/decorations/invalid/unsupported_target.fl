@@ -1,0 +1,3 @@
+module unsupported_target;
+decoration meta { application() target function; };
+i32 main() { return 0; }

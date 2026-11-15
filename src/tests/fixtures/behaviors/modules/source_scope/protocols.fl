@@ -1,0 +1,2 @@
+module protocols;
+export interface Writable {};

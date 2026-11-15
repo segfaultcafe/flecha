@@ -7,10 +7,13 @@
 #include <utility>
 #include <vector>
 
+#include "method_contract.hpp"
 #include "semantic_type.hpp"
 #include "source/source_range.hpp"
 
 namespace flecha::semantic {
+
+struct InterfaceType;
 
 enum class SymbolKind {
     Function,
@@ -20,7 +23,9 @@ enum class SymbolKind {
     ErrorType,
     EnumType,
     StructureType,
-    CallableType
+    InterfaceType,
+    CallableType,
+    TypeBinding
 };
 
 enum class BuiltInFunction {
@@ -88,6 +93,20 @@ class VariableSymbol final : public Symbol {
         : Symbol(kind, std::move(name), type, declarationRange, writable) {}
 };
 
+class InterfaceSymbol final : public Symbol {
+   public:
+    InterfaceSymbol(std::string name, const InterfaceType* interfaceType,
+                    source::SourceRange declarationRange)
+        : Symbol(SymbolKind::InterfaceType, std::move(name),
+                 SemanticType(interfaceType), declarationRange, false),
+          _interface(interfaceType) {}
+
+    [[nodiscard]] const InterfaceType* Interface() const { return _interface; }
+
+   private:
+    const InterfaceType* _interface;
+};
+
 class FunctionSymbol final : public Symbol {
    public:
     FunctionSymbol(std::string name, SemanticType returnType,
@@ -101,8 +120,7 @@ class FunctionSymbol final : public Symbol {
                    std::vector<std::size_t> borrowSourceIndices = {},
                    std::vector<core::OwnershipContract> parameterContracts = {},
                    const core::FunctionDeclaration* declaration = nullptr,
-                   bool borrowsVariadicPack = false,
-                   bool isCrashable = false)
+                   bool borrowsVariadicPack = false, bool isCrashable = false)
         : FunctionSymbol(std::move(name),
                          std::make_shared<const CallableSignature>(
                              CallableSignature{returnType,
@@ -115,7 +133,7 @@ class FunctionSymbol final : public Symbol {
                                                isCrashable}),
                          declarationRange, builtIn, owner, isPrivate,
                          hasReceiver, isExtern, std::move(linkName), enumOwner,
-                         declaration, borrowsVariadicPack) {}
+                         declaration, borrowsVariadicPack, nullptr, false) {}
 
     FunctionSymbol(std::string name,
                    std::shared_ptr<const CallableSignature> signature,
@@ -126,14 +144,18 @@ class FunctionSymbol final : public Symbol {
                    std::string linkName = {},
                    const EnumType* enumOwner = nullptr,
                    const core::FunctionDeclaration* declaration = nullptr,
-                   bool borrowsVariadicPack = false)
+                   bool borrowsVariadicPack = false,
+                   const InterfaceType* interfaceOwner = nullptr,
+                   bool isProtected = false)
         : Symbol(SymbolKind::Function, std::move(name), SemanticType(signature),
                  declarationRange, false),
           _signature(std::move(signature)),
           _builtIn(builtIn),
           _owner(owner),
           _enumOwner(enumOwner),
+          _interfaceOwner(interfaceOwner),
           _isPrivate(isPrivate),
+          _isProtected(isProtected),
           _hasReceiver(hasReceiver),
           _isExtern(isExtern),
           _declaration(declaration),
@@ -149,19 +171,20 @@ class FunctionSymbol final : public Symbol {
     }
     [[nodiscard]] bool IsUnsafe() const { return _signature->isUnsafe; }
     [[nodiscard]] bool IsOnce() const { return _signature->isOnce; }
-    [[nodiscard]] bool IsCrashable() const {
-        return _signature->isCrashable;
-    }
+    [[nodiscard]] bool IsCrashable() const { return _signature->isCrashable; }
     const StructureType* Owner() const { return _owner; }
     const EnumType* EnumOwner() const { return _enumOwner; }
-    bool HasOwner() const { return _owner != nullptr || _enumOwner != nullptr; }
+    const InterfaceType* InterfaceOwner() const { return _interfaceOwner; }
+    bool HasOwner() const {
+        return _owner != nullptr || _enumOwner != nullptr ||
+               _interfaceOwner != nullptr;
+    }
     bool IsPrivate() const { return _isPrivate; }
+    bool IsProtected() const { return _isProtected; }
     bool HasReceiver() const { return _hasReceiver; }
     bool IsExtern() const { return _isExtern; }
     const std::string& LinkName() const { return _linkName; }
-    void SetLinkName(std::string linkName) {
-        _linkName = std::move(linkName);
-    }
+    void SetLinkName(std::string linkName) { _linkName = std::move(linkName); }
     [[nodiscard]] const std::vector<std::size_t>& BorrowSourceIndices() const {
         return _signature->borrowSourceIndices;
     }
@@ -184,7 +207,9 @@ class FunctionSymbol final : public Symbol {
     BuiltInFunction _builtIn;
     const StructureType* _owner;
     const EnumType* _enumOwner;
+    const InterfaceType* _interfaceOwner;
     bool _isPrivate;
+    bool _isProtected;
     bool _hasReceiver;
     bool _isExtern;
     const core::FunctionDeclaration* _declaration;
@@ -198,6 +223,23 @@ struct EnumVariant final {
     source::SourceRange range;
 };
 
+struct InterfaceReference final {
+    const InterfaceType* type = nullptr;
+    source::SourceRange range;
+};
+
+struct InterfaceType final {
+    std::string name;
+    std::string displayName;
+    const core::InterfaceDeclaration* syntax = nullptr;
+    std::vector<InterfaceReference> parents;
+    // Deterministic declared-parent pre-order. This excludes the interface
+    // itself and de-duplicates invalid graphs for diagnostic recovery.
+    std::vector<const InterfaceType*> ancestors;
+    std::vector<MethodContract> declaredMethods;
+    std::vector<const MethodContract*> methods;
+};
+
 struct EnumType final {
     std::string name;
     std::string displayName;
@@ -205,8 +247,9 @@ struct EnumType final {
     SemanticType backing = SemanticType(SemanticTypeKind::U32);
     std::vector<EnumVariant> variants;
     std::optional<std::uint64_t> defaultValue;
-    std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
-        methods;
+    std::vector<InterfaceReference> conformances;
+    std::vector<const InterfaceType*> conformanceClosure;
+    std::unordered_map<std::string, std::vector<const FunctionSymbol*>> methods;
 };
 
 struct StructureField final {
@@ -220,8 +263,9 @@ struct StructureType final {
     std::string displayName;
     const core::StructureDeclaration* syntax = nullptr;
     std::vector<StructureField> fields;
-    std::unordered_map<std::string, std::vector<const FunctionSymbol*>>
-        methods;
+    std::vector<InterfaceReference> conformances;
+    std::vector<const InterfaceType*> conformanceClosure;
+    std::unordered_map<std::string, std::vector<const FunctionSymbol*>> methods;
     const FunctionSymbol* init = nullptr;
     const FunctionSymbol* zero = nullptr;
     const FunctionSymbol* tear = nullptr;

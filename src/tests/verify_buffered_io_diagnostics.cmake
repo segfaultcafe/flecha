@@ -21,26 +21,33 @@ function(reject_buffered name code body)
     endif()
 endfunction()
 
-reject_buffered(buffered_move_reuse FLECHA-S0059 [=[
+reject_buffered(buffered_reader_move_reuse FLECHA-S0059 [=[
 void main() {
     reader := stream::Reader::init(
         [](destination) => { return (none, none); }
     );
-    value, failure := buffered::BufferedReader::withCapacity(reader, 4);
+    value, failure := buffered::BufferedReader::withCapacity(
+        reader as &stream::Readable,
+        4
+    );
     moved := value;
     [1]u8 destination = none;
     value.read(destination[:]);
 }
 ]=])
 
-reject_buffered(stream_move_reuse FLECHA-S0059 [=[
+reject_buffered(buffered_writer_move_reuse FLECHA-S0059 [=[
 void main() {
     writer := stream::Writer::init(
         [](source) => { return (source.len(), none); }
     );
-    value, failure := buffered::BufferedWriter::withCapacity(writer, 4);
+    value, failure := buffered::BufferedWriter::withCapacity(
+        writer as &stream::Writable,
+        4
+    );
+    moved := value;
     [1]u8 source = [1];
-    writer.write(source[:]);
+    value.write(source[:]);
 }
 ]=])
 

@@ -1,0 +1,4 @@
+module rooted;
+under namespace root;
+
+export i32 value() { return 15; }

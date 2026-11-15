@@ -1,5 +1,6 @@
 add_library(core STATIC
     module_loader.cpp
+    module_source_index.cpp
     package_graph.cpp
     parser.cpp
     source_provider.cpp

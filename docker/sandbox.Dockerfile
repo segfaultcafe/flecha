@@ -27,8 +27,14 @@ RUN cmake -S . -B /tmp/flecha-build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/opt/flecha \
         "-DFLECHA_BUILD_VERSION=${FLECHA_BUILD_VERSION}" \
-    && cmake --build /tmp/flecha-build --parallel \
-    && cmake --install /tmp/flecha-build
+    && cmake --build /tmp/flecha-build \
+        --target flecha longbow flecha-lsp --parallel \
+    && cmake --install /tmp/flecha-build \
+    && cmake \
+        -DFLECHA_COMPILER=/opt/flecha/bin/flecha \
+        -DFLECHA_LSP=/opt/flecha/bin/flecha-lsp \
+        -DTEST_ROOT=/tmp/flecha-lsp-smoke \
+        -P cmake/verify_lsp_stdio.cmake
 
 FROM ubuntu:24.04
 
@@ -76,16 +82,22 @@ RUN case "${TARGETARCH}" in \
 
 COPY --from=builder /opt/flecha /opt/flecha
 COPY docker/sandbox/init.vim /etc/flecha-sandbox/init.vim
+COPY docker/sandbox/flecha_lsp.lua /etc/flecha-sandbox/flecha_lsp.lua
 
 ENV PATH=/opt/flecha/bin:${PATH}
+ENV FLECHA_COMPILER=/opt/flecha/bin/flecha
+ENV FLECHA_LSP=/opt/flecha/bin/flecha-lsp
 ENV FLECHA_LINKER=/usr/bin/clang++-18
 
 RUN useradd --create-home --shell /bin/bash flecha \
     && install -d -o flecha -g flecha \
         /home/flecha/.config/nvim \
+        /home/flecha/.config/nvim/after/plugin \
         /home/flecha/.local/share/nvim/site/pack/flecha/start \
         /workspace \
     && cp /etc/flecha-sandbox/init.vim /home/flecha/.config/nvim/init.vim \
+    && cp /etc/flecha-sandbox/flecha_lsp.lua \
+        /home/flecha/.config/nvim/after/plugin/flecha_sandbox.lua \
     && ln -s /opt/flecha/share/flecha/editors/neovim \
         /home/flecha/.local/share/nvim/site/pack/flecha/start/flecha.nvim \
     && chown -R flecha:flecha /home/flecha/.config /home/flecha/.local
@@ -95,6 +107,7 @@ WORKDIR /workspace
 
 RUN flecha --version \
     && longbow --version \
+    && command -v flecha-lsp \
     && nvim --version \
     && longbow new hello \
     && cd hello \

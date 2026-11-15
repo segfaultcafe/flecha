@@ -56,6 +56,15 @@ bool IsExclusiveBorrow(SemanticType type) {
     return false;
 }
 
+bool HasErrorType(SemanticType type) {
+    if (type.IsError()) return true;
+    if (type.Kind() == SemanticTypeKind::Tuple)
+        return std::any_of(type.Elements().begin(), type.Elements().end(),
+                           HasErrorType);
+    return type.IsCompound() &&
+           (type.Target() == nullptr || HasErrorType(*type.Target()));
+}
+
 const core::Expression& Unwrap(const core::Expression& expression) {
     if (expression.Kind() == Kind::ParenthesizedExpression)
         return Unwrap(
@@ -158,6 +167,15 @@ class BorrowChecker final {
           _defs(graph.nodes.size()) {}
 
     void Analyze(const core::FunctionDeclaration& function) {
+        const Symbol* declared = _model.DeclaredSymbol(function);
+        if (declared != nullptr && declared->Kind() == SymbolKind::Function)
+            _function = static_cast<const FunctionSymbol*>(declared);
+        if (_function != nullptr &&
+            (HasErrorType(_function->ReturnType()) ||
+             std::any_of(_function->ParameterTypes().begin(),
+                         _function->ParameterTypes().end(), HasErrorType)))
+            return;
+
         State seed;
         for (const std::unique_ptr<core::Parameter>& parameter :
              function.Parameters()) {
@@ -171,9 +189,7 @@ class BorrowChecker final {
                      symbol->Type().Kind() == SemanticTypeKind::Function ||
                          IsExclusiveBorrow(symbol->Type())});
         }
-        const Symbol* declared = _model.DeclaredSymbol(function);
-        if (declared != nullptr && declared->Kind() == SymbolKind::Function) {
-            _function = static_cast<const FunctionSymbol*>(declared);
+        if (_function != nullptr) {
             for (const std::size_t source : _function->BorrowSourceIndices()) {
                 if (source >= function.Parameters().size()) continue;
                 if (const Symbol* parameter =
@@ -492,7 +508,8 @@ class BorrowChecker final {
                 const auto& call =
                     static_cast<const core::MemberCallExpression&>(deferred);
                 const FunctionSymbol* method = _model.MethodFor(call);
-                if (method != nullptr && method->HasReceiver())
+                if (method != nullptr && method->HasReceiver() &&
+                    !_model.IsQualifiedInterfaceProviderCall(call))
                     operands.push_back(&call.Receiver());
                 for (const core::Expression* argument :
                      _model.ArgumentsFor(call))
@@ -761,6 +778,19 @@ class BorrowChecker final {
         return value;
     }
 
+    bool ProjectsCheckedReference(const core::Expression& expression) const {
+        const core::Expression& inner = Unwrap(expression);
+        if (inner.Kind() != Kind::MemberAccessExpression) return false;
+        const auto& field =
+            static_cast<const core::MemberAccessExpression&>(inner);
+        if (field.Access() == TokenType::Arrow &&
+            _model.TypeOf(field.Receiver()).Kind() ==
+                SemanticTypeKind::Reference)
+            return true;
+        return field.Access() == TokenType::Dot &&
+               ProjectsCheckedReference(field.Receiver());
+    }
+
     Value Place(const core::Expression& expression) {
         const core::Expression& inner = Unwrap(expression);
         const Symbol* symbol = Named(inner);
@@ -937,7 +967,20 @@ class BorrowChecker final {
         return result;
     }
 
-    Value Evaluate(const core::Expression& expression) {
+    Value Evaluate(const core::Expression& expression,
+                   bool applyImplicitConversion = true) {
+        // Semantic analysis deliberately keeps walking a function after a
+        // declaration error so that the editor can receive useful follow-up
+        // diagnostics.  Such expressions have no sound borrow semantics: an
+        // unknown field or result type, for example, leaves a unary borrow
+        // typed as Error rather than Reference.  Do not apply reference-only
+        // invariants to that recovery model.
+        if (HasErrorType(_model.TypeOf(expression))) return {};
+        const SemanticType implicit =
+            _model.ImplicitInterfaceConversionFor(expression);
+        if (applyImplicitConversion && !implicit.IsError())
+            return Borrow(Evaluate(expression, false),
+                          !implicit.Target()->IsConst(), expression.Range());
         switch (expression.Kind()) {
             case Kind::BuildExpression:
                 return EvaluateBuild(
@@ -1261,6 +1304,30 @@ class BorrowChecker final {
                                       expression.Range());
                     return Evaluate(cast.Value());
                 }
+                if (resultType.Kind() == SemanticTypeKind::Reference &&
+                    resultType.Target()->Kind() ==
+                        SemanticTypeKind::Interface) {
+                    if (valueType.Kind() == SemanticTypeKind::Structure ||
+                        valueType.Kind() == SemanticTypeKind::Enum)
+                        return Borrow(Place(cast.Value()),
+                                      !resultType.Target()->IsConst(),
+                                      expression.Range());
+                    const core::Expression& source = Unwrap(cast.Value());
+                    const Symbol* symbol = Named(source);
+                    if (TracksBorrow(symbol)) {
+                        const Handle& handle = (*_state)[symbol];
+                        if (handle.moved)
+                            Report(Code::MovedReference, source.Range(),
+                                   "use of possibly moved reference '" +
+                                       symbol->Name() + "'");
+                        return Borrow({handle.origins, symbol, 0},
+                                      !resultType.Target()->IsConst(),
+                                      expression.Range());
+                    }
+                    return Borrow(Evaluate(cast.Value()),
+                                  !resultType.Target()->IsConst(),
+                                  expression.Range());
+                }
                 (void)Evaluate(cast.Value());
                 return {};
             }
@@ -1283,16 +1350,25 @@ class BorrowChecker final {
                     Value borrowSource;
                     Value mutableReceiver;
                     bool hasMutableReceiver = false;
-                    if (method->HasReceiver()) {
+                    const bool qualified =
+                        _model.IsQualifiedInterfaceProviderCall(call);
+                    if (method->HasReceiver() && !qualified) {
                         const auto receiverType = method->ParameterTypes()[0];
                         const bool owningReceiver =
                             receiverType.Kind() ==
                                 SemanticTypeKind::Structure ||
                             receiverType.Kind() == SemanticTypeKind::Enum;
-                        Value value =
-                            owningReceiver || call.Access() == TokenType::Arrow
-                                ? Evaluate(call.Receiver())
-                                : Place(call.Receiver());
+                        const bool projectedReferenceReceiver =
+                            call.Access() == TokenType::Arrow &&
+                            _model.TypeOf(call.Receiver()).Kind() ==
+                                SemanticTypeKind::Reference &&
+                            ProjectsCheckedReference(call.Receiver());
+                        const bool placeReceiver =
+                            !owningReceiver &&
+                            (call.Access() != TokenType::Arrow ||
+                             projectedReferenceReceiver);
+                        Value value = placeReceiver ? Place(call.Receiver())
+                                                    : Evaluate(call.Receiver());
                         if (std::find(method->BorrowSourceIndices().begin(),
                                       method->BorrowSourceIndices().end(),
                                       0) != method->BorrowSourceIndices().end())
@@ -1316,7 +1392,8 @@ class BorrowChecker final {
                             }
                         }
                     }
-                    const std::size_t offset = method->HasReceiver() ? 1 : 0;
+                    const std::size_t offset =
+                        method->HasReceiver() && !qualified ? 1 : 0;
                     const auto arguments = _model.ArgumentsFor(call);
                     for (std::size_t i = 0; i < arguments.size(); ++i) {
                         Value value = Evaluate(*arguments[i]);
@@ -1328,9 +1405,14 @@ class BorrowChecker final {
                         if (std::find(method->BorrowSourceIndices().begin(),
                                       method->BorrowSourceIndices().end(),
                                       parameter) !=
-                            method->BorrowSourceIndices().end())
+                                method->BorrowSourceIndices().end() ||
+                            (method->BorrowsVariadicPack() &&
+                             parameter >= method->ParameterTypes().size()))
                             AddBorrowSource(borrowSource, value);
-                        const auto type = method->ParameterTypes()[parameter];
+                        const auto type =
+                            parameter < method->ParameterTypes().size()
+                                ? method->ParameterTypes()[parameter]
+                                : _model.TypeOf(*arguments[i]);
                         if (type.HasBorrowedLifetime())
                             (void)Borrow(std::move(value),
                                          IsExclusiveBorrow(type),
@@ -1343,7 +1425,8 @@ class BorrowChecker final {
                     }
                     _temporaries = previousLoans;
                     if (CanCarryBorrow(method->ReturnType()) &&
-                        !method->BorrowSourceIndices().empty()) {
+                        (!method->BorrowSourceIndices().empty() ||
+                         method->BorrowsVariadicPack())) {
                         std::size_t resultIndex = 0;
                         return BorrowResult(method->ReturnType(), borrowSource,
                                             expression.Range(), method,

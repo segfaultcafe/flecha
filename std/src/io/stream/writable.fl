@@ -1,0 +1,32 @@
+module stream;
+under namespace root::io;
+
+@imports
+    :: root::io::errors;
+
+export interface Writable {
+    (usize, error) write(&self, []const u8 source) virtual;
+    error writeAll(&self, []const u8 source) default;
+};
+
+error Writable::writeAll(&self, []const u8 source) {
+    usize offset = 0;
+
+    while offset < source.len() {
+        count, writeErr := self->write(source[offset:]);
+        if count > source.len() - offset {
+            return errors::IoError.WriteFailed;
+        }
+
+        offset += count;
+        if writeErr != none {
+            return writeErr;
+        }
+
+        if count == 0 {
+            return errors::IoError.WriteFailed;
+        }
+    }
+
+    return none;
+}

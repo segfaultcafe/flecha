@@ -1,0 +1,11 @@
+module private_method;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+behavior meta<T> => structure << Writable {
+private i32 T::write(&const self, i32 value) override { return 0; }
+};

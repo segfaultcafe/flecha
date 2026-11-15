@@ -47,11 +47,14 @@ i32 main() {
         );
 
         _, allocationError :=
-            buffered::BufferedWriter::withCapacity(writer, 4);
+            buffered::BufferedWriter::withCapacity(
+                writer as &stream::Writable,
+                4
+            );
         if allocationError != AllocationError.OutOfMemory {
             return 1;
         }
-        if cleanupCount != 1 {
+        if cleanupCount != 0 {
             return 2;
         }
     }

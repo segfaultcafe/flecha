@@ -75,9 +75,12 @@ bool Parser::StartsTopLevelOnlyDeclaration() const {
         case TokenType::Test:
         case TokenType::Enum:
         case TokenType::TypeSet:
+        case TokenType::Behavior:
         case TokenType::Decoration:
         case TokenType::Structure:
+        case TokenType::Interface:
         case TokenType::Private:
+        case TokenType::Protected:
         case TokenType::Export:
         case TokenType::Quiver:
         case TokenType::Extern:
@@ -316,6 +319,89 @@ std::vector<std::string> Parser::ParseGenericParameters(
     } while (Match(TokenType::Comma));
     ConsumeTypeArgumentClose("'>' after type parameters");
     return parameters;
+}
+
+std::vector<NominalParent> Parser::ParseNominalParents(
+    std::string_view declarationKind) {
+    std::vector<NominalParent> parents;
+    if (!Match(TokenType::ShiftLeft)) return parents;
+
+    bool keepParents = true;
+    bool expectParent = true;
+    bool diagnosed = false;
+    while (!Check(TokenType::LCurly) && !IsAtEnd()) {
+        if (Check(TokenType::ShiftLeft)) {
+            const Token& chained = Advance();
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::UnexpectedToken, chained.range,
+                std::string(declarationKind) +
+                    " headers may contain '<<' only once; chaining is invalid");
+            diagnosed = true;
+            keepParents = false;
+            expectParent = true;
+            continue;
+        }
+
+        if (!Check(TokenType::Identifier)) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+                "expected an interface name in the parent list");
+            diagnosed = true;
+            if (Check(TokenType::Comma)) {
+                Advance();
+                expectParent = true;
+                continue;
+            }
+            break;
+        }
+
+        const Token& first = Advance();
+        std::string name = first.value;
+        source::SourceLocation end = first.range.end;
+        if (Match(TokenType::Scope)) {
+            const Token* member = Consume(
+                TokenType::Identifier, "interface name after module qualifier");
+            if (member != nullptr) {
+                name += "::" + member->value;
+                end = member->range.end;
+            }
+        }
+        if (keepParents)
+            parents.push_back(
+                {std::move(name), source::SourceRange{first.range.start, end}});
+        expectParent = false;
+
+        if (Match(TokenType::Comma)) {
+            expectParent = true;
+            if (Check(TokenType::LCurly)) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+                    "expected an interface name after ',' in the parent list");
+                diagnosed = true;
+                break;
+            }
+            continue;
+        }
+        if (Check(TokenType::ShiftLeft)) continue;
+        if (Check(TokenType::LCurly) || IsAtEnd()) break;
+
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+            "expected ',' or '{' after interface name in the parent list");
+        diagnosed = true;
+        expectParent = true;
+    }
+
+    if (!diagnosed && parents.empty() && keepParents && expectParent &&
+        !Check(TokenType::Comma)) {
+        // The specific diagnostic above already covers malformed tokens. An
+        // immediate body needs its own non-empty-list diagnostic.
+        if (Check(TokenType::LCurly))
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+                "expected at least one interface name after '<<'");
+    }
+    return parents;
 }
 
 const Token* Parser::Consume(TokenType type, std::string_view expectation) {
@@ -748,7 +834,9 @@ bool Parser::ParseBorrowSources(
     return true;
 }
 
-std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
+std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration(
+    const std::string& implicitOwner, MethodCategory* interfaceCategory,
+    source::SourceRange* categoryRange) {
     const auto tokenStart = _position;
     std::vector<std::pair<std::size_t, std::size_t>> erased;
     auto parametersAtName =
@@ -762,12 +850,14 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     const source::SourceLocation start = Current().range.start;
     std::vector<FunctionModifier> modifiers;
     while (Check(TokenType::Unsafe) || Check(TokenType::Private) ||
-           Check(TokenType::Extern)) {
+           Check(TokenType::Protected) || Check(TokenType::Extern)) {
         const TokenType modifierToken = Advance().type;
         const auto modifier =
             modifierToken == TokenType::Unsafe    ? FunctionModifier::Unsafe
             : modifierToken == TokenType::Private ? FunctionModifier::Private
-                                                  : FunctionModifier::Extern;
+            : modifierToken == TokenType::Protected
+                ? FunctionModifier::Protected
+                : FunctionModifier::Extern;
         if (std::find(modifiers.begin(), modifiers.end(), modifier) !=
             modifiers.end())
             ReportUnexpectedToken("after duplicate function modifier");
@@ -787,7 +877,7 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
     std::map<std::string, std::string> genericConstraints;
     auto genericParameters = parametersAtName(*this, genericConstraints);
     std::vector<std::string> ownerParameters;
-    std::string owner;
+    std::string owner = implicitOwner;
     if (Match(TokenType::Scope)) {
         ownerParameters = std::move(genericParameters);
         if (!genericConstraints.empty())
@@ -872,6 +962,35 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
         return nullptr;
     }
 
+    if (interfaceCategory != nullptr) {
+        *interfaceCategory = MethodCategory::Missing;
+        if (categoryRange != nullptr) *categoryRange = {};
+        const Token* category = nullptr;
+        if (Check(TokenType::Virtual) || Check(TokenType::Default) ||
+            Check(TokenType::Final)) {
+            category = &Advance();
+            *interfaceCategory =
+                category->type == TokenType::Virtual   ? MethodCategory::Virtual
+                : category->type == TokenType::Default ? MethodCategory::Default
+                                                       : MethodCategory::Final;
+        } else {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::ExpectedToken, Current().range,
+                "expected 'virtual', 'default', or 'final' after interface "
+                "method parameters");
+            if (!Check(TokenType::LeftArrow) && !Check(TokenType::SemiColon) &&
+                !Check(TokenType::RCurly) && !Check(TokenType::LCurly) &&
+                !IsAtEnd()) {
+                category = &Advance();
+                *interfaceCategory = MethodCategory::Invalid;
+            }
+        }
+        if (category != nullptr && categoryRange != nullptr)
+            *categoryRange = category->range;
+    } else if (Match(TokenType::Override)) {
+        modifiers.push_back(FunctionModifier::Override);
+    }
+
     std::vector<std::string> borrowSources;
     std::vector<source::SourceRange> borrowSourceRanges;
     bool borrowsVariadicPack = false;
@@ -881,12 +1000,24 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration() {
                             packName, &borrowsVariadicPack))
         return nullptr;
 
-    if (Match(TokenType::Override))
-        modifiers.push_back(FunctionModifier::Override);
+    if (interfaceCategory == nullptr && Match(TokenType::Override)) {
+        if (std::find(modifiers.begin(), modifiers.end(),
+                      FunctionModifier::Override) != modifiers.end())
+            ReportUnexpectedToken("after duplicate override modifier");
+        else
+            modifiers.push_back(FunctionModifier::Override);
+    }
     std::unique_ptr<BlockStatement> body;
     source::SourceLocation end;
-    if (std::find(modifiers.begin(), modifiers.end(),
-                  FunctionModifier::Extern) != modifiers.end()) {
+    if (interfaceCategory != nullptr) {
+        const Token* semicolon =
+            Consume(TokenType::SemiColon, "';' after interface method");
+        if (semicolon == nullptr) return nullptr;
+        end = semicolon->range.end;
+        body = std::make_unique<BlockStatement>(
+            semicolon->range, std::vector<std::unique_ptr<Statement>>{});
+    } else if (std::find(modifiers.begin(), modifiers.end(),
+                         FunctionModifier::Extern) != modifiers.end()) {
         const Token* semicolon =
             Consume(TokenType::SemiColon, "';' after extern declaration");
         if (semicolon == nullptr) return nullptr;
@@ -940,6 +1071,61 @@ std::unique_ptr<ErrorDeclaration> Parser::ParseErrorDeclaration() {
         std::move(variants));
 }
 
+std::unique_ptr<InterfaceMethod> Parser::ParseInterfaceMethod(
+    const std::string& owner) {
+    MethodCategory category = MethodCategory::Missing;
+    source::SourceRange categoryRange;
+    auto signature = ParseFunctionDeclaration(owner, &category, &categoryRange);
+    if (signature == nullptr) return nullptr;
+    const source::SourceRange range = signature->Range();
+    return std::make_unique<InterfaceMethod>(range, std::move(signature),
+                                             category, categoryRange);
+}
+
+std::unique_ptr<InterfaceDeclaration> Parser::ParseInterfaceDeclaration() {
+    const auto tokenStart = _position;
+    const source::SourceLocation start = Advance().range.start;
+    const Token* name = Consume(TokenType::Identifier, "interface name");
+    if (name == nullptr) return nullptr;
+
+    auto parents = ParseNominalParents("interface");
+    if (Consume(TokenType::LCurly, "'{' after interface header") == nullptr)
+        return nullptr;
+
+    std::vector<std::unique_ptr<InterfaceMethod>> methods;
+    while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+        const std::size_t methodStart = _position;
+        auto method = ParseInterfaceMethod(name->value);
+        if (method != nullptr) {
+            methods.push_back(std::move(method));
+            continue;
+        }
+
+        while (!IsAtEnd() && !Check(TokenType::SemiColon) &&
+               !Check(TokenType::RCurly))
+            Advance();
+        Match(TokenType::SemiColon);
+        if (_position == methodStart && !IsAtEnd() && !Check(TokenType::RCurly))
+            Advance();
+    }
+
+    const Token* close = Consume(TokenType::RCurly, "'}' after interface body");
+    const Token* end =
+        close == nullptr
+            ? nullptr
+            : Consume(TokenType::SemiColon, "';' after interface declaration");
+    if (close == nullptr || end == nullptr) return nullptr;
+
+    auto declaration = std::make_unique<InterfaceDeclaration>(
+        source::SourceRange{start, end->range.end}, name->value, name->range,
+        std::move(parents), std::move(methods));
+    declaration->nameTokenIndex =
+        static_cast<std::size_t>(name - _tokens.data()) - tokenStart;
+    declaration->templateTokens.assign(_tokens.begin() + tokenStart,
+                                       _tokens.begin() + _position);
+    return declaration;
+}
+
 std::unique_ptr<EnumDeclaration> Parser::ParseEnumDeclaration() {
     const source::SourceLocation start = Advance().range.start;
     const Token* name = Consume(TokenType::Identifier, "enum type name");
@@ -950,13 +1136,14 @@ std::unique_ptr<EnumDeclaration> Parser::ParseEnumDeclaration() {
         backingType = ParseType();
         if (backingType == nullptr) return nullptr;
     }
+    auto conformances = ParseNominalParents("enum");
     if (Consume(TokenType::LCurly, "'{' after enum type name") == nullptr)
         return nullptr;
 
     std::vector<EnumVariant> variants;
     while (!Check(TokenType::RCurly) && !IsAtEnd()) {
         bool isDefault = false;
-        if (Check(TokenType::Identifier) && Current().value == "default" &&
+        if (Check(TokenType::Default) &&
             Peek(1).type == TokenType::Identifier) {
             Advance();
             isDefault = true;
@@ -986,7 +1173,7 @@ std::unique_ptr<EnumDeclaration> Parser::ParseEnumDeclaration() {
     if (close == nullptr) return nullptr;
     return std::make_unique<EnumDeclaration>(
         source::SourceRange{start, close->range.end}, name->value, name->range,
-        std::move(backingType), std::move(variants));
+        std::move(backingType), std::move(variants), std::move(conformances));
 }
 
 std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
@@ -997,6 +1184,7 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
     std::map<std::string, std::string> genericConstraints;
     auto genericParameters = ParseGenericParameters(&genericConstraints);
     const auto parameterEnd = _position;
+    auto conformances = ParseNominalParents("structure");
     if (!name || !Consume(TokenType::LCurly, "'{' after structure name"))
         return nullptr;
     std::vector<std::unique_ptr<StructureField>> fields;
@@ -1012,7 +1200,7 @@ std::unique_ptr<StructureDeclaration> Parser::ParseStructureDeclaration() {
             if (!end) return nullptr;
             auto declaration = std::make_unique<StructureDeclaration>(
                 source::SourceRange{start, end->range.end}, name->value,
-                name->range, std::move(fields));
+                name->range, std::move(fields), std::move(conformances));
             declaration->genericParameters = std::move(genericParameters);
             declaration->genericConstraints = std::move(genericConstraints);
             if (parameterStart != parameterEnd)
@@ -1101,21 +1289,30 @@ std::vector<DecorationApplication> Parser::ParseDecorations() {
         if (Match(TokenType::LParen)) {
             if (!Check(TokenType::RParen)) {
                 do {
-                    const Token* argument = nullptr;
-                    DecorationArgumentKind kind =
-                        DecorationArgumentKind::Identifier;
-                    if (Check(TokenType::Identifier) ||
-                        Check(TokenType::Structure)) {
-                        argument = &Advance();
-                    } else if (Check(TokenType::StringLiteral)) {
-                        argument = &Advance();
-                        kind = DecorationArgumentKind::String;
+                    const Token& token = Current();
+                    DecorationArgument argument{
+                        DecorationArgumentKind::Expression,
+                        token.value,
+                        token.range,
+                        {}};
+                    if (Check(TokenType::Structure) || Check(TokenType::Enum) ||
+                        Check(TokenType::Interface) ||
+                        Check(TokenType::Default)) {
+                        argument.kind = DecorationArgumentKind::Identifier;
+                        Advance();
                     } else {
-                        ReportUnexpectedToken("in decoration arguments");
-                        break;
+                        auto expression = ParseExpression();
+                        if (!expression) break;
+                        argument.range = expression->Range();
+                        if (expression->Kind() == AstNodeKind::NameExpression)
+                            argument.kind = DecorationArgumentKind::Identifier;
+                        else if (expression->Kind() ==
+                                     AstNodeKind::LiteralExpression &&
+                                 token.type == TokenType::StringLiteral)
+                            argument.kind = DecorationArgumentKind::String;
+                        argument.expression = std::move(expression);
                     }
-                    decoration.arguments.push_back(
-                        {kind, argument->value, argument->range});
+                    decoration.arguments.push_back(std::move(argument));
                 } while (Match(TokenType::Comma));
             }
             if (const Token* close = Consume(TokenType::RParen,
@@ -1128,15 +1325,235 @@ std::vector<DecorationApplication> Parser::ParseDecorations() {
     return decorations;
 }
 
+std::unique_ptr<BehaviorDeclaration> Parser::ParseBehaviorDeclaration() {
+    const Token keyword = Advance();
+    DecorationApplication decoration;
+    const Token* name =
+        Consume(TokenType::Identifier, "owning decoration name");
+    if (!name) return nullptr;
+    decoration.path.push_back(name->value);
+    decoration.pathRanges.push_back(name->range);
+    while (Match(TokenType::Scope)) {
+        name = Consume(TokenType::Identifier, "decoration name after '::'");
+        if (!name) return nullptr;
+        decoration.path.push_back(name->value);
+        decoration.pathRanges.push_back(name->range);
+    }
+    decoration.range = {decoration.pathRanges.front().start, name->range.end};
+    std::string parameter;
+    source::SourceRange parameterRange = Current().range;
+    bool validParameter = false;
+    if (Match(TokenType::Less)) {
+        if (Check(TokenType::Identifier)) {
+            const Token& binder = Advance();
+            parameter = binder.value;
+            parameterRange = binder.range;
+            validParameter = Check(TokenType::Greater);
+        }
+        if (!validParameter) {
+            while (!IsAtEnd() && !Check(TokenType::Greater) &&
+                   !Check(TokenType::FatArrow) && !Check(TokenType::LCurly))
+                Advance();
+        }
+        Match(TokenType::Greater);
+    }
+    if (!validParameter)
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::InvalidBehaviorParameter,
+            parameterRange,
+            "a behavior requires exactly one unconstrained "
+            "target parameter; type arguments, constraints, "
+            "defaults and additional parameters are forbidden");
+    if (!Consume(TokenType::FatArrow, "'=>' after behavior target parameter"))
+        return nullptr;
+    const Token target = Advance();
+    const DecorationTarget targetKind =
+        target.type == TokenType::Structure ? DecorationTarget::Structure
+        : target.type == TokenType::Enum    ? DecorationTarget::Enum
+                                            : DecorationTarget::Invalid;
+    if (targetKind == DecorationTarget::Invalid)
+        _diagnostics.Report(diagnostics::DiagnosticCode::InvalidBehavior,
+                            target.range,
+                            "behavior target must be structure or enum");
+    if (!Check(TokenType::ShiftLeft))
+        _diagnostics.Report(diagnostics::DiagnosticCode::InvalidBehavior,
+                            Current().range,
+                            "behavior requires interface roots after '<<'");
+    auto roots = ParseNominalParents("behavior");
+    if (!Consume(TokenType::LCurly, "'{' after behavior header"))
+        return nullptr;
+    std::vector<std::unique_ptr<FunctionDeclaration>> methods;
+    while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+        const std::size_t before = _position;
+        _inBehaviorMethod = true;
+        auto method = ParseFunctionDeclaration(parameter);
+        _inBehaviorMethod = false;
+        if (method)
+            methods.push_back(std::move(method));
+        else {
+            while (!IsAtEnd() && !Check(TokenType::RCurly) &&
+                   !Check(TokenType::SemiColon))
+                Advance();
+            Match(TokenType::SemiColon);
+        }
+        if (_position == before && !IsAtEnd()) Advance();
+    }
+    const Token* close = Consume(TokenType::RCurly, "'}' after behavior body");
+    if (!close) return nullptr;
+    const Token* end =
+        Consume(TokenType::SemiColon, "';' after behavior declaration");
+    auto result = std::make_unique<BehaviorDeclaration>(source::SourceRange{
+        keyword.range.start, end ? end->range.end : close->range.end});
+    result->keywordRange = keyword.range;
+    result->decoration = std::move(decoration);
+    result->targetParameter = std::move(parameter);
+    result->parameterRange = parameterRange;
+    result->validParameter = validParameter;
+    result->target = targetKind;
+    result->targetRange = target.range;
+    result->roots = std::move(roots);
+    result->methods = std::move(methods);
+    return result;
+}
+
 std::unique_ptr<DecorationDeclaration> Parser::ParseDecorationDeclaration() {
     const source::SourceLocation start = Advance().range.start;
     const Token* name = Consume(TokenType::Identifier, "decoration name");
     if (!name) return nullptr;
+    const bool hasBody = Match(TokenType::LCurly);
+    std::vector<DecorationSignature> signatures;
+    if (hasBody) {
+        while (!Check(TokenType::RCurly) && !IsAtEnd()) {
+            // Retain the declaration and later top-level declarations during
+            // incomplete edits. Recover each malformed signature locally.
+            if (StartsTopLevelOnlyDeclaration()) break;
+            const std::size_t before = _position;
+            const auto parseSignature = [&]() -> bool {
+                DecorationSignature signature;
+                signature.range.start = Current().range.start;
+                if (!Check(TokenType::Identifier) ||
+                    Current().value != "application") {
+                    ReportUnexpectedToken(
+                        "expected 'application' in decoration body");
+                    return false;
+                }
+                signature.applicationRange = Advance().range;
+                if (!Consume(TokenType::LParen, "'(' after application"))
+                    return false;
+                while (!Check(TokenType::RParen) && !IsAtEnd()) {
+                    if ((Check(TokenType::Structure) ||
+                         Check(TokenType::Enum) ||
+                         Check(TokenType::Interface)) &&
+                        Peek(1).type == TokenType::Identifier) {
+                        ReportUnexpectedToken(
+                            "in incomplete application parameters");
+                        return false;
+                    }
+                    DecorationParameter parameter;
+                    parameter.range.start = Current().range.start;
+                    if (Check(TokenType::Structure) || Check(TokenType::Enum) ||
+                        Check(TokenType::Interface) ||
+                        (Check(TokenType::Identifier) &&
+                         (Peek(1).type == TokenType::Comma ||
+                          Peek(1).type == TokenType::RParen))) {
+                        const Token& marker = Advance();
+                        parameter.marker = marker.value;
+                        parameter.nameRange = marker.range;
+                        parameter.range.end = marker.range.end;
+                    } else {
+                        parameter.type = ParseType();
+                        if (!parameter.type) return false;
+                        const Token* parameterName = Consume(
+                            TokenType::Identifier, "decoration parameter name");
+                        if (!parameterName) return false;
+                        parameter.name = parameterName->value;
+                        parameter.nameRange = parameterName->range;
+                        parameter.range.end = parameterName->range.end;
+                    }
+                    signature.parameters.push_back(std::move(parameter));
+                    if (!Match(TokenType::Comma)) break;
+                }
+                if (!Consume(TokenType::RParen,
+                             "')' after application parameters"))
+                    return false;
+                if (!Check(TokenType::Identifier) ||
+                    Current().value != "target") {
+                    ReportUnexpectedToken(
+                        "expected 'target' after application parameters");
+                    return false;
+                }
+                signature.targetKeywordRange = Advance().range;
+                signature.targetRange.start = Current().range.start;
+                do {
+                    if ((Check(TokenType::Structure) ||
+                         Check(TokenType::Enum) ||
+                         Check(TokenType::Interface)) &&
+                        Peek(1).type == TokenType::Identifier) {
+                        ReportUnexpectedToken(
+                            "in incomplete decoration target");
+                        return false;
+                    }
+                    if (!(Check(TokenType::Identifier) ||
+                          Check(TokenType::Structure) ||
+                          Check(TokenType::Enum) ||
+                          Check(TokenType::Interface))) {
+                        _diagnostics.Report(
+                            diagnostics::DiagnosticCode::
+                                InvalidDecorationTarget,
+                            Current().range,
+                            "malformed decoration target qualification");
+                        return false;
+                    }
+                    const Token& part = Advance();
+                    signature.targetPath.push_back(part.value);
+                    signature.targetPathRanges.push_back(part.range);
+                    signature.targetRange.end = part.range.end;
+                } while (Match(TokenType::Scope));
+                const auto& path = signature.targetPath;
+                if (path == std::vector<std::string>{"structure"})
+                    signature.target = DecorationTarget::Structure;
+                else if (path == std::vector<std::string>{"structure", "field"})
+                    signature.target = DecorationTarget::StructureField;
+                else if (path == std::vector<std::string>{"enum"})
+                    signature.target = DecorationTarget::Enum;
+                else if (path == std::vector<std::string>{"interface"})
+                    signature.target = DecorationTarget::Interface;
+                else
+                    _diagnostics.Report(
+                        diagnostics::DiagnosticCode::InvalidDecorationTarget,
+                        signature.targetRange,
+                        path.size() > 1
+                            ? "malformed decoration target qualification"
+                            : "unsupported decoration target category");
+                const Token* end = Consume(TokenType::SemiColon,
+                                           "';' after application signature");
+                signature.range.end =
+                    end ? end->range.end : signature.targetRange.end;
+                signatures.push_back(std::move(signature));
+                return end != nullptr;
+            };
+            if (!parseSignature()) {
+                while (!IsAtEnd() && !Check(TokenType::RCurly) &&
+                       !Check(TokenType::SemiColon) &&
+                       !StartsTopLevelOnlyDeclaration() &&
+                       !(Check(TokenType::Identifier) &&
+                         Current().value == "application" &&
+                         _position != before))
+                    Advance();
+                Match(TokenType::SemiColon);
+                if (_position == before && !IsAtEnd() &&
+                    !Check(TokenType::RCurly))
+                    Advance();
+            }
+        }
+        Consume(TokenType::RCurly, "'}' after decoration body");
+    }
     const Token* end =
         Consume(TokenType::SemiColon, "';' after decoration declaration");
-    if (!end) return nullptr;
     return std::make_unique<DecorationDeclaration>(
-        source::SourceRange{start, end->range.end}, name->value, name->range);
+        source::SourceRange{start,
+                            end ? end->range.end : Current().range.start},
+        name->value, name->range, hasBody, std::move(signatures));
 }
 
 std::unique_ptr<TypeSetDeclaration> Parser::ParseTypeSetDeclaration() {
@@ -1212,7 +1629,9 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
     if (IsModuleConstantDeclaration()) return ParseModuleConstantDeclaration();
     if (Check(TokenType::TypeSet)) return ParseTypeSetDeclaration();
     if (Check(TokenType::Decoration)) return ParseDecorationDeclaration();
+    if (Check(TokenType::Behavior)) return ParseBehaviorDeclaration();
     if (Check(TokenType::Structure)) return ParseStructureDeclaration();
+    if (Check(TokenType::Interface)) return ParseInterfaceDeclaration();
     if (Check(TokenType::Enum)) return ParseEnumDeclaration();
     if (Check(TokenType::Error) && Peek(1).type == TokenType::Identifier &&
         Peek(2).type == TokenType::LCurly)
@@ -1226,7 +1645,7 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
            Peek(2).type == TokenType::Func)));
     if (callableType) return ParseCallableTypeDeclaration();
     if (StartsType() || Check(TokenType::Unsafe) || Check(TokenType::Private) ||
-        Check(TokenType::Extern)) {
+        Check(TokenType::Protected) || Check(TokenType::Extern)) {
         return ParseFunctionDeclaration();
     }
 
@@ -1334,6 +1753,8 @@ std::unique_ptr<Statement> Parser::ParseStatement() {
         return ParseWhileStatement();
     }
     if (Check(TokenType::Loop)) return ParseLoopStatement();
+    if (Check(TokenType::For) && Peek(1).type == TokenType::Less)
+        return ParseFieldIterationStatement();
     if (Check(TokenType::For)) return ParseRangeStatement();
     if (Check(TokenType::Proceed)) return ParseProceedStatement();
     if (Check(TokenType::Break)) return ParseBreakStatement();
@@ -1351,6 +1772,64 @@ std::unique_ptr<Statement> Parser::ParseStatement() {
         semicolon == nullptr ? expression->Range().end : semicolon->range.end;
     return std::make_unique<ExpressionStatement>(
         source::SourceRange{start, end}, std::move(expression));
+}
+
+std::unique_ptr<Statement> Parser::ParseFieldIterationStatement() {
+    const Token keyword = Advance();
+    if (!_inBehaviorMethod)
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::InvalidReflectionContext,
+            keyword.range,
+            "field iteration requires a structure behavior method");
+    Advance();  // '<'
+    const auto fail = [&]() -> std::unique_ptr<Statement> {
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::InvalidFieldIteration, Current().range,
+            "expected for<F> Field<T, F> field = T::fields() { ... }");
+        // Stop at a block boundary or a new declaration during editor recovery.
+        while (!IsAtEnd() && !Check(TokenType::LCurly) &&
+               !Check(TokenType::RCurly) && !Check(TokenType::SemiColon) &&
+               !StartsTopLevelOnlyDeclaration())
+            Advance();
+        if (Check(TokenType::LCurly)) return ParseBlockStatement();
+        Match(TokenType::SemiColon);
+        return nullptr;
+    };
+    if (!Check(TokenType::Identifier)) return fail();
+    const Token binder = Advance();
+    if (!Match(TokenType::Greater)) return fail();
+    if (!Check(TokenType::Identifier) || Current().value != "Field")
+        return fail();
+    const Token field = Advance();
+    if (!Match(TokenType::Less) || !Check(TokenType::Identifier)) return fail();
+    const Token target = Advance();
+    if (!Match(TokenType::Comma) || !Check(TokenType::Identifier))
+        return fail();
+    const Token valueType = Advance();
+    if (!Match(TokenType::Greater) || !Check(TokenType::Identifier))
+        return fail();
+    const Token descriptor = Advance();
+    if (!Match(TokenType::Assign)) return fail();
+    auto pack = ParseExpression();
+    if (!pack || !Check(TokenType::LCurly)) return fail();
+    auto body = ParseBlockStatement();
+    if (!body) return nullptr;
+    auto result = std::make_unique<FieldIterationStatement>(
+        source::SourceRange{keyword.range.start, body->Range().end});
+    result->keywordRange = keyword.range;
+    result->binderRange = binder.range;
+    result->fieldRange = field.range;
+    result->targetRange = target.range;
+    result->valueTypeRange = valueType.range;
+    result->descriptorRange = descriptor.range;
+    result->packRange = pack->Range();
+    result->binder = binder.value;
+    result->target = target.value;
+    result->valueType = valueType.value;
+    result->descriptor = descriptor.value;
+    result->pack = std::move(pack);
+    result->body = std::move(body);
+    return result;
 }
 
 bool Parser::HasParenthesizedBindings() const {
@@ -2170,11 +2649,15 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
 std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
     source::SourceLocation& end, std::vector<bool>* expandedArguments) {
     std::vector<std::unique_ptr<Expression>> arguments;
-    while (!Check(TokenType::RParen) && !IsAtEnd()) {
+    while (!Check(TokenType::RParen) && !IsAtEnd() &&
+           !Check(TokenType::RCurly) && !Check(TokenType::LCurly) &&
+           !StartsTopLevelOnlyDeclaration()) {
         std::unique_ptr<Expression> argument = ParseExpression();
         if (argument == nullptr) {
             while (!IsAtEnd() && !Check(TokenType::Comma) &&
-                   !Check(TokenType::RParen) && !Check(TokenType::SemiColon)) {
+                   !Check(TokenType::RParen) && !Check(TokenType::SemiColon) &&
+                   !Check(TokenType::RCurly) && !Check(TokenType::LCurly) &&
+                   !StartsTopLevelOnlyDeclaration()) {
                 Advance();
             }
         } else {
@@ -2199,7 +2682,9 @@ std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
                                 Current().range,
                                 "expected ',' or ')' after argument");
             while (!IsAtEnd() && !Check(TokenType::RParen) &&
-                   !Check(TokenType::SemiColon)) {
+                   !Check(TokenType::SemiColon) && !Check(TokenType::RCurly) &&
+                   !Check(TokenType::LCurly) &&
+                   !StartsTopLevelOnlyDeclaration()) {
                 Advance();
             }
         }
@@ -2620,19 +3105,18 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpression() {
 void Parser::SynchronizeTopLevel() {
     // Parse() guarantees progress if a failed declaration consumed nothing.
     // Keep a following declaration's first token after a partially parsed one.
-    while (!IsAtEnd() && !StartsType() && !Check(TokenType::Func) &&
-           !Check(TokenType::Once) && !Check(TokenType::Unsafe) &&
-           !Check(TokenType::Structure) && !Check(TokenType::Private) &&
-           !Check(TokenType::TypeSet) && !Check(TokenType::Test) &&
+    while (!IsAtEnd() && !StartsType() && !StartsTopLevelOnlyDeclaration() &&
            !Check(TokenType::Const)) {
         Advance();
     }
 }
 
 void Parser::SynchronizeStatement() {
-    if (!IsAtEnd()) Advance();
+    if (!IsAtEnd() && !Check(TokenType::RCurly) &&
+        !StartsTopLevelOnlyDeclaration())
+        Advance();
     while (!IsAtEnd() && !Check(TokenType::SemiColon) &&
-           !Check(TokenType::RCurly)) {
+           !Check(TokenType::RCurly) && !StartsTopLevelOnlyDeclaration()) {
         Advance();
     }
     Match(TokenType::SemiColon);
@@ -2647,11 +3131,66 @@ void Parser::ParseHeader() {
         Advance();
         _modulePrivate = true;
     }
-    if (Match(TokenType::Module)) {
+    const bool hasModuleDeclaration = Match(TokenType::Module);
+    if (hasModuleDeclaration) {
         const Token* name = Consume(TokenType::Identifier, "module name");
         if (name) moduleName = name->value;
         Consume(TokenType::SemiColon, "';' after module declaration");
     }
+    const auto isIdentifier = [&](std::size_t offset, std::string_view value) {
+        return Peek(offset).type == TokenType::Identifier &&
+               Peek(offset).value == value;
+    };
+    const auto startsNamespaceAttachment = [&] {
+        if (!isIdentifier(0, "under")) return false;
+        // `under namespace` is the contextual header phrase. Preserve the
+        // focused missing-keyword diagnostic for the unambiguous malformed
+        // shape `under root::...` and the missing-module diagnostic without
+        // reserving `under` globally.
+        return isIdentifier(1, "namespace") ||
+               (Peek(1).type == TokenType::Identifier &&
+                Peek(2).type == TokenType::Scope);
+    };
+    while (startsNamespaceAttachment()) {
+        const Token& under = Advance();
+        NamespaceAttachment attachment;
+        attachment.range.start = under.range.start;
+        if (isIdentifier(0, "namespace"))
+            Advance();
+        else
+            _diagnostics.Report(diagnostics::DiagnosticCode::ExpectedToken,
+                                Current().range,
+                                "expected 'namespace' after 'under', found '" +
+                                    Current().value + "'");
+        const Token* first =
+            Consume(TokenType::Identifier, "namespace attachment root");
+        if (first) {
+            attachment.path.push_back(first->value);
+            attachment.segmentRanges.push_back(first->range);
+        }
+        while (Match(TokenType::Scope)) {
+            const Token* segment =
+                Consume(TokenType::Identifier, "namespace path segment");
+            if (!segment) break;
+            attachment.path.push_back(segment->value);
+            attachment.segmentRanges.push_back(segment->range);
+        }
+        const Token* semicolon = Consume(
+            TokenType::SemiColon, "';' after namespace attachment clause");
+        attachment.range.end =
+            semicolon ? semicolon->range.end : Current().range.start;
+        if (_namespaceAttachment) {
+            _diagnostics.Report(
+                diagnostics::DiagnosticCode::DuplicateDeclaration,
+                attachment.range, "duplicate 'under namespace' clause");
+        } else {
+            _namespaceAttachment = std::move(attachment);
+        }
+    }
+    if (_namespaceAttachment && !hasModuleDeclaration)
+        _diagnostics.Report(diagnostics::DiagnosticCode::UnexpectedToken,
+                            _namespaceAttachment->range,
+                            "'under namespace' requires a module declaration");
     if (Check(TokenType::At) && Peek(1).type == TokenType::Identifier &&
         Peek(1).value == "imports") {
         Advance();
@@ -2809,6 +3348,7 @@ std::unique_ptr<CompilationUnit> Parser::Parse() {
         std::move(declarations));
     unit->moduleName = std::move(_moduleName);
     unit->privateModule = _modulePrivate;
+    unit->namespaceAttachment = std::move(_namespaceAttachment);
     unit->imports = std::move(_imports);
     unit->foreignSources = std::move(foreignSources);
     return unit;

@@ -1,0 +1,5 @@
+module main;
+under namespace root::foo;
+@imports :: root::foo::support;
+
+i32 main() { return support::privateValue(); }

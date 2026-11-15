@@ -1,0 +1,4 @@
+module main;
+@imports :: root::foo::*;
+
+i32 main() { return gee::value(); }

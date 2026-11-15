@@ -1,0 +1,3 @@
+module trailing_target;
+decoration meta { application() target structure::; };
+i32 main() { return 0; }

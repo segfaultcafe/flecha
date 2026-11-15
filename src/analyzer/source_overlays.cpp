@@ -48,4 +48,14 @@ const SourceOverlay* SourceOverlays::Find(
     return overlay == _overlays.end() ? nullptr : &overlay->second;
 }
 
+std::vector<std::filesystem::path> SourceOverlays::Paths() const {
+    std::vector<std::filesystem::path> result;
+    result.reserve(_overlays.size());
+    for (const auto& [path, overlay] : _overlays) {
+        (void)overlay;
+        result.push_back(path);
+    }
+    return result;
+}
+
 }  // namespace flecha::analyzer

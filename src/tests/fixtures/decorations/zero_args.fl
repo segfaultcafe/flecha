@@ -1,0 +1,5 @@
+module zero_args;
+decoration tag { application() target structure; };
+@tag structure Tagged {};
+@tag() structure AlsoTagged {};
+i32 main() { return 0; }

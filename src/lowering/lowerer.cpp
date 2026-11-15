@@ -40,9 +40,25 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
                                   source.source, source.range,
                                   source.bodyLine});
     }
+    InterfaceLoweringPlanner interfacePlanner(
+        {}, &semanticModel.InterfaceVariadicShapes(),
+        &semanticModel.VariadicTargets(),
+        &semanticModel.InterfaceVariadicShapeTargets());
+    std::vector<InterfaceTablePlan> interfaceTables =
+        interfacePlanner.BuildPlans(semanticModel);
+    std::vector<InterfaceTableLayout> interfaceLayouts;
+    interfaceLayouts.reserve(semanticModel.Interfaces().size());
+    for (const std::unique_ptr<semantic::InterfaceType>& interfaceType :
+         semanticModel.Interfaces())
+        interfaceLayouts.push_back(
+            interfacePlanner.BuildLayout(*interfaceType));
     _semanticModel = nullptr;
-    return std::make_unique<BoundProgram>(std::move(functions),
-                                          std::move(foreignSources));
+    return std::make_unique<BoundProgram>(
+        std::move(functions), std::move(foreignSources),
+        std::move(interfaceTables), std::move(interfaceLayouts),
+        semanticModel.InterfaceVariadicShapes(),
+        semanticModel.VariadicTargets(),
+        semanticModel.InterfaceVariadicShapeTargets());
 }
 
 std::unique_ptr<BoundFunction> Lowerer::LowerFunction(
@@ -298,6 +314,12 @@ std::unique_ptr<BoundPlaceExpression> Lowerer::LowerPlace(
 std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
     const core::Expression& expression, semantic::SemanticType expected) {
     const semantic::SemanticType type = _semanticModel->TypeOf(expression);
+    if (!expected.IsError() && type != expected &&
+        semantic::CanImplicitlyConvertInterfaceReference(type, expected)) {
+        return std::make_unique<BoundCastExpression>(
+            expression.Range(), expected,
+            LowerExpression(expression, semantic::SemanticType::Error()));
+    }
     if (_semanticModel->TransferOf(expression) == semantic::TransferKind::Move)
         return std::make_unique<BoundMoveExpression>(expression.Range(),
                                                      LowerPlace(expression));
@@ -520,6 +542,23 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
         case core::AstNodeKind::CastExpression: {
             const core::CastExpression& cast =
                 static_cast<const core::CastExpression&>(expression);
+            const semantic::SemanticType source =
+                _semanticModel->TypeOf(cast.Value());
+            if (type.Kind() == semantic::SemanticTypeKind::Reference &&
+                type.Target()->Kind() ==
+                    semantic::SemanticTypeKind::Interface &&
+                (source.Kind() == semantic::SemanticTypeKind::Structure ||
+                 source.Kind() == semantic::SemanticTypeKind::Enum)) {
+                semantic::SemanticType borrowed =
+                    type.Target()->IsConst() ? source.WithConst() : source;
+                return std::make_unique<BoundCastExpression>(
+                    expression.Range(), type,
+                    std::make_unique<BoundAddressExpression>(
+                        cast.Value().Range(),
+                        semantic::SemanticType(
+                            semantic::SemanticTypeKind::Reference, borrowed),
+                        LowerPlace(cast.Value())));
+            }
             return std::make_unique<BoundCastExpression>(
                 expression.Range(), type, LowerExpression(cast.Value()));
         }
@@ -661,6 +700,74 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 return cursor;
             }
             if (const auto* method = _semanticModel->MethodFor(member)) {
+                if (_semanticModel->IsQualifiedInterfaceProviderCall(member)) {
+                    std::vector<std::unique_ptr<BoundExpression>> arguments;
+                    const auto sourceArguments =
+                        _semanticModel->ArgumentsFor(member);
+                    arguments.reserve(sourceArguments.size());
+                    for (std::size_t index = 0; index < sourceArguments.size();
+                         ++index)
+                        arguments.push_back(
+                            LowerExpression(*sourceArguments[index],
+                                            method->ParameterTypes()[index]));
+                    return std::make_unique<BoundCallExpression>(
+                        expression.Range(), *method, std::move(arguments));
+                }
+                if (const auto* contract =
+                        _semanticModel->InterfaceMethodFor(member)) {
+                    std::vector<std::unique_ptr<BoundExpression>> arguments;
+                    const auto sourceArguments =
+                        _semanticModel->ArgumentsFor(member);
+                    arguments.reserve(sourceArguments.size());
+                    for (std::size_t index = 0; index < sourceArguments.size();
+                         ++index) {
+                        const std::size_t parameter = index + 1;
+                        arguments.push_back(LowerExpression(
+                            *sourceArguments[index],
+                            parameter < method->ParameterTypes().size()
+                                ? method->ParameterTypes()[parameter]
+                                : _semanticModel->TypeOf(
+                                      *sourceArguments[index])));
+                    }
+                    const semantic::VariadicShape* shape =
+                        _semanticModel->InterfaceVariadicShapeFor(member);
+                    const semantic::SemanticType receiverType =
+                        _semanticModel->TypeOf(member.Receiver());
+                    std::unique_ptr<BoundExpression> receiver;
+                    if (receiverType.Kind() ==
+                            semantic::SemanticTypeKind::Structure ||
+                        receiverType.Kind() ==
+                            semantic::SemanticTypeKind::Enum) {
+                        const semantic::SemanticType interfaceReference =
+                            method->ParameterTypes().front();
+                        semantic::SemanticType borrowed = receiverType;
+                        if (interfaceReference.Target()->IsConst())
+                            borrowed = borrowed.WithConst();
+                        receiver = std::make_unique<BoundCastExpression>(
+                            member.Receiver().Range(), interfaceReference,
+                            std::make_unique<BoundAddressExpression>(
+                                member.Receiver().Range(),
+                                semantic::SemanticType(
+                                    semantic::SemanticTypeKind::Reference,
+                                    borrowed),
+                                LowerPlace(member.Receiver())));
+                    } else if (receiverType.Kind() ==
+                                   semantic::SemanticTypeKind::Reference &&
+                               receiverType.Target()->Kind() !=
+                                   semantic::SemanticTypeKind::Interface) {
+                        receiver =
+                            LowerExpression(member.Receiver(),
+                                            method->ParameterTypes().front());
+                    } else {
+                        receiver = LowerExpression(member.Receiver());
+                    }
+                    return std::make_unique<BoundInterfaceCallExpression>(
+                        expression.Range(), *contract, std::move(receiver),
+                        std::move(arguments),
+                        shape == nullptr
+                            ? std::optional<semantic::VariadicShape>{}
+                            : std::optional<semantic::VariadicShape>{*shape});
+                }
                 std::vector<std::unique_ptr<BoundExpression>> arguments;
                 if (method->HasReceiver()) {
                     const semantic::SemanticType parameter =

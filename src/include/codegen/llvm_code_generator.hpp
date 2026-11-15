@@ -7,6 +7,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -31,12 +32,14 @@ class LlvmCodeGenerator final {
     [[nodiscard]] const std::string& Error() const { return _error; }
 
    private:
+    enum class DeferredCallKind { Direct, Indirect, Interface };
+
     struct DeferredCall final {
         const lowering::BoundDeferStatement* statement;
         llvm::StructType* recordType;
         std::vector<semantic::SemanticType> captureTypes;
         std::vector<bool> captureOwnershipTransfers;
-        bool indirect;
+        DeferredCallKind kind;
     };
     struct OwnedStorage final {
         llvm::Value* storage;
@@ -60,6 +63,24 @@ class LlvmCodeGenerator final {
         std::size_t retainedScopeCount;
     };
 
+    struct InterfaceTableLocation final {
+        llvm::GlobalVariable* storage;
+        llvm::StructType* aggregateType;
+        std::size_t rootIndex;
+        std::size_t byteOffset;
+        bool usesEmptySentinel;
+    };
+
+    struct InterfaceUpcastLocation final {
+        std::ptrdiff_t tableAdjustment;
+        bool usesEmptySentinel;
+    };
+
+    struct InterfaceDispatchSlotLocation final {
+        std::size_t byteOffset;
+        std::size_t tableAdjustment;
+    };
+
     bool EmitInto(const lowering::BoundExpression& expression,
                   llvm::Value* destination, semantic::SemanticType type);
     bool EmitDefaultInto(llvm::Value* destination, semantic::SemanticType type,
@@ -74,8 +95,42 @@ class LlvmCodeGenerator final {
         const std::function<void(llvm::Value*)>& action);
     llvm::Value* LifetimeFlag(llvm::Value* storage);
     [[nodiscard]] llvm::Type* MapType(semantic::SemanticType type);
+    [[nodiscard]] llvm::StructType* InterfaceReferenceType();
+    [[nodiscard]] llvm::Value* CreateInterfaceReference(llvm::Value* data,
+                                                        llvm::Value* table);
+    [[nodiscard]] llvm::Value* InterfaceReferenceData(llvm::Value* reference);
+    [[nodiscard]] llvm::Value* InterfaceReferenceTable(llvm::Value* reference);
+    [[nodiscard]] llvm::GlobalVariable* EmptyInterfaceTable();
+    [[nodiscard]] llvm::StructType* InterfaceTableType(
+        const lowering::InterfaceTableLayout& layout);
+    [[nodiscard]] llvm::FunctionType* InterfaceSlotType(
+        const semantic::MethodContract& origin,
+        const semantic::VariadicShape* shape = nullptr);
+    [[nodiscard]] llvm::Constant* InterfaceTableInitializer(
+        const lowering::InterfaceTablePlan& plan,
+        const lowering::InterfaceTableLayout& layout);
+    [[nodiscard]] llvm::Function* InterfaceProviderEntry(
+        const lowering::EffectiveInterfaceProvider& provider);
+    [[nodiscard]] llvm::Function* InterfaceProviderThunk(
+        const lowering::EffectiveInterfaceProvider& provider);
+    bool RecordInterfaceTableLayout(
+        const void* concreteIdentity, llvm::GlobalVariable* storage,
+        llvm::StructType* aggregateType, std::size_t rootIndex,
+        std::size_t rootOffset, const lowering::InterfaceTableLayout& layout,
+        llvm::StructType* materializedType = nullptr);
+    bool RecordInterfaceDispatchLayout(
+        const lowering::InterfaceTableLayout& layout,
+        llvm::StructType* materializedType);
+    [[nodiscard]] llvm::Value* MaterializedInterfaceTable(
+        semantic::SemanticType concrete,
+        const semantic::InterfaceType& interfaceType);
+    bool ValidateInterfaceTableType(
+        const lowering::InterfaceTableLayout& layout, llvm::StructType* type);
+    bool DeclareInterfaceInfrastructure(const lowering::BoundProgram& program);
     [[nodiscard]] llvm::StructType* StringViewType();
     [[nodiscard]] llvm::StructType* StringType();
+    [[nodiscard]] llvm::FunctionType* MapFunctionType(
+        const semantic::FunctionSymbol& function, bool hasCaptures = false);
     [[nodiscard]] llvm::FunctionType* MapFunctionType(
         const lowering::BoundFunction& function);
     [[nodiscard]] llvm::FunctionType* MapCallableInvokeType(
@@ -132,6 +187,9 @@ class LlvmCodeGenerator final {
     llvm::Value* EmitIndirectCall(
         const lowering::BoundIndirectCallExpression& expression,
         llvm::Value* destination = nullptr);
+    llvm::Value* EmitInterfaceCall(
+        const lowering::BoundInterfaceCallExpression& expression,
+        llvm::Value* destination = nullptr);
     llvm::Value* EmitExpression(const lowering::BoundExpression& expression);
     [[nodiscard]] llvm::Value* EmitLiteral(
         const lowering::BoundLiteralExpression& expression);
@@ -175,8 +233,8 @@ class LlvmCodeGenerator final {
     [[nodiscard]] llvm::Value* EmitBuiltInStringFormat(
         const lowering::BoundCallExpression& expression,
         const std::vector<llvm::Value*>& arguments);
-    [[nodiscard]] llvm::Value* EmitCrash(
-        llvm::Value* message, source::SourceRange range);
+    [[nodiscard]] llvm::Value* EmitCrash(llvm::Value* message,
+                                         source::SourceRange range);
     [[nodiscard]] llvm::Value* EmitBuiltInInput(
         const lowering::BoundCallExpression& expression,
         const std::vector<llvm::Value*>& arguments);
@@ -229,6 +287,20 @@ class LlvmCodeGenerator final {
         _closureEnvironmentTypes;
     std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
         _closureDestroyers;
+    std::unordered_map<const void*,
+                       std::unordered_map<const semantic::InterfaceType*,
+                                          InterfaceTableLocation>>
+        _interfaceTables;
+    std::unordered_map<const semantic::InterfaceType*,
+                       std::unordered_map<const semantic::InterfaceType*,
+                                          InterfaceUpcastLocation>>
+        _interfaceUpcasts;
+    std::unordered_map<
+        const semantic::InterfaceType*,
+        std::unordered_map<
+            const semantic::MethodContract*,
+            std::unordered_map<std::string, InterfaceDispatchSlotLocation>>>
+        _interfaceDispatchSlots;
     std::unordered_map<const semantic::VariableSymbol*, llvm::Value*>
         _variables;
     std::unordered_map<std::string, llvm::BasicBlock*> _positions;

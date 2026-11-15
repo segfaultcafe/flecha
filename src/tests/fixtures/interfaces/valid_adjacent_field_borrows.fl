@@ -1,0 +1,27 @@
+interface Writable {
+    (usize, error) write(&self, []const u8 source) virtual;
+};
+
+structure BufferedOutput {
+    &Writable sink;
+    own []u8 buffer;
+    usize length;
+};
+
+BufferedOutput BufferedOutput::init(
+    &Writable sink,
+    own []u8 buffer
+) <- sink override {
+    return build BufferedOutput {
+        self.sink = sink;
+        self.length = buffer.len();
+        self.buffer = buffer;
+    };
+}
+
+error BufferedOutput::flush(&self) {
+    usize offset = 0;
+    count, failure :=
+        self->sink->write(self->buffer[offset:self->length]);
+    return failure;
+}

@@ -1,0 +1,2 @@
+module legacy_owner;
+decoration old; interface Root {}; behavior old<T> => structure << Root {};

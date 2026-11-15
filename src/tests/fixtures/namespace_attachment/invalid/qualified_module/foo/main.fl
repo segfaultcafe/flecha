@@ -1,0 +1,3 @@
+module root::foo::main;
+
+i32 main() { return 0; }

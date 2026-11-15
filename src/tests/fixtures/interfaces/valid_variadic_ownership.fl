@@ -1,0 +1,68 @@
+interface Sink {
+    i32 take(&const self, values...) virtual;
+};
+
+structure Owner {
+    *i32 tears;
+    i32 value;
+};
+
+unsafe Owner Owner::init(*i32 tears, i32 value) override {
+    return build Owner {
+        self.tears = tears;
+        self.value = value;
+    };
+}
+
+void Owner::tear(&self) override {
+    unsafe { *self->tears += 1; }
+}
+
+structure Concrete << Sink {};
+
+i32 target(&const Concrete value, Owner owner) {
+    return owner.value;
+}
+
+i32 target(&const Concrete value, string text) {
+    return text.len().cast<i32>;
+}
+
+i32 Concrete::take(&const self, values...) override {
+    return target(self, values...);
+}
+
+unsafe i32 directMove(&const Sink sink, *i32 tears) {
+    owner := Owner::init(tears, 10);
+    return sink->take(owner);
+}
+
+unsafe i32 freshTemporary(&const Sink sink, *i32 tears) {
+    return sink->take(Owner::init(tears, 11));
+}
+
+i32 copyableValue(&const Sink sink) {
+    string text = "copy";
+    if sink->take(text) != 4 { return 1; }
+    return text.len().cast<i32>;
+}
+
+unsafe i32 deferredEarlyReturn(&const Sink sink, *i32 tears) {
+    owner := Owner::init(tears, 12);
+    defer sink->take(owner);
+    return 42;
+}
+
+unsafe i32 main() {
+    i32 tears = 0;
+    concrete := Concrete::init();
+    &const Sink sink = &concrete;
+
+    if directMove(sink, &raw tears) != 10 or tears != 1 { return 1; }
+    if freshTemporary(sink, &raw tears) != 11 or tears != 2 { return 2; }
+    if copyableValue(sink) != 4 or tears != 2 { return 3; }
+    if deferredEarlyReturn(sink, &raw tears) != 42 or tears != 3 {
+        return 4;
+    }
+    return 42;
+}

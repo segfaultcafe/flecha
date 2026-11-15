@@ -21,6 +21,8 @@ stringv Echo(stringv value) {
     return value;
 }
 
+const stringv METHOD = "GET";
+
 void explode!() { crash("boom"); }
 void call_explode!() { explode!(); if !false {} }
 T generic_explode<T>!(T value) { crash("generic boom"); }
@@ -52,6 +54,8 @@ readonly.front();
 fixed.back()++;
 
 void Deferred() { defer stdoutln("done"); }
+void Generator() { yield none; }
+T generic_cast<T>() { return cast<T>(); }
 
 (i32, bool) TupleResult() { return (42, true); }
 void TupleBindings() { (i32 count, bool ready) = TupleResult(); }
@@ -60,12 +64,29 @@ void BareTupleBindings() { i32 quotient, remainder = (3, 2); }
 
 error MathError { DivisionByZero, Overflow }
 enum State: u8 { default Unknown, On, Off }
+
+interface Highlightable {
+    protected error inspect(&const self) virtual;
+    error render(&self) default;
+    error close(&self) final;
+};
+structure Highlighted << Highlightable {};
+structure WrappedHighlight
+    << Highlightable {
+};
 bool IsOn(State state) { return match state { State.On => true, _ => false, }; }
 error genericError = MathError.Overflow;
 
 structure Box { private i32 x; };
+
+module attached;
+under namespace root::foundation;
+i32 under = 20;
+i32 namespace = 22;
 Box Box::init() override { return build Box {}; }
 i32 Box::value(&self) { return self->x; }
+void Server::run() {}
+void StartServer() { Server::run(); }
 &const i32 borrow_all(&const i32 args) <- ...args { return args; }
 args := 0;
 
@@ -125,3 +146,11 @@ quiver i32 quiver_function() { return 42; }
 foreign c { int native_value(void) { return 42; } }
 
 unsafe { old := take(self->storage); buffer, err := new<[]i32>(count); }
+
+decoration typedMeta {
+    application(stringv name) target structure::field;
+    application(structure) target structure;
+    application(stringv name) target enum;
+    application(stringv name) target interface;
+};
+i32 application(i32 target) { return target; }

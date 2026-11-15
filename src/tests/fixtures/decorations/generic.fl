@@ -1,0 +1,4 @@
+module generic;
+decoration tag { application(structure) target structure; application(stringv name) target structure::field; };
+@tag(structure) structure Box<T> { @tag("value") T value; };
+i32 main() { Box<i32> box; return 0; }

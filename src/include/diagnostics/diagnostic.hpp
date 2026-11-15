@@ -3,6 +3,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "source/source_range.hpp"
 
@@ -84,6 +85,29 @@ enum class DiagnosticCode {
     InvalidVariadic,
     InvalidCrashable,
     InvalidDecoration,
+    InvalidInterface,
+    InvalidDecorationTarget,
+    DuplicateDecorationSignature,
+    InvalidDecorationParameter,
+    DecorationArgumentCount,
+    DecorationArgumentType,
+    DecorationTargetMismatch,
+    DuplicateDecorationApplication,
+    InaccessibleDecoration,
+    InvalidDecorationMarker,
+    InvalidBehavior,
+    InvalidBehaviorParameter,
+    DuplicateBehavior,
+    InvalidBehaviorMethod,
+    ConflictingBehaviorRoots,
+    InvalidFieldIteration,
+    InvalidReflectionContext,
+    InvalidReflectionOperation,
+    ReflectionEscape,
+    MissingDecorationProof,
+    InvalidMetadataMember,
+    InvalidBehaviorExpansion,
+
     NativeTargetUnavailable,
     ObjectEmissionFailed,
     RuntimeUnavailable,
@@ -94,11 +118,17 @@ enum class DiagnosticCode {
 
 [[nodiscard]] std::string_view DiagnosticCodeName(DiagnosticCode code);
 
+struct RelatedLocation {
+    source::SourceRange range;
+    std::string message;
+};
+
 struct Diagnostic {
     DiagnosticCode code;
     DiagnosticSeverity severity;
     std::string message;
     source::SourceRange range;
+    std::vector<RelatedLocation> related;
 };
 
 }  // namespace flecha::diagnostics

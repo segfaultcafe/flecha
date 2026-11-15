@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace flecha::analyzer {
 
@@ -34,6 +35,7 @@ class SourceOverlays final {
 
     [[nodiscard]] const SourceOverlay* Find(
         const std::filesystem::path& path) const;
+    [[nodiscard]] std::vector<std::filesystem::path> Paths() const;
 
    private:
     [[nodiscard]] static std::filesystem::path Normalize(

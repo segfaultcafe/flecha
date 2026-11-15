@@ -77,6 +77,21 @@ TEST(TokenizerTests, RecognizesFunctionModifiersAndReservedWords) {
     }
 }
 
+TEST(TokenizerTests, RecognizesInterfaceAndBehaviorStructuralKeywordsOnly) {
+    const std::vector<Token> tokens = Tokenize(
+        "interface virtual default final protected behavior application "
+        "target");
+    const std::vector<TokenType> expected = {
+        TokenType::Interface,  TokenType::Virtual,    TokenType::Default,
+        TokenType::Final,      TokenType::Protected,  TokenType::Behavior,
+        TokenType::Identifier, TokenType::Identifier, TokenType::EOF_TOKEN,
+    };
+
+    ASSERT_EQ(tokens.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        EXPECT_EQ(tokens[index].type, expected[index]);
+}
+
 TEST(TokenizerTests, RecognizesMultiCharacterOperators) {
     std::vector<Token> tokens = Tokenize("= := == != === !== <= >= && ||");
     ASSERT_EQ(tokens.size(), 11);
@@ -330,8 +345,7 @@ TEST(TokenizerTests, RecognizesStringLiterals) {
 
 TEST(TokenizerTests, RecognizesDecorationKeyword) {
     DiagnosticBag diagnostics;
-    const auto tokens =
-        Tokenizer("decoration json;", diagnostics).Tokenize();
+    const auto tokens = Tokenizer("decoration json;", diagnostics).Tokenize();
 
     ASSERT_FALSE(diagnostics.HasErrors());
     ASSERT_GE(tokens.size(), 2u);
@@ -532,4 +546,19 @@ TEST(TokenizerTests, RecognizesModuleAndImportDirectiveTokens) {
     EXPECT_EQ(tokens[3].type, TokenType::At);
     EXPECT_EQ(tokens[4].type, TokenType::Identifier);
     EXPECT_EQ(tokens[5].type, TokenType::Scope);
+}
+
+TEST(TokenizerTests, KeepsNamespaceAttachmentWordsContextual) {
+    const auto tokens = Tokenize(
+        "module gee; under namespace root::foo; underneath namespaced");
+    ASSERT_EQ(tokens.size(), 12);
+    EXPECT_EQ(tokens[0].type, TokenType::Module);
+    EXPECT_EQ(tokens[3].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[3].value, "under");
+    EXPECT_EQ(tokens[4].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[4].value, "namespace");
+    EXPECT_EQ(tokens[5].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[6].type, TokenType::Scope);
+    EXPECT_EQ(tokens[9].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[10].type, TokenType::Identifier);
 }

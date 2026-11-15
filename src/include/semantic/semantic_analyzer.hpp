@@ -19,8 +19,11 @@ class SemanticAnalyzer final {
     [[nodiscard]] SemanticModel Analyze(core::CompilationUnit& unit);
 
    private:
+    friend class BehaviorPlanner;
+    void PlanBehaviors(const core::CompilationUnit& unit);
     void SetSource(const std::string& id);
     void BindImports(const core::CompilationUnit& unit);
+    void RegisterBehaviors(const core::CompilationUnit& unit);
     void ValidateDecorations(const core::CompilationUnit& unit);
     void ValidateExports(const core::CompilationUnit& unit);
     bool ReportInaccessibleImport(const std::string& name,
@@ -69,6 +72,7 @@ class SemanticAnalyzer final {
                              bool allowBorrowedTuple = false);
     SemanticType ResolveTypeSyntax(const core::TypeNode& type);
     void RegisterErrorTypes(const core::CompilationUnit& unit);
+    void RegisterInterfaces(const core::CompilationUnit& unit);
     void RegisterEnums(const core::CompilationUnit& unit);
     void DeclareCallableTypes(const core::CompilationUnit& unit);
     void ResolveCallableTypes(const core::CompilationUnit& unit);
@@ -80,14 +84,17 @@ class SemanticAnalyzer final {
     SemanticType AnalyzeMemberAccess(
         const core::MemberAccessExpression& expression);
     void RegisterStructures(const core::CompilationUnit& unit);
+    void ResolveNominalRelations();
+    void ResolveInterfaceMethods();
+    void ValidateInterfaceConformance();
     void ResolveStructureFields();
     void RegisterFunction(const core::FunctionDeclaration& function,
                           bool generated = false);
     void GenerateInitializers();
     void GenerateJsonMethods();
     SemanticType AnalyzeBuild(const core::BuildExpression& expression);
-    SemanticType AnalyzeStructureCall(
-        const core::MemberCallExpression& expression, SemanticType receiver);
+    SemanticType AnalyzeMethodCall(const core::MemberCallExpression& expression,
+                                   SemanticType receiver);
     std::vector<const FunctionSymbol*> LookupFunctions(
         std::string_view name) const;
     const FunctionSymbol* ResolveOverload(
@@ -96,6 +103,12 @@ class SemanticAnalyzer final {
         const std::vector<std::unique_ptr<core::Expression>>& arguments,
         source::SourceRange range, bool isStatic = true,
         SemanticType receiver = SemanticType::Error());
+    const FunctionSymbol* ResolveOverloadFromTypes(
+        std::string_view displayName,
+        const std::vector<const FunctionSymbol*>& candidates,
+        const std::vector<const core::Expression*>& arguments,
+        const std::vector<SemanticType>& actualTypes, source::SourceRange range,
+        bool isStatic, SemanticType receiver = SemanticType::Error());
     void CheckTransfer(const core::Expression& expression, SemanticType type,
                        bool consumingOwnership = false);
     void WarnForNontrivialDefault(SemanticType type, source::SourceRange range);
@@ -108,10 +121,12 @@ class SemanticAnalyzer final {
                            source::SourceRange range);
     const StructureType* CurrentOwner() const;
     const EnumType* CurrentEnumOwner() const;
+    const InterfaceType* CurrentInterfaceOwner() const;
     void RegisterBuiltIns();
     void RegisterFunctions(const core::CompilationUnit& unit);
     void AnalyzeFunction(const core::FunctionDeclaration& function);
     void AnalyzeVariadicFunction(const core::FunctionDeclaration& function);
+    void ResolveInterfaceVariadicShapeTargets();
     void AnalyzeDefaultArguments(const core::FunctionDeclaration& function);
     void AnalyzeBlock(const core::BlockStatement& block, bool createScope);
     void AnalyzeStatement(const core::Statement& statement);
@@ -163,6 +178,11 @@ class SemanticAnalyzer final {
     SemanticModel _model;
     Scope* _currentScope = nullptr;
     const FunctionSymbol* _currentFunction = nullptr;
+    // Signature-only lookup overlay populated exclusively in detached behavior
+    // analyzers. Never inserted into concrete method tables or ordinary scopes.
+    std::vector<const FunctionSymbol*> _prospectiveMethods;
+    std::unordered_map<const FunctionSymbol*, const MethodContract*>
+        _prospectiveContracts;
     std::unordered_map<std::string, source::SourceRange> _positions;
     std::unordered_set<const Symbol*> _localStringBorrows;
     std::unordered_set<const StructureType*> _warnedDefaults;

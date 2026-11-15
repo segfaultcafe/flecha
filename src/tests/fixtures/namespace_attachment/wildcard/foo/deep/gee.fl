@@ -1,0 +1,4 @@
+module gee;
+under namespace root::foo;
+
+export i32 value() { return 42; }

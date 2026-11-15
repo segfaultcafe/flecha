@@ -1,0 +1,3 @@
+module duplicate_enum;
+decoration meta { application(stringv a) target enum; }; @meta("a") @meta("b") enum State { Ready }
+i32 main() { return 0; }

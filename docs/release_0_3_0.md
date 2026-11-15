@@ -59,9 +59,10 @@ modules with explicit `quiver` declarations for namespace-visible APIs.
 
 The JSON decoration is a compiler-known 0.3.x contract. Upgrade the compiler
 and `flecha/json` package together if generated JSON readers or writers are in
-use. The public decoration and generated method spelling are intended to remain
-stable while the implementation moves to general decoration behavior after
-0.3.x.
+use. The public decoration and generated method spelling remain stable within
+the 0.3.x line. The later v0.4 behavior proposal preserves typed decoration
+applications but may replace generated convenience methods with ordinary
+generic library functions.
 
 Application code should treat allocation, process, filesystem, network, and
 parsing failures as the documented typed errors. The optimized native pipeline

@@ -56,7 +56,8 @@ in [`docs/toolchains.md`](docs/toolchains.md).
 make build
 ```
 
-The main compiler is written to `build/flecha`; the project tool is written to `build/longbow`.
+The main compiler is written to `build/flecha`, the project tool to
+`build/longbow`, and the language server to `build/src/lsp/flecha-lsp`.
 
 To configure and build directly with CMake:
 
@@ -71,9 +72,9 @@ Create relocatable `.tar.gz` and `.zip` release archives with:
 cmake --build build --target package
 ```
 
-The archives contain the Flecha compiler, Longbow, their required shared
-runtime dependencies, the Flecha runtime and standard library, reference
-documentation, and Visual Studio Code and Neovim support.
+The archives contain the Flecha compiler, Longbow, `flecha-lsp`, their required
+shared runtime dependencies, the Flecha runtime and standard library,
+reference documentation, and Visual Studio Code and Neovim support.
 See [`docs/release_0_3.md`](docs/release_0_3.md) for the current Linux,
 Windows, and macOS release gates.
 
@@ -101,7 +102,8 @@ code --install-extension flecha-language-VERSION.vsix
 ```
 
 Compiler archives contain the Neovim plugin under
-`share/flecha/editors/neovim`. See the
+`share/flecha/editors/neovim`; it starts the bundled language server
+automatically when the tools remain discoverable. See the
 [`editor installation guide`](docs/editors.md) for Neovim commands, checksums,
 upgrades, uninstalling, and packaging the VS Code extension from a checkout.
 
@@ -321,6 +323,17 @@ Makefile                Convenient build, test, and example targets
 - [`docs/llvm_codegen.md`](docs/llvm_codegen.md) — current LLVM backend scope and limitations
 - [`docs/modules.md`](docs/modules.md) — current modules, imports, and package libraries
 - [`docs/decorations.md`](docs/decorations.md) — declarative decoration metadata and the JSON derivation proof of concept
+- [`docs/interfaces-v0.4.md`](docs/interfaces-v0.4.md) — implemented v0.4
+  signature-only interfaces, composition, conformance, and dispatch
+- [`docs/IFG/IFG_2026_0001.txt`](docs/IFG/IFG_2026_0001.txt) — accepted v0.4
+  Namespace Attachment for organizing logical modules across physical
+  submodule folders
+- [`docs/behaviors-v0.4.md`](docs/behaviors-v0.4.md) — accepted v0.4 typed
+  decoration behaviors that derive interface implementations
+- [`docs/IFG/IFG_2026_0006.txt`](docs/IFG/IFG_2026_0006.txt) — accepted v0.4
+  contract and completion criteria for typed decorations and behaviors
+- [`docs/IFG/IFG_2026_0000.txt`](docs/IFG/IFG_2026_0000.txt) — the 2026 reader
+  and process for the Idiomatic Flecha Guideline RFC series
 - [`docs/module_composition.md`](docs/module_composition.md) — corrected 0.2.1 logical-module model
 - [`docs/memory_safety_invariants.md`](docs/memory_safety_invariants.md) — normative safety properties and the concurrency gate
 - [`docs/memory_model.md`](docs/memory_model.md) — memory model proposal and implementation status

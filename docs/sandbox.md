@@ -3,7 +3,7 @@
 The development sandbox provides a disposable Linux environment with the
 current checkout of Flecha installed. It includes:
 
-- `flecha` and `longbow` on `PATH`
+- `flecha`, `longbow`, and `flecha-lsp` on `PATH`
 - the bundled standard library, discovered automatically by Longbow
 - Clang 18 as Flecha's native linker
 - Neovim 0.12.6 with the Flecha plugin and the host configuration when present
@@ -33,7 +33,9 @@ container, so plugin managers can maintain their lockfiles without changing
 the host configuration. Neovim's data, cache, and downloaded plugins also
 remain inside the container. When the host directory does not exist, the
 sandbox uses a minimal configuration that enables Flecha filetype detection
-and syntax highlighting.
+and syntax highlighting. In either case, a sandbox-only override keeps the
+Flecha client on the compiler and language server installed together under
+`/opt/flecha`; host paths to incompatible local builds are not reused.
 
 The repository is mounted read-only at its original absolute path. This lets a
 host configuration that points directly at `editors/neovim` keep using the
@@ -63,6 +65,7 @@ This starts the container if necessary and opens an interactive login shell in
 ```sh
 flecha --version
 longbow --version
+command -v flecha-lsp
 cd /workspace/hello
 longbow check
 longbow run

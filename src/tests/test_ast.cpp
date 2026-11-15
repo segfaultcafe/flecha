@@ -154,6 +154,33 @@ TEST(AstTests, RepresentsBorrowResultContract) {
     EXPECT_EQ(function->BorrowSourceRanges()[0], RANGE);
 }
 
+TEST(AstTests, RepresentsInterfacesMethodsAndOrderedParents) {
+    auto signature = std::make_unique<FunctionDeclaration>(
+        RANGE, std::vector<FunctionModifier>{FunctionModifier::Protected},
+        MakeI32Type(), "run", std::vector<std::unique_ptr<Parameter>>{},
+        std::make_unique<BlockStatement>(
+            RANGE, std::vector<std::unique_ptr<Statement>>{}),
+        RANGE, "Service");
+    std::vector<std::unique_ptr<InterfaceMethod>> methods;
+    methods.push_back(std::make_unique<InterfaceMethod>(
+        RANGE, std::move(signature), MethodCategory::Default, RANGE));
+    InterfaceDeclaration declaration(
+        RANGE, "Service", RANGE,
+        std::vector<NominalParent>{{"Readable", RANGE}, {"Writable", RANGE}},
+        std::move(methods));
+
+    EXPECT_EQ(declaration.Kind(), AstNodeKind::InterfaceDeclaration);
+    ASSERT_EQ(declaration.Parents().size(), 2);
+    EXPECT_EQ(declaration.Parents()[0].name, "Readable");
+    EXPECT_EQ(declaration.Parents()[1].name, "Writable");
+    ASSERT_EQ(declaration.Methods().size(), 1);
+    EXPECT_EQ(declaration.Methods()[0]->Kind(), AstNodeKind::InterfaceMethod);
+    EXPECT_EQ(declaration.Methods()[0]->Category(), MethodCategory::Default);
+    EXPECT_EQ(declaration.Methods()[0]->CategoryRange(), RANGE);
+    EXPECT_TRUE(declaration.Methods()[0]->Signature().HasModifier(
+        FunctionModifier::Protected));
+}
+
 TEST(AstTests, NodesAreMoveOnly) {
     static_assert(!std::is_copy_constructible_v<LiteralExpression>);
     static_assert(std::is_move_constructible_v<LiteralExpression>);

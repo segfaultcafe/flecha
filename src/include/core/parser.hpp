@@ -29,12 +29,18 @@ class Parser {
     }
     [[nodiscard]] const std::string& ModuleName() const { return _moduleName; }
     [[nodiscard]] bool PrivateModule() const { return _modulePrivate; }
+    [[nodiscard]] const std::optional<NamespaceAttachment>&
+    NamespaceAttachmentClause() const {
+        return _namespaceAttachment;
+    }
     [[nodiscard]] std::unique_ptr<CompilationUnit> Parse();
 
    private:
     bool _headerParsed = false;
+    bool _inBehaviorMethod = false;
     std::string _moduleName;
     bool _modulePrivate = false;
+    std::optional<NamespaceAttachment> _namespaceAttachment;
     std::vector<Import> _imports;
     std::set<std::string> _importAliases;
     [[nodiscard]] const Token& Current() const;
@@ -59,9 +65,15 @@ class Parser {
     std::vector<std::unique_ptr<TypeNode>> ParseTypeArguments();
     std::vector<std::string> ParseGenericParameters(
         std::map<std::string, std::string>* constraints = nullptr);
+    std::vector<NominalParent> ParseNominalParents(
+        std::string_view declarationKind);
     std::unique_ptr<StructureDeclaration> ParseStructureDeclaration();
+    std::unique_ptr<InterfaceDeclaration> ParseInterfaceDeclaration();
+    std::unique_ptr<InterfaceMethod> ParseInterfaceMethod(
+        const std::string& owner);
     std::unique_ptr<TypeSetDeclaration> ParseTypeSetDeclaration();
     std::unique_ptr<DecorationDeclaration> ParseDecorationDeclaration();
+    std::unique_ptr<BehaviorDeclaration> ParseBehaviorDeclaration();
     std::vector<DecorationApplication> ParseDecorations();
     std::unique_ptr<ModuleConstantDeclaration> ParseModuleConstantDeclaration();
     std::unique_ptr<ErrorDeclaration> ParseErrorDeclaration();
@@ -70,7 +82,10 @@ class Parser {
     [[nodiscard]] bool IsModuleConstantDeclaration() const;
     std::unique_ptr<FunctionDeclaration> ParseTestDeclaration();
     std::unique_ptr<CallableTypeDeclaration> ParseCallableTypeDeclaration();
-    std::unique_ptr<FunctionDeclaration> ParseFunctionDeclaration();
+    std::unique_ptr<FunctionDeclaration> ParseFunctionDeclaration(
+        const std::string& implicitOwner = {},
+        MethodCategory* interfaceCategory = nullptr,
+        source::SourceRange* categoryRange = nullptr);
     bool ParseBorrowSources(
         const std::vector<std::unique_ptr<Parameter>>& parameters,
         std::vector<std::string>& sources,
@@ -98,6 +113,7 @@ class Parser {
     std::unique_ptr<WhileStatement> ParseWhileStatement();
     std::unique_ptr<Statement> ParseLoopStatement();
     std::unique_ptr<RangeStatement> ParseRangeStatement();
+    std::unique_ptr<Statement> ParseFieldIterationStatement();
     std::unique_ptr<ProceedStatement> ParseProceedStatement();
     std::unique_ptr<BreakStatement> ParseBreakStatement();
     std::unique_ptr<JumpToStatement> ParseJumpToStatement();

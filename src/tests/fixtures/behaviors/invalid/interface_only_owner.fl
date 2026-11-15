@@ -1,0 +1,2 @@
+module interface_only_owner;
+decoration meta { application() target interface; }; interface Root {}; behavior meta<T> => structure << Root {};

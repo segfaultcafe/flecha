@@ -1,0 +1,9 @@
+module derived_conflict;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Writable { i32 write(&const self, i32 value) virtual; };
+decoration other { application() target structure; }; behavior meta<T> => structure << Writable {}; behavior other<T> => structure << Writable {}; @meta @other structure Item {};

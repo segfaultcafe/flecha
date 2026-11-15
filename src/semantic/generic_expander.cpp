@@ -5,7 +5,9 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <string_view>
 
+#include "core/ast_walk.hpp"
 #include "core/parser.hpp"
 #include "core/tokenizer.hpp"
 #include "semantic/semantic_type.hpp"
@@ -16,7 +18,6 @@ using namespace core;
 using diagnostics::DiagnosticCode;
 using Tokens = std::vector<Token>;
 using Arguments = std::vector<Tokens>;
-using Callback = std::function<void(AstNode&, bool)>;
 
 bool IsPrimitiveNumericTypeName(const std::string& name) {
     return name == "i8" || name == "i16" || name == "i32" || name == "i64" ||
@@ -24,260 +25,7 @@ bool IsPrimitiveNumericTypeName(const std::string& name) {
            name == "u64" || name == "usize" || name == "f32" || name == "f64";
 }
 
-// One structural walk is shared by rewriting, substitution-site discovery, and
-// template checks. Re-parsing templates preserves all existing desugarings.
-void Walk(const AstNode& input, const Callback& callback) {
-    auto& node = const_cast<AstNode&>(input);
-    callback(node, true);
-    auto visit = [&](const AstNode& child) { Walk(child, callback); };
-    auto optional = [&](const auto* child) {
-        if (child) visit(*child);
-    };
-    auto list = [&](const auto& children) {
-        for (const auto& child : children) visit(*child);
-    };
-#define NODE(Type) const auto& n = static_cast<const Type&>(node)
-    switch (node.Kind()) {
-        case AstNodeKind::Type: {
-            NODE(TypeNode);
-            optional(n.Target());
-            list(n.Elements());
-            list(n.typeArguments);
-            break;
-        }
-        case AstNodeKind::FunctionDeclaration: {
-            NODE(FunctionDeclaration);
-            visit(n.ReturnType());
-            list(n.Parameters());
-            visit(n.Body());
-            break;
-        }
-        case AstNodeKind::AnonymousFunctionExpression: {
-            NODE(AnonymousFunctionExpression);
-            visit(n.Function());
-            break;
-        }
-        case AstNodeKind::CallableTypeDeclaration: {
-            NODE(CallableTypeDeclaration);
-            list(n.Parameters());
-            list(n.Results());
-            break;
-        }
-        case AstNodeKind::StructureDeclaration: {
-            NODE(StructureDeclaration);
-            list(n.Fields());
-            break;
-        }
-        case AstNodeKind::EnumDeclaration: {
-            NODE(EnumDeclaration);
-            optional(n.BackingType());
-            break;
-        }
-        case AstNodeKind::TypeSetDeclaration: {
-            NODE(TypeSetDeclaration);
-            list(n.Members());
-            break;
-        }
-        case AstNodeKind::ModuleConstantDeclaration: {
-            NODE(ModuleConstantDeclaration);
-            visit(n.Type());
-            visit(n.Initializer());
-            break;
-        }
-        case AstNodeKind::StructureField: {
-            NODE(StructureField);
-            visit(n.Type());
-            optional(n.Initializer());
-            break;
-        }
-        case AstNodeKind::Parameter: {
-            NODE(Parameter);
-            visit(n.Type());
-            optional(n.DefaultValue());
-            break;
-        }
-        case AstNodeKind::BlockStatement: {
-            NODE(BlockStatement);
-            list(n.Statements());
-            break;
-        }
-        case AstNodeKind::ReturnStatement: {
-            NODE(ReturnStatement);
-            optional(n.Value());
-            break;
-        }
-        case AstNodeKind::AlsoClause: {
-            NODE(AlsoClause);
-            visit(n.Condition());
-            visit(n.Body());
-            break;
-        }
-        case AstNodeKind::ConditionalBranch: {
-            NODE(ConditionalBranch);
-            visit(n.Condition());
-            visit(n.Body());
-            optional(n.Also());
-            break;
-        }
-        case AstNodeKind::IfStatement: {
-            NODE(IfStatement);
-            visit(n.PrimaryBranch());
-            list(n.ElseIfBranches());
-            optional(n.ElseBody());
-            break;
-        }
-        case AstNodeKind::WhileStatement: {
-            NODE(WhileStatement);
-            visit(n.Condition());
-            visit(n.Body());
-            optional(n.Also());
-            optional(n.Update());
-            break;
-        }
-        case AstNodeKind::RangeStatement: {
-            NODE(RangeStatement);
-            visit(n.Expansion());
-            break;
-        }
-        case AstNodeKind::VariableDeclarationStatement: {
-            NODE(VariableDeclarationStatement);
-            optional(n.ExplicitType());
-            optional(n.Initializer());
-            break;
-        }
-        case AstNodeKind::DestructureStatement: {
-            NODE(DestructureStatement);
-            list(n.Bindings());
-            visit(n.Value());
-            break;
-        }
-        case AstNodeKind::DestructureBinding: {
-            NODE(DestructureBinding);
-            optional(n.ExplicitType());
-            break;
-        }
-        case AstNodeKind::DeferStatement: {
-            NODE(DeferStatement);
-            visit(n.Call());
-            break;
-        }
-        case AstNodeKind::ExpressionStatement: {
-            NODE(ExpressionStatement);
-            visit(n.Value());
-            break;
-        }
-        case AstNodeKind::TupleExpression: {
-            NODE(TupleExpression);
-            list(n.Elements());
-            break;
-        }
-        case AstNodeKind::ArrayExpression: {
-            NODE(ArrayExpression);
-            list(n.Elements());
-            break;
-        }
-        case AstNodeKind::MatchExpression: {
-            NODE(MatchExpression);
-            visit(n.Value());
-            list(n.Arms());
-            break;
-        }
-        case AstNodeKind::MatchArm: {
-            NODE(MatchArm);
-            visit(n.Value());
-            break;
-        }
-        case AstNodeKind::NameExpression: {
-            NODE(NameExpression);
-            list(n.typeArguments);
-            break;
-        }
-        case AstNodeKind::ParenthesizedExpression: {
-            NODE(ParenthesizedExpression);
-            visit(n.Inner());
-            break;
-        }
-        case AstNodeKind::CastExpression: {
-            NODE(CastExpression);
-            visit(n.Value());
-            visit(n.TargetType());
-            break;
-        }
-        case AstNodeKind::IsOfExpression: {
-            NODE(IsOfExpression);
-            visit(n.Value());
-            visit(n.Target());
-            break;
-        }
-        case AstNodeKind::UnaryExpression: {
-            NODE(UnaryExpression);
-            visit(n.Operand());
-            break;
-        }
-        case AstNodeKind::BinaryExpression: {
-            NODE(BinaryExpression);
-            visit(n.Left());
-            visit(n.Right());
-            break;
-        }
-        case AstNodeKind::AssignmentExpression: {
-            NODE(AssignmentExpression);
-            visit(n.Target());
-            visit(n.Value());
-            break;
-        }
-        case AstNodeKind::CallExpression: {
-            NODE(CallExpression);
-            visit(n.Callee());
-            optional(n.TypeArgument());
-            list(n.Arguments());
-            break;
-        }
-        case AstNodeKind::MemberCallExpression: {
-            NODE(MemberCallExpression);
-            visit(n.Receiver());
-            list(n.typeArguments);
-            list(n.Arguments());
-            break;
-        }
-        case AstNodeKind::MemberAccessExpression: {
-            NODE(MemberAccessExpression);
-            visit(n.Receiver());
-            break;
-        }
-        case AstNodeKind::SliceExpression: {
-            NODE(SliceExpression);
-            visit(n.Receiver());
-            optional(n.Start());
-            optional(n.End());
-            break;
-        }
-        case AstNodeKind::IndexExpression: {
-            NODE(IndexExpression);
-            visit(n.Receiver());
-            visit(n.Index());
-            break;
-        }
-        case AstNodeKind::BuildExpression: {
-            NODE(BuildExpression);
-            visit(n.Type());
-            visit(n.Body());
-            break;
-        }
-        case AstNodeKind::CompilationUnit:
-        case AstNodeKind::AnonymousCapture:
-        case AstNodeKind::ErrorDeclaration:
-        case AstNodeKind::DecorationDeclaration:
-        case AstNodeKind::ProceedStatement:
-        case AstNodeKind::BreakStatement:
-        case AstNodeKind::JumpToStatement:
-        case AstNodeKind::PositionStatement:
-        case AstNodeKind::LiteralExpression:
-            break;
-    }
-#undef NODE
-    callback(node, false);
-}
+using core::WalkAst;
 std::string Name(const Declaration& declaration) {
     if (declaration.Kind() == AstNodeKind::FunctionDeclaration) {
         const auto& function =
@@ -288,6 +36,8 @@ std::string Name(const Declaration& declaration) {
         return static_cast<const StructureDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::EnumDeclaration)
         return static_cast<const EnumDeclaration&>(declaration).Name();
+    if (declaration.Kind() == AstNodeKind::InterfaceDeclaration)
+        return static_cast<const InterfaceDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::CallableTypeDeclaration)
         return static_cast<const CallableTypeDeclaration&>(declaration).Name();
     if (declaration.Kind() == AstNodeKind::TypeSetDeclaration)
@@ -313,6 +63,41 @@ std::string Key(const Arguments& arguments) {
     }
     return key;
 }
+
+void AppendIdentityComponent(std::string& result, std::string_view value) {
+    result += std::to_string(value.size()) + ":" + std::string(value);
+}
+
+std::string DeclarationIdentity(const Declaration& declaration) {
+    if (!declaration.specializationIdentity.empty())
+        return declaration.specializationIdentity;
+    std::string result;
+    AppendIdentityComponent(result, declaration.moduleId);
+    AppendIdentityComponent(result, Name(declaration));
+    return result;
+}
+
+std::string SpecializationIdentity(const Declaration& origin,
+                                   const Arguments& arguments,
+                                   const CompilationUnit& unit) {
+    std::string result = DeclarationIdentity(origin);
+    result += "<";
+    for (const Tokens& argument : arguments) {
+        result += "[";
+        for (const Token& token : argument) {
+            result += std::to_string(static_cast<int>(token.type)) + ":";
+            const auto alias = unit.genericAliases.find(token.value);
+            if (alias == unit.genericAliases.end())
+                AppendIdentityComponent(result, token.value);
+            else
+                AppendIdentityComponent(result,
+                                        DeclarationIdentity(*alias->second));
+        }
+        result += "]";
+    }
+    result += ">";
+    return result;
+}
 struct Instance {
     const Declaration* origin;
     Declaration* concrete;
@@ -335,6 +120,9 @@ class Expander {
             modules[module.sourceId] = &module;
         auto originals = unit.TakeDeclarations();
         for (const auto& d : originals) {
+            // Behaviors are not callable or explicitly instantiable
+            // declarations.
+            if (d->Kind() == AstNodeKind::BehaviorDeclaration) continue;
             if (d->Kind() == AstNodeKind::FunctionDeclaration &&
                 !static_cast<const FunctionDeclaration&>(*d).Owner().empty()) {
                 methods.push_back(
@@ -446,8 +234,8 @@ class Expander {
             locals.emplace_back();
             localTypes.clear();
             localTypes.emplace_back();
-            Walk(*current,
-                 [&](AstNode& node, bool enter) { Rewrite(node, enter); });
+            WalkAst(*current,
+                    [&](AstNode& node, bool enter) { Rewrite(node, enter); });
         }
     }
 
@@ -489,6 +277,55 @@ class Expander {
             tokens.erase(tokens.begin());
         return tokens;
     }
+    const Declaration* NominalDeclaration(const Tokens& tokens) const {
+        std::size_t index = 0;
+        while (index < tokens.size() &&
+               (tokens[index].type == TokenType::Const ||
+                tokens[index].type == TokenType::Own ||
+                tokens[index].type == TokenType::Lend))
+            ++index;
+        if (index + 1 != tokens.size() ||
+            tokens[index].type != TokenType::Identifier)
+            return nullptr;
+        const auto found = unit.genericAliases.find(tokens[index].value);
+        return found == unit.genericAliases.end() ? nullptr : found->second;
+    }
+    bool ImplementsInterface(const Declaration& declaration,
+                             const Declaration& target,
+                             std::set<const Declaration*>& visiting) {
+        if (&declaration == &target) return true;
+        if (!visiting.insert(&declaration).second) return false;
+        const std::vector<NominalParent>* relations = nullptr;
+        if (declaration.Kind() == AstNodeKind::InterfaceDeclaration)
+            relations = &static_cast<const InterfaceDeclaration&>(declaration)
+                             .Parents();
+        else if (declaration.Kind() == AstNodeKind::StructureDeclaration)
+            relations = &static_cast<const StructureDeclaration&>(declaration)
+                             .Conformances();
+        else if (declaration.Kind() == AstNodeKind::EnumDeclaration)
+            relations = &static_cast<const EnumDeclaration&>(declaration)
+                             .Conformances();
+        if (relations != nullptr)
+            for (const NominalParent& relation : *relations) {
+                const Declaration* parent = LookupFrom(
+                    relation.name, declaration, relation.range, false);
+                if (parent != nullptr &&
+                    parent->Kind() == AstNodeKind::InterfaceDeclaration &&
+                    ImplementsInterface(*parent, target, visiting)) {
+                    visiting.erase(&declaration);
+                    return true;
+                }
+            }
+        visiting.erase(&declaration);
+        return false;
+    }
+    bool ImplementsInterface(const Tokens& argument,
+                             const Declaration& target) {
+        const Declaration* concrete = NominalDeclaration(argument);
+        if (concrete == nullptr) return false;
+        std::set<const Declaration*> visiting;
+        return ImplementsInterface(*concrete, target, visiting);
+    }
     const Declaration* LookupFrom(const std::string& name,
                                   const Declaration& context,
                                   source::SourceRange range,
@@ -510,8 +347,10 @@ class Expander {
             Error(range, "unknown type set '" + setName + "'");
             return false;
         }
+        if (declaration->Kind() == AstNodeKind::InterfaceDeclaration)
+            return ImplementsInterface(argument, *declaration);
         if (declaration->Kind() != AstNodeKind::TypeSetDeclaration) {
-            Error(range, "'" + setName + "' is not a type set");
+            Error(range, "'" + setName + "' is not a type set or interface");
             return false;
         }
         if (!visiting.insert(declaration).second) {
@@ -850,9 +689,10 @@ class Expander {
             if (!set)
                 Error(declaration.Range(),
                       "unknown type set '" + constraint + "'");
-            else if (set->Kind() != AstNodeKind::TypeSetDeclaration)
+            else if (set->Kind() != AstNodeKind::TypeSetDeclaration &&
+                     set->Kind() != AstNodeKind::InterfaceDeclaration)
                 Error(declaration.Range(),
-                      "'" + constraint + "' is not a type set");
+                      "'" + constraint + "' is not a type set or interface");
             else if (constraintApi->exported && !set->exported)
                 Error(declaration.Range(),
                       "exported generics cannot use non-exported type sets");
@@ -907,7 +747,7 @@ class Expander {
             for (const auto& result : callable.Results())
                 ValidateApiType(*result, declaration, parameters);
         }
-        Walk(declaration, [&](AstNode& node, bool enter) {
+        WalkAst(declaration, [&](AstNode& node, bool enter) {
             if (!enter) return;
             std::string name;
             if (node.Kind() == AstNodeKind::Parameter)
@@ -949,7 +789,7 @@ class Expander {
             substitutions[parameters[i]] = arguments[i];
         std::set<std::size_t> sites;
         std::map<std::size_t, const IsOfExpression*> isOfSites;
-        Walk(origin, [&](AstNode& node, bool enter) {
+        WalkAst(origin, [&](AstNode& node, bool enter) {
             if (!enter) return;
             if (node.Kind() == AstNodeKind::IsOfExpression) {
                 const auto& expression =
@@ -1094,6 +934,8 @@ class Expander {
         if (current)
             concrete->instantiationOrigins = current->instantiationOrigins;
         concrete->instantiationOrigins.push_back(at);
+        concrete->specializationIdentity =
+            SpecializationIdentity(origin, arguments, unit);
         concrete->specializationName = Name(origin) + "<";
         for (std::size_t i = 0; i < arguments.size(); ++i) {
             if (i) concrete->specializationName += ", ";
@@ -1141,16 +983,17 @@ class Expander {
             current = concrete;
             for (const auto& field :
                  static_cast<StructureDeclaration&>(*concrete).Fields())
-                Walk(field->Type(), [&](AstNode& node, bool enter) {
+                WalkAst(field->Type(), [&](AstNode& node, bool enter) {
                     if (enter && node.Kind() == AstNodeKind::Type)
                         Rewrite(node, true);
                 });
             current = saved;
             for (const auto* method : genericMethods[instance.origin])
-                if (!method->IsCrashable() &&
-                    method->genericParameters.empty() &&
-                    (method->Name() == "init" || method->Name() == "zero" ||
-                     method->Name() == "tear"))
+                if (method->genericParameters.empty() &&
+                    (method->HasModifier(FunctionModifier::Override) ||
+                     (!method->IsCrashable() &&
+                      (method->Name() == "init" || method->Name() == "zero" ||
+                       method->Name() == "tear"))))
                     if (auto* clone = Clone(*method, arguments, method->Name(),
                                             at, Name(*concrete)))
                         concreteMethods[{concrete, Name(*clone)}] =
@@ -1378,6 +1221,8 @@ class Expander {
             if (set && set->Kind() == AstNodeKind::TypeSetDeclaration)
                 return Satisfies(argument, target.Name(), origin,
                                  target.Range());
+            if (set && set->Kind() == AstNodeKind::InterfaceDeclaration)
+                return ImplementsInterface(argument, *set);
         }
         auto concrete = CopyType(target);
         Declaration* saved = current;
@@ -1854,7 +1699,7 @@ class Expander {
         // Function signatures resolve at module scope; body applications must
         // honor local shadowing just like ordinary type syntax.
         if (locals.size() <= 1) return;
-        Walk(type, [&](AstNode& node, bool enter) {
+        WalkAst(type, [&](AstNode& node, bool enter) {
             if (!enter || node.Kind() != AstNodeKind::Type) return;
             const auto& named = static_cast<const TypeNode&>(node);
             if (named.TypeForm() == TypeKind::Named && Local(named.Name()))

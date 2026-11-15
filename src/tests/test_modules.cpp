@@ -1,10 +1,14 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
+#include "codegen/llvm_code_generator.hpp"
 #include "core/module_loader.hpp"
+#include "lowering/lowerer.hpp"
 #include "semantic/semantic_analyzer.hpp"
 
 namespace {
@@ -72,7 +76,226 @@ class ModuleTests : public ::testing::Test {
                 diagnostic.range.start.file + ":" + diagnostic.message + "\n";
         return messages;
     }
+    std::string CheckFixture(const std::string& fixture,
+                             const std::string& entry = "main.fl") {
+        const fs::path fixtureRoot =
+            fs::path(FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR) / fixture;
+        flecha::diagnostics::DiagnosticBag diagnostics;
+        flecha::core::ModuleLoader loader(diagnostics);
+        auto unit = loader.Load(fixtureRoot / entry, fixtureRoot);
+        if (!diagnostics.HasErrors()) {
+            flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+            auto model = analyzer.Analyze(*unit);
+        }
+        std::string messages;
+        for (const auto& diagnostic : diagnostics.Diagnostics())
+            messages +=
+                diagnostic.range.start.file + ":" + diagnostic.message + "\n";
+        return messages;
+    }
 };
+
+TEST_F(ModuleTests, LoadsAndComposesAttachedModulesFromAncestorNamespaces) {
+    EXPECT_EQ(CheckFixture("valid"), "");
+}
+
+TEST_F(ModuleTests, KeepsLegacySourcesUnchangedWithoutAnAttachmentClause) {
+    EXPECT_EQ(CheckFixture("legacy"), "");
+}
+
+TEST_F(ModuleTests, AttachedSourcesGainQuiverButNotPrivateAccess) {
+    EXPECT_EQ(CheckFixture("valid"), "");
+    const std::string errors =
+        CheckFixture("invalid/private_access", "foo/baz/main.fl");
+    EXPECT_NE(errors.find("unknown name 'support::privateValue'"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, RetainsPhysicalPathsAlongsideLogicalNamespaceOwnership) {
+    const fs::path fixtureRoot =
+        fs::path(FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR) / "valid";
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit = loader.Load(fixtureRoot / "main.fl", fixtureRoot);
+    ASSERT_FALSE(diagnostics.HasErrors());
+
+    const flecha::core::Module* gee = nullptr;
+    for (const auto& module : unit->modules)
+        if (module.name == "gee") gee = &module;
+    ASSERT_NE(gee, nullptr);
+    EXPECT_EQ(fs::path(gee->file).filename(), "gee.fl");
+    EXPECT_EQ(gee->quiverName, "root::foo");
+    EXPECT_EQ(gee->physicalQuiverName, "root::foo::baz");
+    ASSERT_TRUE(gee->namespaceAttachment.has_value());
+    EXPECT_EQ(gee->namespaceAttachment->path,
+              (std::vector<std::string>{"root", "foo"}));
+}
+
+TEST_F(ModuleTests, OrdersMultipleAttachedSourcesByPhysicalPath) {
+    const fs::path fixtureRoot =
+        fs::path(FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR) / "valid";
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit = loader.Load(fixtureRoot / "main.fl", fixtureRoot);
+    ASSERT_FALSE(diagnostics.HasErrors());
+
+    std::vector<std::string> files;
+    for (const auto& module : unit->modules)
+        if (module.name == "pieces")
+            files.push_back(fs::path(module.file).generic_string());
+    ASSERT_EQ(files.size(), 2);
+    EXPECT_TRUE(std::is_sorted(files.begin(), files.end()));
+    EXPECT_NE(files[0].find("/one/"), std::string::npos);
+    EXPECT_NE(files[1].find("/two/"), std::string::npos);
+}
+
+TEST_F(ModuleTests, OrdersInvalidAttachmentDiagnosticsByPhysicalPath) {
+    Write("foo/anchor.fl", "module anchor; void keep() {}");
+    Write("alpha/bad.fl",
+          "module bad; under namespace root::foo; void first() {}");
+    Write("zeta/bad.fl",
+          "module bad; under namespace root::foo; void second() {}");
+    Write("main.fl", "module main; @imports :: root::foo::bad; void main() {}");
+
+    const std::string errors = Check();
+    const std::size_t alpha = errors.find("alpha/bad.fl");
+    const std::size_t zeta = errors.find("zeta/bad.fl");
+    ASSERT_NE(alpha, std::string::npos) << errors;
+    ASSERT_NE(zeta, std::string::npos) << errors;
+    EXPECT_LT(alpha, zeta) << errors;
+}
+
+TEST_F(ModuleTests, WildcardOrdersInvalidAttachmentDiagnosticsByPhysicalPath) {
+    Write("foo/anchor.fl", "module anchor; void keep() {}");
+    Write("alpha/bad.fl",
+          "module bad; under namespace root::foo; void first() {}");
+    Write("zeta/bad.fl",
+          "module bad; under namespace root::foo; void second() {}");
+    Write("main.fl", "module main; @imports :: root::foo::*; void main() {}");
+
+    const std::string errors = Check();
+    const std::size_t alpha = errors.find("alpha/bad.fl");
+    const std::size_t zeta = errors.find("zeta/bad.fl");
+    ASSERT_NE(alpha, std::string::npos) << errors;
+    ASSERT_NE(zeta, std::string::npos) << errors;
+    EXPECT_LT(alpha, zeta) << errors;
+}
+
+TEST_F(ModuleTests, ResolvesAttachmentsInsideEachPackageSourceRoot) {
+    Write("app/main.fl", R"(module main;
+        @imports :: lib::dependency::foo::gee;
+        i32 main() { return gee::answer(); }
+    )");
+    Write("dependency/foo/bar/gee.fl", R"(module gee;
+        under namespace root::foo;
+        export i32 answer() { return 42; }
+    )");
+    EXPECT_EQ(CheckGraph(R"({
+        "schema": 1,
+        "root": "app",
+        "packages": [
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"dependency":"dependency@1"}},
+            {"id":"dependency@1", "identity":"example/dependency",
+             "version":"1.0.0", "source":"../dependency",
+             "dependencies":{}}
+        ]
+    })"),
+              "");
+}
+
+TEST_F(ModuleTests, RejectsNonAncestorAndEscapingAttachmentTargets) {
+    struct Rejection final {
+        const char* fixture;
+        const char* entry;
+        const char* message;
+    };
+    for (const Rejection rejection : std::vector<Rejection>{
+             {"invalid/sibling", "foo/baz/main.fl", "is not an ancestor"},
+             {"invalid/descendant", "foo/baz/main.fl", "is not an ancestor"},
+             {"invalid/unrelated", "foo/baz/main.fl", "is not an ancestor"},
+             {"invalid/missing", "foo/baz/main.fl",
+              "is not an existing directory"},
+             {"invalid/escape", "foo/main.fl", "must start with 'root'"},
+         }) {
+        const std::string errors =
+            CheckFixture(rejection.fixture, rejection.entry);
+        EXPECT_NE(errors.find(rejection.message), std::string::npos)
+            << rejection.fixture << "\n"
+            << errors;
+        EXPECT_NE(errors.find(rejection.entry), std::string::npos)
+            << rejection.fixture << "\n"
+            << errors;
+    }
+}
+
+TEST_F(ModuleTests, KeepsHeaderDiagnosticsExplicitAndPhysical) {
+    for (const auto& [fixture, expected] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"invalid/duplicate", "duplicate 'under namespace' clause"},
+             {"invalid/malformed", "expected 'namespace' after 'under'"},
+             {"invalid/qualified_module",
+              "expected ';' after module declaration"},
+         }) {
+        const std::string errors = CheckFixture(fixture, "foo/main.fl");
+        EXPECT_NE(errors.find(expected), std::string::npos) << fixture << "\n"
+                                                            << errors;
+        EXPECT_NE(errors.find("foo/main.fl"), std::string::npos)
+            << fixture << "\n"
+            << errors;
+    }
+}
+
+TEST_F(ModuleTests, DiagnosesCollisionsAcrossPhysicalAndAttachedParts) {
+    const std::string errors = CheckFixture("invalid/collision");
+    EXPECT_NE(errors.find("duplicate"), std::string::npos) << errors;
+    EXPECT_NE(errors.find("bar.fl"), std::string::npos) << errors;
+}
+
+TEST_F(ModuleTests, DiscoversAttachedModulesThroughWildcardImports) {
+    EXPECT_EQ(CheckFixture("wildcard"), "");
+}
+
+TEST_F(ModuleTests, WildcardComposesOrdinaryAndAttachedModulePartsOnce) {
+    Write("foo/pieces.fl",
+          "module pieces; export i32 ordinary() { return 20; }");
+    Write("foo/deep/extension.fl",
+          "module pieces; under namespace root::foo; "
+          "export i32 attached() { return 22; }");
+    Write("main.fl",
+          "module main; @imports :: root::foo::*; "
+          "i32 main() { return pieces::ordinary() + pieces::attached(); }");
+
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, WildcardAttachmentsStayInsideEachPackageSourceRoot) {
+    Write("app/main.fl", R"(module main;
+        @imports :: lib::left::foo::* :: lib::right::foo::*;
+        i32 main() { return left_value::answer() + right_value::answer(); }
+    )");
+    Write("left/foo/deep/value.fl", R"(module left_value;
+        under namespace root::foo;
+        export i32 answer() { return 20; }
+    )");
+    Write("right/foo/deep/value.fl", R"(module right_value;
+        under namespace root::foo;
+        export i32 answer() { return 22; }
+    )");
+
+    EXPECT_EQ(CheckGraph(R"({
+        "schema":1, "root":"app",
+        "packages":[
+            {"id":"app", "identity":"local/app", "source":"../app",
+             "dependencies":{"left":"left", "right":"right"}},
+            {"id":"left", "identity":"owner/left", "source":"../left",
+             "dependencies":{}},
+            {"id":"right", "identity":"owner/right", "source":"../right",
+             "dependencies":{}}
+        ]
+    })"),
+              "");
+}
 TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
     Write("a/calc.fl", "module calc; export i32 value() { return 20; }");
     Write("b/calc.fl", "module calc; export i32 value() { return 22; }");
@@ -80,6 +303,83 @@ TEST_F(ModuleTests, ResolvesNestedPathsAliasesAndIdenticallyNamedModules) {
           "module main; @imports :: root::a::calc :: root::b::calc as other; "
           "i32 main() { return calc::value() + other::value(); }");
     EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, ResolvesExportedInterfacesInNominalRelations) {
+    Write("contracts.fl", R"(module contracts;
+        export interface Readable {};
+        export interface Closeable {};
+        interface Hidden {};
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::contracts;
+        interface Displayable << contracts::Readable {};
+        structure Worker << Displayable, contracts::Closeable {};
+        enum State << contracts::Readable { Off, }
+        void main() {}
+    )");
+
+    EXPECT_EQ(Check(), "");
+
+    Write("main.fl", R"(module main;
+        @imports :: root::contracts;
+        interface Invalid << contracts::Hidden {};
+        void main() {}
+    )");
+    EXPECT_NE(Check().find("unknown interface 'contracts::Hidden'"),
+              std::string::npos);
+}
+
+TEST_F(ModuleTests, ResolvesInterfaceMethodsAcrossThreeModules) {
+    Write("contracts.fl", R"(module contracts;
+        export interface Readable {
+            i32 read(&const self) virtual;
+            i32 adjusted(&const self) default;
+        };
+        i32 Readable::adjusted(&const self) {
+            return self->read() + 1;
+        }
+    )");
+    Write("providers.fl", R"(module providers;
+        @imports :: root::contracts;
+        export structure Value << contracts::Readable { i32 value; };
+        i32 Value::read(&const self) override { return self->value; }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::contracts :: root::providers;
+        i32 consume(&const contracts::Readable value) {
+            return value->adjusted();
+        }
+        i32 main() {
+            value := providers::Value::init();
+            value.value = 41;
+            view := value as &const contracts::Readable;
+            return consume(view);
+        }
+    )");
+
+    EXPECT_EQ(Check(), "");
+}
+
+TEST_F(ModuleTests, InterfaceRelationsRespectApiVisibility) {
+    Write("main.fl", R"(module main;
+        interface Hidden {};
+        export interface PublicContract << Hidden {};
+        export structure PublicStructure << Hidden {};
+        export enum PublicEnum << Hidden { Value, }
+        void main() {}
+    )");
+
+    const std::string errors = Check();
+    std::size_t visibilityErrors = 0;
+    std::size_t position = 0;
+    const std::string message =
+        "exported APIs cannot expose non-exported types";
+    while ((position = errors.find(message, position)) != std::string::npos) {
+        ++visibilityErrors;
+        position += message.size();
+    }
+    EXPECT_EQ(visibilityErrors, 3);
 }
 
 TEST_F(ModuleTests, ResolvesExportedDecorationsThroughModuleAliases) {
@@ -999,6 +1299,94 @@ TEST_F(ModuleTests, GenericDiamondImportsShareSpecializationIdentity) {
     EXPECT_EQ(Check(), "");
 }
 
+TEST_F(ModuleTests, ClosedSpecializationIdentityQualifiesHomonymousArguments) {
+    Write("left.fl", "module left; export structure Item { i32 value; };");
+    Write("right.fl", "module right; export structure Item { i32 value; };");
+    Write("box.fl", "module box; export structure Box<T> { T value; };");
+    Write("main.fl", R"(module main;
+        @imports :: root::left :: root::right :: root::box;
+        void useLeft(box::Box<left::Item> value) {}
+        void useRight(box::Box<right::Item> value) {}
+    )");
+
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit = loader.Load(root / "main.fl", root, {});
+    ASSERT_FALSE(diagnostics.HasErrors());
+    flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+    auto model = analyzer.Analyze(*unit);
+    ASSERT_FALSE(diagnostics.HasErrors());
+
+    std::vector<std::string> identities;
+    for (const auto& structure : model.Structures()) {
+        if (structure->displayName != "Box<Item>") continue;
+        ASSERT_NE(structure->syntax, nullptr);
+        ASSERT_FALSE(structure->syntax->specializationIdentity.empty());
+        identities.push_back(structure->syntax->specializationIdentity);
+    }
+    ASSERT_EQ(identities.size(), 2);
+    EXPECT_NE(identities[0], identities[1]);
+    EXPECT_EQ(identities[0].find("$generic_alias"), std::string::npos);
+    EXPECT_EQ(identities[1].find("$generic_alias"), std::string::npos);
+    EXPECT_EQ(identities[0].find("$specialization"), std::string::npos);
+    EXPECT_EQ(identities[1].find("$specialization"), std::string::npos);
+}
+
+TEST_F(ModuleTests, HomonymousModuleTypesCastToTheSharedEmptySentinel) {
+    Write("contracts.fl", "module contracts; export interface Marker {};");
+    Write("left.fl", R"(module left;
+        @imports :: root::contracts;
+        export structure Item << contracts::Marker { i32 value; };
+    )");
+    Write("right.fl", R"(module right;
+        @imports :: root::contracts;
+        export structure Item << contracts::Marker { i64 value; };
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::contracts :: root::left :: root::right;
+        void castLeft(left::Item value) {
+            marker := value as &contracts::Marker;
+        }
+        void castRight(right::Item value) {
+            marker := value as &contracts::Marker;
+        }
+    )");
+
+    flecha::diagnostics::DiagnosticBag diagnostics;
+    flecha::core::ModuleLoader loader(diagnostics);
+    auto unit = loader.Load(root / "main.fl", root, {});
+    ASSERT_FALSE(diagnostics.HasErrors());
+    flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+    auto model = analyzer.Analyze(*unit);
+    ASSERT_FALSE(diagnostics.HasErrors());
+    flecha::lowering::Lowerer lowerer;
+    auto program = lowerer.Lower(*unit, model, diagnostics);
+    ASSERT_NE(program, nullptr);
+    flecha::codegen::LlvmCodeGenerator generator;
+    auto module = generator.Generate(*program, "homonymous_empty_casts");
+    ASSERT_NE(module, nullptr) << generator.Error();
+    EXPECT_TRUE(flecha::codegen::VerifyModule(*module).empty());
+
+    llvm::GlobalVariable* sentinel =
+        module->getNamedGlobal("__flecha_empty_interface_table");
+    ASSERT_NE(sentinel, nullptr);
+    std::size_t sentinelCasts = 0;
+    for (const llvm::Function& function : *module)
+        for (const llvm::BasicBlock& block : function)
+            for (const llvm::Instruction& instruction : block) {
+                const auto* insert =
+                    llvm::dyn_cast<llvm::InsertValueInst>(&instruction);
+                if (insert != nullptr && insert->getNumIndices() == 1 &&
+                    *insert->idx_begin() == 1 &&
+                    insert->getInsertedValueOperand() == sentinel)
+                    ++sentinelCasts;
+            }
+    EXPECT_EQ(sentinelCasts, 2);
+    for (const llvm::GlobalVariable& global : module->globals())
+        EXPECT_FALSE(
+            global.getName().starts_with("__flecha_interface_tables."));
+}
+
 TEST_F(ModuleTests, GenericVisibilityIsCheckedAtDefinitionAndUse) {
     Write("helper.fl", "module helper; T secret<T>(T value) { return value; }");
     Write("main.fl",
@@ -1359,4 +1747,35 @@ TEST_F(ModuleTests, PrivateMembersRequireTheExactOwningType) {
     const std::string errors = Check();
     EXPECT_NE(errors.find("field 'value' is private"), std::string::npos);
     EXPECT_NE(errors.find("hidden' is private"), std::string::npos);
+}
+
+TEST_F(ModuleTests, TypedDecorationVisibilityAndSourceScopes) {
+    const fs::path fixtures = FLECHA_DECORATION_FIXTURE_DIR;
+    for (const auto& [entry, code] : std::vector<
+             std::pair<std::string, flecha::diagnostics::DiagnosticCode>>{
+             {"private.fl",
+              flecha::diagnostics::DiagnosticCode::InaccessibleDecoration},
+             {"child/inaccessible.fl",
+              flecha::diagnostics::DiagnosticCode::InaccessibleDecoration},
+             {"scoped.fl",
+              flecha::diagnostics::DiagnosticCode::InvalidDecoration}}) {
+        SCOPED_TRACE(entry);
+        flecha::diagnostics::DiagnosticBag diagnostics;
+        flecha::core::ModuleLoader loader(diagnostics);
+        auto unit =
+            loader.Load(fixtures / "modules" / entry, fixtures / "modules");
+        ASSERT_FALSE(diagnostics.HasErrors());
+        flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
+        auto model = analyzer.Analyze(*unit);
+        const auto found = std::find_if(
+            diagnostics.Diagnostics().begin(), diagnostics.Diagnostics().end(),
+            [&](const auto& diagnostic) { return diagnostic.code == code; });
+        ASSERT_NE(found, diagnostics.Diagnostics().end());
+        if (code ==
+            flecha::diagnostics::DiagnosticCode::InaccessibleDecoration) {
+            ASSERT_EQ(found->related.size(), 1u);
+            EXPECT_TRUE(found->related[0].range.start.file.ends_with(
+                "annotations_extra.fl"));
+        }
+    }
 }

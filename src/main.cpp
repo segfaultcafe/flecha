@@ -57,6 +57,10 @@ void PrintDiagnostic(const flecha::diagnostics::Diagnostic& diagnostic) {
     if (diagnostic.severity == flecha::diagnostics::DiagnosticSeverity::Warning)
         std::cerr << "warning: ";
     std::cerr << diagnostic.message << "\n";
+    for (const auto& related : diagnostic.related)
+        std::cerr << related.range.start.file << ":" << related.range.start.line
+                  << ":" << related.range.start.column
+                  << ": note: " << related.message << "\n";
 }
 void PrintDiagnostics(const flecha::diagnostics::DiagnosticBag& diagnostics) {
     for (const auto& diagnostic : diagnostics.Diagnostics())

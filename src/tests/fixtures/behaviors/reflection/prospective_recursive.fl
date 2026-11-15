@@ -1,0 +1,22 @@
+module prospective_recursive;
+decoration meta { application() target structure; application() target enum; };
+interface Count { i32 count(&const self, i32 depth) virtual; };
+behavior meta<T> => structure << Count {
+    i32 T::count(&const self, i32 depth) override {
+        if T::decorated() {
+            if depth > 0 { return self->count(depth - 1); }
+        }
+        return 0;
+    }
+};
+behavior meta<T> => enum << Count {
+    i32 T::count(&const self, i32 depth) override {
+        if T::decorated() {
+            if depth > 0 { return self->count(depth - 1); }
+        }
+        return 0;
+    }
+};
+@meta structure Item { i32 value; };
+@meta enum State { Ready }
+i32 main() { return 0; }
