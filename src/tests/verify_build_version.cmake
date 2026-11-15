@@ -8,7 +8,7 @@ file(REMOVE_RECURSE "${TEST_ROOT}")
 file(MAKE_DIRECTORY "${TEST_ROOT}/source")
 file(WRITE "${TEST_ROOT}/source/CMakeLists.txt"
     "cmake_minimum_required(VERSION 3.20)\n"
-    "project(VersionFixture VERSION 0.3.3 LANGUAGES NONE)\n"
+    "project(VersionFixture VERSION 0.4.0 LANGUAGES NONE)\n"
     "include(\"${SOURCE_ROOT}/cmake/flecha_version.cmake\")\n"
     "file(WRITE \"\${CMAKE_BINARY_DIR}/version.txt\" \"\${FLECHA_BUILD_VERSION}\")\n")
 file(WRITE "${TEST_ROOT}/source/tracked.txt" "fixture\n")
@@ -31,7 +31,7 @@ run_git(config user.name "Flecha Tests")
 run_git(config user.email "tests@flecha.invalid")
 run_git(add CMakeLists.txt tracked.txt)
 run_git(commit -m initial)
-run_git(tag v0.3.2)
+run_git(tag v0.3.3)
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -S "${TEST_ROOT}/source"
@@ -45,7 +45,7 @@ if(NOT configureResult EQUAL 0)
         "version fixture configuration failed: ${configureOutput}${configureError}")
 endif()
 file(READ "${TEST_ROOT}/build/version.txt" version)
-if(NOT version MATCHES "^0[.]3[.]3-dev-g[0-9a-f]+$")
+if(NOT version MATCHES "^0[.]4[.]0-dev-g[0-9a-f]+$")
     message(FATAL_ERROR "unexpected tagless development version: ${version}")
 endif()
 
@@ -64,6 +64,6 @@ if(NOT dirtyConfigureResult EQUAL 0)
         "${dirtyConfigureOutput}${dirtyConfigureError}")
 endif()
 file(READ "${TEST_ROOT}/build/version.txt" dirtyVersion)
-if(NOT dirtyVersion MATCHES "^0[.]3[.]3-dev-g[0-9a-f]+-dirty$")
+if(NOT dirtyVersion MATCHES "^0[.]4[.]0-dev-g[0-9a-f]+-dirty$")
     message(FATAL_ERROR "unexpected dirty development version: ${dirtyVersion}")
 endif()
