@@ -381,4 +381,163 @@ void SemanticAnalyzer::RegisterBehaviors(const core::CompilationUnit& unit) {
     }
 }
 
+void SemanticAnalyzer::StageBehaviorConformances() {
+    // RegisterBehaviors has checked the union of explicit and activated roots.
+    // These mutations remain private to Analyze until the transaction succeeds.
+    for (const auto& activation : _model._behaviorActivations) {
+        if (!activation.valid) continue;
+        const auto* symbol = _model.DeclaredSymbol(*activation.target);
+        if (!symbol) continue;
+        const auto append = [&](auto* target) {
+            for (const auto& root : activation.behavior->roots) {
+                target->conformances.push_back(
+                    {root.type,
+                     activation.applications.front()->application->range});
+            }
+            target->conformanceClosure =
+                InterfaceConformanceClosure(target->conformances);
+        };
+        if (symbol->Type().Structure())
+            append(const_cast<StructureType*>(symbol->Type().Structure()));
+        else if (symbol->Type().Enum())
+            append(const_cast<EnumType*>(symbol->Type().Enum()));
+    }
+}
+
+void SemanticAnalyzer::ReportBehaviorOrigins() {
+    diagnostics::DiagnosticBag mapped;
+    for (const auto& diagnostic : _diagnostics.Diagnostics()) {
+        auto range = diagnostic.range;
+        auto related = diagnostic.related;
+        for (const auto& plan : _model._behaviorPlans)
+            for (const auto& body : plan.bodies) {
+                const auto find = [&](source::SourceRange at)
+                    -> const BehaviorSourceProvenance* {
+                    for (const auto& origin : body.provenance)
+                        if (origin.expansion.start.file == at.start.file &&
+                            origin.expansion.start.offset <= at.start.offset &&
+                            at.start.offset < origin.expansion.end.offset)
+                            return &origin;
+                    return nullptr;
+                };
+                const BehaviorSourceProvenance* origin = nullptr;
+                for (auto& location : related)
+                    if (const auto* found = find(location.range)) {
+                        location.range = found->original;
+                        origin = found;
+                    }
+                if (const auto* found = find(range)) {
+                    range = found->original;
+                    origin = found;
+                }
+                if (origin) {
+                    related.push_back({plan.activation->behavior->declaration
+                                           ->decoration.range,
+                                       "behavior declared here"});
+                    related.push_back({plan.activation->applications.front()
+                                           ->application->range,
+                                       "behavior activated here"});
+                    related.push_back({plan.activation->target->Range(),
+                                       "concrete T = " + plan.target.Name()});
+                    for (const auto& method :
+                         plan.activation->behavior->methods)
+                        if (method.declaration->Name() ==
+                            body.declaration->Name()) {
+                            related.push_back({method.declaration->NameRange(),
+                                               "behavior method provider"});
+                            if (method.requirement)
+                                related.push_back(
+                                    {method.requirement->syntax->Range(),
+                                     "required interface method"});
+                        }
+                    if (origin->field)
+                        related.push_back(
+                            {origin->field->syntax->NameRange(),
+                             "field '" + origin->field->name +
+                                 "', F = " + origin->field->type.Name()});
+                }
+            }
+        // Signature/graph failures occur before body plans exist. Attach the
+        // same activation provenance to those ordinary diagnostics as well.
+        const auto contains = [](source::SourceRange outer,
+                                 source::SourceRange inner) {
+            return outer.start.file == inner.start.file &&
+                   outer.start.offset <= inner.start.offset &&
+                   inner.end.offset <= outer.end.offset;
+        };
+        const auto add = [&](source::SourceRange at, std::string message) {
+            if (std::none_of(related.begin(), related.end(),
+                             [&](const auto& existing) {
+                                 return existing.range == at &&
+                                        existing.message == message;
+                             }))
+                related.push_back({at, std::move(message)});
+        };
+        for (const auto& activation : _model._behaviorActivations) {
+            const auto* symbol = _model.DeclaredSymbol(*activation.target);
+            const auto type =
+                symbol ? symbol->Type() : SemanticType(SemanticTypeKind::Error);
+            // A specialized body error already identifies its exact target.
+            // Do not attach other specializations of the same behavior.
+            if (std::any_of(related.begin(), related.end(),
+                            [](const auto& location) {
+                                return location.message.starts_with(
+                                    "concrete T = ");
+                            }) &&
+                std::none_of(
+                    related.begin(), related.end(), [&](const auto& location) {
+                        return location.message ==
+                                   "concrete T = " + type.Name() &&
+                               location.range == activation.target->Range();
+                    }))
+                continue;
+            const auto matches = [&](source::SourceRange at) {
+                if (contains(activation.target->Range(), at) ||
+                    contains(activation.behavior->declaration->Range(), at))
+                    return true;
+                for (const auto* application : activation.applications)
+                    if (contains(application->application->range, at))
+                        return true;
+                return false;
+            };
+            const FunctionSymbol* provider = nullptr;
+            const auto inspect = [&](const auto& methods) {
+                for (const auto& [name, overloads] : methods)
+                    for (const auto* method : overloads)
+                        if (method->Declaration() &&
+                            contains(method->Declaration()->Range(), range))
+                            provider = method;
+            };
+            if (type.Structure())
+                inspect(type.Structure()->methods);
+            else if (type.Enum())
+                inspect(type.Enum()->methods);
+            if (!matches(range) && !provider &&
+                std::none_of(related.begin(), related.end(),
+                             [&](const auto& location) {
+                                 return matches(location.range);
+                             }))
+                continue;
+            add(activation.behavior->declaration->decoration.range,
+                "behavior declared here");
+            for (const auto* application : activation.applications)
+                add(application->application->range, "behavior activated here");
+            add(activation.target->Range(), "concrete T = " + type.Name());
+            if (provider) {
+                add(provider->Declaration()->NameRange(),
+                    "concrete method provider");
+                for (const auto& root : activation.behavior->roots)
+                    for (const auto* requirement : root.type->methods)
+                        if (requirement->key.name ==
+                            provider->Declaration()->Name())
+                            add(requirement->syntax->Range(),
+                                "required interface method");
+            }
+        }
+        mapped.Report(diagnostic.code, range, diagnostic.message,
+                      diagnostic.severity, std::move(related));
+    }
+    _diagnostics = std::move(mapped);
+}
+
 }  // namespace flecha::semantic

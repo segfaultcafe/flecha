@@ -217,8 +217,9 @@ std::optional<SemanticQueries::Match> SemanticQueries::Find(
         if (!Queryable(symbol)) return;
         const std::string displayName(TerminalName(name));
         consider({IdentifierRange(std::move(range), name),
-                  symbol.DeclarationRange(), displayName, symbol.Type().Name(),
-                  ItemKind(symbol.Kind()), TargetKind::Symbol, &symbol});
+                  _model.SourceOrigin(symbol.DeclarationRange()), displayName,
+                  symbol.Type().Name(), ItemKind(symbol.Kind()),
+                  TargetKind::Symbol, &symbol});
     };
 
     for (const auto& item : BehaviorOccurrences(_model)) {
@@ -354,7 +355,7 @@ std::vector<SemanticOccurrence> SemanticQueries::Occurrences(
         const std::string displayName(TerminalName(name));
         add(IdentifierRange(std::move(range), name), displayName,
             symbol.Type().Name(), ItemKind(symbol.Kind()),
-            symbol.DeclarationRange());
+            _model.SourceOrigin(symbol.DeclarationRange()));
     };
 
     for (const auto& item : BehaviorOccurrences(_model))

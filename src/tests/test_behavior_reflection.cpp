@@ -38,7 +38,7 @@ Result Analyze(std::string source) {
     r.model = analyzer.Analyze(*r.unit);
     return r;
 }
-TEST(BehaviorReflection, FieldIdentityOrderMetadataAndDetachedBodies) {
+TEST(BehaviorReflection, FieldIdentityOrderMetadataAndGeneratedBodies) {
     auto r = Analyze(Fixture("fields.fl"));
     ASSERT_FALSE(r.diagnostics.HasErrors()) << Messages(r.diagnostics);
     ASSERT_EQ(r.model.BehaviorPlans().size(), 3u);
@@ -56,16 +56,15 @@ TEST(BehaviorReflection, FieldIdentityOrderMetadataAndDetachedBodies) {
               3u);
     EXPECT_FALSE(plan.pack.fields[1].metadata);
     ASSERT_EQ(plan.bodies.size(), 1u);
-    EXPECT_EQ(r.model.DeclaredSymbol(*plan.bodies[0].declaration), nullptr);
-    EXPECT_TRUE(plan.target.Structure()->conformances.empty());
-    EXPECT_FALSE(plan.target.Structure()->methods.contains("inspect"));
+    EXPECT_NE(r.model.DeclaredSymbol(*plan.bodies[0].declaration), nullptr);
+    EXPECT_EQ(plan.target.Structure()->conformances.size(), 1u);
+    EXPECT_TRUE(plan.target.Structure()->methods.contains("inspect"));
     EXPECT_FALSE(r.model.BehaviorPlans()[1].metadata);
     EXPECT_TRUE(r.model.BehaviorPlans()[2].pack.fields.empty());
     EXPECT_FALSE(plan.substitutions.empty());
-    for (const auto& symbol : plan.bodies[0].semantics->Symbols())
+    for (const auto& symbol : r.model.Symbols())
         if (symbol->Kind() == semantic::SymbolKind::ModuleConstant)
-            EXPECT_NE(plan.bodies[0].semantics->ModuleConstantFor(*symbol),
-                      nullptr);
+            EXPECT_NE(r.model.ModuleConstantFor(*symbol), nullptr);
 }
 TEST(BehaviorReflection, PositiveFixtures) {
     const auto root =
@@ -182,7 +181,7 @@ TEST(BehaviorReflection, AnalyzerNavigationAndIncompletePrefixes) {
     }
 }
 
-TEST(BehaviorReflection, ProspectiveCallsStayInDetachedModels) {
+TEST(BehaviorReflection, ProspectiveCallsUsePublishedOrdinaryMethods) {
     std::size_t calls = 0;
     for (const std::string fixture :
          {"prospective_siblings.fl", "prospective_recursive.fl",
@@ -193,19 +192,8 @@ TEST(BehaviorReflection, ProspectiveCallsStayInDetachedModels) {
             << Messages(result.diagnostics);
         for (const auto& plan : result.model.BehaviorPlans()) {
             ASSERT_TRUE(plan.valid);
-            const auto isolated = [&](const auto* target) {
-                EXPECT_TRUE(target->conformances.empty());
-                EXPECT_TRUE(target->conformanceClosure.empty());
-                for (const auto& body : plan.bodies)
-                    for (const auto& [name, methods] : target->methods)
-                        for (const auto* method : methods)
-                            for (const auto& symbol : body.semantics->Symbols())
-                                EXPECT_NE(symbol.get(), method);
-            };
-            if (plan.target.Structure()) isolated(plan.target.Structure());
-            if (plan.target.Enum()) isolated(plan.target.Enum());
             for (const auto& body : plan.bodies) {
-                EXPECT_EQ(result.model.DeclaredSymbol(*body.declaration),
+                EXPECT_NE(result.model.DeclaredSymbol(*body.declaration),
                           nullptr);
                 core::WalkAst(body.declaration->Body(), [&](core::AstNode& node,
                                                             bool enter) {
@@ -221,22 +209,20 @@ TEST(BehaviorReflection, ProspectiveCallsStayInDetachedModels) {
                                 .Name() != "self")
                         return;
                     ++calls;
-                    const auto* method = body.semantics->MethodFor(call);
+                    const auto* method = result.model.MethodFor(call);
                     ASSERT_NE(method, nullptr);
-                    EXPECT_EQ(result.model.MethodFor(call), nullptr);
-                    EXPECT_EQ(method->Owner(), plan.target.Structure());
-                    EXPECT_EQ(method->EnumOwner(), plan.target.Enum());
-                    EXPECT_NE(body.semantics->InterfaceMethodFor(call),
-                              nullptr);
                     bool owned = false;
-                    for (const auto& symbol : body.semantics->Symbols())
+                    for (const auto& symbol : result.model.Symbols())
                         owned |= symbol.get() == method;
                     EXPECT_TRUE(owned);
-                    for (const auto& symbol : result.model.Symbols())
-                        EXPECT_NE(symbol.get(), method);
+                    // Concrete siblings use direct calls. Only inherited
+                    // defaults/finals retain interface dispatch metadata.
+                    if (method->Owner() || method->EnumOwner())
+                        EXPECT_EQ(result.model.InterfaceMethodFor(call),
+                                  nullptr);
                     if (call.Member() == body.declaration->Name())
                         EXPECT_EQ(
-                            body.semantics->DeclaredSymbol(*body.declaration),
+                            result.model.DeclaredSymbol(*body.declaration),
                             method);
                 });
             }
@@ -245,7 +231,7 @@ TEST(BehaviorReflection, ProspectiveCallsStayInDetachedModels) {
     EXPECT_EQ(calls, 11u);
 }
 
-TEST(BehaviorReflection, ProspectiveMethodsRemainUnavailableToOrdinaryCode) {
+TEST(BehaviorReflection, GeneratedMethodsAreAvailableToOrdinaryCode) {
     for (const auto& [fixture, method] :
          std::vector<std::pair<std::string, std::string>>{
              {"prospective_siblings.fl", "helper"},
@@ -256,12 +242,8 @@ TEST(BehaviorReflection, ProspectiveMethodsRemainUnavailableToOrdinaryCode) {
         auto result = Analyze(Fixture(fixture) +
                               "\ni32 outside(&Item item) { return item->" +
                               method + "(1); }\n");
-        bool unknown = false;
-        for (const auto& diagnostic : result.diagnostics.Diagnostics())
-            unknown |=
-                diagnostic.code == diagnostics::DiagnosticCode::InvalidMember &&
-                diagnostic.message.find("unknown method") != std::string::npos;
-        EXPECT_TRUE(unknown) << Messages(result.diagnostics);
+        EXPECT_FALSE(result.diagnostics.HasErrors())
+            << Messages(result.diagnostics);
     }
 }
 
@@ -305,7 +287,8 @@ TEST(BehaviorReflection, ProspectiveCallsUseOrdinaryCallValidation) {
               std::string::npos);
 }
 
-TEST(BehaviorReflection, ExpandedPlansDoNotChangeIR) {
+TEST(BehaviorReflection,
+     ExpandedMethodsHaveDeterministicIRWithoutReflectionArtifacts) {
     for (const std::string fixture :
          {"fields.fl", "prospective_siblings.fl", "prospective_recursive.fl",
           "prospective_mutual.fl", "prospective_default.fl"}) {
@@ -314,12 +297,8 @@ TEST(BehaviorReflection, ExpandedPlansDoNotChangeIR) {
         auto with = Analyze(source);
         ASSERT_FALSE(with.diagnostics.HasErrors())
             << Messages(with.diagnostics);
-        for (auto it = with.model.Behaviors().rbegin();
-             it != with.model.Behaviors().rend(); ++it)
-            source.erase(it->declaration->Range().start.offset,
-                         it->declaration->Range().Length());
-        auto without = Analyze(source);
-        ASSERT_FALSE(without.diagnostics.HasErrors());
+        auto repeat = Analyze(source);
+        ASSERT_FALSE(repeat.diagnostics.HasErrors());
         auto generate = [](Result& result) {
             lowering::Lowerer lowerer;
             auto program =
@@ -334,10 +313,13 @@ TEST(BehaviorReflection, ExpandedPlansDoNotChangeIR) {
             if (module) module->print(stream, nullptr);
             return text;
         };
-        EXPECT_EQ(generate(with), generate(without));
-        EXPECT_TRUE(with.model.BehaviorPlans()[0]
-                        .target.Structure()
-                        ->conformanceClosure.empty());
+        const auto ir = generate(with);
+        EXPECT_EQ(ir, generate(repeat));
+        EXPECT_NE(ir.find("__flecha_interface_tables"), std::string::npos);
+        EXPECT_EQ(ir.find("$behavior$"), std::string::npos);
+        EXPECT_EQ(ir.find("Field<"), std::string::npos);
+        EXPECT_EQ(ir.find("::fields"), std::string::npos);
+        EXPECT_EQ(ir.find("::decorator"), std::string::npos);
     }
 }
 TEST(BehaviorReflection, ProjectionErrorsHaveExactFieldProvenance) {
@@ -358,11 +340,11 @@ TEST(BehaviorReflection, ProjectionErrorsHaveExactFieldProvenance) {
         }
 }
 
-TEST(BehaviorReflection, ActivationsStillDoNotMakeMethodsCallable) {
+TEST(BehaviorReflection, ActivationsMakeMethodsCallable) {
     auto result = Analyze(Fixture("fields.fl") +
                           "void call() { Record item; item.inspect(); }");
-    EXPECT_TRUE(result.diagnostics.HasErrors());
-    EXPECT_NE(Messages(result.diagnostics).find("inspect"), std::string::npos);
+    EXPECT_FALSE(result.diagnostics.HasErrors())
+        << Messages(result.diagnostics);
 }
 TEST(BehaviorReflection, CyclicConstantsFailWithoutRecursingInPlans) {
     auto source = Fixture("metadata.fl");

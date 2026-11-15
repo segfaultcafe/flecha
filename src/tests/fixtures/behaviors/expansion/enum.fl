@@ -1,0 +1,6 @@
+module expansion_enum;
+decoration meta { application() target enum; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => enum << Read { i32 T::read(&const self) override { return 42; } };
+@meta enum Item { A, B }
+i32 main() { Item item = Item.B; &const Read view = item as &const Read; return item.read() + view->read() - 42; }

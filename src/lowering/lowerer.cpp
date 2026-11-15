@@ -28,7 +28,8 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
             functions.push_back(LowerFunction(function));
     }
     for (const auto& function : semanticModel.GeneratedFunctions())
-        functions.push_back(LowerFunction(*function));
+        if (!function->HasVariadicPack())
+            functions.push_back(LowerFunction(*function));
     for (const auto* function : semanticModel.AnonymousFunctions())
         functions.push_back(LowerFunction(*function));
     std::vector<BoundForeignSource> foreignSources;

@@ -1,0 +1,22 @@
+module expansion_generic;
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+A identity<A>(A value) { return value; }
+behavior meta<T> => structure << Read {
+ i32 T::read(&const self) override {
+  i32 total = 0;
+  for<F> Field<T, F> field = T::fields() {
+   F value = identity<F>(field::get(self));
+   total += value as i32;
+  }
+  return total;
+ }
+};
+@meta structure Box<A> { A value; };
+i32 main() {
+ Box<i32> first; first.value = 20;
+ Box<i64> second; second.value = 22;
+ &const Read a = first as &const Read;
+ &const Read b = second as &const Read;
+ return a->read() + b->read();
+}

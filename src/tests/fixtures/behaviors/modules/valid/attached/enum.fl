@@ -1,3 +1,3 @@
 module metadata;
 under namespace root;
-behavior stamp<T> => enum << Writable {};
+behavior stamp<T> => enum << Writable { i32 T::write(&const self) override { return 42; } };

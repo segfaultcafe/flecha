@@ -1,0 +1,9 @@
+module expansion_protected;
+decoration meta { application() target structure; };
+interface Read { protected i32 helper(&const self) virtual; i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read {
+ i32 T::read(&const self) override { return self->helper() + 21; }
+ protected i32 T::helper(&const self) override { return 21; }
+};
+@meta structure Item {};
+i32 main() { Item item; &const Read view = item as &const Read; return view->read(); }

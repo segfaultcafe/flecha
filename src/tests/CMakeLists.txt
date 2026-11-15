@@ -4,6 +4,7 @@ add_executable(test_flecha
     test_analyzer_server_loop.cpp
     test_analyzer_client.cpp
     test_ast.cpp
+    test_behavior_expansion.cpp
     test_behavior.cpp
     test_behavior_reflection.cpp
     test_codegen.cpp
@@ -2036,3 +2037,58 @@ add_behavior_reflection_failure(interface_body FLECHA-S0081)
 add_behavior_reflection_failure(decoration_body FLECHA-P0001)
 add_behavior_reflection_failure(jumpto FLECHA-S0081)
 add_behavior_reflection_failure(numeric_fold FLECHA-S0009)
+
+# LANG-04: execute each positive fixture through the ordinary interface ABI.
+foreach(fixture borrow composition enum field_only_empty generic generic_methods
+        legacy_json mutable overloads private_fields protected recursion structure suppression variadic)
+    add_test(NAME BehaviorExpansion.runtime_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/expansion/${fixture}.fl
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/behavior_${fixture}_test
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_behavior_runtime.cmake)
+endforeach()
+foreach(fixture modules composite_modules)
+    add_test(NAME BehaviorExpansion.runtime_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/expansion/${fixture}/main.fl
+            -DFLECHA_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/expansion/${fixture}
+            -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/behavior_${fixture}_test
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_behavior_runtime.cmake)
+endforeach()
+function(add_behavior_expansion_failure fixture code)
+    add_test(NAME BehaviorExpansion.reject_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/expansion/invalid/${fixture}.fl
+            -DEXPECTED_DIAGNOSTIC=${code}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+endfunction()
+add_behavior_expansion_failure(atomic FLECHA-S0011)
+add_behavior_expansion_failure(body_allocation FLECHA-S0048)
+add_behavior_expansion_failure(body_borrow FLECHA-S0029)
+add_behavior_expansion_failure(body_move FLECHA-S0046)
+add_behavior_expansion_failure(body_type FLECHA-S0011)
+add_behavior_expansion_failure(body_unknown FLECHA-S0002)
+add_behavior_expansion_failure(body_unsafe FLECHA-S0025)
+add_behavior_expansion_failure(borrow_contract FLECHA-S0065)
+add_behavior_expansion_failure(duplicate_provider FLECHA-S0079)
+add_behavior_expansion_failure(explicit_collision FLECHA-S0079)
+add_behavior_expansion_failure(final FLECHA-S0078)
+add_behavior_expansion_failure(generic_field FLECHA-S0003)
+add_behavior_expansion_failure(horizontal FLECHA-S0079)
+add_behavior_expansion_failure(interface_metadata FLECHA-S0018)
+add_behavior_expansion_failure(missing FLECHA-S0065)
+add_behavior_expansion_failure(missing_before_body FLECHA-S0065)
+add_behavior_expansion_failure(missing_override FLECHA-S0065)
+add_behavior_expansion_failure(no_propagation FLECHA-S0018)
+add_behavior_expansion_failure(parameters FLECHA-S0065)
+add_behavior_expansion_failure(receiver FLECHA-S0065)
+add_behavior_expansion_failure(related FLECHA-S0079)
+add_behavior_expansion_failure(return_contract FLECHA-S0065)
+add_behavior_expansion_failure(shared FLECHA-S0079)
+add_behavior_expansion_failure(variadic_cycle FLECHA-S0062)
+add_behavior_expansion_failure(variadic_shape FLECHA-S0065)
+add_behavior_expansion_failure(vertical FLECHA-S0065)
+add_behavior_expansion_failure(body_initialization FLECHA-S0021)

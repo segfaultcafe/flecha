@@ -239,6 +239,73 @@ class Expander {
         }
     }
 
+    void Resume(FunctionDeclaration& function) {
+        incremental = true;
+        for (const auto& module : unit.modules)
+            modules[module.sourceId] = &module;
+        for (const auto& [alias, declaration] : unit.genericAliases)
+            aliases.try_emplace(declaration, alias);
+        const auto index = [&](const auto& list) {
+            for (const auto& d : list) {
+                if (d->Kind() == AstNodeKind::BehaviorDeclaration) continue;
+                if (d->Kind() == AstNodeKind::FunctionDeclaration &&
+                    !static_cast<const FunctionDeclaration&>(*d)
+                         .Owner()
+                         .empty())
+                    methods.push_back(
+                        static_cast<const FunctionDeclaration*>(d.get()));
+                else
+                    declarations.try_emplace(
+                        std::make_pair(d->moduleId, Name(*d)), d.get());
+                if (d->specializationOrigin) {
+                    const auto* origin = d->specializationOrigin;
+                    if (origin->genericParameters.size() ==
+                        d->specializationArguments.size())
+                        cache[{origin, Key(d->specializationArguments)}] =
+                            d.get();
+                    if (d->Kind() == AstNodeKind::StructureDeclaration)
+                        instances.push_back(
+                            {origin, d.get(), d->specializationArguments});
+                }
+            }
+        };
+        index(unit.genericTemplates);
+        index(unit.typeSets);
+        index(unit.Declarations());
+        for (const auto* method : methods) {
+            const auto owner =
+                declarations.find({method->moduleId, method->Owner()});
+            if (owner == declarations.end()) continue;
+            if (Template(*method))
+                genericMethods[owner->second].push_back(method);
+            else
+                concreteMethods[{owner->second, Name(*method)}] = method;
+        }
+        for (const auto& [owner, methods] : genericMethods)
+            if (owner->genericParameters.empty())
+                instances.push_back(
+                    {owner, const_cast<Declaration*>(owner), {}});
+        generatedDeclarations = std::count_if(
+            unit.Declarations().begin(), unit.Declarations().end(),
+            [](const auto& declaration) {
+                return declaration->specializationOrigin != nullptr;
+            });
+        const auto firstNew = unit.Declarations().size();
+        const auto rewrite = [&](Declaration& declaration) {
+            current = &declaration;
+            locals.clear();
+            locals.emplace_back();
+            localTypes.clear();
+            localTypes.emplace_back();
+            WalkAst(declaration,
+                    [&](AstNode& node, bool enter) { Rewrite(node, enter); });
+        };
+        rewrite(function);
+        for (std::size_t i = firstNew;
+             i < unit.Declarations().size() && !failedBudget; ++i)
+            rewrite(*unit.Declarations()[i]);
+    }
+
    private:
     void Error(source::SourceRange range, const std::string& message) {
         diagnostics.Report(DiagnosticCode::InvalidGeneric, range, message);
@@ -559,8 +626,11 @@ class Expander {
         if (const auto found = aliases.find(&declaration);
             found != aliases.end())
             return found->second;
-        const std::string alias =
-            "$generic_alias" + std::to_string(aliases.size());
+        std::size_t index = unit.genericAliases.size();
+        while (unit.genericAliases.contains("$generic_alias" +
+                                            std::to_string(index)))
+            ++index;
+        const std::string alias = "$generic_alias" + std::to_string(index);
         aliases[&declaration] = alias;
         unit.genericAliases[alias] = &declaration;
         return alias;
@@ -765,6 +835,11 @@ class Expander {
     Declaration* Clone(const Declaration& origin, const Arguments& arguments,
                        const std::string& name, source::SourceRange at,
                        const std::string& owner = {}) {
+        const auto identity = SpecializationIdentity(origin, arguments, unit);
+        for (const auto& existing : unit.Declarations())
+            if (incremental && existing->specializationOrigin == &origin &&
+                existing->specializationIdentity == identity)
+                return existing.get();
         if (!ValidateConstraints(origin, arguments, at)) return nullptr;
         if (generatedDeclarations >= 2048 ||
             (current && current->instantiationOrigins.size() >= 64) ||
@@ -934,8 +1009,9 @@ class Expander {
         if (current)
             concrete->instantiationOrigins = current->instantiationOrigins;
         concrete->instantiationOrigins.push_back(at);
-        concrete->specializationIdentity =
-            SpecializationIdentity(origin, arguments, unit);
+        concrete->specializationIdentity = identity;
+        concrete->specializationOrigin = &origin;
+        concrete->specializationArguments = arguments;
         concrete->specializationName = Name(origin) + "<";
         for (std::size_t i = 0; i < arguments.size(); ++i) {
             if (i) concrete->specializationName += ", ";
@@ -1957,13 +2033,17 @@ class Expander {
                   "unknown generic method or wrong type argument count for '" +
                       call.Member() + "'");
         if (!found) return;
-        call.Rename(requestNames[key]);
+        const auto selected = concreteMethods.find(
+            {owner, request.concreteName + (request.crashable ? "!" : "")});
+        call.Rename(selected != concreteMethods.end() ? selected->second->Name()
+                                                      : requestNames[key]);
         call.typeArguments.clear();
     }
     CompilationUnit& unit;
     diagnostics::DiagnosticBag& diagnostics;
     Declaration* current = nullptr;
     bool failedBudget = false;
+    bool incremental = false;
     std::size_t generatedTokens = 0, generatedDeclarations = 0;
     std::map<std::string, const Module*> modules;
     std::map<std::pair<std::string, std::string>, const Declaration*>
@@ -1994,6 +2074,11 @@ class Expander {
 void ExpandGenerics(core::CompilationUnit& unit,
                     diagnostics::DiagnosticBag& diagnostics) {
     Expander(unit, diagnostics).Run();
+}
+void ExpandGeneratedGenerics(core::CompilationUnit& unit,
+                             core::FunctionDeclaration& function,
+                             diagnostics::DiagnosticBag& diagnostics) {
+    Expander(unit, diagnostics).Resume(function);
 }
 void ReportGenericOrigins(const core::CompilationUnit& unit,
                           diagnostics::DiagnosticBag& diagnostics) {

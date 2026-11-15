@@ -1,0 +1,6 @@
+module expansion_structure;
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+@meta structure Item {};
+i32 main() { Item item; &const Read view = item as &const Read; return view->read(); }

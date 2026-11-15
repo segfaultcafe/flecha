@@ -8,6 +8,9 @@ namespace flecha::semantic {
 // concrete ASTs.
 void ExpandGenerics(core::CompilationUnit& unit,
                     diagnostics::DiagnosticBag& diagnostics);
+void ExpandGeneratedGenerics(core::CompilationUnit& unit,
+                             core::FunctionDeclaration& function,
+                             diagnostics::DiagnosticBag& diagnostics);
 void ReportGenericOrigins(const core::CompilationUnit& unit,
                           diagnostics::DiagnosticBag& diagnostics);
 }  // namespace flecha::semantic

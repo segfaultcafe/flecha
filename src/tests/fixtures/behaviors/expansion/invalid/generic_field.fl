@@ -1,0 +1,9 @@
+module expansion_generic_field;
+// expect FLECHA-S0003
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read {
+ i32 T::read(&const self) override { for<F> Field<T, F> field = T::fields() { F value = 42; } return 42; }
+};
+@meta structure Box<A> { A value; };
+void use(Box<i32> good, Box<bool> bad) {}

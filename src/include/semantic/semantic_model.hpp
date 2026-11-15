@@ -130,10 +130,11 @@ struct BehaviorSourceProvenance final {
 };
 struct BehaviorBodyCandidate final {
     std::vector<BehaviorSourceProvenance> provenance;
-    std::unique_ptr<core::FunctionDeclaration> declaration;
-    // This model owns only detached symbols; it borrows the input world's
-    // types.
-    std::shared_ptr<SemanticModel> semantics;
+    // Owned by GeneratedFunctions after materialization. The plan retains the
+    // exact source/field provenance used by ordinary analysis and tooling.
+    const core::FunctionDeclaration* declaration = nullptr;
+    std::vector<std::pair<source::SourceRange, const StructureField*>>
+        projections;
 };
 struct BehaviorExpansionPlan final {
     const BehaviorActivationCandidate* activation;
@@ -265,6 +266,9 @@ class SemanticModel final {
     [[nodiscard]] const std::vector<std::unique_ptr<Scope>>& Scopes() const {
         return _scopes;
     }
+
+    [[nodiscard]] source::SourceRange SourceOrigin(
+        source::SourceRange range) const;
 
    private:
     friend class SemanticAnalyzer;

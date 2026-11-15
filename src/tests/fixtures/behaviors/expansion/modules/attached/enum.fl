@@ -1,0 +1,3 @@
+module metadata;
+under namespace root;
+behavior derive<T> => enum << Read { i32 T::read(&const self) override { return 20; } };

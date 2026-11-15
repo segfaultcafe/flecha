@@ -1,0 +1,8 @@
+// expect FLECHA-S0062
+module expansion_variadic_cycle;
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self, values...) virtual; };
+behavior meta<T> => structure << Read {
+ i32 T::read(&const self, values...) override { return self->read(values...); }
+};
+@meta structure Item {};

@@ -1,0 +1,8 @@
+module expansion_shared;
+// expect FLECHA-S0079
+decoration meta { application() target structure; };
+interface Ancestor {};
+interface Read << Ancestor { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+interface Other << Ancestor {};
+@meta structure Item << Other {};

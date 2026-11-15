@@ -1,0 +1,6 @@
+module expansion_explicit_collision;
+// expect FLECHA-S0079
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+@meta structure Item << Read {};

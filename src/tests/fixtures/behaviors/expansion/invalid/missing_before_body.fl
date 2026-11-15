@@ -1,0 +1,11 @@
+// expect FLECHA-S0065
+module expansion_missing_before_body;
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; i32 missing(&const self) virtual; };
+behavior meta<T> => structure << Read {
+ i32 T::read(&const self) override {
+  for<F> Field<T, F> field = T::fields() { field::invalid(); }
+  return absent();
+ }
+};
+@meta structure Item { bool value; };

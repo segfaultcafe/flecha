@@ -1,0 +1,8 @@
+module expansion_borrow;
+decoration meta { application() target structure; };
+interface Borrow { &const i32 read(&const self) virtual <-self; };
+behavior meta<T> => structure << Borrow {
+ &const i32 T::read(&const self) override <-self { return &self->value; }
+};
+@meta structure Item { private i32 value = 42; };
+i32 main() { item := Item::init(); &const Borrow view = item as &const Borrow; return *view->read(); }

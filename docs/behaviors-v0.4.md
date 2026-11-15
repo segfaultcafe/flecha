@@ -1,44 +1,46 @@
 # Behaviors and decorations for Flecha 0.4
 
-Status: accepted by [IFG 2026-0006](IFG/IFG_2026_0006.txt); typed decoration
-contracts (LANG-01), behavior declarations (LANG-02), and bounded reflection
-with detached expansion planning (LANG-03) implemented; concrete derivation
-deferred to LANG-04
+Status: accepted by [IFG 2026-0006](IFG/IFG_2026_0006.txt); typed decorations,
+behavior declarations, bounded reflection, concrete derivation, and ordinary
+lowering are implemented. Migration of compiler-owned JSON remains separate.
 
 The compiler resolves behavior ownership, interface roots, method contracts,
-and activation candidates. It constructs a `BehaviorExpansionPlan` for each
-valid activation, retaining typed direct metadata, source-ordered field
-descriptors, closed `T` and `F` bindings, substitutions, folded branches, body
-candidates, and source provenance. Repeated field types have distinct descriptor
-identities, and closed generic targets have separate plans.
+and direct activation candidates. Each activation has a `BehaviorExpansionPlan`
+with typed metadata, source-ordered field descriptors, closed `T`/`F` bindings,
+substitutions, selected bodies, and source provenance. Repeated field types have
+distinct descriptor identities; closed generic targets have separate plans.
 
-`for<F> Field<T,F> field = T::fields()` has its own AST node. The contextual
-operations `name`, `decorated`, `decorator`, and `get` are available within the
-bounded behavior context. Metadata members retain their decoration signature
-types. Constant metadata predicates fold before checking the selected branch;
-absent unguarded metadata, descriptor escapes, invalid operations, and runtime
-loop control are errors. Materialized projections use the normal type,
-definite-assignment, borrow, and allocation checks, including private target
-fields and ordinary const/ownership restrictions. Analyzer hover, navigation,
-and semantic tokens expose the source bindings and typed metadata members.
+Expansion is a transaction. The complete union of explicit and behavior roots
+must satisfy ordinary interface composition rules before provider selection.
+Exact handwritten implementations win and must carry `override`. Their behavior
+bodies are never expanded or checked, even if those bodies contain invalid
+reflection. Different method keys remain ordinary overloads; a same-key
+incompatible return, borrow, visibility, or effect contract is diagnosed by the
+ordinary interface rules rather than suppressing a body.
 
-Plans and their semantic models are detached from ordinary overload resolution
-and lowering. Reflection-bearing bodies are checked after substitution; opaque
-LANG-02 bodies remain provider candidates for the later selection stage.
+All selected signatures are registered before checking missing requirements or
+expanding any body. This permits forward sibling calls, self/mutual recursion,
+inherited defaults/finals, and qualified interface calls. Surviving bodies are
+ordinary compiler-owned functions, using the same access, const, ownership,
+borrow, initialization, allocation, generic, and effect checks as handwritten
+methods. Failed transactions expose neither partial methods nor conformance.
 
-Before checking a reflected body, its detached analyzer registers the complete
-set of behavior method signatures and reachable interface defaults. This permits
-forward sibling calls, recursion, and inherited default calls through `self`.
-The lookup view retains ordinary overload, visibility, effect, and borrow
-checks; it neither registers concrete methods nor selects or suppresses runtime
-providers.
+Generated concrete calls use ordinary direct resolution. Interface references,
+casts, composed tables, receiver adapters, and variadic slots use the existing
+interface ABI. Expansion changes no concrete fields or layouts and allocates
+no runtime metadata. Only ordinary scalar values and projected expressions
+survive reflection folding. Analyzer definitions and diagnostics map generated
+locations to behavior source, activating applications, targets, and fields.
 
-LANG-03 does **not** select providers, satisfy virtual requirements, suppress
-handwritten methods, add concrete conformance, emit methods or interface tables,
-or change compiler-owned JSON. Declaring or activating a behavior still does
-not make its promised interfaces callable on the target. The design below
-specifies the complete intended feature; its concrete registration, provider
-selection, vtable construction, lowering, and JSON migration require LANG-04.
+`for<F> Field<T,F> field = T::fields()` has a dedicated AST node. The contextual
+operations `name`, `decorated`, `decorator`, and `get` are bounded compile-time
+operations. Metadata predicates fold before checking the selected branch.
+Missing metadata guards, descriptor escapes, invalid operations, and unsupported
+loop transfers are errors. `break`, `proceed`, and `jumpto` inside these loops
+remain rejected; their future control-flow semantics are not part of LANG-04.
+
+Existing compiler-owned JSON derivation is unchanged. Replacing it with native
+Flecha interfaces and behaviors is a subsequent migration and parity exercise.
 
 Behaviors let a library derive an interface implementation for a structure or
 enum from typed decoration metadata. They are deliberately narrower than
@@ -490,7 +492,7 @@ declaration, and token budgets. Exceeding a budget is a compile-time error.
 Control flow for compile-time field iteration remains an open follow-up:
 iteration-local `jumpto` would require hygienic positions and boundary checks;
 `break` and `proceed` need explicit whole-expansion and next-field semantics.
-All three remain rejected in LANG-03.
+All three remain rejected, including after concrete behavior expansion.
 
 The initial design does not include:
 

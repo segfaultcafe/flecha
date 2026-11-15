@@ -1,0 +1,5 @@
+module main;
+@imports :: root::metadata as m;
+structure Value { i32 answer; };
+@m::derive structure Item { [1]Value field; };
+i32 main() { Item item; item.field[0].answer = 42; return item.read(); }

@@ -1,0 +1,20 @@
+module expansion_generic_methods;
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+structure Box<A> { A value; };
+A Box<A>::get(&const self) { return self->value; }
+B Box<A>::convert<B>(&const self) { return self->value as B; }
+A identity<A>(A value) { return value; }
+behavior meta<T> => structure << Read {
+ i32 T::read(&const self) override {
+  i32 total = 0;
+  for<F> Field<T, F> field = T::fields() {
+   Box<F> box; box.value = field::get(self);
+   total += identity(box.convert<i32>());
+   total += box.get() as i32;
+  }
+  return total;
+ }
+};
+@meta structure Item { i32 a; i64 b; };
+i32 main() { Item item; item.a = 10; item.b = 11; return item.read(); }

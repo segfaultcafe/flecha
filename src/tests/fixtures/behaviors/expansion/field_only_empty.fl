@@ -1,0 +1,13 @@
+module expansion_field_only_empty;
+decoration meta { application() target structure; application() target structure::field; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read {
+ i32 T::read(&const self) override {
+  i32 count = 0;
+  for<F> Field<T, F> field = T::fields() { count += 21; }
+  return count;
+ }
+};
+structure Item { @meta i32 first; i32 second; };
+@meta structure Empty {};
+i32 main() { Item item; Empty empty; return item.read() + empty.read(); }
