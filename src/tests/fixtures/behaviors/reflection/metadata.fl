@@ -1,0 +1,22 @@
+module reflection_metadata;
+enum State: u8 { Ready, Done }
+error Fault { Bad, Worse }
+const i32 BASE = NEXT + 1;
+const i32 NEXT = 3;
+const stringv LABEL = "label";
+const bool FLAG = !false;
+decoration meta { application(stringv name, i32 version, bool enabled, char letter, f64 weight, State state, error fault) target structure; };
+interface Inspect { void inspect(&self) virtual; };
+behavior meta<T> => structure << Inspect {
+ void T::inspect(&self) override {
+    stringv name = T::decorator().name;
+    i32 version = T::decorator().version;
+    bool enabled = T::decorator().enabled;
+    char letter = T::decorator().letter;
+    f64 weight = T::decorator().weight;
+    State state = T::decorator().state;
+    error fault = T::decorator().fault;
+    if T::decorator().version == 7 { i32 good = 1; } else { invalid(); }
+ }
+};
+@meta(LABEL, (BASE * 2 - 1) as i32, FLAG, 'x', 1.5 + 2.0, State.Done, Fault.Bad) structure Item {};

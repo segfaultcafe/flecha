@@ -24,7 +24,8 @@ enum class SymbolKind {
     EnumType,
     StructureType,
     InterfaceType,
-    CallableType
+    CallableType,
+    TypeBinding
 };
 
 enum class BuiltInFunction {

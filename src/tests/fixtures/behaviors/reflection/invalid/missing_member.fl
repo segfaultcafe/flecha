@@ -1,0 +1,7 @@
+module reflection_missing_member;
+// expect FLECHA-S0085
+decoration meta { application(stringv name) target structure; application(stringv name) target structure::field; application(stringv name) target enum; application(stringv name) target interface; };
+interface Inspect { void inspect(&self) virtual; };
+structure Other { i32 first; private i32 hidden; };
+behavior meta<T> => structure << Inspect { void T::inspect(&self) override { for<F> Field<T, F> field = T::fields() { if field::decorated() { stringv name = field::decorator().missing; } } } };
+structure Item { @meta("first") i32 first; i32 second; };

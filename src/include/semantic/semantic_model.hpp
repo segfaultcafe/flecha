@@ -2,8 +2,10 @@
 #define FLECHA_SEMANTIC_SEMANTIC_MODEL_HPP
 
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 #include "core/ast.hpp"
@@ -16,6 +18,8 @@ class SemanticQueries;
 namespace flecha::semantic {
 
 class SemanticAnalyzer;
+class BehaviorPlanner;
+class SemanticModel;
 
 enum class TransferKind { Copy, Move, Direct };
 
@@ -70,6 +74,74 @@ struct BehaviorActivationCandidate final {
     const core::Declaration* target;
     // Multiple direct fields and a declaration application activate once.
     std::vector<const DecorationMetadata*> applications;
+    bool valid = true;
+};
+
+// Typed compiler values use the same closed scalar domain as module constants.
+struct EnumMetadataValue final {
+    const EnumType* type;
+    std::uint64_t value;
+    bool operator==(const EnumMetadataValue&) const = default;
+};
+struct ErrorMetadataValue final {
+    std::string family;
+    std::uint64_t code;
+    bool operator==(const ErrorMetadataValue&) const = default;
+};
+struct CompileTimeValue final {
+    SemanticType type = SemanticType::Error();
+    std::variant<std::uint64_t, double, bool, char, std::string,
+                 EnumMetadataValue, ErrorMetadataValue>
+        value;
+};
+struct DecorationRecordMember final {
+    const core::DecorationParameter* parameter;
+    CompileTimeValue value;
+};
+struct TypedDecorationRecord final {
+    const DecorationMetadata* application;
+    std::vector<DecorationRecordMember> members;
+};
+struct BehaviorFieldDescriptor final {
+    // Identity includes the closed owner and declaration, never merely F.
+    const StructureType* owner;
+    const StructureField* field;
+    SemanticType type;
+    core::OwnershipContract ownership;
+    std::optional<TypedDecorationRecord> metadata;
+};
+struct BehaviorFieldPack final {
+    std::vector<BehaviorFieldDescriptor> fields;
+};
+struct BehaviorReflectionOccurrence final {
+    source::SourceRange range, definition;
+    std::string name, description;
+    bool type = false;
+    bool operation = false;
+};
+struct BehaviorSubstitution final {
+    source::SourceRange range;
+    const StructureField* field = nullptr;
+    std::optional<CompileTimeValue> value;
+};
+struct BehaviorSourceProvenance final {
+    source::SourceRange expansion, original;
+    const StructureField* field = nullptr;
+};
+struct BehaviorBodyCandidate final {
+    std::vector<BehaviorSourceProvenance> provenance;
+    std::unique_ptr<core::FunctionDeclaration> declaration;
+    // This model owns only detached symbols; it borrows the input world's
+    // types.
+    std::shared_ptr<SemanticModel> semantics;
+};
+struct BehaviorExpansionPlan final {
+    const BehaviorActivationCandidate* activation;
+    SemanticType target;
+    std::optional<TypedDecorationRecord> metadata;
+    BehaviorFieldPack pack;
+    std::vector<BehaviorSubstitution> substitutions;
+    std::vector<BehaviorBodyCandidate> bodies;
     bool valid = true;
 };
 
@@ -170,6 +242,8 @@ class SemanticModel final {
     const auto& Structures() const { return _structures; }
     const auto& Enums() const { return _enums; }
     const auto& Interfaces() const { return _interfaces; }
+    const auto& BehaviorPlans() const { return _behaviorPlans; }
+    const auto& ReflectionOccurrences() const { return _reflectionOccurrences; }
     const auto& Behaviors() const { return _behaviors; }
     const auto& BehaviorActivations() const { return _behaviorActivations; }
     const auto& DecorationContracts() const { return _decorationContracts; }
@@ -194,6 +268,13 @@ class SemanticModel final {
 
    private:
     friend class SemanticAnalyzer;
+    friend class BehaviorPlanner;
+    // Scalar substitutions owned by detached models, never input-unit
+    // declarations.
+    std::vector<std::unique_ptr<core::ModuleConstantDeclaration>>
+        _detachedConstants;
+    std::vector<BehaviorExpansionPlan> _behaviorPlans;
+    std::vector<BehaviorReflectionOccurrence> _reflectionOccurrences;
     friend class analyzer::SemanticQueries;
     std::vector<BehaviorContract> _behaviors;
     std::vector<BehaviorActivationCandidate> _behaviorActivations;

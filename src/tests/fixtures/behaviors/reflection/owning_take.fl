@@ -1,0 +1,13 @@
+module reflection_owning_take;
+decoration meta { application() target structure; };
+interface Clear { unsafe void clear(&self) virtual; };
+behavior meta<T> => structure << Clear {
+    unsafe void T::clear(&self) override {
+        for<F> Field<T, F> field = T::fields() {
+            old := take(field::get(self));
+            free(old);
+        }
+    }
+};
+@meta structure Item { own *i32 pointer; };
+unsafe void Item::tear(&self) override { free(self->pointer); }

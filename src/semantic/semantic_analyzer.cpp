@@ -1403,7 +1403,8 @@ SemanticType SemanticAnalyzer::ResolveTypeSyntax(const core::TypeNode& type) {
                                   symbol->Kind() != SymbolKind::EnumType &&
                                   symbol->Kind() != SymbolKind::StructureType &&
                                   symbol->Kind() != SymbolKind::InterfaceType &&
-                                  symbol->Kind() != SymbolKind::CallableType)) {
+                                  symbol->Kind() != SymbolKind::CallableType &&
+                                  symbol->Kind() != SymbolKind::TypeBinding)) {
             if (!ReportInaccessibleImport(type.Name(), type.Range()))
                 Report(diagnostics::DiagnosticCode::UnknownType, type.Range(),
                        "unknown type '" + type.Name() + "'");
@@ -3056,6 +3057,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     WarnForCrashlessFunctions();
     if (!_diagnostics.HasErrors())
         AnalyzeAllocations(unit, _model, _diagnostics);
+    PlanBehaviors(unit);
     ReportGenericOrigins(unit, _diagnostics);
     _currentScope = nullptr;
     _currentFunction = nullptr;
@@ -3615,6 +3617,12 @@ void SemanticAnalyzer::AnalyzeBranch(const core::ConditionalBranch& branch) {
 
 void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
     switch (statement.Kind()) {
+        case core::AstNodeKind::FieldIterationStatement:
+            Report(diagnostics::DiagnosticCode::InvalidReflectionContext,
+                   statement.Range(),
+                   "field iteration requires a structure behavior method");
+            break;
+
         case core::AstNodeKind::BlockStatement: {
             const auto& block =
                 static_cast<const core::BlockStatement&>(statement);
@@ -5149,7 +5157,8 @@ SemanticType SemanticAnalyzer::AnalyzeName(
     if (symbol->Kind() == SymbolKind::ErrorType ||
         symbol->Kind() == SymbolKind::StructureType ||
         symbol->Kind() == SymbolKind::EnumType ||
-        symbol->Kind() == SymbolKind::CallableType) {
+        symbol->Kind() == SymbolKind::CallableType ||
+        symbol->Kind() == SymbolKind::TypeBinding) {
         Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
                "type '" + expression.Name() + "' is not a value");
         return SemanticType::Error();

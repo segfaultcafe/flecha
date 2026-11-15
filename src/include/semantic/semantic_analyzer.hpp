@@ -19,6 +19,8 @@ class SemanticAnalyzer final {
     [[nodiscard]] SemanticModel Analyze(core::CompilationUnit& unit);
 
    private:
+    friend class BehaviorPlanner;
+    void PlanBehaviors(const core::CompilationUnit& unit);
     void SetSource(const std::string& id);
     void BindImports(const core::CompilationUnit& unit);
     void RegisterBehaviors(const core::CompilationUnit& unit);

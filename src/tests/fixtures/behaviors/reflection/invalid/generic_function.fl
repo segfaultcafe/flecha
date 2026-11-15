@@ -1,0 +1,4 @@
+module reflection_generic_function;
+// expect FLECHA-S0081
+void inspect<T>() { for<F> Field<T, F> field = T::fields() {  } }
+void use() { inspect<i32>(); }

@@ -1,0 +1,10 @@
+module reflection_folding;
+decoration meta { application(stringv name) target structure; application(stringv name) target structure::field; application(stringv name) target enum; application(stringv name) target interface; };
+interface Inspect { void inspect(&self) virtual; };
+behavior meta<T> => structure << Inspect { void T::inspect(&self) override { for<F> Field<T, F> field = T::fields() { if !field::decorated() { stringv name = field::name(); } else if field::decorator().name == "selected" { stringv name = field::decorator().name; }
+if field::decorated() && field::decorator().name == "selected" { i32 x = field::get(self); }
+bool runtime = field::get(self) > 0;
+if runtime {} else if field::decorated() { stringv name = field::decorator().name; }
+if field::decorated() { stringv name = field::decorator().name; } also false { stringv absent = T::decorator().name; }
+if false { stringv absent = T::decorator().name; } } } };
+structure Item { @meta("selected") i32 a; i32 b; };

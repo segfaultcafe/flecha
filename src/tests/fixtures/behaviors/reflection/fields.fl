@@ -1,0 +1,28 @@
+module reflection_fields;
+decoration meta {
+    application(stringv name, i32 version) target structure;
+    application(stringv name, i32 version) target structure::field;
+};
+interface Inspect { void inspect(&self) virtual; };
+behavior meta<T> => structure << Inspect {
+    void T::inspect(&self) override {
+        if T::decorated() { stringv label = T::decorator().name; }
+        for<F> Field<T, F> field = T::fields() {
+            stringv name = field::name();
+            if field::decorated() {
+                name = field::decorator().name;
+                i32 version = field::decorator().version;
+            }
+            F value = field::get(self);
+            field::get(self) = value;
+        }
+    }
+};
+@meta("record", 2) structure Record {
+    @meta("first", 1 + 2) i32 first;
+    private i32 second;
+    bool third;
+};
+structure FieldOnly { @meta("only", 1) i32 value; };
+@meta("empty", 0) structure Empty {};
+i32 main() { return 0; }

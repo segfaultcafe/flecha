@@ -5,6 +5,7 @@ add_executable(test_flecha
     test_analyzer_client.cpp
     test_ast.cpp
     test_behavior.cpp
+    test_behavior_reflection.cpp
     test_codegen.cpp
     test_diagnostics.cpp
     test_analyzer_transport.cpp
@@ -1947,3 +1948,79 @@ add_test(NAME Behaviors.reject_receiver_ownership
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/invalid/receiver_ownership.fl
         -DEXPECTED_DIAGNOSTIC=FLECHA-P0001
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+
+# Bounded reflection fixtures run independently through the native loader.
+foreach(fixture IN ITEMS
+    borrow_projection
+    const_projection
+    enum
+    fields
+    folding
+    generic
+    metadata
+    move_projection
+    nested
+    owning_projection
+    owning_take)
+    string(REPLACE "/" "_" fixture_name "${fixture}")
+    add_test(NAME BehaviorReflection.${fixture_name}
+        COMMAND $<TARGET_FILE:flecha> check
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/reflection/${fixture}.fl")
+endforeach()
+add_test(NAME BehaviorReflection.modules_main
+    COMMAND $<TARGET_FILE:flecha> check
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/reflection/modules/main.fl"
+        --root "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/reflection/modules")
+function(add_behavior_reflection_failure fixture code)
+    add_test(NAME BehaviorReflection.reject_${fixture}
+        COMMAND ${CMAKE_COMMAND}
+            -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+            -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/behaviors/reflection/invalid/${fixture}.fl
+            -DEXPECTED_DIAGNOSTIC=${code}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+endfunction()
+add_behavior_reflection_failure(arbitrary_decoration FLECHA-S0082)
+add_behavior_reflection_failure(borrow_conflict FLECHA-S0029)
+add_behavior_reflection_failure(break FLECHA-S0081)
+add_behavior_reflection_failure(const_write FLECHA-S0005)
+add_behavior_reflection_failure(descriptor_address FLECHA-S0083)
+add_behavior_reflection_failure(descriptor_call FLECHA-S0083)
+add_behavior_reflection_failure(descriptor_capture FLECHA-S0083)
+add_behavior_reflection_failure(descriptor_cast FLECHA-S0083)
+add_behavior_reflection_failure(descriptor_local FLECHA-S0083)
+add_behavior_reflection_failure(descriptor_return FLECHA-S0083)
+add_behavior_reflection_failure(descriptor_type FLECHA-S0083)
+add_behavior_reflection_failure(enum_fields FLECHA-S0081)
+add_behavior_reflection_failure(field_type FLECHA-S0003)
+add_behavior_reflection_failure(generic_function FLECHA-S0081)
+add_behavior_reflection_failure(metadata_type FLECHA-S0003)
+add_behavior_reflection_failure(missing_member FLECHA-S0085)
+add_behavior_reflection_failure(move_twice FLECHA-S0046)
+add_behavior_reflection_failure(nested_closure FLECHA-S0081)
+add_behavior_reflection_failure(nested_iteration FLECHA-S0081)
+add_behavior_reflection_failure(ordinary FLECHA-S0081)
+add_behavior_reflection_failure(pack_escape FLECHA-S0083)
+add_behavior_reflection_failure(proceed FLECHA-S0081)
+add_behavior_reflection_failure(record_call FLECHA-S0083)
+add_behavior_reflection_failure(record_local FLECHA-S0083)
+add_behavior_reflection_failure(record_return FLECHA-S0083)
+add_behavior_reflection_failure(runtime_loop FLECHA-S0081)
+add_behavior_reflection_failure(same_binder FLECHA-S0080)
+add_behavior_reflection_failure(unguarded_field FLECHA-S0084)
+add_behavior_reflection_failure(unguarded_target FLECHA-S0084)
+add_behavior_reflection_failure(unknown_operation FLECHA-S0082)
+add_behavior_reflection_failure(unrelated_private FLECHA-S0044)
+add_behavior_reflection_failure(wrong_arity FLECHA-S0082)
+add_behavior_reflection_failure(wrong_binder FLECHA-S0080)
+add_behavior_reflection_failure(wrong_pack FLECHA-S0080)
+add_behavior_reflection_failure(wrong_receiver FLECHA-S0082)
+add_behavior_reflection_failure(wrong_shape FLECHA-S0080)
+add_behavior_reflection_failure(wrong_target FLECHA-S0080)
+add_behavior_reflection_failure(record_address FLECHA-S0083)
+add_behavior_reflection_failure(record_cast FLECHA-S0083)
+add_behavior_reflection_failure(descriptor_string FLECHA-S0083)
+add_behavior_reflection_failure(runtime_range FLECHA-S0081)
+add_behavior_reflection_failure(interface_body FLECHA-S0081)
+add_behavior_reflection_failure(decoration_body FLECHA-P0001)
+add_behavior_reflection_failure(jumpto FLECHA-S0081)
+add_behavior_reflection_failure(numeric_fold FLECHA-S0009)
