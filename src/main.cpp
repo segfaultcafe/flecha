@@ -70,11 +70,14 @@ int Compile(const std::string& command, const std::string& input,
             const std::string& output, const std::filesystem::path& root,
             const std::map<std::string, std::filesystem::path>& libraries,
             const flecha::core::PackageGraph* packageGraph,
-            const std::vector<std::string>& linkInputs, bool verboseTests) {
+            const std::vector<std::string>& linkInputs, bool verboseTests,
+            bool wholeTestModule) {
     flecha::diagnostics::DiagnosticBag diagnostics;
     flecha::core::ModuleLoader loader(diagnostics);
-    const auto mode = command == "test" ? flecha::core::ModuleLoadMode::Test
-                                        : flecha::core::ModuleLoadMode::Runtime;
+    const auto mode = command != "test" ? flecha::core::ModuleLoadMode::Runtime
+                      : wholeTestModule
+                          ? flecha::core::ModuleLoadMode::TestModule
+                          : flecha::core::ModuleLoadMode::Test;
     auto unit = packageGraph
                     ? loader.Load(input, *packageGraph, mode, verboseTests)
                     : loader.Load(input, root, libraries, mode, verboseTests);
@@ -167,13 +170,14 @@ int Compile(const std::string& command, const std::string& input,
     return result < 0 ? 1 : result;
 }
 void PrintUsage(const char* executable) {
-    std::cerr << "usage: " << executable
-              << " <check|build|test|--emit-llvm|--emit-object> <input.fl> [-o "
-                 "output]"
-                 " [--root source-directory] [--lib name=source-directory ...]"
-                 " [--package-graph graph.json]"
-                 " [--link object-or-library ...] [--verbose]\n"
-              << "       " << executable << " analyze --stdio\n";
+    std::cerr
+        << "usage: " << executable
+        << " <check|build|test|--emit-llvm|--emit-object> <input.fl> [-o "
+           "output]"
+           " [--root source-directory] [--lib name=source-directory ...]"
+           " [--package-graph graph.json]"
+           " [--link object-or-library ...] [--verbose] [--whole-module]\n"
+        << "       " << executable << " analyze --stdio\n";
 }
 }  // namespace
 int main(int argc, char** argv) {
@@ -209,8 +213,17 @@ int main(int argc, char** argv) {
     std::map<std::string, std::filesystem::path> libraries;
     std::vector<std::string> linkInputs;
     bool verboseTests = false;
+    bool wholeTestModule = false;
     for (int index = 3; index < argc; ++index) {
         const std::string option = argv[index];
+        if (option == "--whole-module") {
+            if (command != "test" || wholeTestModule) {
+                PrintUsage(argv[0]);
+                return 1;
+            }
+            wholeTestModule = true;
+            continue;
+        }
         if (option == "--verbose") {
             if (command != "test" || verboseTests) {
                 PrintUsage(argv[0]);
@@ -273,7 +286,7 @@ int main(int argc, char** argv) {
         }
         return Compile(command, argv[2], output, root, libraries,
                        packageGraph ? &*packageGraph : nullptr, linkInputs,
-                       verboseTests);
+                       verboseTests, wholeTestModule);
     } catch (const std::filesystem::filesystem_error& error) {
         std::cerr << error.what() << "\n";
         return 1;

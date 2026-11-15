@@ -1,0 +1,19 @@
+module streaming_test;
+
+@imports :: root::streaming :: lib::std::tests::testing;
+
+extern unsafe i32 test_output_should_fail();
+extern unsafe i32 test_output_is_visible();
+
+test first_result(&testing::UnitTest t) {
+    t->log("completed first test");
+    unsafe {
+        if test_output_should_fail() != 0 { t->fail(); }
+    }
+}
+
+test observes_previous_result(&testing::UnitTest t) {
+    unsafe {
+        if test_output_is_visible() == 0 { t->fail(); }
+    }
+}

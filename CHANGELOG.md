@@ -4,6 +4,11 @@
 
 ### Changed
 
+- `longbow test` compiles each logical test module once, including attached
+  source files. `flecha test --whole-module` selects the same scope explicitly;
+  file-only selection remains the default for `flecha test`. Completed test
+  results stream immediately in verbose mode, and failures stream in both modes.
+
 - JSON serialization and deserialization now belong to Flecha library
   behaviors. The compiler no longer recognizes a special `json` decoration,
   generates JSON methods, or provides `__json_slice_append`. Upgrade to the

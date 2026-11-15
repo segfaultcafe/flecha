@@ -26,7 +26,21 @@ test adds_two_values(&testing::UnitTest t) {
 }
 ```
 
-Run one test module with `flecha test path/to/calculator_test.fl`. Test files,
+Run the tests in one file with `flecha test path/to/calculator_test.fl`.
+Use `--whole-module` to include every source file in its logical module.
+`longbow test` groups files by logical module and compiles each group once,
+including namespace-attached files. Files and tests run in deterministic order;
+a failed assertion does not prevent later tests or files from running. Each
+file keeps its own result summary, and multi-module runs report module totals.
+Tests in a group share one process: a crash stops that group, while Longbow
+continues with the other modules.
+
+With `--verbose`, each completed test result and its recorded output are flushed
+immediately, including when stdout is redirected. Without it, failures are
+reported immediately and successful files keep their compact summaries.
+Assertion details and `t->log` messages remain buffered until that test returns.
+
+Test files,
 module pairing, and discovery follow the rules described in the
 [v0.2 testing design](release_0_2.md#test-modules).
 

@@ -67,67 +67,81 @@ std::string StringLiteral(std::string_view value) {
     return escaped;
 }
 
-std::string TestHarnessSource(
-    const std::vector<const FunctionDeclaration*>& tests,
-    const fs::path& entryFile, bool verbose) {
-    const std::string fileName = entryFile.filename().string();
-    const std::string displayPath = DisplayPath(entryFile);
-    const std::string escapedFileName = StringLiteral(fileName);
-    const std::string escapedDisplayPath = StringLiteral(displayPath);
+struct TestFile final {
+    fs::path path;
+    std::vector<const FunctionDeclaration*> tests;
+};
 
+std::string TestHarnessSource(const std::vector<TestFile>& files,
+                              bool verbose) {
+    // Flush completed results even when stdout is redirected to a pipe or file.
+    constexpr std::string_view flush =
+        "unsafe { flecha_runtime_v1_standard_output_flush(); } ";
     std::ostringstream source;
-    source << "i32 __flecha_test_main() { usize __flecha_passed = 0; "
-              "usize __flecha_failed = 0; ";
-    struct TestContext final {
-        const FunctionDeclaration* function;
-        std::string variable;
-    };
-    std::vector<TestContext> contexts;
-    for (std::size_t index = 0; index < tests.size(); ++index) {
-        const auto& function = *tests[index];
-        const std::string context =
-            "__flecha_test_context_" + std::to_string(index);
-        contexts.push_back({&function, context});
-        source << "testing::UnitTest " << context
-               << " = testing::UnitTest::init(\"" << function.Name() << "\", "
-               << (verbose ? "true" : "false") << "); " << function.Name()
-               << "(&" << context << "); if " << context
-               << ".failed() { __flecha_failed++; } else { "
-                  "__flecha_passed++; } ";
-    }
-    source << "if __flecha_failed != 0 { ";
-    source << "stdoutln(\"" << escapedFileName << "\"); ";
-    for (const auto& context : contexts) {
-        const auto& function = *context.function;
-        const std::string functionPath =
-            function.Range().start.file.empty()
-                ? escapedDisplayPath
-                : StringLiteral(DisplayPath(function.Range().start.file));
-        source << "if " << context.variable << ".failed() { "
-               << "stdoutln(\"" << DotLeader("  " + function.Name())
-               << "fail\"); stdoutf(\"    test: " << functionPath << ":"
-               << function.NameRange().start.line << ":"
-               << function.NameRange().start.column << "\\n\"); "
-               << context.variable << ".printOutput(); } ";
+    source << "extern unsafe i32 flecha_runtime_v1_standard_output_flush(); "
+              "i32 __flecha_test_main() { usize __flecha_failed_files = 0; ";
+    for (const auto& file : files) {
+        const auto& tests = file.tests;
+        const std::string fileName = file.path.filename().string();
+        const std::string escapedFileName = StringLiteral(fileName);
+        const std::string escapedDisplayPath =
+            StringLiteral(DisplayPath(file.path));
+        source << "{ usize __flecha_passed = 0; usize __flecha_failed = 0; ";
         if (verbose)
-            source << "else { stdoutln(\"" << DotLeader("  " + function.Name())
-                   << "ok\"); " << context.variable << ".printOutput(); } ";
+            source << "stdoutln(\"" << escapedFileName << "\"); " << flush;
+        for (std::size_t index = 0; index < tests.size(); ++index) {
+            const auto& function = *tests[index];
+            const std::string context =
+                "__flecha_test_context_" + std::to_string(index);
+            const std::string functionPath =
+                function.Range().start.file.empty()
+                    ? escapedDisplayPath
+                    : StringLiteral(DisplayPath(function.Range().start.file));
+            // Release each context after reporting it, rather than retaining
+            // all diagnostic buffers until the entire file finishes.
+            source << "{ testing::UnitTest " << context
+                   << " = testing::UnitTest::init(\"" << function.Name()
+                   << "\", " << (verbose ? "true" : "false") << "); "
+                   << function.Name() << "(&" << context << "); if " << context
+                   << ".failed() { ";
+            if (!verbose)
+                source << "if __flecha_failed == 0 { stdoutln(\""
+                       << escapedFileName << "\"); } ";
+            source << "__flecha_failed++; stdoutln(\""
+                   << DotLeader("  " + function.Name())
+                   << "fail\"); stdoutf(\"    test: " << functionPath << ":"
+                   << function.NameRange().start.line << ":"
+                   << function.NameRange().start.column << "\\n\"); " << context
+                   << ".printOutput(); " << flush
+                   << "} else { __flecha_passed++; ";
+            if (verbose)
+                source << "stdoutln(\"" << DotLeader("  " + function.Name())
+                       << "ok\"); " << context << ".printOutput(); " << flush;
+            source << "} } ";
+        }
+        source << "if __flecha_failed != 0 { stdoutln(\"\"); "
+               << "stdoutf(\"FAIL [{}/" << tests.size()
+               << "] tests passed, but [{}/" << tests.size()
+               << "] failed\\n\", __flecha_passed, __flecha_failed); " << flush
+               << "__flecha_failed_files++; } else { ";
+        if (verbose)
+            source << "stdoutln(\"\"); ";
+        else
+            source << "stdout(\"" << StringLiteral(DotLeader(fileName))
+                   << "\"); ";
+        source << "stdoutf(\"OK [{}/" << tests.size()
+               << "] tests passed\\n\", __flecha_passed); " << flush << "} } ";
     }
-    source << "stdoutln(\"\"); ";
-    source << "stdoutf(\"FAIL [{}/" << tests.size()
-           << "] tests passed, but [{}/" << tests.size()
-           << "] failed\\n\", __flecha_passed, __flecha_failed); return 1; } ";
-    if (verbose) {
-        source << "stdoutln(\"" << escapedFileName << "\"); ";
-        for (const auto& context : contexts)
-            source << "stdoutln(\""
-                   << DotLeader("  " + context.function->Name()) << "ok\"); "
-                   << context.variable << ".printOutput(); ";
-        source << "stdoutln(\"\"); ";
-    } else
-        source << "stdout(\"" << StringLiteral(DotLeader(fileName)) << "\"); ";
-    source << "stdoutf(\"OK [{}/" << tests.size()
-           << "] tests passed\\n\", __flecha_passed); return 0; }";
+    if (files.size() > 1) {
+        source << "if __flecha_failed_files == 0 { stdoutf(\"\\nOK ["
+               << files.size() << "/" << files.size()
+               << "] test files passed\\n\"); } else { stdoutf(\"\\nFAIL [{}/"
+               << files.size() << "] test files passed, but [{}/"
+               << files.size() << "] test files failed\\n\", " << files.size()
+               << " - __flecha_failed_files, __flecha_failed_files); } ";
+    }
+    source << flush
+           << "if __flecha_failed_files != 0 { return 1; } return 0; }";
     return source.str();
 }
 }  // namespace
@@ -332,7 +346,7 @@ void ModuleLoader::LoadLegacyEntry(const fs::path& file, const fs::path& root,
                             diagnostic.message, diagnostic.severity);
     Parser parser(std::move(tokens), _diagnostics);
     auto unit = parser.Parse();
-    if (_mode == ModuleLoadMode::Test)
+    if ((_mode == ModuleLoadMode::Test || _mode == ModuleLoadMode::TestModule))
         Report(fileRange,
                "'flecha test' requires a declared '<name>_test' module");
     const std::string sourceId = "$legacy$";
@@ -433,13 +447,17 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
     const bool testModule = IsTestModule(name);
     const source::SourceLocation namespaceOrigin{0, 1, 1, directory.string()};
     const source::SourceRange namespaceRange{namespaceOrigin, namespaceOrigin};
-    const bool acceptsTestEntry =
-        _mode == ModuleLoadMode::Test || _mode == ModuleLoadMode::Analysis;
+    const bool acceptsTestEntry = (_mode == ModuleLoadMode::Test ||
+                                   _mode == ModuleLoadMode::TestModule) ||
+                                  _mode == ModuleLoadMode::Analysis;
     if (testModule && (!acceptsTestEntry || !entry))
         Report(
             namespaceRange,
             "test modules can only be compiled as the entry of 'flecha test'");
-    if (entry && _mode == ModuleLoadMode::Test && !testModule)
+    if (entry &&
+        (_mode == ModuleLoadMode::Test ||
+         _mode == ModuleLoadMode::TestModule) &&
+        !testModule)
         Report(namespaceRange,
                "'flecha test' requires a declared '<name>_test' module");
 
@@ -628,20 +646,25 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
         _modules.push_back(std::move(module));
     }
 
-    if (entry && _mode == ModuleLoadMode::Test) {
-        std::vector<const FunctionDeclaration*> tests;
+    if (entry && (_mode == ModuleLoadMode::Test ||
+                  _mode == ModuleLoadMode::TestModule)) {
+        std::vector<TestFile> files;
         for (const auto& source : sources) {
-            if (source.file != entrySource) continue;
+            if (_mode == ModuleLoadMode::Test && source.file != entrySource)
+                continue;
+            TestFile file{source.file, {}};
             for (const auto& declaration : source.unit->Declarations())
                 if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
                     static_cast<const FunctionDeclaration&>(*declaration)
                         .IsTest())
-                    tests.push_back(static_cast<const FunctionDeclaration*>(
-                        declaration.get()));
+                    file.tests.push_back(
+                        static_cast<const FunctionDeclaration*>(
+                            declaration.get()));
+            files.push_back(std::move(file));
         }
         diagnostics::DiagnosticBag generatedDiagnostics;
         auto generatedTokens =
-            Tokenizer(TestHarnessSource(tests, entrySource, _verboseTests),
+            Tokenizer(TestHarnessSource(files, _verboseTests),
                       generatedDiagnostics)
                 .Tokenize();
         Parser generatedParser(std::move(generatedTokens),
@@ -681,7 +704,9 @@ std::string ModuleLoader::VisitModule(const fs::path& inputDirectory,
                                   harnessPhysicalName,
                                   std::nullopt});
         for (auto& declaration : generated->TakeDeclarations()) {
-            if (declaration->Kind() == AstNodeKind::FunctionDeclaration)
+            if (declaration->Kind() == AstNodeKind::FunctionDeclaration &&
+                static_cast<FunctionDeclaration&>(*declaration).Name() ==
+                    "__flecha_test_main")
                 static_cast<FunctionDeclaration&>(*declaration)
                     .MarkTestHarness();
             declaration->moduleId = id;
