@@ -216,8 +216,12 @@ cannot inspect arbitrary decorations.
 T.isof<Type> and F.isof<Type> are evaluated against the concrete target and
 field type during expansion. They use ordinary type and interface membership
 rules and can prune incompatible branches before ordinary body analysis.
-Requirements and these queries do not permit reflection inside runtime loops
-or closures.
+Field iteration and reflected operations may compose with while, counted loop,
+and range loops. Expansion still happens once per direct field at compilation;
+only ordinary specialized code repeats at runtime. Closures cannot capture
+reflection. Requirements and uniqueness validations remain invalid under runtime
+selection, including inside runtime loops; validate fields before iteration.
+Break, proceed, and jumpto remain invalid inside a field iteration.
 
 Generic constraints may consult nominal interface promises from directly
 applicable behaviors before semantic registration. This does not publish

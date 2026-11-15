@@ -821,6 +821,59 @@ TEST(NativeCompilerTests, RunsOwningStringSlicesAcrossMovesAndFailures) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsManagedSliceReturnsThroughInterfaces) {
+    GeneratedSource result = Generate(R"(
+        interface Encode {
+            (own []u8, error) encode(&const self) default;
+            (own []u8, error) custom(&const self) virtual;
+        };
+        (own []u8, error) Encode::encode(&const self) {
+            bytes, err := new<own []u8>(1);
+            if err != none { return (none, err); }
+            bytes[0] = 21;
+            return (bytes, none);
+        }
+        structure Item << Encode {};
+        (own []u8, error) Item::custom(&const self) override {
+            bytes, err := new<own []u8>(1);
+            if err != none { return (none, err); }
+            bytes[0] = 21;
+            return (bytes, none);
+        }
+        i32 inspect(&const Encode value) {
+            first, a := value->encode();
+            if a != none { return 1; }
+            second, b := value->custom();
+            if b != none { return 2; }
+            x := first[:];
+            y := second[:];
+            return x[0].cast<i32> + y[0].cast<i32>;
+        }
+        i32 main() {
+            item := Item::init();
+            return inspect(&item);
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_interface_managed_return_test";
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "interface_managed_return_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsManagedSlicesStoredAsStructureBorrows) {
     GeneratedSource result = Generate(R"(
         structure Buffer { own []i32 values; };
@@ -3927,6 +3980,76 @@ TEST(NativeCompilerTests, RunsDeferredIndirectAndMemberCalls) {
     const llvm::StringRef arguments[] = {executablePathText};
     EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
     std::filesystem::remove(executablePath);
+}
+
+TEST(NativeCompilerTests, DestroysRecursiveOwnedSlicesInReverseElementOrder) {
+    GeneratedSource result = Generate(R"(
+        structure Node {
+            *i32 log; i32 id; string label; own []Node children;
+        };
+        void Node::tear(&self) override {
+            unsafe {
+                if self->log != none { *self->log = *self->log * 10 + self->id; }
+            }
+        }
+        structure Left { *i32 log; own []Right children; };
+        structure Right { *i32 log; own []Left children; };
+        void Left::tear(&self) override {
+            unsafe { if self->log != none { *self->log = *self->log * 10 + 5; } }
+        }
+        void Right::tear(&self) override {
+            unsafe { if self->log != none { *self->log = *self->log * 10 + 6; } }
+        }
+        i32 main() {
+            i32 log = 0;
+            unsafe {
+                {
+                    root := Node::init();
+                    root.log = &raw log; root.id = 1; root.label = "root";
+                    children, err := new<own []Node>(2);
+                    if err != none { return 1; }
+                    children[0].log = &raw log; children[0].id = 2;
+                    children[1].log = &raw log; children[1].id = 3;
+                    grandchildren, nestedErr := new<own []Node>(1);
+                    if nestedErr != none { return 2; }
+                    grandchildren[0].log = &raw log; grandchildren[0].id = 4;
+                    grandchildren[0].label = "leaf";
+                    children[1].children = grandchildren;
+                    root.children = children;
+                }
+                if log != 1342 { return 3; }
+                log = 0;
+                {
+                    root := Left::init(); root.log = &raw log;
+                    children, err := new<own []Right>(1);
+                    if err != none { return 4; }
+                    children[0].log = &raw log;
+                    grandchildren, nestedErr := new<own []Left>(1);
+                    if nestedErr != none { return 5; }
+                    grandchildren[0].log = &raw log;
+                    children[0].children = grandchildren;
+                    root.children = children;
+                }
+                if log != 565 { return 6; }
+            }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    const auto path = std::filesystem::temp_directory_path() /
+                      "flecha_recursive_owned_slice_cleanup";
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "recursive_owned_slice_cleanup",
+                                         path.string())) << compiler.Error();
+    const std::string executable = path.string();
+    const llvm::StringRef arguments[] = {executable};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executable, arguments), 42);
+    std::filesystem::remove(path);
 }
 
 TEST(NativeCompilerTests, ZeroLengthMoveOnlyRepeatsDestroyTheirInitializer) {

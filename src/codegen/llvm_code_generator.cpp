@@ -5109,19 +5109,53 @@ void LlvmCodeGenerator::EmitRuntimeArrayElements(
     _builder.SetInsertPoint(done);
 }
 
+llvm::Function* LlvmCodeGenerator::StructureDestroyer(
+    semantic::SemanticType type) {
+    const auto found = _structureDestroyers.find(type.Structure());
+    if (found != _structureDestroyers.end()) return found->second;
+    auto* signature = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(_context),
+        {llvm::PointerType::getUnqual(_context)}, false);
+    auto* destroyer = llvm::Function::Create(
+        signature, llvm::Function::InternalLinkage,
+        type.Structure()->name + ".$structure.destroy", *_module);
+    // Publish before emitting the body so recursive edges become calls.
+    _structureDestroyers.emplace(type.Structure(), destroyer);
+    const auto savedIP = _builder.saveIP();
+    llvm::Function* savedFunction = _currentFunction;
+    _currentFunction = destroyer;
+    _builder.SetInsertPoint(
+        llvm::BasicBlock::Create(_context, "entry", destroyer));
+    EmitStructureDestroyAt(destroyer->getArg(0), type);
+    _builder.CreateRetVoid();
+    _currentFunction = savedFunction;
+    _builder.restoreIP(savedIP);
+    return destroyer;
+}
+
+void LlvmCodeGenerator::EmitStructureDestroyAt(
+    llvm::Value* storage, semantic::SemanticType type) {
+    if (type.Structure()->tear)
+        _builder.CreateCall(_functions.at(type.Structure()->tear), {storage});
+    const auto& fields = type.Structure()->fields;
+    for (std::size_t i = fields.size(); i > 0; --i)
+        if (fields[i - 1].type.OwnsStorage())
+            EmitDestroyAt(
+                _builder.CreateStructGEP(MapType(type), storage, i - 1),
+                fields[i - 1].type);
+}
+
 void LlvmCodeGenerator::EmitDestroyAt(llvm::Value* storage,
                                       semantic::SemanticType type) {
     using Kind = semantic::SemanticTypeKind;
     if (type.Kind() == Kind::Structure) {
-        if (type.Structure()->tear)
-            _builder.CreateCall(_functions.at(type.Structure()->tear),
-                                {storage});
-        const auto& fields = type.Structure()->fields;
-        for (std::size_t i = fields.size(); i > 0; --i)
-            if (fields[i - 1].type.OwnsStorage())
-                EmitDestroyAt(
-                    _builder.CreateStructGEP(MapType(type), storage, i - 1),
-                    fields[i - 1].type);
+        if (_structureDestroyers.count(type.Structure()) ||
+            !_destroyingStructures.insert(type.Structure()).second) {
+            _builder.CreateCall(StructureDestroyer(type), {storage});
+            return;
+        }
+        EmitStructureDestroyAt(storage, type);
+        _destroyingStructures.erase(type.Structure());
     } else if (type.Kind() == Kind::Tuple) {
         for (std::size_t i = type.Elements().size(); i > 0; --i)
             if (type.Elements()[i - 1].OwnsStorage())
@@ -5697,6 +5731,8 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
     _boundFunctions.clear();
     _closureEnvironmentTypes.clear();
     _closureDestroyers.clear();
+    _structureDestroyers.clear();
+    _destroyingStructures.clear();
     _interfaceTables.clear();
     _interfaceUpcasts.clear();
     _interfaceDispatchSlots.clear();

@@ -1,0 +1,38 @@
+decoration meta { application(structure) target structure; };
+interface Inspect { i32 inspect(&const self) virtual; };
+i32 depth<T>() {
+    if T.isof<own []E> { return 1 + depth<E>(); }
+    else { return 0; }
+}
+behavior meta<T> => structure << Inspect {
+    i32 T::inspect(&const self) override {
+        i32 result = 0;
+        for<F> Field<T, F> field = T::fields() {
+            if F.isof<own []E> { result += 1 + depth<E>(); }
+            else { result += 10; }
+        }
+        return result;
+    }
+};
+@meta(structure)
+structure Data { own []i32 a; own []own []i32 b; i32 c; };
+@meta(structure)
+structure Node { own []Node children; };
+bool shape<T>() { return T.isof<own []Element>; }
+bool exact<T, Element>() { return T.isof<own []Element>; }
+i32 main() {
+    data := Data::init();
+    if data.inspect() != 13 { return 1; }
+    if !shape<own []const i32>() { return 2; }
+    if shape<[]i32>() or shape<[2]i32>() { return 3; }
+    if !exact<own []i32, i32>() or exact<own []i32, u32>() { return 4; }
+    if depth<own []own []own []i32>() != 3 { return 5; }
+    node := Node::init();
+    children, err := new<own []Node>(2);
+    if err != none { return 6; }
+    node.children = children;
+    if node.inspect() != 1 or node.children[0].inspect() != 1 {
+        return 7;
+    }
+    return 42;
+}

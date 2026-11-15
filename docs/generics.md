@@ -160,3 +160,28 @@ library provides [`RawArray<T>`](dynamic_arrays.md), implemented in Flecha. Its
 runtime storage currently supports numeric, boolean, and character elements;
 pointers and structures are not yet supported. Element restrictions are
 enforced when the relevant generic operations are instantiated.
+
+## Owning-slice type patterns
+
+An `if` or `else if` with `T.isof<own []Element>` can bind a fresh element-type
+name inside its selected body. The name is arbitrary; an existing type name or
+type parameter keeps its meaning and is compared instead of rebound. The match
+requires an owning slice and preserves the exact element type, including const
+qualification and nested ownership. For example:
+
+```flecha
+usize depth<T>() {
+    if T.isof<own []Element> {
+        return 1 + depth<Element>();
+    } else {
+        return 0;
+    }
+}
+```
+
+Specialization selects direct `T.isof<...>` branches before checking bodies,
+including exact types, interfaces, and type sets. Ordinary runtime conditions
+retain normal checking. A new pattern binding is scoped to the matching body;
+it is unavailable in alternatives, `also`, and following statements. Pattern
+binding in compound Boolean conditions is not supported. Recursive helpers use
+the existing specialization budgets and ordinary ownership checks.

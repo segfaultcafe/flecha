@@ -95,6 +95,32 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::U8)));
 }
 
+TEST(SemanticTypeTests, FindsReferencesThroughRecursiveSliceGraphs) {
+    StructureType first;
+    StructureType second;
+    first.validLayout = second.validLayout = true;
+    first.fields.push_back({"children", SemanticType(
+        SemanticTypeKind::OwnedSlice, SemanticType(&first)), nullptr});
+    EXPECT_FALSE(SemanticType(&first).ContainsReference());
+    first.fields.push_back({"others", SemanticType(
+        SemanticTypeKind::OwnedSlice, SemanticType(&second)), nullptr});
+    second.fields.push_back({"parents", SemanticType(
+        SemanticTypeKind::Slice, SemanticType(&first)), nullptr});
+    EXPECT_FALSE(SemanticType(&first).ContainsReference());
+    EXPECT_FALSE(SemanticType(&second).ContainsReference());
+    second.fields.push_back({"reference", SemanticType(
+        SemanticTypeKind::Reference, SemanticType(SemanticTypeKind::I32)),
+        nullptr});
+    EXPECT_TRUE(SemanticType(&first).ContainsReference());
+    EXPECT_TRUE(SemanticType(&second).ContainsReference());
+    second.fields.pop_back();
+    first.fields.push_back({"reference", SemanticType(
+        SemanticTypeKind::Reference, SemanticType(SemanticTypeKind::I32)),
+        nullptr});
+    EXPECT_TRUE(SemanticType(&first).ContainsReference());
+    EXPECT_TRUE(SemanticType(&second).ContainsReference());
+}
+
 TEST(SemanticInterfaceTests, RegistersInterfacesAndResolvesNominalRelations) {
     Analysis analysis = Analyze(R"(
         interface Readable {};
@@ -8303,6 +8329,47 @@ TEST(SemanticMemoryTests, MutableOwnerCallsCannotReceiveTheirFieldAliases) {
     EXPECT_TRUE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests, InterfaceReturnsPreserveManagedSliceCleanup) {
+    auto analysis = Analyze(R"(
+        interface Encode {
+            (own []u8, error) encode(&const self) default;
+            own []u8 empty(&const self) default;
+            (own []u8, error) custom(&const self) virtual;
+        };
+        (own []u8, error) Encode::encode(&const self) {
+            return new<own []u8>(1);
+        }
+        own []u8 Encode::empty(&const self) { return none; }
+        structure Item << Encode {};
+        (own []u8, error) Item::custom(&const self) override {
+            return new<own []u8>(1);
+        }
+        void inspect(&const Encode value) {
+            loop usize i = 0; i < 2; i++ {
+                bytes, err := value->encode();
+                if err != none { return; }
+                view := bytes[:];
+                view.len();
+                empty := value->empty();
+                empty[:].len();
+                custom, failure := value->custom();
+                if failure != none { return; }
+                custom[:].len();
+            }
+        }
+        void use() {
+            item := Item::init();
+            bytes, err := item.encode();
+            if err != none { return; }
+            bytes[:].len();
+            inspect(&item);
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
 TEST(SemanticMemoryTests, InterfaceContractsRejectUnprovenRawEffects) {
     for (const std::string& source : {
              R"(
@@ -9541,4 +9608,58 @@ TEST(SemanticDecorationTests, RejectsOutOfRangeMetadataWithoutPublishingIt) {
         FindDiagnostic(analysis, DiagnosticCode::IntegerLiteralOutOfRange),
         nullptr);
     EXPECT_TRUE(analysis.model.Decorations().empty());
+}
+
+TEST(SemanticGenericTests, OwnedSlicePatternsBindOnlyInSelectedBranches) {
+    auto analysis = Analyze(R"(
+        structure Item { i32 value; };
+        i32 depth<T>() {
+            if T.isof<own []Element> {
+                return 1 + depth<Element>();
+            } else if T.isof<i32> {
+                return 0;
+            } else if T.isof<Item> {
+                Item value = none;
+                return value.value;
+            } else {
+                return missing();
+            }
+        }
+        bool exact<T, E>() { return T.isof<own []E>; }
+        i32 main() {
+            bool yes = exact<own []i32, i32>();
+            bool no = exact<own []i32, u32>();
+            return depth<own []own []Item>() + depth<i32>();
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        EXPECT_NE(diagnostic.severity, DiagnosticSeverity::Error) << diagnostic.message;
+}
+
+TEST(SemanticGenericTests, OwnedSlicePatternBindingsDoNotEscapeOrShadowTypes) {
+    for (const std::string& source : {
+        R"(void check<T>() { if T.isof<own []E> { E value = none; } E escaped = none; }
+            i32 main() { check<own []i32>(); return 0; })",
+        R"(void check<T>() { if T.isof<own []E> {} else { E escaped = none; } }
+            i32 main() { check<i32>(); return 0; })",
+        R"(structure E {}; void check<T>() { if T.isof<own []E> { missing(); } }
+            i32 main() { check<own []E>(); return 0; })",
+        R"(void check<T, E>() { if T.isof<own []E> { missing(); } }
+            i32 main() { check<own []i32, i32>(); return 0; })"
+    }) {
+        SCOPED_TRACE(source);
+        auto analysis = Analyze(source);
+        EXPECT_TRUE(analysis.diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, OwnedSlicePatternsKeepOrdinaryLoopAndBranchChecking) {
+    auto analysis = Analyze(R"(
+        void check<T>(bool flag) {
+            if flag { unknownRuntimeCall(); }
+            if T.isof<own []E> { E value = none; }
+        }
+        i32 main() { check<own []i32>(false); return 0; }
+    )");
+    EXPECT_TRUE(analysis.diagnostics.HasErrors());
 }

@@ -1,0 +1,9 @@
+module main;
+@imports :: root::metadata;
+@metadata structure Item {};
+structure Explicit { @metadata i32 value; };
+i32 main() {
+    item := Item::init();
+    explicitValue := Explicit::init();
+    return metadata::consume<Item>(&item) + metadata::consume<Explicit>(&explicitValue);
+}

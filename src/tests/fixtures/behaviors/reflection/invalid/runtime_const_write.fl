@@ -1,0 +1,8 @@
+module runtime_const_write;
+// expect FLECHA-S0005
+decoration meta { application() target structure; };
+interface Read { void read(&const self) virtual; };
+behavior meta<T> => structure << Read {
+    void T::read(&const self) override { while true { for<F> Field<T, F> field = T::fields() { field::get(self) = 1; } } }
+};
+@meta structure Item { i32 value; };

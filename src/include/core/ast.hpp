@@ -1417,11 +1417,13 @@ class RangeStatement final : public Statement {
     RangeStatement(source::SourceRange range,
                    std::unique_ptr<BlockStatement> expansion,
                    const VariableDeclarationStatement* source,
-                   const VariableDeclarationStatement* indexBinding)
+                   const VariableDeclarationStatement* indexBinding,
+                   std::vector<const AstNode*> syntaxChildren)
         : Statement(range),
           _expansion(std::move(expansion)),
           _source(source),
-          _indexBinding(indexBinding) {}
+          _indexBinding(indexBinding),
+          _syntaxChildren(std::move(syntaxChildren)) {}
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::RangeStatement;
     }
@@ -1434,11 +1436,16 @@ class RangeStatement final : public Statement {
     [[nodiscard]] const VariableDeclarationStatement* IndexBinding() const {
         return _indexBinding;
     }
+    // Original source nodes, owned by Expansion(), without synthetic nodes.
+    [[nodiscard]] const std::vector<const AstNode*>& SyntaxChildren() const {
+        return _syntaxChildren;
+    }
 
    private:
     std::unique_ptr<BlockStatement> _expansion;
     const VariableDeclarationStatement* _source;
     const VariableDeclarationStatement* _indexBinding;
+    std::vector<const AstNode*> _syntaxChildren;
 };
 
 // A bounded compiler-only field pack iteration; never a runtime loop.

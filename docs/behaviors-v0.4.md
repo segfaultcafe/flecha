@@ -36,8 +36,8 @@ locations to behavior source, activating applications, targets, and fields.
 operations `name`, `decorated`, `decorator`, and `get` are bounded compile-time
 operations. Metadata predicates fold before checking the selected branch.
 Missing metadata guards, descriptor escapes, invalid operations, and unsupported
-loop transfers are errors. `break`, `proceed`, and `jumpto` inside these loops
-remain rejected; their future control-flow semantics are not part of LANG-04.
+loop transfers are errors. `proceed` skips the current expanded field and
+`break` exits the field iteration. `jumpto` remains rejected.
 
 Existing compiler-owned JSON derivation is unchanged. Replacing it with native
 Flecha interfaces and behaviors is a subsequent migration and parity exercise.
@@ -309,11 +309,27 @@ for<F> Field<T, F> field = T::fields() {
 
 The compiler expands it in source declaration order and then type-checks each
 specialized body normally. An empty structure produces zero expansions. The
-loop cannot use runtime `break`, `proceed`, or `jumpto`, and neither
+loop supports `proceed` and `break` as described below. Neither
 `Field<T, F>` nor a field pack has a runtime representation. This exact loop
 form is valid only inside a `behavior ... => structure` method. It is not general compile-time
 iteration and is invalid in ordinary functions, interface bodies, and enum
 behaviors.
+
+Field iteration may occur inside `while`, counted `loop`, and `for ... range`
+loops. Conversely, runtime loops may use reflected projections, metadata, and
+closed `F` types inside a field iteration. Expansion happens once per direct
+field at compile time; only the resulting ordinary code runs repeatedly. This
+does not introduce runtime descriptors or data-dependent expansion. Ordinary
+borrow, move, initialization, and effect checks apply to the expanded loops.
+Transfers target the nearest enclosing loop. When that loop is `for<F>`,
+`proceed` skips the rest of the current field's expanded body; `break` skips
+all remaining fields and continues after the entire field iteration. A nested
+runtime loop retains ordinary `break`/`proceed` semantics. These transfers do
+not target an outer runtime loop. Ordinary cleanup applies on both paths.
+`jumpto` inside a field iteration remains prohibited.
+
+Field-pack expansion and compile-time validations still run independently of
+runtime transfers. A runtime `break` does not suppress validation of later fields.
 
 The loop variable is a unique compile-time descriptor type, not a runtime
 value and not the field's value type. `F` is the value type. Two fields with
@@ -404,8 +420,8 @@ error.
 
 Selection must also be known at expansion time. Folded-away branches register
 no keys. A validation statement under an unresolved `if`, `else if`, `else`,
-or `also` condition is rejected. The existing prohibitions on reflection in
-runtime loops and closures remain in force. Validation is performed when the
+or `also` condition, or inside a runtime loop, is rejected. Put compile-time
+validations before runtime iteration. Reflection remains prohibited in closures. Validation is performed when the
 method is expanded, regardless of whether runtime execution would reach the
 statement; it has no return value, cannot be deferred, and cannot escape into
 an expression. Exact handwritten providers still suppress the entire derived
@@ -463,8 +479,30 @@ for<F> Field<T, F> field = T::fields() {
 }
 ```
 
+An owning slice can be matched with `F.isof<own []Element>` in an `if`
+or `else if` condition. A fresh unqualified `Element` binds the exact element
+type in the selected body only. Existing nominal types and already-bound type
+parameters remain exact match targets, rather than being rebound. Matching
+`own []own []i32` binds `Element` to `own []i32`; matching `own []const User`
+preserves `const User`. Borrowed slices and fixed arrays do not match.
+
+```flecha
+if F.isof<own []Element> {
+    value, err := readArray<Element>(reader);
+    if err != none { return err; }
+    field::get(self) = value;
+}
+```
+
+The same pattern and selected-branch specialization work in generic helpers,
+allowing bounded recursive specialization for nested arrays. A pattern binding
+does not escape into alternatives, `also`, or following statements. Use the
+pattern as the direct branch condition; it is not a general declaration inside
+an arbitrary Boolean expression. Incompatible branches are discarded before
+ordinary semantic analysis. There is no runtime type test or type descriptor.
+
 This does not permit references to owned strings, general compile-time calls,
-or reflection inside runtime loops and closures. New concrete generic types
+or reflection inside closures. New concrete generic types
 needed by closed query targets enter the existing expansion fixed point and
 are rolled back if the transaction fails.
 
@@ -618,10 +656,8 @@ declaration, and token budgets. Exceeding a budget is a compile-time error.
 
 ## Deliberately deferred
 
-Control flow for compile-time field iteration remains an open follow-up:
-iteration-local `jumpto` would require hygienic positions and boundary checks;
-`break` and `proceed` need explicit whole-expansion and next-field semantics.
-All three remain rejected, including after concrete behavior expansion.
+Iteration-local `jumpto` remains deferred: it would require hygienic positions
+and boundary checks. `break` and `proceed` are supported as described above.
 
 The initial design does not include:
 

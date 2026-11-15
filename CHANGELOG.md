@@ -4,6 +4,17 @@
 
 ### Added
 
+- Owning-slice type patterns such as `T.isof<own []Element>` bind an element
+  type in selected behavior and generic branches, including nested owners.
+  Nonselected type branches are discarded before semantic checking.
+- Behavior field loops support `proceed` for the next field and `break` for
+  exiting the field pack, while nested runtime loops keep their own targets.
+  `jumpto` remains rejected.
+
+- Behavior field iteration composes with `while`, counted `loop`, and range
+  loops. Reflected metadata, field projections, and type queries expand before
+  ordinary runtime analysis. Compile-time validations remain outside runtime
+  selection; descriptor escapes and unsupported loop transfers remain errors.
 - Behavior field reflection now supports `field::isPrivate()` and bounded
   `field::requireUnique(key)` validation. Libraries can exclude private fields
   and reject duplicate compile-time names without generating runtime checks.
@@ -27,6 +38,16 @@
 - The Neovim plugin now starts `flecha-lsp` automatically for Flecha buffers,
   discovers Longbow workspace roots, reuses an existing compatible client, and
   supports explicit server/compiler overrides for development checkouts.
+
+### Fixed
+
+- Recursive owning-slice structures no longer overflow the compiler stack
+  during reference analysis or destruction generation. Recursive cleanup
+  preserves custom teardown and reverse element destruction order.
+- Managed owning slices returned through interfaces retain automatic cleanup
+  instead of being tracked as raw allocations, including tuple results.
+- Prospective behavior conformance recognizes imported decoration shorthand
+  such as `@json`, consistently with semantic decoration resolution.
 
 ## 0.3.3 - 2026-11-15
 

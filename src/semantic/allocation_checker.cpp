@@ -1175,8 +1175,15 @@ class AllocationChecker final {
     Value IndirectContractResult(State& state, const core::Expression& call,
                                  const CallableSignature& signature) {
         const auto owned = [&](std::size_t index) {
+            const SemanticType type =
+                signature.result.Kind() == SemanticTypeKind::Tuple
+                    ? signature.result.Elements()[index]
+                    : signature.result;
+            // Managed owning slices carry cleanup in their type. Only raw
+            // owning handles belong in the explicit allocation ledger.
             return index < signature.resultContracts.size() &&
-                   signature.resultContracts[index] == OwnershipContract::Own;
+                   signature.resultContracts[index] == OwnershipContract::Own &&
+                   IsHeapHandle(type);
         };
         const auto makeOwned = [&](std::size_t index) {
             const auto key = std::make_pair(&call, index);

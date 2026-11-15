@@ -13,14 +13,10 @@ structure Explicit {
     @j::json("answer") i32 value;
     bool ignored;
 };
-// The protected slot is currently part of the interface contract, including
-// for handwritten providers. This fixture makes that obligation explicit.
+// Handwritten readers need only the public readJson contract.
 structure Manual << j::JsonReadable { i32 value; };
 error Manual::readJson(&self, &j::Reader reader) override {
     self->value = 42;
-    return reader->skipValue();
-}
-protected error Manual::readJsonField(&self, &j::Reader reader) override {
     return reader->skipValue();
 }
 

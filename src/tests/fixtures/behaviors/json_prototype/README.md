@@ -37,7 +37,9 @@ CI exercises the ownership boundary without an external library checkout.
 This does not establish parity for every supported JSON field type, allocation
 failure, or serialization.
 
-The protected virtual helper is part of the interface contract. A handwritten
-`readJson` alone does not fulfill that extra slot; `Manual` explicitly provides
-both methods. The migration must decide compatibility for existing handwritten
-providers before adopting this contract in the public library.
+The public contract requires only `readJson`. Its behavior expands field
+selection inside the runtime property loop, without a protected helper slot.
+`Manual` implements only `readJson`. Compile-time field requirements and unique
+name validation run before the runtime loop. The helper-based fixture above
+remains coverage for ordinary protected interface dispatch, not a JSON API
+requirement.
