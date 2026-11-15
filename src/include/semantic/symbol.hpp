@@ -228,6 +228,9 @@ struct InterfaceReference final {
     source::SourceRange range;
 };
 
+[[nodiscard]] std::vector<const InterfaceType*> InterfaceConformanceClosure(
+    const std::vector<InterfaceReference>& roots);
+
 struct InterfaceType final {
     std::string name;
     std::string displayName;

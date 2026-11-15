@@ -2810,6 +2810,7 @@ void SemanticAnalyzer::RegisterFunction(
 }
 
 SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
+    const auto diagnosticsBeforeAnalysis = _diagnostics;
     _model = SemanticModel{};
     const auto diagnosticsBeforeExpansion = _diagnostics.Diagnostics().size();
     ExpandGenerics(unit, _diagnostics);
@@ -2939,6 +2940,27 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     ResolveStructureFields();
     ValidateDecorations(unit);
     ResolveCallableTypes(unit);
+    RegisterBehaviors(unit);
+    const bool hasBehaviors = !_model._behaviorActivations.empty();
+    const auto declarationsBeforeBehaviors = unit.Declarations().size();
+    const auto aliasesBeforeBehaviors = unit.genericAliases;
+    const auto rollbackBehaviors = [&]() {
+        ReportBehaviorOrigins();
+        // Generic declarations discovered only by an aborted expansion are
+        // part of the transaction as well.
+        auto declarations = unit.TakeDeclarations();
+        declarations.resize(declarationsBeforeBehaviors);
+        for (auto& declaration : declarations)
+            unit.AddDeclaration(std::move(declaration));
+        unit.genericAliases = aliasesBeforeBehaviors;
+        diagnostics::DiagnosticBag ignored;
+        SemanticAnalyzer baseline(ignored);
+        baseline._behaviorBaseline = true;
+        return baseline.Analyze(unit);
+    };
+    if (!_behaviorBaseline && hasBehaviors && _diagnostics.HasErrors())
+        return rollbackBehaviors();
+    if (!_behaviorBaseline) StageBehaviorConformances();
     RegisterFunctions(unit);
     bindGenericAliases();
     BindImports(unit);
@@ -2946,8 +2968,31 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     GenerateInitializers();
     GenerateJsonMethods();
     BindImports(unit);
-    ValidateInterfaceConformance();
-    RegisterBehaviors(unit);
+    if (_behaviorBaseline) return std::move(_model);
+    if (hasBehaviors && _diagnostics.HasErrors()) return rollbackBehaviors();
+    PlanBehaviors(unit);
+    if (!_diagnostics.HasErrors() &&
+        unit.Declarations().size() != declarationsBeforeBehaviors) {
+        if (_behaviorExpansionDepth >= 64) {
+            Report(diagnostics::DiagnosticCode::InvalidBehaviorExpansion,
+                   unit.Range(),
+                   "behavior/generic specialization depth exceeded");
+            return rollbackBehaviors();
+        }
+        // Newly discovered generic types/functions enter the same ordinary
+        // registration pipeline. Rebuild the private transaction to a fixed
+        // point; cached specialization identities prevent duplicate emission.
+        // Reanalysis recomputes warnings; retain only diagnostics supplied by
+        // the caller so each source diagnostic is reported once.
+        _diagnostics = diagnosticsBeforeAnalysis;
+        SemanticAnalyzer next(_diagnostics);
+        next._behaviorExpansionDepth = _behaviorExpansionDepth + 1;
+        auto result = next.Analyze(unit);
+        if (_diagnostics.HasErrors()) return rollbackBehaviors();
+        return result;
+    }
+    bindGenericAliases();
+    if (hasBehaviors && _diagnostics.HasErrors()) return rollbackBehaviors();
     ValidateExports(unit);
     for (const auto& structure : _model._structures)
         for (const auto& field : structure->fields)
@@ -2993,18 +3038,21 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
         if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration)
             AnalyzeDefaultArguments(
                 static_cast<const core::FunctionDeclaration&>(*declaration));
-    for (const std::unique_ptr<core::Declaration>& declaration :
-         unit.Declarations())
-        if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration &&
-            static_cast<const core::FunctionDeclaration&>(*declaration)
-                .HasVariadicPack())
-            AnalyzeFunction(
-                static_cast<const core::FunctionDeclaration&>(*declaration));
-    for (const auto& declaration : unit.Declarations()) {
-        if (declaration->Kind() != core::AstNodeKind::FunctionDeclaration)
-            continue;
-        const auto& syntax =
-            static_cast<const core::FunctionDeclaration&>(*declaration);
+    std::vector<const core::FunctionDeclaration*> variadicFunctions;
+    for (const auto& declaration : unit.Declarations())
+        if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration) {
+            const auto* function =
+                static_cast<const core::FunctionDeclaration*>(
+                    declaration.get());
+            if (function->HasVariadicPack())
+                variadicFunctions.push_back(function);
+        }
+    for (const auto& function : _model._generatedFunctions)
+        if (function->HasVariadicPack())
+            variadicFunctions.push_back(function.get());
+    for (const auto* function : variadicFunctions) AnalyzeFunction(*function);
+    for (const auto* function : variadicFunctions) {
+        const auto& syntax = *function;
         if (!syntax.HasVariadicPack()) continue;
         const auto* start =
             static_cast<const FunctionSymbol*>(_model.DeclaredSymbol(syntax));
@@ -3023,7 +3071,11 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
                 "variadic forwarding cycle involving '" + start->Name() + "'");
     }
     for (const auto& function : _model._generatedFunctions)
-        AnalyzeFunction(*function);
+        if (!function->HasVariadicPack()) AnalyzeFunction(*function);
+    if (hasBehaviors) {
+        ValidateBehaviorProjections();
+        if (_diagnostics.HasErrors()) return rollbackBehaviors();
+    }
     for (const std::unique_ptr<core::Declaration>& declaration :
          unit.Declarations()) {
         if (declaration->Kind() == core::AstNodeKind::FunctionDeclaration) {
@@ -3057,8 +3109,9 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     WarnForCrashlessFunctions();
     if (!_diagnostics.HasErrors())
         AnalyzeAllocations(unit, _model, _diagnostics);
-    PlanBehaviors(unit);
     ReportGenericOrigins(unit, _diagnostics);
+    ReportBehaviorOrigins();
+    if (hasBehaviors && _diagnostics.HasErrors()) return rollbackBehaviors();
     _currentScope = nullptr;
     _currentFunction = nullptr;
     return std::move(_model);
@@ -7473,23 +7526,12 @@ void SemanticAnalyzer::ResolveNominalRelations() {
     for (const auto& enumeration : _model._enums)
         validateComposition(enumeration->conformances, "enum");
 
-    const auto conformanceClosure = [](const auto& direct) {
-        std::vector<const InterfaceType*> result;
-        std::unordered_set<const InterfaceType*> seen;
-        for (const auto& reference : direct) {
-            if (seen.insert(reference.type).second)
-                result.push_back(reference.type);
-            for (const InterfaceType* ancestor : reference.type->ancestors)
-                if (seen.insert(ancestor).second) result.push_back(ancestor);
-        }
-        return result;
-    };
     for (const auto& structure : _model._structures)
         structure->conformanceClosure =
-            conformanceClosure(structure->conformances);
+            InterfaceConformanceClosure(structure->conformances);
     for (const auto& enumeration : _model._enums)
         enumeration->conformanceClosure =
-            conformanceClosure(enumeration->conformances);
+            InterfaceConformanceClosure(enumeration->conformances);
 }
 
 void SemanticAnalyzer::ResolveInterfaceMethods() {
@@ -7791,13 +7833,16 @@ void SemanticAnalyzer::ValidateInterfaceConformance() {
                     }
                 if (!implemented &&
                     required->category == core::MethodCategory::Virtual)
-                    Report(diagnostics::DiagnosticCode::InvalidInterface,
-                           conformance.range,
-                           std::string(concreteKind) + " '" +
-                               concrete.displayName + "' does not implement '" +
-                               required->key.name +
-                               "' required by interface '" +
-                               required->declaredBy->displayName + "'");
+                    _diagnostics.Report(
+                        diagnostics::DiagnosticCode::InvalidInterface,
+                        conformance.range,
+                        std::string(concreteKind) + " '" +
+                            concrete.displayName + "' does not implement '" +
+                            required->key.name + "' required by interface '" +
+                            required->declaredBy->displayName + "'",
+                        diagnostics::DiagnosticSeverity::Error,
+                        {{required->syntax->Range(),
+                          "required interface method"}});
             }
         }
     };
@@ -8777,12 +8822,7 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
          (function.EnumOwner() && CurrentEnumOwner() != function.EnumOwner())))
         Report(diagnostics::DiagnosticCode::PrivateAccess, range,
                "method '" + function.Name() + "' is private");
-    const bool prospectiveAccess =
-        std::ranges::find(_prospectiveMethods, &function) !=
-            _prospectiveMethods.end() &&
-        ((function.Owner() && CurrentOwner() == function.Owner()) ||
-         (function.EnumOwner() && CurrentEnumOwner() == function.EnumOwner()));
-    if (function.IsProtected() && !prospectiveAccess) {
+    if (function.IsProtected()) {
         const InterfaceType* declaringInterface = function.InterfaceOwner();
         const MethodKey key = MethodKeyOf(function);
         const auto findDeclaration = [&](const auto& conformances) {
@@ -9302,23 +9342,6 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
             overloads.insert(overloads.end(), concrete->second.begin(),
                              concrete->second.end());
     }
-    // A detached behavior sees its declared signatures as a provisional
-    // method surface. Same-key concrete methods do not create a second
-    // overload here; selecting an implementation remains a later stage.
-    for (const FunctionSymbol* prospective : _prospectiveMethods) {
-        if ((!owner || prospective->Owner() != owner) &&
-            (!enumOwner || prospective->EnumOwner() != enumOwner))
-            continue;
-        const MethodKey key = MethodKeyOf(*prospective);
-        if (key.name != expression.Member() ||
-            prospective->IsCrashable() != expression.IsCrashable())
-            continue;
-        std::erase_if(overloads, [&](const FunctionSymbol* candidate) {
-            return candidate->IsCrashable() == prospective->IsCrashable() &&
-                   MethodKeyOf(*candidate) == key;
-        });
-        overloads.push_back(prospective);
-    }
     const std::size_t concreteOverloadCount = overloads.size();
     if (interfaceOwner) {
         for (const MethodContract* contract : interfaceOwner->methods)
@@ -9379,11 +9402,6 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
     if (!function) return SemanticType::Error();
     _model._methods[&expression] = function;
     const MethodContract* interfaceContract = nullptr;
-    if (const auto prospective = _prospectiveContracts.find(function);
-        prospective != _prospectiveContracts.end()) {
-        interfaceContract = prospective->second;
-        _model._interfaceMethods[&expression] = interfaceContract;
-    }
     if (interfaceOwner) {
         for (const MethodContract* contract : interfaceOwner->methods)
             if (contract->callable == function) {

@@ -9,6 +9,7 @@
 #include "core/parser.hpp"
 #include "semantic/allocation_checker.hpp"
 #include "semantic/compile_time_value.hpp"
+#include "semantic/generic_expander.hpp"
 #include "semantic/semantic_analyzer.hpp"
 
 namespace flecha::semantic {
@@ -25,6 +26,24 @@ bool Inside(Range outer, Range inner) {
     return outer.start.file == inner.start.file &&
            outer.start.offset <= inner.start.offset &&
            inner.end.offset <= outer.end.offset;
+}
+Range SyntaxRange(const AstNode& node) {
+    auto range = node.Range();
+    // NameExpression keeps an identifier range for navigation. Its explicit
+    // type arguments still belong to the rewrite, before the caller's `>`.
+    if (node.Kind() == AstNodeKind::Type) {
+        const auto& type = static_cast<const TypeNode&>(node);
+        for (const auto& argument : type.typeArguments)
+            if (SyntaxRange(*argument).end.offset > range.end.offset)
+                range.end = SyntaxRange(*argument).end;
+    }
+    if (node.Kind() == AstNodeKind::NameExpression) {
+        const auto& name = static_cast<const NameExpression&>(node);
+        for (const auto& argument : name.typeArguments)
+            if (SyntaxRange(*argument).end.offset > range.end.offset)
+                range.end = SyntaxRange(*argument).end;
+    }
+    return range;
 }
 std::vector<const AstNode*> Children(const AstNode& n) {
     std::vector<const AstNode*> children;
@@ -57,23 +76,14 @@ struct Context {
 };
 }  // namespace
 
-// All generated declarations and symbols belong to a separate model. The
-// input model is only consulted for resolved types, metadata and lexical scope.
+// Materialize accepted plans in the analyzer transaction. Nothing is returned
+// to callers until the complete generated surface passes ordinary analysis.
 class BehaviorPlanner {
    public:
     explicit BehaviorPlanner(SemanticAnalyzer& analyzer)
         : _host(analyzer), _model(analyzer._model) {}
-    void Run(const CompilationUnit& unit) {
-        for (const auto& behavior : _model._behaviors) {
-            _currentBehavior = &behavior;
-            const auto before = _host._diagnostics.Diagnostics().size();
-            for (auto& method : behavior.declaration->methods) {
-                _tokens = &method->templateTokens;
-                Validate(method->Body(), {});
-            }
-            if (_host._diagnostics.Diagnostics().size() != before)
-                _invalidBehaviors.insert(&behavior);
-        }
+    void Run(CompilationUnit& unit) {
+        _model._behaviorPlans.reserve(_model._behaviorActivations.size());
         for (const auto& activation : _model._behaviorActivations) {
             if (!activation.valid) continue;
             _currentBehavior = activation.behavior;
@@ -81,7 +91,7 @@ class BehaviorPlanner {
             if (!target) continue;
             _model._behaviorPlans.push_back({&activation, target->Type()});
             _plan = &_model._behaviorPlans.back();
-            _plan->valid = !_invalidBehaviors.contains(_currentBehavior);
+
             for (auto* metadata : activation.applications)
                 if (metadata->target == activation.target)
                     _plan->metadata = Record(*metadata);
@@ -103,18 +113,35 @@ class BehaviorPlanner {
             for (auto& method : _currentBehavior->methods) Build(method, unit);
             _plan = nullptr;
         }
+        // All ordinary method symbols and inherited contracts are now visible.
+        // Validate the complete selected surface before touching any body.
+        _host.ValidateInterfaceConformance();
+        if (_host._diagnostics.HasErrors()) return;
+        for (auto& pending : _pending) {
+            _plan = pending.plan;
+            _currentBehavior = _plan->activation->behavior;
+            Build(*pending.method, unit, &pending);
+        }
+        _plan = nullptr;
     }
 
    private:
+    struct Pending {
+        BehaviorExpansionPlan* plan;
+        const BehaviorMethodContract* method;
+        FunctionDeclaration* function;
+        Scope* scope;
+        std::size_t bodyIndex;
+    };
+    std::vector<Pending> _pending;
     SemanticAnalyzer& _host;
     SemanticModel& _model;
     const BehaviorContract* _currentBehavior = nullptr;
     BehaviorExpansionPlan* _plan = nullptr;
     const std::vector<Token>* _tokens = nullptr;
-    SemanticAnalyzer* _detached = nullptr;
     Scope* _scope = nullptr;
     std::size_t _generatedTokens = 0, _generatedBodies = 0, _aliasId = 0;
-    std::set<const BehaviorContract*> _invalidBehaviors;
+
     std::set<std::pair<std::string, std::size_t>> _ambiguousNavigation;
     std::vector<std::pair<Range, const StructureField*>> _projections;
 
@@ -444,19 +471,18 @@ class BehaviorPlanner {
         // These values were evaluated from an already validated scalar
         // contract. Preserve their exact type/bits, including signed integers
         // and errors.
-        _detached->_model._types.insert_or_assign(initializer.get(),
-                                                  literalType);
+        _model._types.insert_or_assign(initializer.get(), literalType);
         auto declaration = std::make_unique<ModuleConstantDeclaration>(
-            range, _detached->TypeSyntax(value.type.WithConst(), range), name,
-            range, std::move(initializer));
+            range, _host.TypeSyntax(value.type.WithConst(), range), name, range,
+            std::move(initializer));
         auto symbol = std::make_unique<VariableSymbol>(
             SymbolKind::ModuleConstant, name, value.type.WithConst(), range,
             false);
         (void)_scope->Declare(*symbol);
-        _detached->_model._moduleConstants[symbol.get()] = declaration.get();
-        _detached->_model._declarations[declaration.get()] = symbol.get();
-        _detached->_model._symbols.push_back(std::move(symbol));
-        _detached->_model._detachedConstants.push_back(std::move(declaration));
+        _model._moduleConstants[symbol.get()] = declaration.get();
+        _model._declarations[declaration.get()] = symbol.get();
+        _model._symbols.push_back(std::move(symbol));
+        _model._detachedConstants.push_back(std::move(declaration));
         _plan->substitutions.push_back(
             {range, c.field ? c.field->field : nullptr, value});
         return One(TokenType::Identifier, name, range);
@@ -479,7 +505,7 @@ class BehaviorPlanner {
                     iteration.fieldTypeAlias, field.type, loop.binderRange,
                     false);
                 (void)_scope->Declare(*alias);
-                _detached->_model._symbols.push_back(std::move(alias));
+                _model._symbols.push_back(std::move(alias));
                 Occurrence(loop.binderRange, loop.binder,
                            "F = " + field.type.Name(), true, loop.binderRange);
                 auto body = Rewrite(*loop.body, iteration);
@@ -656,78 +682,81 @@ class BehaviorPlanner {
             return a->Range().start.offset < b->Range().start.offset;
         });
         Tokens out;
-        std::size_t cursor = n.Range().start.offset;
+        std::size_t cursor = SyntaxRange(n).start.offset;
         for (auto* child : children) {
-            if (!Inside(n.Range(), child->Range()) ||
-                child->Range().start.offset < cursor)
+            if (!Inside(SyntaxRange(n), SyntaxRange(*child)) ||
+                SyntaxRange(*child).start.offset < cursor)
                 continue;
             for (auto& token : *_tokens)
-                if (Inside(n.Range(), token.range) &&
+                if (Inside(SyntaxRange(n), token.range) &&
                     token.range.start.offset >= cursor &&
-                    token.range.end.offset <= child->Range().start.offset)
+                    token.range.end.offset <= SyntaxRange(*child).start.offset)
                     out.push_back({token});
             Append(out, Rewrite(*child, c));
-            cursor = child->Range().end.offset;
+            cursor = SyntaxRange(*child).end.offset;
         }
         for (auto& token : *_tokens)
-            if (Inside(n.Range(), token.range) &&
+            if (Inside(SyntaxRange(n), token.range) &&
                 token.range.start.offset >= cursor)
                 out.push_back({token});
         return out;
     }
-    void Build(const BehaviorMethodContract& method,
-               const CompilationUnit& unit) {
+    void Build(const BehaviorMethodContract& method, CompilationUnit& unit,
+               Pending* pending = nullptr) {
         if (!_plan->valid) return;
-        bool reflects = false;
-        WalkAst(method.declaration->Body(), [&](AstNode& n, bool enter) {
-            if (!enter) return;
-            if (n.Kind() == AstNodeKind::FieldIterationStatement)
-                reflects = true;
-            if (const auto* call = Operation(n);
-                call &&
-                Receiver(*call) ==
-                    _currentBehavior->declaration->targetParameter &&
-                (call->Member() == "decorated" ||
-                 call->Member() == "decorator" || call->Member() == "fields"))
-                reflects = true;
-        });
-        // LANG-02 accepted opaque bodies. Bodies without contextual reflection
-        // remain provider candidates for LANG-04, preserving that contract.
-
-        if (++_generatedBodies > 2048) {
-            Error(DiagnosticCode::InvalidBehaviorExpansion,
-                  method.declaration->Range(),
-                  "behavior declaration budget exceeded");
-            return;
+        if (!pending) {
+            // Exact handwritten providers suppress the entire body, including
+            // its static reflection validation.
+            const auto& methods = _plan->target.Structure()
+                                      ? _plan->target.Structure()->methods
+                                      : _plan->target.Enum()->methods;
+            for (const auto& [name, overloads] : methods)
+                for (const auto* provider : overloads)
+                    if (!provider->IsPrivate() &&
+                        MethodContractOf(*provider,
+                                         provider->IsProtected()
+                                             ? MethodVisibility::Protected
+                                             : MethodVisibility::Public)
+                            .SameContract(method.signature))
+                        return;
+            if (++_generatedBodies > 2048) {
+                Error(DiagnosticCode::InvalidBehaviorExpansion,
+                      method.declaration->Range(),
+                      "behavior declaration budget exceeded");
+                return;
+            }
         }
-        diagnostics::DiagnosticBag diagnostics;
-        SemanticAnalyzer analyzer(diagnostics);
-        _detached = &analyzer;
-        _host.SetSource(_currentBehavior->declaration->sourceId);
-        _scope = &analyzer.AddScope(_host._currentScope);
-        analyzer._currentScope = _scope;
-        analyzer._sourceScopes = _host._sourceScopes;
-        analyzer._sourceScopes[_currentBehavior->declaration->sourceId] =
-            _scope;
-        analyzer._sourceModules = _host._sourceModules;
-        analyzer._inaccessibleImports = _host._inaccessibleImports;
-        analyzer._ambiguousImports = _host._ambiguousImports;
-        analyzer._model._moduleConstants = _model._moduleConstants;
-        analyzer._model._types = _model._types;
-        analyzer._model._bindings = _model._bindings;
-        analyzer._model._declarations = _model._declarations;
-        analyzer._model._variadicTargets = _model._variadicTargets;
-        auto binder = std::make_unique<Symbol>(
-            _plan->target.Kind() == SemanticTypeKind::Structure
-                ? SymbolKind::StructureType
-                : SymbolKind::EnumType,
-            _currentBehavior->declaration->targetParameter, _plan->target,
-            _currentBehavior->declaration->parameterRange, false);
-        (void)_scope->Declare(*binder);
-        analyzer._model._symbols.push_back(std::move(binder));
         _tokens = &method.declaration->templateTokens;
+        if (pending) Validate(method.declaration->Body(), {});
+        if (!_plan->valid) return;
+        auto& diagnostics = _host._diagnostics;
+        auto& analyzer = _host;
+        if (pending) {
+            _scope = pending->scope;
+            analyzer.SetSource(pending->function->sourceId);
+        } else {
+            _host.SetSource(_currentBehavior->declaration->sourceId);
+            _scope = &analyzer.AddScope(_host._currentScope);
+            analyzer._currentScope = _scope;
+            auto binder = std::make_unique<Symbol>(
+                _plan->target.Structure() ? SymbolKind::StructureType
+                                          : SymbolKind::EnumType,
+                _currentBehavior->declaration->targetParameter, _plan->target,
+                _currentBehavior->declaration->parameterRange, false);
+            (void)_scope->Declare(*binder);
+            analyzer._model._symbols.push_back(std::move(binder));
+        }
         _projections.clear();
-        auto expanded = Rewrite(*method.declaration, {});
+        Tokens expanded;
+        if (pending)
+            expanded = Rewrite(*method.declaration, {});
+        else {
+            auto signature = method.declaration->Range();
+            signature.end = method.declaration->Body().Range().start;
+            expanded = Raw(signature);
+            Append(expanded, One(TokenType::LCurly, "{", signature));
+            Append(expanded, One(TokenType::RCurly, "}", signature));
+        }
         if (!_plan->valid) return;
         // Give repeated expansions distinct coordinates inside the detached
         // AST. Every coordinate maps back to its exact original token and F.
@@ -735,7 +764,8 @@ class BehaviorPlanner {
         std::vector<Token> materialized;
         std::size_t offset = 0;
         const std::string expansionFile =
-            "$behavior$" + std::to_string(_generatedBodies);
+            pending ? pending->function->sourceId
+                    : "$behavior$" + std::to_string(_generatedBodies);
         for (auto& item : expanded) {
             auto original = item.token.range;
             auto range = original;
@@ -747,29 +777,6 @@ class BehaviorPlanner {
             item.token.range = range;
             materialized.push_back(std::move(item.token));
         }
-        const auto originFor =
-            [&](Range range) -> const BehaviorSourceProvenance* {
-            for (const auto& origin : provenance)
-                if (origin.expansion.start.file == range.start.file &&
-                    origin.expansion.start.offset <= range.start.offset &&
-                    range.start.offset < origin.expansion.end.offset)
-                    return &origin;
-            return nullptr;
-        };
-        const auto sourceRange = [&](Range range) {
-            if (const auto* origin = originFor(range)) {
-                auto original = origin->original;
-                for (const auto& end : provenance)
-                    if (end.expansion.start.offset < range.end.offset &&
-                        range.end.offset <= end.expansion.end.offset &&
-                        end.original.end.offset >= original.start.offset) {
-                        original.end = end.original.end;
-                        break;
-                    }
-                return original;
-            }
-            return range;
-        };
         materialized.emplace_back(TokenType::EOF_TOKEN, "",
                                   materialized.empty()
                                       ? method.declaration->Range()
@@ -785,142 +792,144 @@ class BehaviorPlanner {
             diagnostics.HasErrors()) {
             Error(DiagnosticCode::InvalidBehaviorExpansion,
                   method.declaration->Range(),
-                  "cannot materialize detached behavior body");
+                  "cannot materialize behavior method");
         } else {
             auto function = std::unique_ptr<FunctionDeclaration>(
                 static_cast<FunctionDeclaration*>(parsed.front().release()));
-            function->sourceId = _currentBehavior->declaration->sourceId;
-            function->moduleId = _currentBehavior->declaration->moduleId;
-            function->quiverId = _currentBehavior->declaration->quiverId;
-            // Register every declared signature before checking any reflected
-            // body. Forward calls and recursion resolve inside this detached
-            // model without publishing a concrete implementation.
-            const auto addProspective =
-                [&](const MethodContract& contract,
-                    const FunctionDeclaration* declaration,
-                    const MethodContract* requirement) {
-                    const SemanticType receiver =
-                        contract.key.receiver ==
-                                MethodReceiverKind::ConstReference
-                            ? _plan->target.WithConst()
-                            : _plan->target;
-                    std::vector<SemanticType> parameters{
-                        SemanticType(SemanticTypeKind::Reference, receiver)};
-                    parameters.insert(parameters.end(),
-                                      contract.key.parameters.begin(),
-                                      contract.key.parameters.end());
-                    auto signature =
-                        std::make_shared<CallableSignature>(CallableSignature{
-                            contract.result, parameters,
-                            contract.parameterContracts,
-                            contract.resultContracts,
-                            contract.borrowSourceIndices, contract.isUnsafe,
-                            contract.isOnce, contract.isCrashable});
-                    auto symbol = std::make_unique<FunctionSymbol>(
-                        "$behavior$" + std::to_string(_generatedBodies) +
-                            "::" + contract.key.name,
-                        signature, declaration->NameRange(),
-                        BuiltInFunction::None, _plan->target.Structure(), false,
-                        true, false, "", _plan->target.Enum(), declaration,
-                        contract.borrowsVariadicPack, nullptr,
-                        contract.visibility == MethodVisibility::Protected);
-                    if (declaration == function.get())
-                        analyzer._model._declarations[function.get()] =
-                            symbol.get();
-                    analyzer._prospectiveMethods.push_back(symbol.get());
-                    analyzer._prospectiveContracts.emplace(symbol.get(),
-                                                           requirement);
-                    analyzer._model._symbols.push_back(std::move(symbol));
+            if (pending) {
+                // Reuse the generic expander after binding T/F to concrete
+                // syntax. Canonical aliases preserve nominal identity across
+                // modules; primitives keep their ordinary syntax.
+                const auto alias = [&](const Declaration* declaration) {
+                    for (const auto& [name, existing] : unit.genericAliases)
+                        if (existing == declaration) return name;
+                    std::size_t id = unit.genericAliases.size();
+                    while (unit.genericAliases.contains("$generic_alias" +
+                                                        std::to_string(id)))
+                        ++id;
+                    const auto name = "$generic_alias" + std::to_string(id);
+                    unit.genericAliases[name] = declaration;
+                    return name;
                 };
-            for (const auto& prospective : _currentBehavior->methods)
-                addProspective(prospective.signature,
-                               &prospective == &method
-                                   ? function.get()
-                                   : prospective.declaration,
-                               prospective.requirement);
-            // Root method graphs already include inherited defaults. Expose
-            // their contracts with a concrete receiver, without deriving any
-            // conformance or selecting a runtime provider.
-            for (const auto& root : _currentBehavior->roots)
-                for (const MethodContract* contract : root.type->methods) {
-                    if (!contract->provider ||
-                        (contract->category != MethodCategory::Default &&
-                         contract->category != MethodCategory::Final))
-                        continue;
-                    const bool declared = std::any_of(
-                        analyzer._prospectiveMethods.begin(),
-                        analyzer._prospectiveMethods.end(),
-                        [&](const FunctionSymbol* candidate) {
-                            return MethodKeyOf(*candidate) == contract->key;
-                        });
-                    if (declared) continue;
-                    const auto* declaration = contract->provider->Declaration();
-                    if (!declaration)
-                        declaration = &contract->syntax->Signature();
-                    addProspective(*contract, declaration, contract);
-                }
-            if (reflects) analyzer.AnalyzeFunction(*function);
-            for (std::size_t i = 0;
-                 i < analyzer._model._anonymousFunctions.size(); ++i)
-                analyzer.AnalyzeFunction(
-                    *analyzer._model._anonymousFunctions[i]);
-            WalkAst(function->Body(), [&](AstNode& n, bool enter) {
-                if (!enter || n.Kind() != AstNodeKind::MemberAccessExpression)
-                    return;
-                auto& access = static_cast<const MemberAccessExpression&>(n);
-                auto found = std::find_if(
-                    _projections.begin(), _projections.end(), [&](auto& p) {
-                        return p.first.start.offset ==
-                                   sourceRange(access.MemberRange())
-                                       .start.offset &&
-                               p.second->name == access.Member();
-                    });
-                if (found != _projections.end() &&
-                    analyzer._model.FieldFor(access) != found->second)
-                    Error(DiagnosticCode::InvalidReflectionOperation,
-                          sourceRange(access.Range()),
-                          "get() receiver must refer to the concrete behavior "
-                          "target");
-            });
-            if (reflects && !diagnostics.HasErrors()) {
-                std::vector<std::unique_ptr<Declaration>> declarations;
-                declarations.push_back(std::move(function));
-                CompilationUnit validation(method.declaration->Range(),
-                                           std::move(declarations));
-                AnalyzeAllocations(validation, analyzer._model, diagnostics);
-                auto checked = validation.TakeDeclarations();
-                function.reset(static_cast<FunctionDeclaration*>(
-                    checked.front().release()));
+                const auto nominal =
+                    [&](SemanticType type) -> const Declaration* {
+                    if (type.Structure()) return type.Structure()->syntax;
+                    if (type.Enum()) return type.Enum()->syntax;
+                    if (type.Interface()) return type.Interface()->syntax;
+                    if (type.Kind() == SemanticTypeKind::NamedError ||
+                        type.Kind() == SemanticTypeKind::Function)
+                        for (const auto& declaration : unit.Declarations()) {
+                            const auto* symbol =
+                                _model.DeclaredSymbol(*declaration);
+                            if (symbol &&
+                                (symbol->Kind() == SymbolKind::ErrorType ||
+                                 symbol->Kind() == SymbolKind::CallableType) &&
+                                symbol->Type() == type.WithoutConst())
+                                return declaration.get();
+                        }
+                    return nullptr;
+                };
+                const auto canonicalize = [&](auto&& recurse, TypeNode& syntax,
+                                              SemanticType type) -> void {
+                    if (const auto* declaration = nominal(type))
+                        syntax.Rename(alias(declaration));
+                    else if (type.Kind() == SemanticTypeKind::Tuple) {
+                        for (std::size_t i = 0; i < type.Elements().size(); ++i)
+                            recurse(recurse, *syntax.Elements()[i],
+                                    type.Elements()[i]);
+                    } else if (type.Target()) {
+                        auto* target = syntax.Target();
+                        if (type.Kind() == SemanticTypeKind::OwnedBuffer)
+                            target = target->Target();
+                        recurse(recurse, *target, *type.Target());
+                    }
+                };
+                WalkAst(*function, [&](AstNode& node, bool enter) {
+                    if (!enter) return;
+                    if (node.Kind() == AstNodeKind::Type) {
+                        auto& type = static_cast<TypeNode&>(node);
+                        if (type.TypeForm() != TypeKind::Named ||
+                            !type.typeArguments.empty())
+                            return;
+                        const auto* symbol = _scope->Lookup(type.Name());
+                        if (!symbol) return;
+                        if (const auto* declaration = nominal(symbol->Type()))
+                            type.Rename(alias(declaration));
+                        else if (symbol->Kind() == SymbolKind::TypeBinding) {
+                            auto actual = analyzer.TypeSyntax(
+                                type.IsConst() ? symbol->Type().WithConst()
+                                               : symbol->Type(),
+                                type.Range(), type.Contract());
+                            canonicalize(canonicalize, *actual, symbol->Type());
+                            type = std::move(*actual);
+                        }
+                    } else if (node.Kind() == AstNodeKind::NameExpression) {
+                        auto& name = static_cast<NameExpression&>(node);
+                        const auto* symbol = _scope->Lookup(name.Name());
+                        if ((name.Name() == _currentBehavior->declaration
+                                                ->targetParameter ||
+                             name.Name().starts_with("$behavior$type$")) &&
+                            symbol &&
+                            (symbol->Kind() == SymbolKind::StructureType ||
+                             symbol->Kind() == SymbolKind::EnumType))
+                            if (const auto* declaration =
+                                    nominal(symbol->Type()))
+                                name.Rename(alias(declaration));
+                    }
+                });
+                function->sourceId = _currentBehavior->declaration->sourceId;
+                function->moduleId = _currentBehavior->declaration->moduleId;
+                function->quiverId = _currentBehavior->declaration->quiverId;
+                ExpandGeneratedGenerics(unit, *function, diagnostics);
+                pending->function->ReplaceBody(*function);
+                _plan->bodies[pending->bodyIndex].provenance =
+                    std::move(provenance);
+                _plan->bodies[pending->bodyIndex].projections = _projections;
+                return;
             }
-            _plan->bodies.push_back(
-                {provenance, std::move(function),
-                 std::make_shared<SemanticModel>(std::move(analyzer._model))});
-        }
-        for (auto& diagnostic : diagnostics.Diagnostics()) {
-            auto related = diagnostic.related;
-            related.push_back({_currentBehavior->declaration->decoration.range,
-                               "behavior declared here"});
-            related.push_back(
-                {_plan->activation->applications.front()->application->range,
-                 "behavior activated here"});
-            related.push_back({_plan->activation->target->Range(),
-                               "concrete T = " + _plan->target.Name()});
-            for (auto& location : related)
-                location.range = sourceRange(location.range);
-            if (const auto* origin = originFor(diagnostic.range);
-                origin && origin->field)
-                related.push_back({origin->field->syntax->NameRange(),
-                                   "field '" + origin->field->name +
-                                       "', F = " + origin->field->type.Name()});
-            _host._diagnostics.Report(
-                diagnostic.code, sourceRange(diagnostic.range),
-                diagnostic.message, diagnostic.severity, std::move(related));
-            if (diagnostic.severity == diagnostics::DiagnosticSeverity::Error)
-                _plan->valid = false;
+            function->sourceId = expansionFile;
+            function->moduleId = _plan->activation->target->moduleId;
+            function->quiverId = _plan->activation->target->quiverId;
+            analyzer._sourceScopes[expansionFile] = _scope;
+            analyzer._sourceModules[expansionFile] = function->moduleId;
+            analyzer._inaccessibleImports[expansionFile] =
+                analyzer._inaccessibleImports[_currentBehavior->declaration
+                                                  ->sourceId];
+            analyzer._ambiguousImports[expansionFile] =
+                analyzer
+                    ._ambiguousImports[_currentBehavior->declaration->sourceId];
+            analyzer.RegisterFunction(*function, true);
+            _plan->bodies.push_back({std::move(provenance), function.get()});
+            _pending.push_back({_plan, &method, function.get(), _scope,
+                                _plan->bodies.size() - 1});
+            _model._generatedFunctions.push_back(std::move(function));
         }
     }
 };
-void SemanticAnalyzer::PlanBehaviors(const core::CompilationUnit& unit) {
+void SemanticAnalyzer::ValidateBehaviorProjections() {
+    for (const auto& plan : _model._behaviorPlans)
+        for (const auto& body : plan.bodies)
+            WalkAst(body.declaration->Body(), [&](AstNode& node, bool enter) {
+                if (!enter ||
+                    node.Kind() != AstNodeKind::MemberAccessExpression)
+                    return;
+                const auto& access =
+                    static_cast<const MemberAccessExpression&>(node);
+                for (const auto& origin : body.provenance) {
+                    if (!Inside(origin.expansion, access.MemberRange()))
+                        continue;
+                    for (const auto& [range, field] : body.projections)
+                        if (range == origin.original &&
+                            access.Member() == field->name &&
+                            _model.FieldFor(access) != field)
+                            Report(DiagnosticCode::InvalidReflectionOperation,
+                                   access.Range(),
+                                   "get() receiver must refer to the concrete "
+                                   "behavior target");
+                }
+            });
+}
+void SemanticAnalyzer::PlanBehaviors(core::CompilationUnit& unit) {
     BehaviorPlanner(*this).Run(unit);
 }
 }  // namespace flecha::semantic

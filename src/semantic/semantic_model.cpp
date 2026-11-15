@@ -1,5 +1,7 @@
 #include "semantic/semantic_model.hpp"
 
+#include <algorithm>
+
 namespace flecha::semantic {
 
 const Symbol* SemanticModel::SymbolFor(
@@ -97,6 +99,32 @@ const core::ModuleConstantDeclaration* SemanticModel::ModuleConstantFor(
     const Symbol& symbol) const {
     const auto found = _moduleConstants.find(&symbol);
     return found == _moduleConstants.end() ? nullptr : found->second;
+}
+
+std::vector<const InterfaceType*> InterfaceConformanceClosure(
+    const std::vector<InterfaceReference>& roots) {
+    std::vector<const InterfaceType*> result;
+    const auto add = [&](const InterfaceType* type) {
+        if (std::find(result.begin(), result.end(), type) == result.end())
+            result.push_back(type);
+    };
+    for (const auto& root : roots) {
+        add(root.type);
+        for (const auto* ancestor : root.type->ancestors) add(ancestor);
+    }
+    return result;
+}
+
+source::SourceRange SemanticModel::SourceOrigin(
+    source::SourceRange range) const {
+    for (const auto& plan : _behaviorPlans)
+        for (const auto& body : plan.bodies)
+            for (const auto& origin : body.provenance)
+                if (origin.expansion.start.file == range.start.file &&
+                    origin.expansion.start.offset <= range.start.offset &&
+                    range.start.offset < origin.expansion.end.offset)
+                    return origin.original;
+    return range;
 }
 
 }  // namespace flecha::semantic
