@@ -194,7 +194,10 @@ The bounded descriptor operations are:
   and
 - field::get(receiver), which projects this exact field hygienically; and
 - field::requireUnique(key), a compile-time statement requiring a stringv key
-  to be unique among selected fields in the same bounded iteration.
+  to be unique among selected fields in the same bounded iteration; and
+- field::require(condition, message), which requires a compile-time bool and
+  stringv and reports the message when the condition is false. T::require
+  provides the corresponding target-level validation.
 
 Each lexical field loop expansion has its own validation set, shared by all
 validation sites within the loop and isolated from other loops, methods, and
@@ -209,6 +212,18 @@ operations for a direct target application. A decorator() call must be guarded
 by compile-time proof from decorated() when the application is optional. These
 operations refer only to the decoration that owns the current behavior; they
 cannot inspect arbitrary decorations.
+
+T.isof<Type> and F.isof<Type> are evaluated against the concrete target and
+field type during expansion. They use ordinary type and interface membership
+rules and can prune incompatible branches before ordinary body analysis.
+Requirements and these queries do not permit reflection inside runtime loops
+or closures.
+
+Generic constraints may consult nominal interface promises from directly
+applicable behaviors before semantic registration. This does not publish
+conformance: metadata, contracts, conflicts, bodies, and ownership still pass
+the complete semantic transaction. Interface metadata never activates a
+behavior. Generated generic calls use the same prospective query.
 
 Field names are compile-time stringv values. Field descriptors and decoration
 metadata have no runtime representation and cannot escape behavior expansion,

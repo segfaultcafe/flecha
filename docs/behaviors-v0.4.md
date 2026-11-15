@@ -432,6 +432,56 @@ reflection collections, nested field iteration, or JSON-specific compiler
 logic. The existing compiler-owned JSON path remains unchanged until the
 library migration.
 
+### Compile-time requirements and type selection
+
+`T::require(condition, message);` and `field::require(condition, message);`
+validate a compile-time `bool` with a compile-time `stringv` message. A false
+condition reports `FLECHA-S0088` using the supplied message and the behavior,
+activation, concrete target, and current field provenance. Both arguments must
+be constant even when the condition is true. These statements follow the same
+selection and suppression rules as `requireUnique`: runtime-controlled
+validation is rejected, folded-away validation is skipped, and no validation
+call or message is emitted into runtime code.
+
+Within an expanded behavior, the existing expressions `T.isof<Type>` and
+`F.isof<Type>` query the concrete target or current field type. Closed types,
+interfaces (including ancestors), and type sets use ordinary `isof` matching
+rules. Queries on the field binder apply only inside its `for<F>` iteration.
+The result can select a branch before ordinary body analysis:
+
+```flecha
+for<F> Field<T, F> field = T::fields() {
+    field::require(!field::isPrivate() or !field::decorated(),
+                   "private fields cannot be decorated");
+    if F.isof<string> {
+        value, err := reader->readString();
+        if err == none { field::get(self) = value; }
+    } else {
+        // Only this branch forms a field reference for non-string fields.
+        readValue(reader, &field::get(self));
+    }
+}
+```
+
+This does not permit references to owned strings, general compile-time calls,
+or reflection inside runtime loops and closures. New concrete generic types
+needed by closed query targets enter the existing expansion fixed point and
+are rolled back if the transaction fails.
+
+### Prospective generic constraints
+
+Generic specialization may consult the nominal interface roots promised by a
+behavior applicable to a directly decorated structure, field, or enum. It
+resolves decoration identities and roots in their logical modules and includes
+inherited interfaces. Interface-target metadata and decorations on nested
+field types do not activate a behavior for the containing type.
+
+This early query does not publish a conformance. Typed metadata, method
+contracts, conflicts, selected bodies, and ownership still pass the complete
+semantic transaction before concrete methods or conformances become usable.
+An invalid promise cannot make an otherwise invalid program compile. The same
+query is used for specializations discovered by generated bodies.
+
 ## Explicit implementations and conflicts
 
 An exact handwritten target implementation takes precedence over the matching

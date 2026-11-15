@@ -134,6 +134,48 @@ TEST(BehaviorReflection, DuplicateKeysHaveBothFieldsAndStableProvenance) {
         }
     }
 }
+TEST(BehaviorReflection, FailedRequirementsHaveFieldAndActivationProvenance) {
+    auto result = Analyze(Fixture("invalid/require_private.fl"));
+    ASSERT_EQ(result.diagnostics.Diagnostics().size(), 1u)
+        << Messages(result.diagnostics);
+    const auto& diagnostic = result.diagnostics.Diagnostics().front();
+    EXPECT_EQ(diagnostic.code,
+              diagnostics::DiagnosticCode::BehaviorRequirementFailed);
+    EXPECT_EQ(diagnostic.message, "private fields cannot be decorated");
+    bool field = false, activation = false;
+    for (const auto& related : diagnostic.related) {
+        field |= related.message == "field 'value', F = i32";
+        activation |= related.message == "behavior activated here";
+    }
+    EXPECT_TRUE(field);
+    EXPECT_TRUE(activation);
+    EXPECT_TRUE(result.model.BehaviorPlans().empty());
+}
+TEST(BehaviorReflection, HandwrittenProviderSuppressesFailedRequirements) {
+    auto result = Analyze(Fixture("invalid/require_private.fl") + R"(
+        void Item::read(&self, bool runtime) override {}
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors())
+        << Messages(result.diagnostics);
+    ASSERT_EQ(result.model.BehaviorPlans().size(), 1u);
+    EXPECT_TRUE(result.model.BehaviorPlans().front().bodies.empty());
+}
+TEST(BehaviorReflection, RequirementsHaveEditorHoverAndTokens) {
+    const auto root =
+        std::filesystem::path(FLECHA_BEHAVIOR_FIXTURE_DIR) / "reflection";
+    analyzer::AnalysisSession session(root);
+    const auto source = Fixture("requirements.fl");
+    auto result = session.Analyze(root / "requirements.fl");
+    ASSERT_FALSE(result.HasErrors()) << Messages(result.diagnostics);
+    const auto offset = source.find("T::require") + 3;
+    const auto hover = result.Hover(root / "requirements.fl", offset);
+    ASSERT_TRUE(hover);
+    EXPECT_NE(hover->type.find("compile-time requirement"), std::string::npos);
+    const auto occurrence =
+        result.OccurrenceAt(root / "requirements.fl", offset);
+    ASSERT_TRUE(occurrence);
+    EXPECT_EQ(occurrence->kind, analyzer::SemanticItemKind::Function);
+}
 TEST(BehaviorReflection, ValidationScopesResetAcrossMethodsAndSpecializations) {
     auto source = Fixture("unique_scopes.fl");
     source += R"(

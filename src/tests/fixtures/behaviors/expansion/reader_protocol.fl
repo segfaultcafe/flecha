@@ -1,0 +1,30 @@
+module expansion_reader_protocol;
+decoration meta { application() target structure; };
+structure Reader { i32 key; i32 value; };
+interface Read {
+    i32 read(&self, &Reader reader) default;
+    protected void readField(&self, &Reader reader) virtual;
+};
+i32 Read::read(&self, &Reader reader) {
+    while reader->key < 2 { self->readField(reader); reader->key++; }
+    return reader->value;
+}
+behavior meta<T> => structure << Read {
+    protected void T::readField(&self, &Reader reader) override {
+        for<F> Field<T, F> field = T::fields() {
+            if F.isof<i32> {
+                if reader->key == 0 { field::get(self) = reader->value; }
+            } else if F.isof<bool> {
+                if reader->key == 1 { field::get(self) = true; }
+            } else { field::require(false, "unsupported field"); }
+        }
+    }
+};
+T from<T: Read>() {
+    T value = T::zero();
+    Reader reader; reader.value = 42;
+    value.read(&reader);
+    return value;
+}
+@meta structure Item { i32 value; bool flag; };
+i32 main() { item := from<Item>(); if !item.flag { return 1; } return item.value; }

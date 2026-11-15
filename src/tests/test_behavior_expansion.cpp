@@ -283,6 +283,8 @@ TEST(BehaviorExpansion, FieldValidationEmitsOnlySelectedOrdinaryOperations) {
                 i32 sum = 0;
                 for<F> Field<T, F> field = T::fields() {
                     if !field::isPrivate() {
+                        field::require(F.isof<i32>, "expected i32");
+                        T::require(T.isof<Read>, "expected Read");
                         field::requireUnique(field::name());
                         sum = sum + field::get(self);
                     }

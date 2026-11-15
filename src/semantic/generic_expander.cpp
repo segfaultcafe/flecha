@@ -122,7 +122,11 @@ class Expander {
         for (const auto& d : originals) {
             // Behaviors are not callable or explicitly instantiable
             // declarations.
-            if (d->Kind() == AstNodeKind::BehaviorDeclaration) continue;
+            if (d->Kind() == AstNodeKind::BehaviorDeclaration) {
+                behaviors.push_back(
+                    static_cast<const BehaviorDeclaration*>(d.get()));
+                continue;
+            }
             if (d->Kind() == AstNodeKind::FunctionDeclaration &&
                 !static_cast<const FunctionDeclaration&>(*d).Owner().empty()) {
                 methods.push_back(
@@ -239,7 +243,7 @@ class Expander {
         }
     }
 
-    void Resume(FunctionDeclaration& function) {
+    void IndexExpandedUnit() {
         incremental = true;
         for (const auto& module : unit.modules)
             modules[module.sourceId] = &module;
@@ -247,7 +251,11 @@ class Expander {
             aliases.try_emplace(declaration, alias);
         const auto index = [&](const auto& list) {
             for (const auto& d : list) {
-                if (d->Kind() == AstNodeKind::BehaviorDeclaration) continue;
+                if (d->Kind() == AstNodeKind::BehaviorDeclaration) {
+                    behaviors.push_back(
+                        static_cast<const BehaviorDeclaration*>(d.get()));
+                    continue;
+                }
                 if (d->Kind() == AstNodeKind::FunctionDeclaration &&
                     !static_cast<const FunctionDeclaration&>(*d)
                          .Owner()
@@ -290,23 +298,52 @@ class Expander {
             [](const auto& declaration) {
                 return declaration->specializationOrigin != nullptr;
             });
+    }
+    void PrepareBehaviorQueries(const BehaviorDeclaration& behavior,
+                                const FunctionDeclaration& function) {
+        IndexExpandedUnit();
         const auto firstNew = unit.Declarations().size();
-        const auto rewrite = [&](Declaration& declaration) {
-            current = &declaration;
-            locals.clear();
-            locals.emplace_back();
-            localTypes.clear();
-            localTypes.emplace_back();
-            WalkAst(declaration,
-                    [&](AstNode& node, bool enter) { Rewrite(node, enter); });
-        };
-        rewrite(function);
+        current = const_cast<BehaviorDeclaration*>(&behavior);
+        std::set<std::string> binders{behavior.targetParameter};
+        WalkAst(function.Body(), [&](AstNode& node, bool enter) {
+            if (enter && node.Kind() == AstNodeKind::FieldIterationStatement)
+                binders.insert(
+                    static_cast<const FieldIterationStatement&>(node).binder);
+        });
+        WalkAst(function.Body(), [&](AstNode& node, bool enter) {
+            if (!enter || node.Kind() != AstNodeKind::IsOfExpression) return;
+            auto& query = static_cast<IsOfExpression&>(node);
+            bool dependent = false;
+            WalkAst(query.Target(), [&](AstNode& target, bool entry) {
+                if (entry && target.Kind() == AstNodeKind::Type)
+                    dependent |= binders.contains(
+                        static_cast<const TypeNode&>(target).Name());
+            });
+            if (!dependent) PrepareIsOf(query);
+        });
         for (std::size_t i = firstNew;
              i < unit.Declarations().size() && !failedBudget; ++i)
-            rewrite(*unit.Declarations()[i]);
+            RewriteDeclaration(*unit.Declarations()[i]);
+    }
+    void Resume(FunctionDeclaration& function) {
+        IndexExpandedUnit();
+        const auto firstNew = unit.Declarations().size();
+        RewriteDeclaration(function);
+        for (std::size_t i = firstNew;
+             i < unit.Declarations().size() && !failedBudget; ++i)
+            RewriteDeclaration(*unit.Declarations()[i]);
     }
 
    private:
+    void RewriteDeclaration(Declaration& declaration) {
+        current = &declaration;
+        locals.clear();
+        locals.emplace_back();
+        localTypes.clear();
+        localTypes.emplace_back();
+        WalkAst(declaration,
+                [&](AstNode& node, bool enter) { Rewrite(node, enter); });
+    }
     void Error(source::SourceRange range, const std::string& message) {
         diagnostics.Report(DiagnosticCode::InvalidGeneric, range, message);
     }
@@ -357,6 +394,57 @@ class Expander {
         const auto found = unit.genericAliases.find(tokens[index].value);
         return found == unit.genericAliases.end() ? nullptr : found->second;
     }
+    const DecorationDeclaration* DecorationOwner(
+        const DecorationApplication& application, const Declaration& context) {
+        std::string name;
+        for (const auto& component : application.path) {
+            if (!name.empty()) name += "::";
+            name += component;
+        }
+        const auto* declaration =
+            LookupFrom(name, context, application.range, false);
+        return declaration &&
+                       declaration->Kind() == AstNodeKind::DecorationDeclaration
+                   ? static_cast<const DecorationDeclaration*>(declaration)
+                   : nullptr;
+    }
+    bool Activates(const Declaration& target,
+                   const BehaviorDeclaration& behavior) {
+        const auto kind = target.Kind() == AstNodeKind::StructureDeclaration
+                              ? DecorationTarget::Structure
+                          : target.Kind() == AstNodeKind::EnumDeclaration
+                              ? DecorationTarget::Enum
+                              : DecorationTarget::Invalid;
+        if (kind == DecorationTarget::Invalid || behavior.target != kind ||
+            !behavior.validParameter)
+            return false;
+        const auto* decoration = DecorationOwner(behavior.decoration, behavior);
+        if (!decoration || !decoration->HasBody() ||
+            decoration->moduleId != behavior.moduleId)
+            return false;
+        const auto applied = [&](const auto& applications,
+                                 DecorationTarget category) {
+            const bool accepts = std::any_of(
+                decoration->Signatures().begin(),
+                decoration->Signatures().end(), [&](const auto& signature) {
+                    return signature.target == category;
+                });
+            if (!accepts) return false;
+            return std::any_of(applications.begin(), applications.end(),
+                               [&](const auto& application) {
+                                   return DecorationOwner(application,
+                                                          target) == decoration;
+                               });
+        };
+        if (applied(target.decorations, kind)) return true;
+        if (kind == DecorationTarget::Structure)
+            for (const auto& field :
+                 static_cast<const StructureDeclaration&>(target).Fields())
+                if (applied(field->Decorations(),
+                            DecorationTarget::StructureField))
+                    return true;
+        return false;
+    }
     bool ImplementsInterface(const Declaration& declaration,
                              const Declaration& target,
                              std::set<const Declaration*>& visiting) {
@@ -383,6 +471,22 @@ class Expander {
                     return true;
                 }
             }
+        // Generic specialization precedes semantic behavior registration. Use
+        // direct, nominal promises here without mutating AST conformances.
+        // The semantic transaction must still validate metadata, contracts,
+        // root conflicts and selected bodies before publishing any result.
+        for (const auto* behavior : behaviors)
+            if (Activates(declaration, *behavior))
+                for (const auto& root : behavior->roots) {
+                    const auto* parent =
+                        LookupFrom(root.name, *behavior, root.range, false);
+                    if (parent &&
+                        parent->Kind() == AstNodeKind::InterfaceDeclaration &&
+                        ImplementsInterface(*parent, target, visiting)) {
+                        visiting.erase(&declaration);
+                        return true;
+                    }
+                }
         visiting.erase(&declaration);
         return false;
     }
@@ -2049,6 +2153,7 @@ class Expander {
     std::map<std::pair<std::string, std::string>, const Declaration*>
         declarations;
     std::vector<const FunctionDeclaration*> methods;
+    std::vector<const BehaviorDeclaration*> behaviors;
     std::map<const Declaration*, std::vector<const FunctionDeclaration*>>
         genericMethods;
     std::map<const Declaration*, std::string> aliases;
@@ -2079,6 +2184,12 @@ void ExpandGeneratedGenerics(core::CompilationUnit& unit,
                              core::FunctionDeclaration& function,
                              diagnostics::DiagnosticBag& diagnostics) {
     Expander(unit, diagnostics).Resume(function);
+}
+void PrepareBehaviorTypeQueries(core::CompilationUnit& unit,
+                                const core::BehaviorDeclaration& behavior,
+                                const core::FunctionDeclaration& function,
+                                diagnostics::DiagnosticBag& diagnostics) {
+    Expander(unit, diagnostics).PrepareBehaviorQueries(behavior, function);
 }
 void ReportGenericOrigins(const core::CompilationUnit& unit,
                           diagnostics::DiagnosticBag& diagnostics) {

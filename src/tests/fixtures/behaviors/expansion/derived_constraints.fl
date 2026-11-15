@@ -1,0 +1,27 @@
+module derived_constraints;
+decoration meta {
+    application() target structure;
+    application() target structure::field;
+    application() target enum;
+    application() target interface;
+};
+interface Base { i32 read(&const self) virtual; };
+interface Read << Base {};
+behavior meta<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+behavior meta<T> => enum << Read { i32 T::read(&const self) override { return 42; } };
+i32 consume<A: Base>(&const A value) { &const Base view = value; return view->read(); }
+bool recognizes<A>() { return A.isof<Base>; }
+structure Holder<A: Base> { A value; };
+@meta structure Box<A> { A value; };
+structure FieldOnly { @meta i32 value; };
+@meta enum Choice { First }
+structure Plain {};
+i32 main() {
+    Box<i32> box;
+    Holder<Box<bool>> holder;
+    FieldOnly field;
+    Choice choice = Choice.First;
+    if !recognizes<Box<i32>>() or !recognizes<Choice>() or !recognizes<FieldOnly>() or recognizes<Plain>() { return 1; }
+    if consume<Box<i32>>(&box) != 42 or consume<Box<bool>>(&holder.value) != 42 or consume<Choice>(&choice) != 42 { return 2; }
+    return consume<FieldOnly>(&field);
+}

@@ -11,6 +11,10 @@ void ExpandGenerics(core::CompilationUnit& unit,
 void ExpandGeneratedGenerics(core::CompilationUnit& unit,
                              core::FunctionDeclaration& function,
                              diagnostics::DiagnosticBag& diagnostics);
+void PrepareBehaviorTypeQueries(core::CompilationUnit& unit,
+                                const core::BehaviorDeclaration& behavior,
+                                const core::FunctionDeclaration& function,
+                                diagnostics::DiagnosticBag& diagnostics);
 void ReportGenericOrigins(const core::CompilationUnit& unit,
                           diagnostics::DiagnosticBag& diagnostics);
 }  // namespace flecha::semantic

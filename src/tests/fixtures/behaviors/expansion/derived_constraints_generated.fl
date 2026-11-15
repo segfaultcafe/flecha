@@ -1,0 +1,17 @@
+module derived_constraints_generated;
+decoration inner { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior inner<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+decoration outer { application() target structure; };
+interface Sum { i32 sum(&const self) virtual; };
+i32 consume<A: Read>(&const A value) { return value->read(); }
+behavior outer<T> => structure << Sum {
+    i32 T::sum(&const self) override {
+        i32 total = 0;
+        for<F> Field<T, F> field = T::fields() { total += consume<F>(&field::get(self)); }
+        return total;
+    }
+};
+@inner structure Box<A> { A value; };
+@outer structure Item { Box<i32> value; };
+i32 main() { Item item; return item.sum(); }

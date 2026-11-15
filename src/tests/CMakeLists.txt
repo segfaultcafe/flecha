@@ -1977,7 +1977,8 @@ foreach(fixture IN ITEMS
     prospective_default
     visibility
     unique_keys
-    unique_scopes)
+    unique_scopes
+    requirements)
     string(REPLACE "/" "_" fixture_name "${fixture}")
     add_test(NAME BehaviorReflection.${fixture_name}
         COMMAND $<TARGET_FILE:flecha> check
@@ -2054,9 +2055,20 @@ add_behavior_reflection_failure(unique_defer FLECHA-S0082)
 add_behavior_reflection_failure(unique_arity FLECHA-S0082)
 add_behavior_reflection_failure(visibility_arity FLECHA-S0082)
 add_behavior_reflection_failure(visibility_runtime_loop FLECHA-S0081)
+add_behavior_reflection_failure(require_private FLECHA-S0088)
+add_behavior_reflection_failure(require_target FLECHA-S0088)
+add_behavior_reflection_failure(require_runtime FLECHA-S0082)
+add_behavior_reflection_failure(require_message FLECHA-S0082)
+add_behavior_reflection_failure(require_guard FLECHA-S0081)
+add_behavior_reflection_failure(require_value FLECHA-S0082)
+add_behavior_reflection_failure(require_arity FLECHA-S0082)
+add_behavior_reflection_failure(require_condition_type FLECHA-S0082)
+add_behavior_reflection_failure(require_message_type FLECHA-S0082)
+add_behavior_reflection_failure(require_loop FLECHA-S0081)
 
 # LANG-04: execute each positive fixture through the ordinary interface ABI.
-foreach(fixture borrow composition enum field_only_empty field_validation generic generic_methods
+foreach(fixture borrow composition type_queries reader_protocol derived_constraints
+        derived_constraints_generated enum field_only_empty field_validation generic generic_methods
         legacy_json mutable overloads private_fields protected recursion structure suppression variadic)
     add_test(NAME BehaviorExpansion.runtime_${fixture}
         COMMAND ${CMAKE_COMMAND}
@@ -2109,3 +2121,12 @@ add_behavior_expansion_failure(variadic_cycle FLECHA-S0062)
 add_behavior_expansion_failure(variadic_shape FLECHA-S0065)
 add_behavior_expansion_failure(vertical FLECHA-S0065)
 add_behavior_expansion_failure(body_initialization FLECHA-S0021)
+
+add_behavior_expansion_failure(constraint_interface_metadata FLECHA-S0054)
+add_behavior_expansion_failure(constraint_no_propagation FLECHA-S0054)
+add_behavior_expansion_failure(constraint_invalid_metadata FLECHA-S0069)
+add_behavior_expansion_failure(constraint_requirement FLECHA-S0088)
+add_behavior_expansion_failure(constraint_missing_method FLECHA-S0065)
+
+add_behavior_reflection_failure(type_query_loop FLECHA-S0081)
+add_behavior_reflection_failure(type_query_unknown FLECHA-S0054)
