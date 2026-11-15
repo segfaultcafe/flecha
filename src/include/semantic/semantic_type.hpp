@@ -194,6 +194,8 @@ struct CallableSignature final {
 };
 
 [[nodiscard]] bool IsAssignable(SemanticType destination, SemanticType source);
+[[nodiscard]] bool MatchesTypeQuery(SemanticType value, SemanticType candidate,
+                                    bool typeSetQuery);
 [[nodiscard]] bool IsExternAssignable(SemanticType destination,
                                       SemanticType source);
 [[nodiscard]] bool CanReborrow(SemanticType destination, SemanticType source);

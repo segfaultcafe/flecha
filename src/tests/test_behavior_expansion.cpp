@@ -271,6 +271,44 @@ TEST(BehaviorExpansion, LegacyCompilerOwnedJsonIRIsUnchanged) {
     EXPECT_FALSE(original.empty());
     EXPECT_EQ(original, CanonicalIR(after, true));
 }
+TEST(BehaviorExpansion, FieldValidationEmitsOnlySelectedOrdinaryOperations) {
+    const std::string common = R"(
+        interface Read { i32 read(&const self) virtual; };
+        i32 main() { Item item; item.value = 42; return item.read(); }
+    )";
+    auto generated = Analyze(common + R"(
+        decoration meta { application() target structure; };
+        behavior meta<T> => structure << Read {
+            i32 T::read(&const self) override {
+                i32 sum = 0;
+                for<F> Field<T, F> field = T::fields() {
+                    if !field::isPrivate() {
+                        field::require(F.isof<i32>, "expected i32");
+                        T::require(T.isof<Read>, "expected Read");
+                        field::requireUnique(field::name());
+                        sum = sum + field::get(self);
+                    }
+                }
+                return sum;
+            }
+        };
+        @meta structure Item { i32 value; private bool secret; };
+    )");
+    auto handwritten = Analyze(common + R"(
+        structure Item << Read { i32 value; private bool secret; };
+        i32 Item::read(&const self) override {
+            i32 sum = 0;
+            { { sum = sum + (self)->value; } }
+            {}
+            return sum;
+        }
+    )");
+    ASSERT_FALSE(generated.diagnostics.HasErrors())
+        << Messages(generated.diagnostics);
+    ASSERT_FALSE(handwritten.diagnostics.HasErrors())
+        << Messages(handwritten.diagnostics);
+    EXPECT_EQ(CanonicalIR(generated), CanonicalIR(handwritten));
+}
 TEST(BehaviorExpansion, NamespaceAttachedGenericHelpersKeepLexicalScope) {
     analyzer::AnalysisSession session(root / "modules");
     auto result = session.Analyze("main.fl");

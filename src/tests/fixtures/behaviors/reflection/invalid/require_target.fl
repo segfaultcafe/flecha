@@ -1,0 +1,10 @@
+module require_target;
+// expect FLECHA-S0088
+decoration meta { application() target structure; application(stringv name) target structure::field; };
+interface Read { void read(&self, bool runtime) virtual; };
+behavior meta<T> => structure << Read {
+    void T::read(&self, bool runtime) override {
+        T::require(false, "target rejected");
+    }
+};
+@meta structure Item { @meta("value") private i32 value; };

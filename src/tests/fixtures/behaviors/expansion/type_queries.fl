@@ -1,0 +1,24 @@
+module expansion_type_queries;
+decoration meta { application() target structure; };
+interface Base { i32 value(&const self) virtual; };
+interface Read << Base {};
+structure Box<A> { A value; };
+typeset integers { i32, i64 };
+behavior meta<T> => structure << Read {
+ i32 T::value(&const self) override {
+  T::require(T.isof<Read>, "root");
+  T::require(T.isof<Base>, "inherited root");
+  T::require(!T.isof<Box<Box<bool>>>, "novel specialization");
+  i32 result = 0;
+  for<F> Field<T, F> field = T::fields() {
+   field::require(F.isof<F>, "identity");
+   if F.isof<integers> { result += field::get(self); }
+   else if F.isof<Box<i32>> { result += field::get(self).value; }
+   else if F.isof<string> { result += 2; }
+   else { nonexistent(); }
+  }
+  return result;
+ }
+};
+@meta structure Item { i32 number; Box<i32> nested; string text; };
+i32 main() { Item item; item.number = 20; item.nested.value=20; return item.value(); }

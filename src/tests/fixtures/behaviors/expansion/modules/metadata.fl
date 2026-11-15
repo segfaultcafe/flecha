@@ -1,3 +1,4 @@
 module metadata;
 export decoration derive { application() target structure; application() target enum; };
 export interface Read { i32 read(&const self) virtual; };
+export i32 consume<A: Read>(&const A value) { return value->read(); }

@@ -4,6 +4,17 @@
 
 ### Added
 
+- Behavior field reflection now supports `field::isPrivate()` and bounded
+  `field::requireUnique(key)` validation. Libraries can exclude private fields
+  and reject duplicate compile-time names without generating runtime checks.
+- Behavior expansion supports `T::require` / `field::require` compile-time
+  diagnostics and folds `T.isof<...>` / `F.isof<...>` before analyzing selected
+  branches. Generic constraints recognize prospective behavior interface roots,
+  subject to complete validation and rollback before publication.
+- Interface calls now support ownership verification from contracts for managed
+  values and references, including default/protected behavior reader methods.
+  Mutable virtual calls invalidate owning-field aliases, including deferred
+  calls; unsupported raw allocation effects remain rejected.
 - Flecha now builds and installs `flecha-lsp`. The Visual Studio Code extension
   starts it for compiler diagnostics, hover information, go to definition,
   references, completion, rename, and semantic tokens, with configurable

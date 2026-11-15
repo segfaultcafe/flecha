@@ -283,9 +283,19 @@ concrete methods and conformance; failures leave the concrete graph unchanged.
 Reflection diagnostics use `FLECHA-S0080` (iteration shape), `FLECHA-S0081`
 (context/control flow), `FLECHA-S0082` (operation or receiver), `FLECHA-S0083`
 (compile-time artifact escape), `FLECHA-S0084` (missing decoration proof),
-`FLECHA-S0085` (metadata member), and `FLECHA-S0086` (evaluation/expansion).
+`FLECHA-S0085` (metadata member), `FLECHA-S0086` (evaluation/expansion),
+`FLECHA-S0087` (duplicate reflected field key), and `FLECHA-S0088`
+(failed library-supplied compile-time requirement).
 Ordinary type, ownership, and borrow diagnostics retain their identifiers and
 include related behavior, activation, target, and field locations.
+
+`field::isPrivate()` lets a behavior select public fields before expansion.
+`field::requireUnique(key);` checks compile-time `stringv` keys across selected
+fields within one lexical loop expansion. It is erased before ordinary body
+analysis and lowering; runtime-dependent selection or keys are rejected. See
+[bounded field-key validation](behaviors-v0.4.md#bounded-field-key-validation)
+for scope and selection rules. These operations do not change the existing
+compiler-owned JSON implementation.
 
 Behavior-derived interface calls use the existing composed-table ABI. No field
 pack, decoration record, or reflection operation reaches runtime. Generated
@@ -294,3 +304,11 @@ method navigation and diagnostics retain their original source provenance.
 
 See [behaviors-v0.4.md](behaviors-v0.4.md) for provider selection, publication,
 and the separately deferred JSON migration.
+
+Behavior bodies may also use `T::require(condition, message);` and
+`field::require(condition, message);` for compile-time validation. The condition
+must be a constant `bool`, and the message a constant `stringv`. A false
+requirement reports the message with activation and field provenance. Queries
+such as `F.isof<string>` and `T.isof<Interface>` are folded during expansion,
+allowing incompatible branches to be removed before body analysis. See
+[behavior reflection](behaviors-v0.4.md#compile-time-requirements-and-type-selection).

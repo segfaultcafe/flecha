@@ -1,0 +1,10 @@
+module require_runtime;
+// expect FLECHA-S0082
+decoration meta { application() target structure; application(stringv name) target structure::field; };
+interface Read { void read(&self, bool runtime) virtual; };
+behavior meta<T> => structure << Read {
+    void T::read(&self, bool runtime) override {
+        T::require(runtime, "runtime condition");
+    }
+};
+@meta structure Item { @meta("value") private i32 value; };

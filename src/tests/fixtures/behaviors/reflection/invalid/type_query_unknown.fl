@@ -1,0 +1,9 @@
+// expect FLECHA-S0054
+decoration meta { application() target structure; };
+interface Read { void read(&self) virtual; };
+behavior meta<T> => structure << Read {
+    void T::read(&self) override {
+        for<F> Field<T, F> field = T::fields() { if F.isof<Missing> {} }
+    }
+};
+@meta structure Item { i32 value; };

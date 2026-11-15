@@ -437,6 +437,28 @@ SemanticType SemanticType::FromSyntax(core::PrimitiveType type) {
     return Error();
 }
 
+bool MatchesTypeQuery(SemanticType value, SemanticType candidate,
+                      bool typeSetQuery) {
+    if (value.IsError() || candidate.IsError()) return false;
+    if (typeSetQuery) {
+        value = value.WithoutConst();
+        candidate = candidate.WithoutConst();
+    }
+    if (value == candidate) return true;
+    if (value.Kind() == SemanticTypeKind::Reference) value = *value.Target();
+    if (candidate.Kind() != SemanticTypeKind::Interface) return false;
+    const auto* target = candidate.Interface();
+    const auto contains = [target](const auto& interfaces) {
+        return std::find(interfaces.begin(), interfaces.end(), target) !=
+               interfaces.end();
+    };
+    if (value.Structure())
+        return contains(value.Structure()->conformanceClosure);
+    if (value.Enum()) return contains(value.Enum()->conformanceClosure);
+    return value.Interface() && (value.Interface() == target ||
+                                 contains(value.Interface()->ancestors));
+}
+
 bool IsAssignable(SemanticType destination, SemanticType source) {
     if (destination.IsError() || source.IsError()) return true;
     if (destination.WithoutConst() == source.WithoutConst()) return true;

@@ -1,0 +1,10 @@
+module require_private;
+// expect FLECHA-S0088
+decoration meta { application() target structure; application(stringv name) target structure::field; };
+interface Read { void read(&self, bool runtime) virtual; };
+behavior meta<T> => structure << Read {
+    void T::read(&self, bool runtime) override {
+        for<F> Field<T, F> field = T::fields() { field::require(!field::isPrivate() or !field::decorated(), "private fields cannot be decorated"); }
+    }
+};
+@meta structure Item { @meta("value") private i32 value; };

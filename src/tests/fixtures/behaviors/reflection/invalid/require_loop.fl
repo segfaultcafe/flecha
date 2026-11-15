@@ -1,0 +1,10 @@
+module require_loop;
+// expect FLECHA-S0081
+decoration meta { application() target structure; application(stringv name) target structure::field; };
+interface Read { void read(&self, bool runtime) virtual; };
+behavior meta<T> => structure << Read {
+    void T::read(&self, bool runtime) override {
+        while runtime { T::require(true, "not here"); }
+    }
+};
+@meta structure Item { @meta("value") private i32 value; };

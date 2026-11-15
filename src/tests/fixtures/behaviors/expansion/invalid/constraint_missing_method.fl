@@ -1,0 +1,7 @@
+// expect FLECHA-S0065
+decoration meta { application() target structure; application() target interface; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read {  };
+i32 consume<A: Read>(&const A value) { return value->read(); }
+@meta structure Item {};
+i32 main() { Item item; return consume<Item>(&item); }

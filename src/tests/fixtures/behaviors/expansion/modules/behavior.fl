@@ -2,6 +2,7 @@ module metadata;
 @imports :: root::helpers as h;
 behavior derive<T> => structure << Read {
  i32 T::read(&const self) override {
+  T::require(T.isof<Read>, "derived Read contract");
   i32 total = 0;
   for<F> Field<T, F> field = T::fields() { total += h::identity<F>(field::get(self)) as i32; }
   return total;

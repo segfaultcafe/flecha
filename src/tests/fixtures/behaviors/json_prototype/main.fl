@@ -1,0 +1,41 @@
+module main;
+@imports :: root::json as j;
+
+@j::json(structure) structure Address { string city; };
+@j::json(structure) structure User {
+    @j::json("display_name") string name;
+    Address address;
+    bool active;
+    private string secret;
+};
+bool User::secretEmpty(&const self) { return self->secret.view() == ""; }
+structure Explicit {
+    @j::json("answer") i32 value;
+    bool ignored;
+};
+// The protected slot is currently part of the interface contract, including
+// for handwritten providers. This fixture makes that obligation explicit.
+structure Manual << j::JsonReadable { i32 value; };
+error Manual::readJson(&self, &j::Reader reader) override {
+    self->value = 42;
+    return reader->skipValue();
+}
+protected error Manual::readJsonField(&self, &j::Reader reader) override {
+    return reader->skipValue();
+}
+
+i32 main() {
+    user, err := j::from<User>("{\"active\":true,\"unknown\":[1,{\"x\":false}],\"address\":{\"city\":\"Sao Paulo\"},\"display_name\":\"Alex\",\"secret\":\"ignored\"}".cast<[]const u8>);
+    if err != none or user.name.view() != "Alex" or user.address.city.view() != "Sao Paulo" or !user.active or !user.secretEmpty() { return 1; }
+    explicitValue, explicitError := j::from<Explicit>("{\"ignored\":true,\"answer\":42}".cast<[]const u8>);
+    if explicitError != none or explicitValue.value != 42 or explicitValue.ignored { return 2; }
+    manual, manualError := j::from<Manual>("{\"whatever\":null}".cast<[]const u8>);
+    if manualError != none or manual.value != 42 { return 3; }
+    trailing, trailingError := j::from<User>("{} true".cast<[]const u8>);
+    if trailingError != j::JsonError.TrailingData { return 4; }
+    malformed, malformedError := j::from<User>("{\"active\":}".cast<[]const u8>);
+    if malformedError == none { return 5; }
+    wrong, wrongError := j::from<User>("{\"active\":42}".cast<[]const u8>);
+    if wrongError != j::JsonError.TypeMismatch { return 6; }
+    return 42;
+}

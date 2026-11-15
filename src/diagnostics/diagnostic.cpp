@@ -176,6 +176,10 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-S0085";
         case DiagnosticCode::InvalidBehaviorExpansion:
             return "FLECHA-S0086";
+        case DiagnosticCode::DuplicateBehaviorFieldKey:
+            return "FLECHA-S0087";
+        case DiagnosticCode::BehaviorRequirementFailed:
+            return "FLECHA-S0088";
         case DiagnosticCode::InvalidInterface:
             return "FLECHA-S0065";
         case DiagnosticCode::InvalidGeneric:

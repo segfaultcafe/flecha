@@ -327,9 +327,13 @@ A field descriptor provides only bounded, typed information through type-level
 - its owning type is `T`;
 - its field type is `F`;
 - `field::name()` is its source declaration name as a compile-time `stringv`;
+- `field::isPrivate()` is a compile-time `bool`, including fields declared in
+  a `private { ... }` block;
 - `field::decorated()` reports direct presence of the behavior's decoration;
 - `field::decorator()` exposes that application's typed argument record; and
-- `field::get(receiver)` is a hygienic projection of that exact field.
+- `field::get(receiver)` is a hygienic projection of that exact field; and
+- `field::requireUnique(key)` validates a compile-time `stringv` key against
+  earlier keys in the same field iteration, without emitting runtime code.
 
 The target type has corresponding direct-decoration operations:
 
@@ -378,6 +382,131 @@ over unrelated types. A structure behavior body receives target-method access
 to the target's private fields because applying the decoration is an explicit
 opt-in by the type author. The behavior may still inspect visibility and
 deliberately apply a public-only policy such as JSON's v0.3 contract.
+
+### Bounded field-key validation
+
+`field::requireUnique(key);` is a statement available only inside a bounded
+field iteration. Each expansion of a lexical `for<F>` owns a fresh key set.
+All validation sites in that loop share the set, including sites in different
+compile-time branches. Sets do not cross loops, methods, activations, or
+generic specializations. Validation follows field source order, and duplicate
+keys produce `FLECHA-S0087` with the first and conflicting field locations,
+the behavior, and its activation.
+
+The key must evaluate to `stringv` from string literals, `field::name()`, or
+typed decoration names using the existing scalar evaluator. Runtime locals,
+calls, and unresolved template names are rejected. Module constants can be
+passed through typed decoration arguments, where ordinary name resolution
+has already taken place. Equality compares the evaluated string
+contents exactly, including empty strings. Each reached validation statement
+registers a key; registering the same key twice, even for one field, is an
+error.
+
+Selection must also be known at expansion time. Folded-away branches register
+no keys. A validation statement under an unresolved `if`, `else if`, `else`,
+or `also` condition is rejected. The existing prohibitions on reflection in
+runtime loops and closures remain in force. Validation is performed when the
+method is expanded, regardless of whether runtime execution would reach the
+statement; it has no return value, cannot be deferred, and cannot escape into
+an expression. Exact handwritten providers still suppress the entire derived
+body, including its validations.
+
+For example, a library can select public fields, support explicit-only field
+applications, and validate both renamed and original names together:
+
+```flecha
+for<F> Field<T, F> field = T::fields() {
+    if !field::isPrivate() and (T::decorated() or field::decorated()) {
+        if field::decorated() {
+            field::requireUnique(field::decorator().name);
+        } else {
+            field::requireUnique(field::name());
+        }
+        // Emit the selected field using the same naming policy.
+    }
+}
+```
+
+This operation does not introduce general compile-time execution, mutable
+reflection collections, nested field iteration, or JSON-specific compiler
+logic. The existing compiler-owned JSON path remains unchanged until the
+library migration.
+
+### Compile-time requirements and type selection
+
+`T::require(condition, message);` and `field::require(condition, message);`
+validate a compile-time `bool` with a compile-time `stringv` message. A false
+condition reports `FLECHA-S0088` using the supplied message and the behavior,
+activation, concrete target, and current field provenance. Both arguments must
+be constant even when the condition is true. These statements follow the same
+selection and suppression rules as `requireUnique`: runtime-controlled
+validation is rejected, folded-away validation is skipped, and no validation
+call or message is emitted into runtime code.
+
+Within an expanded behavior, the existing expressions `T.isof<Type>` and
+`F.isof<Type>` query the concrete target or current field type. Closed types,
+interfaces (including ancestors), and type sets use ordinary `isof` matching
+rules. Queries on the field binder apply only inside its `for<F>` iteration.
+The result can select a branch before ordinary body analysis:
+
+```flecha
+for<F> Field<T, F> field = T::fields() {
+    field::require(!field::isPrivate() or !field::decorated(),
+                   "private fields cannot be decorated");
+    if F.isof<string> {
+        value, err := reader->readString();
+        if err == none { field::get(self) = value; }
+    } else {
+        // Only this branch forms a field reference for non-string fields.
+        readValue(reader, &field::get(self));
+    }
+}
+```
+
+This does not permit references to owned strings, general compile-time calls,
+or reflection inside runtime loops and closures. New concrete generic types
+needed by closed query targets enter the existing expansion fixed point and
+are rolled back if the transaction fails.
+
+### Prospective generic constraints
+
+Generic specialization may consult the nominal interface roots promised by a
+behavior applicable to a directly decorated structure, field, or enum. It
+resolves decoration identities and roots in their logical modules and includes
+inherited interfaces. Interface-target metadata and decorations on nested
+field types do not activate a behavior for the containing type.
+
+This early query does not publish a conformance. Typed metadata, method
+contracts, conflicts, selected bodies, and ownership still pass the complete
+semantic transaction before concrete methods or conformances become usable.
+An invalid promise cannot make an otherwise invalid program compile. The same
+query is used for specializations discovered by generated bodies.
+
+### Interface calls and ownership
+
+Generated and handwritten methods use the same interface-call ownership check.
+For signatures carrying managed values and references without exposing raw
+allocation handles, the allocation checker uses the interface contract rather
+than requiring a single concrete callee body. Provider bodies still undergo
+ordinary independent ownership validation. This supports, for example, a
+reader default method that passes `&Reader` to a protected virtual helper while
+Reader owns its internal storage.
+
+This initial summary does not support raw pointers or raw buffers in interface
+parameters/results, including pointers nested in reference, array, slice, or
+tuple types. Such calls retain `FLECHA-S0052`, even with explicit `own`/`lend`
+annotations. It also rejects tracked raw aliases hidden in actual arguments.
+These restrictions do not change ordinary direct-call ownership contracts.
+
+A mutable interface reference erases concrete object identity. The checker
+therefore conservatively invalidates tracked owning-field aliases across such
+a call and rejects conflicts with pending deferred uses. Const references do
+not invalidate those aliases. Deferred virtual calls apply these effects in
+cleanup order, rather than at registration. The checks can conservatively
+reject an alias of an unrelated owner when object identity cannot be proved.
+
+See the [JSON reader probe](../src/tests/fixtures/behaviors/json_prototype/README.md)
+for the integration coverage and remaining library compatibility decisions.
 
 ## Explicit implementations and conflicts
 

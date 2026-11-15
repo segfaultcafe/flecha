@@ -4224,30 +4224,7 @@ SemanticType SemanticAnalyzer::AnalyzeIsOf(
     bool result = false;
     for (const auto& candidateSyntax : expression.Candidates()) {
         SemanticType candidate = ResolveType(*candidateSyntax);
-        if (expression.IsTypeSetQuery()) {
-            value = value.WithoutConst();
-            candidate = candidate.WithoutConst();
-        }
-        SemanticType staticValue = value;
-        if (staticValue.Kind() == SemanticTypeKind::Reference)
-            staticValue = *staticValue.Target();
-        bool conforms = false;
-        if (candidate.Kind() == SemanticTypeKind::Interface) {
-            const InterfaceType* target = candidate.Interface();
-            const auto contains = [target](const auto& interfaces) {
-                return std::find(interfaces.begin(), interfaces.end(),
-                                 target) != interfaces.end();
-            };
-            if (staticValue.Kind() == SemanticTypeKind::Structure)
-                conforms =
-                    contains(staticValue.Structure()->conformanceClosure);
-            else if (staticValue.Kind() == SemanticTypeKind::Enum)
-                conforms = contains(staticValue.Enum()->conformanceClosure);
-            else if (staticValue.Kind() == SemanticTypeKind::Interface)
-                conforms = staticValue.Interface() == target ||
-                           contains(staticValue.Interface()->ancestors);
-        }
-        if (value == candidate || conforms) {
+        if (MatchesTypeQuery(value, candidate, expression.IsTypeSetQuery())) {
             result = true;
             break;
         }

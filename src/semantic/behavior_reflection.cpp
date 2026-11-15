@@ -2,6 +2,7 @@
 #include <functional>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <set>
 #include <sstream>
 
@@ -73,6 +74,12 @@ struct Context {
     const BehaviorFieldDescriptor* field = nullptr;
     bool restricted = false;
     std::string fieldTypeAlias;
+    bool runtimeConditional = false;
+    struct UniqueKey {
+        const StructureField* field;
+        Range range;
+    };
+    std::map<std::string, UniqueKey>* uniqueKeys = nullptr;
 };
 }  // namespace
 
@@ -120,7 +127,9 @@ class BehaviorPlanner {
         for (auto& pending : _pending) {
             _plan = pending.plan;
             _currentBehavior = _plan->activation->behavior;
+            const auto before = unit.Declarations().size();
             Build(*pending.method, unit, &pending);
+            if (unit.Declarations().size() != before) return;
         }
         _plan = nullptr;
     }
@@ -146,7 +155,8 @@ class BehaviorPlanner {
     std::vector<std::pair<Range, const StructureField*>> _projections;
 
     void Error(DiagnosticCode code, Range range, std::string message,
-               Context context = {}) {
+               Context context = {},
+               std::vector<diagnostics::RelatedLocation> extra = {}) {
         if (_plan) _plan->valid = false;
         std::vector<diagnostics::RelatedLocation> related{
             {_currentBehavior->declaration->decoration.range,
@@ -162,6 +172,7 @@ class BehaviorPlanner {
             related.push_back({context.field->field->syntax->NameRange(),
                                "field '" + context.field->field->name +
                                    "', F = " + context.field->type.Name()});
+        related.insert(related.end(), extra.begin(), extra.end());
         _host._diagnostics.Report(code, range, std::move(message),
                                   diagnostics::DiagnosticSeverity::Error,
                                   std::move(related));
@@ -211,7 +222,35 @@ class BehaviorPlanner {
                    _currentBehavior->declaration->targetParameter ||
                (c.loop && Receiver(call) == c.loop->descriptor);
     }
-    void Validate(const AstNode& n, Context c) {
+    void Validate(const AstNode& n, Context c, bool statement = false) {
+        if (n.Kind() == AstNodeKind::IsOfExpression) {
+            const auto& query = static_cast<const IsOfExpression&>(n);
+            if (query.Value().Kind() == AstNodeKind::NameExpression) {
+                const auto& name =
+                    static_cast<const NameExpression&>(query.Value());
+                if (name.Name() ==
+                        _currentBehavior->declaration->targetParameter ||
+                    (c.loop && name.Name() == c.loop->binder)) {
+                    if (c.restricted)
+                        Error(DiagnosticCode::InvalidReflectionContext,
+                              query.Range(),
+                              "type reflection cannot be used in a runtime "
+                              "loop or closure",
+                              c);
+                    Occurrence(
+                        name.Range(), name.Name(), "compile-time type query",
+                        true,
+                        c.loop && name.Name() == c.loop->binder
+                            ? c.loop->binderRange
+                            : _currentBehavior->declaration->parameterRange);
+                }
+            }
+        }
+        if (n.Kind() == AstNodeKind::ExpressionStatement) {
+            Validate(static_cast<const ExpressionStatement&>(n).Value(), c,
+                     true);
+            return;
+        }
         if (n.Kind() == AstNodeKind::FieldIterationStatement) {
             auto& loop = static_cast<const FieldIterationStatement&>(n);
             if (_currentBehavior->declaration->target !=
@@ -286,8 +325,10 @@ class BehaviorPlanner {
                       "closure",
                       c);
             const auto& op = call->Member();
-            bool valid = op == "decorated" || op == "decorator" ||
-                         (field && (op == "name" || op == "get"));
+            bool valid =
+                op == "decorated" || op == "decorator" || op == "require" ||
+                (field && (op == "name" || op == "get" || op == "isPrivate" ||
+                           op == "requireUnique"));
             if (op == "fields")
                 Error(DiagnosticCode::ReflectionEscape, call->Range(),
                       "a field pack can only initialize a bounded field "
@@ -297,11 +338,20 @@ class BehaviorPlanner {
                 Error(DiagnosticCode::InvalidReflectionOperation,
                       call->MemberRange(),
                       "unknown field descriptor operation '" + op + "'", c);
-            if (valid && (call->Arguments().size() != (op == "get" ? 1u : 0u) ||
+            if (valid && (call->Arguments().size() !=
+                              (op == "require"                        ? 2u
+                               : op == "get" || op == "requireUnique" ? 1u
+                                                                      : 0u) ||
                           !call->typeArguments.empty() || call->IsCrashable()))
                 Error(DiagnosticCode::InvalidReflectionOperation, call->Range(),
                       "invalid reflection arguments; operations query only the "
                       "owning decoration",
+                      c);
+            if (valid && (op == "requireUnique" || op == "require") &&
+                !statement)
+                Error(DiagnosticCode::InvalidReflectionOperation, call->Range(),
+                      op + "() is a compile-time validation statement, not a "
+                           "value",
                       c);
             if (valid) {
                 Occurrence(call->Receiver().Range(), Receiver(*call),
@@ -312,8 +362,14 @@ class BehaviorPlanner {
                                ? c.loop->descriptorRange
                                : _currentBehavior->declaration->parameterRange);
                 Occurrence(call->MemberRange(), op,
-                           op == "name"        ? "stringv field name"
-                           : op == "decorated" ? "compile-time bool"
+                           op == "name" ? "stringv field name"
+                           : op == "decorated" || op == "isPrivate"
+                               ? "compile-time bool"
+                           : op == "requireUnique"
+                               ? "compile-time unique stringv key in this "
+                                 "field iteration"
+                           : op == "require"
+                               ? "compile-time requirement (bool, stringv)"
                            : op == "get" ? "exact field place"
                                          : "typed decoration argument record",
                            false, {}, true);
@@ -398,6 +454,39 @@ class BehaviorPlanner {
         return _plan->metadata ? &*_plan->metadata : nullptr;
     }
     std::optional<CompileTimeValue> Reflection(const Expression& e, Context c) {
+        if (e.Kind() == AstNodeKind::IsOfExpression) {
+            const auto& query = static_cast<const IsOfExpression&>(e);
+            if (query.Value().Kind() == AstNodeKind::NameExpression) {
+                const auto& name =
+                    static_cast<const NameExpression&>(query.Value()).Name();
+                const bool field = c.field && name == c.loop->binder;
+                if (field ||
+                    name == _currentBehavior->declaration->targetParameter) {
+                    const auto value = field ? c.field->type : _plan->target;
+                    Scope* saved = _host._currentScope;
+                    _host._currentScope = &_host.AddScope(_scope);
+                    if (c.field) {
+                        auto binder = std::make_unique<Symbol>(
+                            SymbolKind::TypeBinding, c.loop->binder,
+                            c.field->type, c.loop->binderRange, false);
+                        (void)_host._currentScope->Declare(*binder);
+                        _model._symbols.push_back(std::move(binder));
+                    }
+                    bool result = false;
+                    if (query.Candidates().empty())
+                        result = MatchesTypeQuery(
+                            value, _host.ResolveType(query.Target()), false);
+                    else
+                        for (const auto& candidate : query.Candidates())
+                            result |= MatchesTypeQuery(
+                                value, _host.ResolveType(*candidate),
+                                query.IsTypeSetQuery());
+                    _host._currentScope = saved;
+                    return CompileTimeValue{
+                        SemanticType(SemanticTypeKind::Bool), result};
+                }
+            }
+        }
         if (auto* call = Operation(e); call && IsContextual(*call, c) &&
                                        call->Arguments().empty() &&
                                        call->typeArguments.empty()) {
@@ -409,6 +498,10 @@ class BehaviorPlanner {
                 return CompileTimeValue{
                     SemanticType(SemanticTypeKind::StringView),
                     c.field->field->name};
+            if (call->Member() == "isPrivate" && c.field &&
+                Receiver(*call) == c.loop->descriptor)
+                return CompileTimeValue{SemanticType(SemanticTypeKind::Bool),
+                                        c.field->field->syntax->IsPrivate()};
         }
         if (e.Kind() == AstNodeKind::MemberAccessExpression) {
             auto& member = static_cast<const MemberAccessExpression&>(e);
@@ -489,13 +582,96 @@ class BehaviorPlanner {
     }
     Tokens Rewrite(const AstNode& n, Context c) {
         if (_generatedTokens > 1000000) return {};
+        if (n.Kind() == AstNodeKind::ExpressionStatement) {
+            const auto* call =
+                Operation(static_cast<const ExpressionStatement&>(n).Value());
+            if (call && IsContextual(*call, c) && call->Member() == "require") {
+                if (c.runtimeConditional) {
+                    Error(
+                        DiagnosticCode::InvalidReflectionContext, call->Range(),
+                        "require() selection must be known at compile time", c);
+                    return {};
+                }
+                const auto evaluate = [&](const auto& expression) {
+                    return EvaluateCompileTimeValue(
+                        expression, _model, [&](const auto& value) {
+                            return Reflection(value, c);
+                        });
+                };
+                const auto condition = evaluate(*call->Arguments()[0]);
+                const auto message = evaluate(*call->Arguments()[1]);
+                if (!condition ||
+                    condition->type.Kind() != SemanticTypeKind::Bool ||
+                    !std::holds_alternative<bool>(condition->value) ||
+                    !message ||
+                    message->type.Kind() != SemanticTypeKind::StringView ||
+                    !std::holds_alternative<std::string>(message->value)) {
+                    Error(DiagnosticCode::InvalidReflectionOperation,
+                          call->Range(),
+                          "require() requires a compile-time bool and stringv "
+                          "message",
+                          c);
+                    return {};
+                }
+                if (!std::get<bool>(condition->value))
+                    Error(DiagnosticCode::BehaviorRequirementFailed,
+                          call->Range(), std::get<std::string>(message->value),
+                          c);
+                _plan->substitutions.push_back(
+                    {call->Range(), c.field ? c.field->field : nullptr,
+                     condition});
+                return {};
+            }
+            if (call && c.field && Receiver(*call) == c.loop->descriptor &&
+                call->Member() == "requireUnique") {
+                if (c.runtimeConditional) {
+                    Error(DiagnosticCode::InvalidReflectionContext,
+                          call->Range(),
+                          "requireUnique() selection must be known at compile "
+                          "time",
+                          c);
+                    return {};
+                }
+                auto key = EvaluateCompileTimeValue(
+                    *call->Arguments()[0], _model,
+                    [&](const auto& value) { return Reflection(value, c); });
+                if (!key || key->type.Kind() != SemanticTypeKind::StringView ||
+                    !std::holds_alternative<std::string>(key->value)) {
+                    Error(DiagnosticCode::InvalidReflectionOperation,
+                          call->Arguments()[0]->Range(),
+                          "requireUnique() requires a compile-time stringv key",
+                          c);
+                    return {};
+                }
+                const auto& name = std::get<std::string>(key->value);
+                const auto [previous, inserted] = c.uniqueKeys->emplace(
+                    name, Context::UniqueKey{c.field->field, call->Range()});
+                if (!inserted)
+                    Error(DiagnosticCode::DuplicateBehaviorFieldKey,
+                          call->Range(),
+                          "duplicate reflected field key '" + name + "'", c,
+                          {{previous->second.field->syntax->NameRange(),
+                            "first used by field '" +
+                                previous->second.field->name + "'"},
+                           {previous->second.range,
+                            "first key validation here"}});
+                _plan->substitutions.push_back(
+                    {call->Range(), c.field->field, key});
+                return {};
+            }
+        }
         if (n.Kind() == AstNodeKind::FieldIterationStatement) {
             auto& loop = static_cast<const FieldIterationStatement&>(n);
             Tokens result;
+            std::map<std::string, Context::UniqueKey> uniqueKeys;
             for (auto& field : _plan->pack.fields) {
                 Context iteration{
-                    &loop, &field, false,
-                    "$behavior$type$" + std::to_string(_aliasId++)};
+                    &loop,
+                    &field,
+                    false,
+                    "$behavior$type$" + std::to_string(_aliasId++),
+                    c.runtimeConditional,
+                    &uniqueKeys};
                 auto alias = std::make_unique<Symbol>(
                     field.type.Kind() == SemanticTypeKind::Structure
                         ? SymbolKind::StructureType
@@ -532,11 +708,11 @@ class BehaviorPlanner {
                 &statement.PrimaryBranch()};
             for (const auto& branch : statement.ElseIfBranches())
                 branches.push_back(branch.get());
-            const auto emit = [&](const auto& self,
-                                  std::size_t index) -> Tokens {
+            const auto emit = [&](const auto& self, std::size_t index,
+                                  Context path) -> Tokens {
                 if (index == branches.size())
                     return statement.ElseBody()
-                               ? Rewrite(*statement.ElseBody(), c)
+                               ? Rewrite(*statement.ElseBody(), path)
                                : Tokens{};
                 const auto& branch = *branches[index];
                 const auto condition = fold(branch.Condition());
@@ -547,15 +723,16 @@ class BehaviorPlanner {
                         {branch.Condition().Range(),
                          c.field ? c.field->field : nullptr, condition});
                     if (!std::get<bool>(condition->value))
-                        return self(self, index + 1);
-                    if (!branch.Also()) return Rewrite(branch.Body(), c);
+                        return self(self, index + 1, path);
+                    if (!branch.Also()) return Rewrite(branch.Body(), path);
                 }
+                if (!constant) path.runtimeConditional = true;
                 Tokens result =
                     One(TokenType::If, "if", branch.Condition().Range());
                 Append(result, constant ? One(TokenType::True, "true",
                                               branch.Condition().Range())
-                                        : Rewrite(branch.Condition(), c));
-                Append(result, Rewrite(branch.Body(), c));
+                                        : Rewrite(branch.Condition(), path));
+                Append(result, Rewrite(branch.Body(), path));
                 if (const auto* also = branch.Also()) {
                     const auto value = fold(also->Condition());
                     const bool known =
@@ -566,11 +743,13 @@ class BehaviorPlanner {
                         Append(result, known ? One(TokenType::True, "true",
                                                    also->Condition().Range())
                                              : Rewrite(also->Condition(), c));
-                        Append(result, Rewrite(also->Body(), c));
+                        Context alsoPath = path;
+                        if (!known) alsoPath.runtimeConditional = true;
+                        Append(result, Rewrite(also->Body(), alsoPath));
                     }
                 }
                 if (!constant) {
-                    auto alternative = self(self, index + 1);
+                    auto alternative = self(self, index + 1, path);
                     if (!alternative.empty()) {
                         Append(result,
                                One(TokenType::Else, "else", branch.Range()));
@@ -579,7 +758,7 @@ class BehaviorPlanner {
                 }
                 return result;
             };
-            return emit(emit, 0);
+            return emit(emit, 0, c);
         }
         if (auto* expression = dynamic_cast<const Expression*>(&n)) {
             if (auto value = Reflection(*expression, c)) {
@@ -727,7 +906,19 @@ class BehaviorPlanner {
             }
         }
         _tokens = &method.declaration->templateTokens;
-        if (pending) Validate(method.declaration->Body(), {});
+        if (pending) {
+            Validate(method.declaration->Body(), {});
+            if (!_plan->valid) return;
+            const auto beforeQueries = unit.Declarations().size();
+            PrepareBehaviorTypeQueries(unit, *_currentBehavior->declaration,
+                                       *method.declaration, _host._diagnostics);
+            // Closed query targets may discover generic specializations. The
+            // analyzer's existing fixed point registers them before folding.
+            if (unit.Declarations().size() != beforeQueries) return;
+            for (const auto& [alias, declaration] : unit.genericAliases)
+                if (const auto* symbol = _model.DeclaredSymbol(*declaration))
+                    (void)_model._scopes.front()->DeclareAs(alias, *symbol);
+        }
         if (!_plan->valid) return;
         auto& diagnostics = _host._diagnostics;
         auto& analyzer = _host;

@@ -1,0 +1,15 @@
+module reflection_unique_runtime_also;
+// expect FLECHA-S0081
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+};
+interface Inspect { void inspect(&self, bool runtime) virtual; };
+behavior meta<T> => structure << Inspect {
+    void T::inspect(&self, bool runtime) override {
+        for<F> Field<T, F> field = T::fields() {
+            if true {} also runtime { field::requireUnique(field::name()); }
+        }
+    }
+};
+@meta structure Item { i32 first; i32 second; };

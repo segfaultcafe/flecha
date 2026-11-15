@@ -8303,6 +8303,95 @@ TEST(SemanticMemoryTests, MutableOwnerCallsCannotReceiveTheirFieldAliases) {
     EXPECT_TRUE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests, InterfaceContractsRejectUnprovenRawEffects) {
+    for (const std::string& source : {
+             R"(
+            interface Clear { void clear(&self, &*i32 slot) virtual; };
+            unsafe void call(&Clear target) {
+                pointer, err := new<i32>(42);
+                target->clear(&pointer);
+                free(pointer);
+            }
+        )",
+             R"(
+            interface Factory { unsafe own *i32 make(&self) virtual; };
+            unsafe void call(&Factory factory) { pointer := factory->make(); free(pointer); }
+        )",
+             R"(
+            interface Sink { unsafe void consume(&self, own *i32 value) virtual; };
+            unsafe void call(&Sink sink) { pointer, err := new<i32>(42); sink->consume(pointer); }
+        )",
+             R"(
+            interface Inspect { unsafe void inspect(&self, lend *i32 value) virtual; };
+            unsafe void call(&Inspect target) {
+                pointer, err := new<i32>(42);
+                defer target->inspect(pointer);
+                free(pointer);
+            }
+        )",
+         }) {
+        SCOPED_TRACE(source);
+        const auto result = Analyze(source);
+        EXPECT_NE(
+            FindErrorDiagnostic(result, DiagnosticCode::UnverifiedOwnership),
+            nullptr);
+    }
+}
+
+TEST(SemanticMemoryTests, InterfaceProvidersStillVerifyTheirBodies) {
+    auto result = Analyze(R"(
+        interface Run { void run(&self) virtual; };
+        structure Item << Run {};
+        void Item::run(&self) override {
+            unsafe { pointer, err := new<i32>(42); }
+        }
+        void call(&Run target) { target->run(); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(result, DiagnosticCode::MemoryLeak), nullptr);
+}
+
+TEST(SemanticMemoryTests, MutableInterfaceCallsInvalidateOwningFieldAliases) {
+    const std::string prefix = R"(
+        interface Reset { void reset(&self) virtual; };
+        interface Observe { void observe(&const self) virtual; };
+        structure Owner << Reset, Observe { own *i32 pointer; };
+        unsafe void Owner::tear(&self) override { free(self->pointer); }
+        void Owner::observe(&const self) override {}
+        void Owner::reset(&self) override {
+            unsafe { old := take(self->pointer); free(old); }
+        }
+        unsafe void inspect(lend *i32 pointer) {}
+    )";
+    for (const std::string& body : {
+             "alias := self->pointer; if alias != null { &Reset view = self; "
+             "view->reset(); *alias = 1; }",
+             "defer inspect(self->pointer); &Reset view = self; view->reset();",
+             "alias := self->pointer; &Reset view = self; defer "
+             "inspect(alias); "
+             "defer view->reset();",
+         }) {
+        SCOPED_TRACE(body);
+        const auto result =
+            Analyze(prefix + "unsafe void Owner::bad(&self) { " + body + " }");
+        EXPECT_TRUE(
+            FindErrorDiagnostic(result, DiagnosticCode::UseAfterFree) ||
+            FindErrorDiagnostic(result, DiagnosticCode::UnverifiedOwnership));
+    }
+    const auto good = Analyze(prefix + R"(
+        void Owner::good(&self) { &Reset view = self; view->reset(); }
+        unsafe void Owner::readOnly(&self) {
+            alias := self->pointer;
+            if alias != null { &const Observe view = self; view->observe(); *alias = 1; }
+        }
+        unsafe void Owner::safeCleanupOrder(&self) {
+            alias := self->pointer; &Reset view = self;
+            defer view->reset(); defer inspect(alias);
+        }
+    )");
+    for (const auto& diagnostic : good.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+}
+
 TEST(SemanticGenericTests,
      ReusesConcreteFunctionsAndAllowsRecursionAndReferences) {
     auto result = Analyze(R"(
