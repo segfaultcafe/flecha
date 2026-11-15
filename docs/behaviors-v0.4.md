@@ -25,6 +25,14 @@ and semantic tokens expose the source bindings and typed metadata members.
 Plans and their semantic models are detached from ordinary overload resolution
 and lowering. Reflection-bearing bodies are checked after substitution; opaque
 LANG-02 bodies remain provider candidates for the later selection stage.
+
+Before checking a reflected body, its detached analyzer registers the complete
+set of behavior method signatures and reachable interface defaults. This permits
+forward sibling calls, recursion, and inherited default calls through `self`.
+The lookup view retains ordinary overload, visibility, effect, and borrow
+checks; it neither registers concrete methods nor selects or suppresses runtime
+providers.
+
 LANG-03 does **not** select providers, satisfy virtual requirements, suppress
 handwritten methods, add concrete conformance, emit methods or interface tables,
 or change compiler-owned JSON. Declaring or activating a behavior still does

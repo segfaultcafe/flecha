@@ -1961,7 +1961,11 @@ foreach(fixture IN ITEMS
     move_projection
     nested
     owning_projection
-    owning_take)
+    owning_take
+    prospective_siblings
+    prospective_recursive
+    prospective_mutual
+    prospective_default)
     string(REPLACE "/" "_" fixture_name "${fixture}")
     add_test(NAME BehaviorReflection.${fixture_name}
         COMMAND $<TARGET_FILE:flecha> check

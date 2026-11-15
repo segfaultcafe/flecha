@@ -792,28 +792,73 @@ class BehaviorPlanner {
             function->sourceId = _currentBehavior->declaration->sourceId;
             function->moduleId = _currentBehavior->declaration->moduleId;
             function->quiverId = _currentBehavior->declaration->quiverId;
-            auto& contract = method.signature;
-            SemanticType receiver =
-                contract.key.receiver == MethodReceiverKind::ConstReference
-                    ? _plan->target.WithConst()
-                    : _plan->target;
-            std::vector<SemanticType> parameters{
-                SemanticType(SemanticTypeKind::Reference, receiver)};
-            parameters.insert(parameters.end(), contract.key.parameters.begin(),
-                              contract.key.parameters.end());
-            auto signature =
-                std::make_shared<CallableSignature>(CallableSignature{
-                    contract.result, parameters, contract.parameterContracts,
-                    contract.resultContracts, contract.borrowSourceIndices,
-                    contract.isUnsafe, contract.isOnce, contract.isCrashable});
-            auto symbol = std::make_unique<FunctionSymbol>(
-                "$behavior$" + std::to_string(_generatedBodies), signature,
-                function->NameRange(), BuiltInFunction::None,
-                _plan->target.Structure(), false, true, false, "",
-                _plan->target.Enum(), function.get(),
-                contract.borrowsVariadicPack);
-            analyzer._model._declarations[function.get()] = symbol.get();
-            analyzer._model._symbols.push_back(std::move(symbol));
+            // Register every declared signature before checking any reflected
+            // body. Forward calls and recursion resolve inside this detached
+            // model without publishing a concrete implementation.
+            const auto addProspective =
+                [&](const MethodContract& contract,
+                    const FunctionDeclaration* declaration,
+                    const MethodContract* requirement) {
+                    const SemanticType receiver =
+                        contract.key.receiver ==
+                                MethodReceiverKind::ConstReference
+                            ? _plan->target.WithConst()
+                            : _plan->target;
+                    std::vector<SemanticType> parameters{
+                        SemanticType(SemanticTypeKind::Reference, receiver)};
+                    parameters.insert(parameters.end(),
+                                      contract.key.parameters.begin(),
+                                      contract.key.parameters.end());
+                    auto signature =
+                        std::make_shared<CallableSignature>(CallableSignature{
+                            contract.result, parameters,
+                            contract.parameterContracts,
+                            contract.resultContracts,
+                            contract.borrowSourceIndices, contract.isUnsafe,
+                            contract.isOnce, contract.isCrashable});
+                    auto symbol = std::make_unique<FunctionSymbol>(
+                        "$behavior$" + std::to_string(_generatedBodies) +
+                            "::" + contract.key.name,
+                        signature, declaration->NameRange(),
+                        BuiltInFunction::None, _plan->target.Structure(), false,
+                        true, false, "", _plan->target.Enum(), declaration,
+                        contract.borrowsVariadicPack, nullptr,
+                        contract.visibility == MethodVisibility::Protected);
+                    if (declaration == function.get())
+                        analyzer._model._declarations[function.get()] =
+                            symbol.get();
+                    analyzer._prospectiveMethods.push_back(symbol.get());
+                    analyzer._prospectiveContracts.emplace(symbol.get(),
+                                                           requirement);
+                    analyzer._model._symbols.push_back(std::move(symbol));
+                };
+            for (const auto& prospective : _currentBehavior->methods)
+                addProspective(prospective.signature,
+                               &prospective == &method
+                                   ? function.get()
+                                   : prospective.declaration,
+                               prospective.requirement);
+            // Root method graphs already include inherited defaults. Expose
+            // their contracts with a concrete receiver, without deriving any
+            // conformance or selecting a runtime provider.
+            for (const auto& root : _currentBehavior->roots)
+                for (const MethodContract* contract : root.type->methods) {
+                    if (!contract->provider ||
+                        (contract->category != MethodCategory::Default &&
+                         contract->category != MethodCategory::Final))
+                        continue;
+                    const bool declared = std::any_of(
+                        analyzer._prospectiveMethods.begin(),
+                        analyzer._prospectiveMethods.end(),
+                        [&](const FunctionSymbol* candidate) {
+                            return MethodKeyOf(*candidate) == contract->key;
+                        });
+                    if (declared) continue;
+                    const auto* declaration = contract->provider->Declaration();
+                    if (!declaration)
+                        declaration = &contract->syntax->Signature();
+                    addProspective(*contract, declaration, contract);
+                }
             if (reflects) analyzer.AnalyzeFunction(*function);
             for (std::size_t i = 0;
                  i < analyzer._model._anonymousFunctions.size(); ++i)

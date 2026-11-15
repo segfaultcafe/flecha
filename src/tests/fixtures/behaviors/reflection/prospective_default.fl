@@ -1,0 +1,23 @@
+module prospective_default;
+decoration meta { application() target structure; };
+interface Defaults {
+    i32 helper(&const self, i32 value) default;
+    bool helper(&const self, bool value) default;
+    protected i32 secret(&const self) default;
+};
+i32 Defaults::helper(&const self, i32 value) { return value; }
+bool Defaults::helper(&const self, bool value) { return value; }
+protected i32 Defaults::secret(&const self) { return 3; }
+interface Inspect << Defaults { void inspect(&self) virtual; };
+behavior meta<T> => structure << Inspect {
+    void T::inspect(&self) override {
+        i32 number = self->helper(7);
+        bool flag = self->helper(true);
+        i32 hidden = self->secret();
+        for<F> Field<T, F> field = T::fields() {
+            F value = field::get(self);
+        }
+    }
+};
+@meta structure Item { i32 value; };
+i32 main() { return 0; }

@@ -8777,7 +8777,12 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
          (function.EnumOwner() && CurrentEnumOwner() != function.EnumOwner())))
         Report(diagnostics::DiagnosticCode::PrivateAccess, range,
                "method '" + function.Name() + "' is private");
-    if (function.IsProtected()) {
+    const bool prospectiveAccess =
+        std::ranges::find(_prospectiveMethods, &function) !=
+            _prospectiveMethods.end() &&
+        ((function.Owner() && CurrentOwner() == function.Owner()) ||
+         (function.EnumOwner() && CurrentEnumOwner() == function.EnumOwner()));
+    if (function.IsProtected() && !prospectiveAccess) {
         const InterfaceType* declaringInterface = function.InterfaceOwner();
         const MethodKey key = MethodKeyOf(function);
         const auto findDeclaration = [&](const auto& conformances) {
@@ -9297,6 +9302,23 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
             overloads.insert(overloads.end(), concrete->second.begin(),
                              concrete->second.end());
     }
+    // A detached behavior sees its declared signatures as a provisional
+    // method surface. Same-key concrete methods do not create a second
+    // overload here; selecting an implementation remains a later stage.
+    for (const FunctionSymbol* prospective : _prospectiveMethods) {
+        if ((!owner || prospective->Owner() != owner) &&
+            (!enumOwner || prospective->EnumOwner() != enumOwner))
+            continue;
+        const MethodKey key = MethodKeyOf(*prospective);
+        if (key.name != expression.Member() ||
+            prospective->IsCrashable() != expression.IsCrashable())
+            continue;
+        std::erase_if(overloads, [&](const FunctionSymbol* candidate) {
+            return candidate->IsCrashable() == prospective->IsCrashable() &&
+                   MethodKeyOf(*candidate) == key;
+        });
+        overloads.push_back(prospective);
+    }
     const std::size_t concreteOverloadCount = overloads.size();
     if (interfaceOwner) {
         for (const MethodContract* contract : interfaceOwner->methods)
@@ -9357,6 +9379,11 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
     if (!function) return SemanticType::Error();
     _model._methods[&expression] = function;
     const MethodContract* interfaceContract = nullptr;
+    if (const auto prospective = _prospectiveContracts.find(function);
+        prospective != _prospectiveContracts.end()) {
+        interfaceContract = prospective->second;
+        _model._interfaceMethods[&expression] = interfaceContract;
+    }
     if (interfaceOwner) {
         for (const MethodContract* contract : interfaceOwner->methods)
             if (contract->callable == function) {
