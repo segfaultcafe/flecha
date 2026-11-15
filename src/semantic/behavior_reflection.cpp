@@ -8,6 +8,7 @@
 
 #include "core/ast_walk.hpp"
 #include "core/parser.hpp"
+#include "core/tokenizer.hpp"
 #include "semantic/allocation_checker.hpp"
 #include "semantic/compile_time_value.hpp"
 #include "semantic/generic_expander.hpp"
@@ -75,6 +76,15 @@ struct Context {
     bool restricted = false;
     std::string fieldTypeAlias;
     bool runtimeConditional = false;
+    struct TypePatternBinding {
+        SemanticType type{SemanticTypeKind::Error};
+        std::string alias;
+        Range declaration;
+    };
+    std::map<std::string, TypePatternBinding> typeBindings;
+    unsigned runtimeLoopDepth = 0;
+    std::string breakFlag;
+
     struct UniqueKey {
         const StructureField* field;
         Range range;
@@ -305,13 +315,9 @@ class BehaviorPlanner {
         }
         if (n.Kind() == AstNodeKind::AnonymousFunctionExpression)
             c.restricted = true;
-        if (c.loop && (n.Kind() == AstNodeKind::BreakStatement ||
-                       n.Kind() == AstNodeKind::ProceedStatement ||
-                       n.Kind() == AstNodeKind::JumpToStatement))
+        if (c.loop && n.Kind() == AstNodeKind::JumpToStatement)
             Error(DiagnosticCode::InvalidReflectionContext, n.Range(),
-                  "break, proceed and jumpto are invalid in compile-time field "
-                  "iteration",
-                  c);
+                  "jumpto is invalid in compile-time field iteration", c);
         if (auto* call = Operation(n); call && IsContextual(*call, c)) {
             const bool field = c.loop && Receiver(*call) == c.loop->descriptor;
             if (c.restricted)
@@ -446,16 +452,53 @@ class BehaviorPlanner {
             return c.field && c.field->metadata ? &*c.field->metadata : nullptr;
         return _plan->metadata ? &*_plan->metadata : nullptr;
     }
-    std::optional<CompileTimeValue> Reflection(const Expression& e, Context c) {
+    std::optional<CompileTimeValue> Reflection(const Expression& e, Context c,
+                                               Context* bindings = nullptr) {
         if (e.Kind() == AstNodeKind::IsOfExpression) {
             const auto& query = static_cast<const IsOfExpression&>(e);
             if (query.Value().Kind() == AstNodeKind::NameExpression) {
                 const auto& name =
                     static_cast<const NameExpression&>(query.Value()).Name();
                 const bool field = c.field && name == c.loop->binder;
-                if (field ||
+                if (field || c.typeBindings.contains(name) ||
                     name == _currentBehavior->declaration->targetParameter) {
-                    const auto value = field ? c.field->type : _plan->target;
+                    const auto value = field ? c.field->type
+                                       : c.typeBindings.contains(name)
+                                           ? c.typeBindings.at(name).type
+                                           : _plan->target;
+                    const auto& pattern = query.Target();
+                    const auto* element = pattern.Target();
+                    if (pattern.TypeForm() == TypeKind::Slice &&
+                        pattern.Contract() == OwnershipContract::Own &&
+                        element && element->TypeForm() == TypeKind::Named &&
+                        element->typeArguments.empty() && !element->IsConst() &&
+                        element->Contract() == OwnershipContract::None &&
+                        element->Name().find("::") == std::string::npos &&
+                        !c.typeBindings.contains(element->Name()) &&
+                        element->Name() !=
+                            _currentBehavior->declaration->targetParameter &&
+                        (!c.loop || element->Name() != c.loop->binder) &&
+                        !_scope->Lookup(element->Name())) {
+                        const bool matches =
+                            value.Kind() == SemanticTypeKind::OwnedSlice;
+                        if (matches && bindings) {
+                            auto alias =
+                                "$behavior$type$" + std::to_string(_aliasId++);
+                            auto symbol = std::make_unique<Symbol>(
+                                SymbolKind::TypeBinding, alias, *value.Target(),
+                                element->Range(), false);
+                            (void)_scope->Declare(*symbol);
+                            _model._symbols.push_back(std::move(symbol));
+                            bindings->typeBindings[element->Name()] = {
+                                *value.Target(), alias, element->Range()};
+                            Occurrence(
+                                element->Range(), element->Name(),
+                                "element type = " + value.Target()->Name(),
+                                true, element->Range());
+                        }
+                        return CompileTimeValue{
+                            SemanticType(SemanticTypeKind::Bool), matches};
+                    }
                     Scope* saved = _host._currentScope;
                     _host._currentScope = &_host.AddScope(_scope);
                     if (c.field) {
@@ -464,6 +507,13 @@ class BehaviorPlanner {
                             c.field->type, c.loop->binderRange, false);
                         (void)_host._currentScope->Declare(*binder);
                         _model._symbols.push_back(std::move(binder));
+                    }
+                    for (const auto& [boundName, binding] : c.typeBindings) {
+                        auto symbol = std::make_unique<Symbol>(
+                            SymbolKind::TypeBinding, boundName, binding.type,
+                            binding.declaration, false);
+                        (void)_host._currentScope->Declare(*symbol);
+                        _model._symbols.push_back(std::move(symbol));
                     }
                     bool result = false;
                     if (query.Candidates().empty())
@@ -578,8 +628,25 @@ class BehaviorPlanner {
         // Reflection expands once, even inside runtime loops. Requirements
         // still cannot depend on runtime selection or execution counts.
         if (n.Kind() == AstNodeKind::WhileStatement ||
-            n.Kind() == AstNodeKind::RangeStatement)
+            n.Kind() == AstNodeKind::RangeStatement) {
             c.runtimeConditional = true;
+            ++c.runtimeLoopDepth;
+        }
+        if (c.field && c.runtimeLoopDepth == 0 &&
+            (n.Kind() == AstNodeKind::BreakStatement ||
+             n.Kind() == AstNodeKind::ProceedStatement)) {
+            Tokens result;
+            if (n.Kind() == AstNodeKind::BreakStatement) {
+                Append(result,
+                       One(TokenType::Identifier, c.breakFlag, n.Range()));
+                Append(result, One(TokenType::Assign, "=", n.Range()));
+                Append(result, One(TokenType::True, "true", n.Range()));
+                Append(result, One(TokenType::SemiColon, ";", n.Range()));
+            }
+            Append(result, One(TokenType::Break, "break", n.Range()));
+            Append(result, One(TokenType::SemiColon, ";", n.Range()));
+            return result;
+        }
         if (n.Kind() == AstNodeKind::ExpressionStatement) {
             const auto* call =
                 Operation(static_cast<const ExpressionStatement&>(n).Value());
@@ -661,15 +728,40 @@ class BehaviorPlanner {
         if (n.Kind() == AstNodeKind::FieldIterationStatement) {
             auto& loop = static_cast<const FieldIterationStatement&>(n);
             Tokens result;
+            bool transfers = false;
+            WalkAst(*loop.body, [&](AstNode& node, bool enter) {
+                if (enter && (node.Kind() == AstNodeKind::BreakStatement ||
+                              node.Kind() == AstNodeKind::ProceedStatement))
+                    transfers = true;
+            });
+            const auto breakFlag = "$loop$break$" + std::to_string(_aliasId++);
+            const auto syntax = [&](std::string text) {
+                for (auto pos = text.find(breakFlag); pos != std::string::npos;
+                     pos = text.find(breakFlag))
+                    text.replace(pos, breakFlag.size(), "fieldBreak");
+                diagnostics::DiagnosticBag ignored;
+                auto tokens = Tokenizer(text, ignored).Tokenize();
+                Tokens result;
+                for (auto& token : tokens) {
+                    if (token.type == TokenType::EOF_TOKEN) continue;
+                    if (token.value == "fieldBreak") token.value = breakFlag;
+                    token.range = loop.Range();
+                    result.push_back({std::move(token)});
+                }
+                return result;
+            };
+            if (transfers)
+                Append(result, syntax("{ bool " + breakFlag +
+                                      " = false; while true {"));
             std::map<std::string, Context::UniqueKey> uniqueKeys;
             for (auto& field : _plan->pack.fields) {
                 Context iteration{
-                    &loop,
-                    &field,
-                    false,
+                    &loop, &field, false,
                     "$behavior$type$" + std::to_string(_aliasId++),
-                    c.runtimeConditional,
-                    &uniqueKeys};
+                    c.runtimeConditional};
+                iteration.uniqueKeys = &uniqueKeys;
+                iteration.typeBindings = c.typeBindings;
+                iteration.breakFlag = breakFlag;
                 auto alias = std::make_unique<Symbol>(
                     field.type.Kind() == SemanticTypeKind::Structure
                         ? SymbolKind::StructureType
@@ -691,16 +783,25 @@ class BehaviorPlanner {
                         "behavior expansion token budget exceeded", iteration);
                     break;
                 }
+                if (transfers) Append(result, syntax("while true {"));
                 Append(result, std::move(body));
+                if (transfers)
+                    Append(result,
+                           syntax("break; } if " + breakFlag + " { break; }"));
             }
+            if (transfers) Append(result, syntax("break; } }"));
             return result;
         }
         if (n.Kind() == AstNodeKind::IfStatement) {
             const auto& statement = static_cast<const IfStatement&>(n);
-            const auto fold = [&](const Expression& expression) {
+            const auto fold = [&](const Expression& expression,
+                                  Context* bindings = nullptr) {
                 return EvaluateCompileTimeValue(
-                    expression, _model,
-                    [&](const auto& value) { return Reflection(value, c); });
+                    expression, _model, [&](const auto& value) {
+                        return Reflection(
+                            value, c,
+                            &value == &expression ? bindings : nullptr);
+                    });
             };
             std::vector<const ConditionalBranch*> branches{
                 &statement.PrimaryBranch()};
@@ -713,7 +814,8 @@ class BehaviorPlanner {
                                ? Rewrite(*statement.ElseBody(), path)
                                : Tokens{};
                 const auto& branch = *branches[index];
-                const auto condition = fold(branch.Condition());
+                Context selected = path;
+                const auto condition = fold(branch.Condition(), &selected);
                 const bool constant =
                     condition && std::holds_alternative<bool>(condition->value);
                 if (constant) {
@@ -722,7 +824,7 @@ class BehaviorPlanner {
                          c.field ? c.field->field : nullptr, condition});
                     if (!std::get<bool>(condition->value))
                         return self(self, index + 1, path);
-                    if (!branch.Also()) return Rewrite(branch.Body(), path);
+                    if (!branch.Also()) return Rewrite(branch.Body(), selected);
                 }
                 if (!constant) path.runtimeConditional = true;
                 Tokens result =
@@ -730,7 +832,8 @@ class BehaviorPlanner {
                 Append(result, constant ? One(TokenType::True, "true",
                                               branch.Condition().Range())
                                         : Rewrite(branch.Condition(), path));
-                Append(result, Rewrite(branch.Body(), path));
+                selected.runtimeConditional = path.runtimeConditional;
+                Append(result, Rewrite(branch.Body(), selected));
                 if (const auto* also = branch.Also()) {
                     const auto value = fold(also->Condition());
                     const bool known =
@@ -820,6 +923,26 @@ class BehaviorPlanner {
                       "metadata member",
                       c);
                 return One(TokenType::None, "none", n.Range());
+            }
+        }
+        if (n.Kind() == AstNodeKind::Type ||
+            n.Kind() == AstNodeKind::NameExpression) {
+            const auto name =
+                n.Kind() == AstNodeKind::Type
+                    ? static_cast<const TypeNode&>(n).Name()
+                    : static_cast<const NameExpression&>(n).Name();
+            if (auto binding = c.typeBindings.find(name);
+                binding != c.typeBindings.end()) {
+                Occurrence(n.Range(), name,
+                           "element type = " + binding->second.type.Name(),
+                           true, binding->second.declaration);
+                Tokens result;
+                if (n.Kind() == AstNodeKind::Type &&
+                    static_cast<const TypeNode&>(n).IsConst())
+                    Append(result, One(TokenType::Const, "const", n.Range()));
+                Append(result, One(TokenType::Identifier, binding->second.alias,
+                                   n.Range()));
+                return result;
             }
         }
         if (n.Kind() == AstNodeKind::Type && c.field) {

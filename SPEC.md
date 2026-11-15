@@ -1251,6 +1251,18 @@ See [generics](docs/generics.md) for the implemented rules and limits.
 
 Generic parameters may use closed compile-time type-set constraints, as in
 `T identity<T: numeric>(T value)`. Built-in numeric sets and custom
+In generic specialization and behavior expansion, a direct branch condition
+`T.isof<own []Element>` matches an owning slice and binds a fresh unqualified
+`Element` name to its exact element type in that branch body only. Existing
+type names and parameters are compared without rebinding. Nonselected type
+branches are removed before semantic analysis; no runtime type test is emitted.
+The binding does not extend to alternatives, `also`, or following statements.
+Compound Boolean binding conditions are not supported.
+
+Behavior field iteration supports `proceed` (next expanded field) and `break`
+(after the whole field pack). Transfers inside nested runtime loops target
+those loops instead. `jumpto` remains invalid inside field iteration.
+
 `typeset name { members, };` declarations are supported. `T.isof<name>` folds
 to a boolean during specialization. Type sets have ordinary module visibility
 and no runtime representation. See [type sets](docs/type_sets.md).

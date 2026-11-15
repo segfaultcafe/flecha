@@ -9583,3 +9583,57 @@ TEST(SemanticDecorationTests, RejectsOutOfRangeMetadataWithoutPublishingIt) {
         nullptr);
     EXPECT_TRUE(analysis.model.Decorations().empty());
 }
+
+TEST(SemanticGenericTests, OwnedSlicePatternsBindOnlyInSelectedBranches) {
+    auto analysis = Analyze(R"(
+        structure Item { i32 value; };
+        i32 depth<T>() {
+            if T.isof<own []Element> {
+                return 1 + depth<Element>();
+            } else if T.isof<i32> {
+                return 0;
+            } else if T.isof<Item> {
+                Item value = none;
+                return value.value;
+            } else {
+                return missing();
+            }
+        }
+        bool exact<T, E>() { return T.isof<own []E>; }
+        i32 main() {
+            bool yes = exact<own []i32, i32>();
+            bool no = exact<own []i32, u32>();
+            return depth<own []own []Item>() + depth<i32>();
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        EXPECT_NE(diagnostic.severity, DiagnosticSeverity::Error) << diagnostic.message;
+}
+
+TEST(SemanticGenericTests, OwnedSlicePatternBindingsDoNotEscapeOrShadowTypes) {
+    for (const std::string& source : {
+        R"(void check<T>() { if T.isof<own []E> { E value = none; } E escaped = none; }
+            i32 main() { check<own []i32>(); return 0; })",
+        R"(void check<T>() { if T.isof<own []E> {} else { E escaped = none; } }
+            i32 main() { check<i32>(); return 0; })",
+        R"(structure E {}; void check<T>() { if T.isof<own []E> { missing(); } }
+            i32 main() { check<own []E>(); return 0; })",
+        R"(void check<T, E>() { if T.isof<own []E> { missing(); } }
+            i32 main() { check<own []i32, i32>(); return 0; })"
+    }) {
+        SCOPED_TRACE(source);
+        auto analysis = Analyze(source);
+        EXPECT_TRUE(analysis.diagnostics.HasErrors());
+    }
+}
+
+TEST(SemanticGenericTests, OwnedSlicePatternsKeepOrdinaryLoopAndBranchChecking) {
+    auto analysis = Analyze(R"(
+        void check<T>(bool flag) {
+            if flag { unknownRuntimeCall(); }
+            if T.isof<own []E> { E value = none; }
+        }
+        i32 main() { check<own []i32>(false); return 0; }
+    )");
+    EXPECT_TRUE(analysis.diagnostics.HasErrors());
+}

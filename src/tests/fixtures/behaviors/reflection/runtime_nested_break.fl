@@ -1,5 +1,4 @@
 module runtime_nested_break;
-// expect FLECHA-S0081
 decoration meta { application() target structure; };
 interface Read { void read(&const self) virtual; };
 behavior meta<T> => structure << Read {

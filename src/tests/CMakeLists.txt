@@ -1982,7 +1982,11 @@ foreach(fixture IN ITEMS
     runtime_loop
     runtime_range
     visibility_runtime_loop
-    type_query_loop)
+    type_query_loop
+    break
+    proceed
+    runtime_nested_break
+    runtime_nested_proceed)
     string(REPLACE "/" "_" fixture_name "${fixture}")
     add_test(NAME BehaviorReflection.${fixture_name}
         COMMAND $<TARGET_FILE:flecha> check
@@ -2002,7 +2006,6 @@ function(add_behavior_reflection_failure fixture code)
 endfunction()
 add_behavior_reflection_failure(arbitrary_decoration FLECHA-S0082)
 add_behavior_reflection_failure(borrow_conflict FLECHA-S0029)
-add_behavior_reflection_failure(break FLECHA-S0081)
 add_behavior_reflection_failure(const_write FLECHA-S0005)
 add_behavior_reflection_failure(descriptor_address FLECHA-S0083)
 add_behavior_reflection_failure(descriptor_call FLECHA-S0083)
@@ -2021,7 +2024,6 @@ add_behavior_reflection_failure(nested_closure FLECHA-S0081)
 add_behavior_reflection_failure(nested_iteration FLECHA-S0081)
 add_behavior_reflection_failure(ordinary FLECHA-S0081)
 add_behavior_reflection_failure(pack_escape FLECHA-S0083)
-add_behavior_reflection_failure(proceed FLECHA-S0081)
 add_behavior_reflection_failure(record_call FLECHA-S0083)
 add_behavior_reflection_failure(record_local FLECHA-S0083)
 add_behavior_reflection_failure(record_return FLECHA-S0083)
@@ -2068,7 +2070,7 @@ add_behavior_reflection_failure(require_message_type FLECHA-S0082)
 add_behavior_reflection_failure(require_loop FLECHA-S0081)
 
 # LANG-04: execute each positive fixture through the ordinary interface ABI.
-foreach(fixture borrow composition type_queries reader_protocol runtime_loops derived_constraints
+foreach(fixture borrow composition type_queries reader_protocol runtime_loops field_transfers owned_slice_patterns derived_constraints
         derived_constraints_generated enum field_only_empty field_validation generic generic_methods
         legacy_json mutable overloads private_fields protected recursion structure suppression variadic)
     add_test(NAME BehaviorExpansion.runtime_${fixture}
@@ -2131,8 +2133,6 @@ add_behavior_expansion_failure(constraint_missing_method FLECHA-S0065)
 
 add_behavior_reflection_failure(type_query_unknown FLECHA-S0054)
 
-add_behavior_reflection_failure(runtime_nested_break FLECHA-S0081)
-add_behavior_reflection_failure(runtime_nested_proceed FLECHA-S0081)
 add_behavior_reflection_failure(runtime_unique FLECHA-S0081)
 add_behavior_reflection_failure(runtime_const_write FLECHA-S0005)
 add_behavior_reflection_failure(runtime_closure FLECHA-S0081)

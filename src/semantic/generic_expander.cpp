@@ -319,7 +319,7 @@ class Expander {
                     dependent |= binders.contains(
                         static_cast<const TypeNode&>(target).Name());
             });
-            if (!dependent) PrepareIsOf(query);
+            if (!dependent && !SliceBinder(query.Target())) PrepareIsOf(query);
         });
         for (std::size_t i = firstNew;
              i < unit.Declarations().size() && !failedBudget; ++i)
@@ -943,6 +943,265 @@ class Expander {
                     "value declaration shadows type parameter '" + name + "'");
         });
     }
+    using Bindings = std::map<std::string, Tokens>;
+
+    // Type patterns bind only a fresh, unqualified element name. Existing
+    // names retain their nominal or generic identity.
+    const TypeNode* SliceBinder(const TypeNode& type) const {
+        if (type.TypeForm() != TypeKind::Slice ||
+            type.Contract() != OwnershipContract::Own)
+            return nullptr;
+        const auto* element = type.Target();
+        if (element->TypeForm() != TypeKind::Named ||
+            !element->typeArguments.empty() || element->IsConst() ||
+            element->Contract() != OwnershipContract::None ||
+            element->Name().find("::") != std::string::npos)
+            return nullptr;
+        return element;
+    }
+    Tokens BoundTypeTokens(const TypeNode& type, const Declaration& origin,
+                           const Bindings& bindings) {
+        if (type.TypeForm() == TypeKind::Named) {
+            if (auto found = bindings.find(type.Name());
+                found != bindings.end()) {
+                Tokens result = found->second;
+                if (type.IsConst()) {
+                    auto position = result.begin();
+                    if (position != result.end() &&
+                        position->type == TokenType::Own)
+                        ++position;
+                    if (position == result.end() ||
+                        position->type != TokenType::Const)
+                        result.insert(position, Token(TokenType::Const, "const",
+                                                      type.Range()));
+                }
+                return result;
+            }
+        }
+        if (type.Target()) {
+            auto shell = CopyType(type);
+            // Canonicalize the outer syntax with a primitive placeholder; the
+            // element may itself be a pattern-bound type.
+            *shell->Target() = TypeNode(type.Range(), PrimitiveType::I32);
+            Tokens result = TypeTokens(*shell, origin.moduleId);
+            result.pop_back();
+            auto element = BoundTypeTokens(*type.Target(), origin, bindings);
+            result.insert(result.end(), element.begin(), element.end());
+            return result;
+        }
+        auto concrete = CopyType(type);
+        return TypeTokens(*concrete, origin.moduleId);
+    }
+    std::optional<bool> SpecializationQuery(const Expression& expression,
+                                            const Declaration& origin,
+                                            Bindings& bindings) {
+        if (expression.Kind() != AstNodeKind::IsOfExpression) return {};
+        const auto& query = static_cast<const IsOfExpression&>(expression);
+        if (query.Value().Kind() != AstNodeKind::NameExpression) return {};
+        const auto& receiver =
+            static_cast<const NameExpression&>(query.Value());
+        const auto found = bindings.find(receiver.Name());
+        if (found == bindings.end()) return {};
+        const Tokens argument = found->second;
+        if (const auto* binder = SliceBinder(query.Target());
+            binder && !bindings.contains(binder->Name()) &&
+            !LookupFrom(binder->Name(), origin, binder->Range(), false)) {
+            std::size_t index = 0;
+            if (index == argument.size() ||
+                argument[index++].type != TokenType::Own)
+                return false;
+            if (index < argument.size() &&
+                argument[index].type == TokenType::Const)
+                ++index;
+            if (index + 2 >= argument.size() ||
+                argument[index].type != TokenType::LBracket ||
+                argument[index + 1].type != TokenType::RBracket)
+                return false;
+            bindings[binder->Name()] =
+                Tokens(argument.begin() + index + 2, argument.end());
+            return true;
+        }
+        if (query.Target().Target())
+            return Key({argument}) ==
+                   Key({BoundTypeTokens(query.Target(), origin, bindings)});
+        return MatchesIsOfTarget(argument, query, origin, bindings);
+    }
+    Tokens SpecializeTokens(const Declaration& origin, const Bindings& bindings,
+                            const std::string& name, const std::string& owner) {
+        const auto rangeOf = [&](const auto& self,
+                                 const AstNode& node) -> source::SourceRange {
+            auto range = node.Range();
+            const auto extend = [&](const auto& arguments) {
+                for (const auto& argument : arguments) {
+                    auto end = self(self, *argument).end;
+                    if (end.offset > range.end.offset) range.end = end;
+                }
+            };
+            if (node.Kind() == AstNodeKind::Type)
+                extend(static_cast<const TypeNode&>(node).typeArguments);
+            if (node.Kind() == AstNodeKind::NameExpression)
+                extend(static_cast<const NameExpression&>(node).typeArguments);
+            return range;
+        };
+        std::set<std::size_t> sites;
+        WalkAst(origin, [&](AstNode& node, bool enter) {
+            if (!enter) return;
+            std::string identifier;
+            if (node.Kind() == AstNodeKind::Type)
+                identifier = static_cast<TypeNode&>(node).Name();
+            if (node.Kind() == AstNodeKind::NameExpression)
+                identifier = static_cast<NameExpression&>(node).Name();
+            if (identifier.empty()) return;
+            for (const auto& token : origin.templateTokens)
+                if (token.value == identifier &&
+                    token.range.start.offset >= node.Range().start.offset &&
+                    token.range.end.offset <= node.Range().end.offset)
+                    sites.insert(token.range.start.offset);
+        });
+        const auto append = [](Tokens& result, Tokens source) {
+            result.insert(result.end(), source.begin(), source.end());
+        };
+        const auto raw = [&](source::SourceRange range, const Bindings& scope) {
+            Tokens result;
+            for (std::size_t i = 0; i < origin.templateTokens.size(); ++i) {
+                Token token = origin.templateTokens[i];
+                if (token.range.start.offset < range.start.offset ||
+                    token.range.end.offset > range.end.offset)
+                    continue;
+                bool erased = false;
+                for (const auto& [begin, end] : origin.parameterTokenRanges)
+                    if (i >= begin && i < end) erased = true;
+                if (erased) continue;
+                if (i == origin.nameTokenIndex)
+                    token.value = name;
+                else if (!owner.empty() && i == origin.ownerTokenIndex)
+                    token.value = owner;
+                else if (sites.contains(token.range.start.offset) &&
+                         scope.contains(token.value)) {
+                    Tokens arguments = scope.at(token.value);
+                    if (!result.empty() &&
+                        result.back().type == TokenType::Const &&
+                        !arguments.empty() &&
+                        (arguments.front().type == TokenType::Own ||
+                         arguments.front().type == TokenType::Lend)) {
+                        auto qualifier = result.back();
+                        result.pop_back();
+                        result.push_back(arguments.front());
+                        arguments.erase(arguments.begin());
+                        result.push_back(qualifier);
+                    }
+                    for (auto argument : arguments) {
+                        argument.range = token.range;
+                        if (argument.type == TokenType::Const &&
+                            !result.empty() &&
+                            result.back().type == TokenType::Const)
+                            continue;
+                        result.push_back(std::move(argument));
+                    }
+                    continue;
+                }
+                result.push_back(std::move(token));
+            }
+            return result;
+        };
+        const auto rewrite = [&](const auto& self, const AstNode& node,
+                                 const Bindings& scope) -> Tokens {
+            if (node.Kind() == AstNodeKind::IfStatement) {
+                const auto& statement = static_cast<const IfStatement&>(node);
+                std::vector<const ConditionalBranch*> branches{
+                    &statement.PrimaryBranch()};
+                for (const auto& branch : statement.ElseIfBranches())
+                    branches.push_back(branch.get());
+                const auto emit = [&](const auto& next,
+                                      std::size_t index) -> Tokens {
+                    if (index == branches.size())
+                        return statement.ElseBody()
+                                   ? self(self, *statement.ElseBody(), scope)
+                                   : Tokens{};
+                    const auto& branch = *branches[index];
+                    Bindings bound = scope;
+                    auto constant =
+                        SpecializationQuery(branch.Condition(), origin, bound);
+                    if (constant && !*constant) return next(next, index + 1);
+                    // Keep a real lexical block and preserve also's original
+                    // conditional execution. No bindings escape to
+                    // alternatives.
+                    if (constant && !branch.Also())
+                        return self(self, branch.Body(), bound);
+                    Tokens result{Token(TokenType::If, "if", branch.Range())};
+                    if (constant)
+                        result.emplace_back(TokenType::True, "true",
+                                            branch.Condition().Range());
+                    else
+                        append(result, self(self, branch.Condition(), scope));
+                    append(result, self(self, branch.Body(), bound));
+                    if (branch.Also()) {
+                        result.emplace_back(TokenType::Also, "also",
+                                            branch.Also()->Range());
+                        append(result,
+                               self(self, branch.Also()->Condition(), scope));
+                        append(result,
+                               self(self, branch.Also()->Body(), scope));
+                    }
+                    if (!constant) {
+                        auto alternative = next(next, index + 1);
+                        if (!alternative.empty()) {
+                            result.emplace_back(TokenType::Else, "else",
+                                                branch.Range());
+                            append(result, std::move(alternative));
+                        }
+                    }
+                    return result;
+                };
+                return emit(emit, 0);
+            }
+            if (const auto* expression =
+                    dynamic_cast<const Expression*>(&node)) {
+                Bindings bound = scope;
+                if (auto result =
+                        SpecializationQuery(*expression, origin, bound))
+                    return {Token(*result ? TokenType::True : TokenType::False,
+                                  *result ? "true" : "false", node.Range())};
+            }
+            // Rewrite a type/name as one range so qualifiers and substituted
+            // ownership tokens stay together.
+            if (node.Kind() == AstNodeKind::Type ||
+                node.Kind() == AstNodeKind::NameExpression)
+                return raw(rangeOf(rangeOf, node), scope);
+            std::vector<const AstNode*> children;
+            if (node.Kind() == AstNodeKind::RangeStatement)
+                children =
+                    static_cast<const RangeStatement&>(node).SyntaxChildren();
+            else {
+                unsigned depth = 0;
+                WalkAst(node, [&](AstNode& child, bool enter) {
+                    if (enter) {
+                        if (depth == 1) children.push_back(&child);
+                        ++depth;
+                    } else
+                        --depth;
+                });
+            }
+            std::sort(children.begin(), children.end(), [](auto* a, auto* b) {
+                return a->Range().start.offset < b->Range().start.offset;
+            });
+            Tokens result;
+            auto range = rangeOf(rangeOf, node);
+            auto cursor = range.start;
+            for (auto* child : children) {
+                auto part = rangeOf(rangeOf, *child);
+                if (part.start.offset < cursor.offset ||
+                    part.end.offset > range.end.offset)
+                    continue;
+                append(result, raw({cursor, part.start}, scope));
+                append(result, self(self, *child, scope));
+                cursor = part.end;
+            }
+            append(result, raw({cursor, range.end}, scope));
+            return result;
+        };
+        return rewrite(rewrite, origin, bindings);
+    }
     Declaration* Clone(const Declaration& origin, const Arguments& arguments,
                        const std::string& name, source::SourceRange at,
                        const std::string& owner = {}) {
@@ -973,95 +1232,7 @@ class Expander {
         std::map<std::string, Tokens> substitutions;
         for (std::size_t i = 0; i < parameters.size(); ++i)
             substitutions[parameters[i]] = arguments[i];
-        std::set<std::size_t> sites;
-        std::map<std::size_t, const IsOfExpression*> isOfSites;
-        WalkAst(origin, [&](AstNode& node, bool enter) {
-            if (!enter) return;
-            if (node.Kind() == AstNodeKind::IsOfExpression) {
-                const auto& expression =
-                    static_cast<const IsOfExpression&>(node);
-                if (expression.Value().Kind() == AstNodeKind::NameExpression) {
-                    const auto& receiver =
-                        static_cast<const NameExpression&>(expression.Value());
-                    if (substitutions.contains(receiver.Name()))
-                        isOfSites[receiver.Range().start.offset] = &expression;
-                }
-            }
-            std::string parameter;
-            if (node.Kind() == AstNodeKind::Type)
-                parameter = static_cast<TypeNode&>(node).Name();
-            if (node.Kind() == AstNodeKind::NameExpression)
-                parameter = static_cast<NameExpression&>(node).Name();
-            if (!substitutions.contains(parameter)) return;
-            for (const auto& token : origin.templateTokens)
-                if (token.value == parameter &&
-                    token.range.start.offset >= node.Range().start.offset &&
-                    token.range.end.offset <= node.Range().end.offset)
-                    sites.insert(token.range.start.offset);
-        });
-        Tokens tokens;
-        for (std::size_t i = 0; i < origin.templateTokens.size(); ++i) {
-            bool erase = false;
-            for (const auto& [begin, end] : origin.parameterTokenRanges)
-                if (i >= begin && i < end) erase = true;
-            if (erase) continue;
-            Token token = origin.templateTokens[i];
-            // A type parameter is not a value expression after substitution
-            // (`i32.isof<...>` cannot be parsed), so fold these queries while
-            // cloning the specialization.
-            if (const auto found = isOfSites.find(token.range.start.offset);
-                found != isOfSites.end()) {
-                const auto& query = *found->second;
-                const auto& receiver =
-                    static_cast<const NameExpression&>(query.Value());
-                const bool member =
-                    MatchesIsOfTarget(substitutions[receiver.Name()], query,
-                                      origin, substitutions);
-                token.type = member ? TokenType::True : TokenType::False;
-                token.value = member ? "true" : "false";
-                tokens.push_back(std::move(token));
-                while (i + 1 < origin.templateTokens.size() &&
-                       origin.templateTokens[i + 1].range.start.file ==
-                           query.Range().start.file &&
-                       origin.templateTokens[i + 1].range.end.offset <=
-                           query.Range().end.offset)
-                    ++i;
-                continue;
-            }
-            if (i == origin.nameTokenIndex) {
-                token.value = name;
-                tokens.push_back(token);
-            } else if (!owner.empty() && i == origin.ownerTokenIndex) {
-                token.value = owner;
-                tokens.push_back(token);
-            } else if (sites.contains(token.range.start.offset) &&
-                       substitutions.contains(token.value)) {
-                Tokens arguments = substitutions[token.value];
-                // A const-qualified template parameter such as `[]const T`
-                // becomes `[]own const []U` when T is an owning slice. Keep
-                // the ownership contract outermost so the specialized tokens
-                // remain valid type syntax and const qualifies the owner.
-                if (!tokens.empty() && tokens.back().type == TokenType::Const &&
-                    !arguments.empty() &&
-                    (arguments.front().type == TokenType::Own ||
-                     arguments.front().type == TokenType::Lend)) {
-                    Token qualifier = std::move(tokens.back());
-                    tokens.pop_back();
-                    Token contract = std::move(arguments.front());
-                    arguments.erase(arguments.begin());
-                    tokens.push_back(std::move(contract));
-                    tokens.push_back(std::move(qualifier));
-                }
-                for (auto argument : arguments) {
-                    argument.range = token.range;
-                    if (argument.type == TokenType::Const && !tokens.empty() &&
-                        tokens.back().type == TokenType::Const)
-                        continue;
-                    tokens.push_back(std::move(argument));
-                }
-            } else
-                tokens.push_back(token);
-        }
+        Tokens tokens = SpecializeTokens(origin, substitutions, name, owner);
         generatedTokens += tokens.size();
         ++generatedDeclarations;
         if (generatedTokens > 1000000) {

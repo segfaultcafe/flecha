@@ -1,0 +1,20 @@
+module audit;
+@imports :: lib::json::json;
+@json(structure)
+structure Child { string name; own []i32 numbers; };
+@json(structure)
+structure Document { own []Child children; own []own []string names; };
+i32 main() {
+    document, err := json::from<Document>("{\"children\":[{\"name\":\"Ada\",\"numbers\":[1,2,3]},{\"name\":\"Grace\",\"numbers\":[4]}],\"names\":[[\"first\",\"second\"],[\"third\"]],\"names\":[[\"replacement\"]]}".cast<[]const u8>);
+    if err == AllocationError.OutOfMemory { return 42; }
+    if err != none { return 1; }
+    encoded, writeErr := document.json();
+    if writeErr == AllocationError.OutOfMemory { return 42; }
+    if writeErr != none { return 2; }
+    reader := json::Reader::init("{\"names\":[[\"temporary\"],[\"partial\",false]]}".cast<[]const u8>);
+    readErr := document.readJson(&reader);
+    if readErr == AllocationError.OutOfMemory { return 42; }
+    if readErr != json::JsonError.TypeMismatch { return 3; }
+    if document.names.len() != 1 or document.names[0][0].view() != "replacement" { return 4; }
+    return 42;
+}

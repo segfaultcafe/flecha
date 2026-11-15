@@ -4,6 +4,13 @@
 
 ### Added
 
+- Owning-slice type patterns such as `T.isof<own []Element>` bind an element
+  type in selected behavior and generic branches, including nested owners.
+  Nonselected type branches are discarded before semantic checking.
+- Behavior field loops support `proceed` for the next field and `break` for
+  exiting the field pack, while nested runtime loops keep their own targets.
+  `jumpto` remains rejected.
+
 - Behavior field iteration composes with `while`, counted `loop`, and range
   loops. Reflected metadata, field projections, and type queries expand before
   ordinary runtime analysis. Compile-time validations remain outside runtime

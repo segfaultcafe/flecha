@@ -1,0 +1,38 @@
+module field_transfers;
+decoration meta { application() target structure; };
+interface Inspect { i32 inspect(&const self) virtual; };
+behavior meta<T> => structure << Inspect {
+    i32 T::inspect(&const self) override {
+        i32 total = 0;
+        loop i32 round = 0; round < 2; round++ {
+            for<F> Field<T, F> field = T::fields() {
+                if field::name() == "skip" { proceed; }
+                if field::get(self) == 9 { break; }
+                total += field::get(self);
+            }
+            total += 10;
+        }
+        for<F> Field<T, F> field = T::fields() {
+            i32 index = 0;
+            while index < 3 {
+                index++;
+                if index == 1 { proceed; }
+                if index == 3 { break; }
+                total += 1;
+            }
+        }
+        return total;
+    }
+};
+@meta structure Item { i32 first; i32 skip; i32 stop; i32 after; };
+@meta structure Empty {};
+i32 main() {
+    item := Item::init();
+    item.first = 9; item.skip = 100; item.stop = 9; item.after = 100;
+    if item.inspect() != 24 { return 1; }
+    item.first = 3;
+    if item.inspect() != 30 { return 2; }
+    empty := Empty::init();
+    if empty.inspect() != 20 { return 3; }
+    return 42;
+}

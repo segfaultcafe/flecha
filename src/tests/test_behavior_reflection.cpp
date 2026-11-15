@@ -512,3 +512,41 @@ TEST(BehaviorReflection, RuntimeLoopReflectionRetainsEditorInformation) {
     ASSERT_TRUE(occurrence);
     EXPECT_EQ(occurrence->kind, analyzer::SemanticItemKind::Function);
 }
+
+TEST(BehaviorReflection, OwnedSlicePatternNamesHaveBranchScope) {
+    auto result = Analyze(R"(
+        decoration meta { application() target structure; };
+        interface Inspect { void inspect(&self) virtual; };
+        behavior meta<T> => structure << Inspect {
+            void T::inspect(&self) override {
+                for<F> Field<T, F> field = T::fields() {
+                    if F.isof<own []Element> { Element value = none; }
+                    Element escaped = none;
+                }
+            }
+        };
+        @meta structure Data { own []i32 items; };
+    )");
+    EXPECT_TRUE(result.diagnostics.HasErrors());
+    for (const auto& type : result.model.Structures())
+        EXPECT_EQ(type->conformances.size(), type->syntax->Conformances().size());
+}
+
+TEST(BehaviorReflection, OwnedSlicePatternRetainsEditorInformation) {
+    const auto root =
+        std::filesystem::path(FLECHA_BEHAVIOR_FIXTURE_DIR) / "expansion";
+    analyzer::AnalysisSession session(root);
+    const auto file = root / "owned_slice_patterns.fl";
+    const auto source = Fixture("../expansion/owned_slice_patterns.fl");
+    auto result = session.Analyze(file);
+    ASSERT_FALSE(result.HasErrors()) << Messages(result.diagnostics);
+    const auto pattern = source.find("F.isof<own []E>");
+    const auto binder = pattern + std::string("F.isof<own []").size();
+    const auto use = source.find("depth<E>", pattern) + 6;
+    const auto definition = result.Definition(file, use);
+    ASSERT_TRUE(definition);
+    EXPECT_EQ(definition->start.offset, binder);
+    const auto hover = result.Hover(file, use);
+    ASSERT_TRUE(hover);
+    EXPECT_NE(hover->type.find("element type"), std::string::npos);
+}
