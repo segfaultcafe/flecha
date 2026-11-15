@@ -296,6 +296,30 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_crashable_allocation_failure.cmake
 )
 
+add_executable(test_compiler_probe fixtures/test_compiler_probe.cpp)
+target_link_libraries(test_compiler_probe PRIVATE flecha_project_options llvm_codegen)
+add_test(NAME LanguageTestTests.CompileEachLogicalModuleOnce
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_LONGBOW=$<TARGET_FILE:longbow>
+        -DFLECHA_PROBE=$<TARGET_FILE:test_compiler_probe>
+        -DFLECHA_STD_PACKAGE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/longbow_test_project/deps/std
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/test-module-batching
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_test_module_batching.cmake
+)
+
+add_library(test_output_probe STATIC fixtures/test_output_probe.cpp)
+add_dependencies(test_flecha test_compiler_probe test_output_probe)
+add_test(NAME LanguageTestTests.StreamingResults
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/streaming_tests/streaming_test.fl
+        -DFLECHA_STD=${PROJECT_SOURCE_DIR}/std/src
+        -DFLECHA_PROBE=$<TARGET_FILE:test_output_probe>
+        -DFLECHA_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/streaming-tests
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_streaming_tests.cmake
+)
+
 add_test(
     NAME LanguageTestTests.PassingModule
     COMMAND $<TARGET_FILE:flecha>

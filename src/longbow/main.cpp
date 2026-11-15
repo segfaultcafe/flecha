@@ -17,8 +17,8 @@
 #include <string_view>
 #include <vector>
 
-#include "core/parser.hpp"
-#include "core/tokenizer.hpp"
+#include "core/module_source_index.hpp"
+#include "core/source_provider.hpp"
 #include "flecha/version.hpp"
 #include "longbow/archive.hpp"
 #include "longbow/cache.hpp"
@@ -42,20 +42,6 @@
 
 namespace fs = std::filesystem;
 namespace {
-std::optional<std::string> DeclaredModule(const fs::path& file) {
-    std::ifstream stream(file);
-    if (!stream) return std::nullopt;
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    flecha::diagnostics::DiagnosticBag diagnostics;
-    flecha::core::Parser parser(
-        flecha::core::Tokenizer(buffer.str(), diagnostics).Tokenize(),
-        diagnostics);
-    parser.ParseHeader();
-    if (diagnostics.HasErrors() || parser.ModuleName().empty())
-        return std::nullopt;
-    return parser.ModuleName();
-}
 void Write(const fs::path& file, const std::string& text) {
     std::ofstream stream(file);
     if (!stream || !(stream << text))
@@ -633,24 +619,53 @@ int Run(int argc, char** argv) {
     const CompilerGraph compilerGraph(packages, target,
                                       command == "build" || command == "run");
     if (command == "test") {
-        std::vector<fs::path> tests;
-        const fs::path sourceRoot = root / "src";
+        // Logical identity includes the namespace directory, not just the
+        // module name. Attached files share the identity of their target.
+        std::map<std::pair<fs::path, std::string>, fs::path> modules;
+        const fs::path sourceRoot = fs::weakly_canonical(root / "src");
+        flecha::core::FilesystemSourceProvider sources;
+        flecha::core::ModuleSourceIndex sourceIndex(sources);
         if (fs::is_directory(sourceRoot))
             for (const auto& item :
                  fs::recursive_directory_iterator(sourceRoot)) {
                 if (!item.is_regular_file() || item.path().extension() != ".fl")
                     continue;
-                const auto module = DeclaredModule(item.path());
-                if (!module || !module->ends_with("_test")) continue;
-                tests.push_back(fs::weakly_canonical(item.path()));
+                const fs::path file = fs::weakly_canonical(item.path());
+                const auto header = sourceIndex.Read(file);
+                if (!header.name.ends_with("_test")) continue;
+                fs::path logicalDirectory = file.parent_path();
+                if (header.namespaceAttachment) {
+                    const auto resolution =
+                        flecha::core::ModuleSourceIndex::ResolveAttachment(
+                            file, *header.namespaceAttachment, sourceRoot);
+                    // Keep invalid attachments as separate entries so the
+                    // compiler diagnoses them instead of hiding them in a
+                    // group.
+                    logicalDirectory =
+                        resolution.status ==
+                                flecha::core::NamespaceAttachmentStatus::Valid
+                            ? *resolution.target
+                            : file;
+                }
+                auto [entry, inserted] = modules.emplace(
+                    std::make_pair(logicalDirectory, header.name), file);
+                if (!inserted && file < entry->second) entry->second = file;
             }
+        std::vector<fs::path> tests;
+        for (const auto& [identity, file] : modules) {
+            (void)identity;
+            tests.push_back(file);
+        }
         std::sort(tests.begin(), tests.end());
         std::size_t passed = 0;
         std::size_t failed = 0;
         for (const fs::path& test : tests) {
-            std::vector<std::string> compile{Compiler(argv[0]), "test",
-                                             test.string(), "--package-graph",
-                                             compilerGraph.File().string()};
+            std::vector<std::string> compile{Compiler(argv[0]),
+                                             "test",
+                                             test.string(),
+                                             "--package-graph",
+                                             compilerGraph.File().string(),
+                                             "--whole-module"};
             if (verboseTests) compile.push_back("--verbose");
             for (const auto& [name, input] : manifest.native) {
                 (void)name;
@@ -666,11 +681,11 @@ int Run(int argc, char** argv) {
             const std::size_t total = passed + failed;
             if (failed == 0)
                 std::cout << "\nOK [" << passed << "/" << total
-                          << "] test files passed\n";
+                          << "] test modules passed\n";
             else
                 std::cout << "\nFAIL [" << passed << "/" << total
-                          << "] test files passed, but [" << failed << "/"
-                          << total << "] test files failed\n";
+                          << "] test modules passed, but [" << failed << "/"
+                          << total << "] test modules failed\n";
         } else if (tests.empty())
             std::cout << "no test files found\n";
         return failed == 0 ? 0 : 1;
