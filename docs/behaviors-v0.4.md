@@ -482,6 +482,32 @@ semantic transaction before concrete methods or conformances become usable.
 An invalid promise cannot make an otherwise invalid program compile. The same
 query is used for specializations discovered by generated bodies.
 
+### Interface calls and ownership
+
+Generated and handwritten methods use the same interface-call ownership check.
+For signatures carrying managed values and references without exposing raw
+allocation handles, the allocation checker uses the interface contract rather
+than requiring a single concrete callee body. Provider bodies still undergo
+ordinary independent ownership validation. This supports, for example, a
+reader default method that passes `&Reader` to a protected virtual helper while
+Reader owns its internal storage.
+
+This initial summary does not support raw pointers or raw buffers in interface
+parameters/results, including pointers nested in reference, array, slice, or
+tuple types. Such calls retain `FLECHA-S0052`, even with explicit `own`/`lend`
+annotations. It also rejects tracked raw aliases hidden in actual arguments.
+These restrictions do not change ordinary direct-call ownership contracts.
+
+A mutable interface reference erases concrete object identity. The checker
+therefore conservatively invalidates tracked owning-field aliases across such
+a call and rejects conflicts with pending deferred uses. Const references do
+not invalidate those aliases. Deferred virtual calls apply these effects in
+cleanup order, rather than at registration. The checks can conservatively
+reject an alias of an unrelated owner when object identity cannot be proved.
+
+See the [JSON reader probe](../src/tests/fixtures/behaviors/json_prototype/README.md)
+for the integration coverage and remaining library compatibility decisions.
+
 ## Explicit implementations and conflicts
 
 An exact handwritten target implementation takes precedence over the matching

@@ -1,6 +1,10 @@
 module expansion_reader_protocol;
 decoration meta { application() target structure; };
-structure Reader { i32 key; i32 value; };
+structure Reader { i32 key; i32 value; own *i32 storage; };
+unsafe Reader Reader::init(own *i32 storage) override {
+    return build Reader { self.key = 0; self.value = 42; self.storage = storage; };
+}
+unsafe void Reader::tear(&self) override { free(self->storage); }
 interface Read {
     i32 read(&self, &Reader reader) default;
     protected void readField(&self, &Reader reader) virtual;
@@ -22,8 +26,12 @@ behavior meta<T> => structure << Read {
 };
 T from<T: Read>() {
     T value = T::zero();
-    Reader reader; reader.value = 42;
-    value.read(&reader);
+    unsafe {
+        storage, err := new<i32>(0);
+        if err != none { return value; }
+        reader := Reader::init(storage);
+        value.read(&reader);
+    }
     return value;
 }
 @meta structure Item { i32 value; bool flag; };

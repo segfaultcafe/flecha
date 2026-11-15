@@ -11,6 +11,10 @@
   diagnostics and folds `T.isof<...>` / `F.isof<...>` before analyzing selected
   branches. Generic constraints recognize prospective behavior interface roots,
   subject to complete validation and rollback before publication.
+- Interface calls now support ownership verification from contracts for managed
+  values and references, including default/protected behavior reader methods.
+  Mutable virtual calls invalidate owning-field aliases, including deferred
+  calls; unsupported raw allocation effects remain rejected.
 - Flecha now builds and installs `flecha-lsp`. The Visual Studio Code extension
   starts it for compiler diagnostics, hover information, go to definition,
   references, completion, rename, and semantic tokens, with configurable

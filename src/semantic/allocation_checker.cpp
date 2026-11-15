@@ -180,6 +180,10 @@ class AllocationChecker final {
                                                _model.TypeOf(*node.allocation));
                     if (trackedAllocation || heapIndex || heapSlice ||
                         resourceClosure ||
+                        (node.memoryExpression &&
+                         InterfaceContract(*node.memoryExpression)) ||
+                        (node.memoryDefer &&
+                         InterfaceContract(node.memoryDefer->Call())) ||
                         (callee &&
                          (callee->BuiltIn() == BuiltInFunction::Free ||
                           callee->BuiltIn() == BuiltInFunction::StorageFree)) ||
@@ -782,6 +786,17 @@ class AllocationChecker final {
         return nullptr;
     }
 
+    const MethodContract* InterfaceContract(
+        const core::Expression& expression) const {
+        if (expression.Kind() != AstNodeKind::MemberCallExpression)
+            return nullptr;
+        const auto& call =
+            static_cast<const core::MemberCallExpression&>(expression);
+        return _model.IsQualifiedInterfaceProviderCall(call)
+                   ? nullptr
+                   : _model.InterfaceMethodFor(call);
+    }
+
     std::vector<Value> Arguments(const State& state,
                                  const core::Expression& expression) const {
         std::vector<Value> result;
@@ -837,12 +852,23 @@ class AllocationChecker final {
         if (!function) return;
         for (const auto& parameter : function->ParameterTypes()) {
             if (parameter.Kind() != SemanticTypeKind::Reference ||
-                parameter.Target()->Kind() != SemanticTypeKind::Structure ||
                 parameter.Target()->IsConst())
                 continue;
-            for (const auto& field : parameter.Target()->Structure()->fields) {
-                auto slot = state.fieldValues.find(field.syntax);
-                if (slot == state.fieldValues.end()) continue;
+            std::vector<const core::StructureField*> fields;
+            if (parameter.Target()->Structure()) {
+                for (const auto& field :
+                     parameter.Target()->Structure()->fields)
+                    if (state.fieldValues.contains(field.syntax))
+                        fields.push_back(field.syntax);
+            } else if (parameter.Target()->Interface()) {
+                // The erased receiver may refer to any tracked owner. Without
+                // object identity, invalidate conservatively rather than keep
+                // aliases alive across a mutable virtual call.
+                for (const auto& [field, value] : state.fieldValues)
+                    fields.push_back(field);
+            }
+            for (const auto* field : fields) {
+                auto slot = state.fieldValues.find(field);
                 const auto identity = slot->second.identity;
                 if (identity) {
                     for (const auto& argument : arguments)
@@ -869,9 +895,9 @@ class AllocationChecker final {
                 // abstract field capability, but never revive earlier aliases.
                 const bool tear =
                     !_active.empty() && _active.back()->Name() == "tear";
-                state.resources[field.syntax] = {true, tear, !tear, true};
-                state.nullPointers.erase(field.syntax);
-                slot->second = {ValueKind::Pointer, field.syntax};
+                state.resources[field] = {true, tear, !tear, true};
+                state.nullPointers.erase(field);
+                slot->second = {ValueKind::Pointer, field};
             }
         }
     }
@@ -920,6 +946,31 @@ class AllocationChecker final {
         }
         for (const Value& argument : arguments)
             CheckUse(state, argument, expression);
+        if (InterfaceContract(expression)) {
+            // A virtual slot has no single body to interpret. Managed values
+            // and references use their ordinary type/borrow contracts; every
+            // provider is checked independently. Raw allocation effects still
+            // require a summary we can prove, and are deliberately rejected.
+            bool opaque =
+                function && !ExposesHeapHandle(function->ReturnType());
+            if (function)
+                for (const auto& parameter : function->ParameterTypes())
+                    opaque &= !ExposesHeapHandle(parameter);
+            for (const auto& argument : arguments)
+                opaque &= !Tracks(argument) &&
+                          !(argument.address &&
+                            Tracks(Binding(state, argument.address)));
+            if (!opaque) {
+                Report(DiagnosticCode::UnverifiedOwnership, expression,
+                       "cannot summarize raw allocation effects through an "
+                       "interface contract");
+                return {{std::move(state), {}}};
+            }
+            InvalidateMutableFields(state, function, expression, arguments);
+            auto result = IndirectContractResult(state, expression,
+                                                 function->Signature());
+            return {{std::move(state), std::move(result)}};
+        }
         InvalidateMutableFields(state, function, expression, arguments);
         if (function == nullptr &&
             expression.Kind() == AstNodeKind::CallExpression) {
@@ -1374,10 +1425,17 @@ class AllocationChecker final {
                            static_cast<const core::ParenthesizedExpression&>(
                                expression)
                                .Inner());
-            case AstNodeKind::CastExpression:
-                return Get(state,
-                           static_cast<const core::CastExpression&>(expression)
-                               .Value());
+            case AstNodeKind::CastExpression: {
+                const auto& cast =
+                    static_cast<const core::CastExpression&>(expression);
+                const auto source = _model.TypeOf(cast.Value());
+                const auto target = _model.TypeOf(expression);
+                if (target.Kind() == SemanticTypeKind::Reference &&
+                    target.Target()->Interface() &&
+                    (source.Structure() || source.Enum()))
+                    return Address(state, cast.Value());
+                return Get(state, cast.Value());
+            }
             case AstNodeKind::AssignmentExpression: {
                 const auto& assignment =
                     static_cast<const core::AssignmentExpression&>(expression);
@@ -1945,6 +2003,7 @@ class AllocationChecker final {
                     // Even calls without tracked arguments may allocate; they
                     // need execution at cleanup rather than at registration.
                     if (Tracks(retainedCallee) || owningResult ||
+                        InterfaceContract(call) ||
                         Relevant(Callee(call), arguments)) {
                         Deferred registration{
                             node.scopes.back(), &call, Callee(call),
