@@ -1,23 +1,36 @@
 # Behaviors and decorations for Flecha 0.4
 
 Status: accepted by [IFG 2026-0006](IFG/IFG_2026_0006.txt); typed decoration
-contracts (LANG-01) and behavior declaration semantics (LANG-02) implemented;
-behavior expansion deferred
+contracts (LANG-01), behavior declarations (LANG-02), and bounded reflection
+with detached expansion planning (LANG-03) implemented; concrete derivation
+deferred to LANG-04
 
-The current compiler parses behavior declarations, resolves their owning typed
-decoration and interface roots, checks declared method signatures, and records
-which concrete declarations would activate each behavior. It enforces logical
-module ownership and rejects duplicate behaviors and conflicting prospective
-roots. These records are available to analyzer navigation, hover, and semantic
-tokens.
+The compiler resolves behavior ownership, interface roots, method contracts,
+and activation candidates. It constructs a `BehaviorExpansionPlan` for each
+valid activation, retaining typed direct metadata, source-ordered field
+descriptors, closed `T` and `F` bindings, substitutions, folded branches, body
+candidates, and source provenance. Repeated field types have distinct descriptor
+identities, and closed generic targets have separate plans.
 
-LANG-02 does **not** add concrete conformance, generate methods or vtables, or
-analyze/specialize behavior bodies. An empty behavior body is accepted: whether
-all virtual requirements have concrete providers will be checked by the future
-expansion stage. Declaring a behavior does not make its interfaces usable on a
-decorated target yet. The design below describes the complete intended feature;
-field reflection, typed field iteration, expansion, and JSON migration remain
-unimplemented.
+`for<F> Field<T,F> field = T::fields()` has its own AST node. The contextual
+operations `name`, `decorated`, `decorator`, and `get` are available within the
+bounded behavior context. Metadata members retain their decoration signature
+types. Constant metadata predicates fold before checking the selected branch;
+absent unguarded metadata, descriptor escapes, invalid operations, and runtime
+loop control are errors. Materialized projections use the normal type,
+definite-assignment, borrow, and allocation checks, including private target
+fields and ordinary const/ownership restrictions. Analyzer hover, navigation,
+and semantic tokens expose the source bindings and typed metadata members.
+
+Plans and their semantic models are detached from ordinary overload resolution
+and lowering. Reflection-bearing bodies are checked after substitution; opaque
+LANG-02 bodies remain provider candidates for the later selection stage.
+LANG-03 does **not** select providers, satisfy virtual requirements, suppress
+handwritten methods, add concrete conformance, emit methods or interface tables,
+or change compiler-owned JSON. Declaring or activating a behavior still does
+not make its promised interfaces callable on the target. The design below
+specifies the complete intended feature; its concrete registration, provider
+selection, vtable construction, lowering, and JSON migration require LANG-04.
 
 Behaviors let a library derive an interface implementation for a structure or
 enum from typed decoration metadata. They are deliberately narrower than
@@ -286,9 +299,9 @@ for<F> Field<T, F> field = T::fields() {
 
 The compiler expands it in source declaration order and then type-checks each
 specialized body normally. An empty structure produces zero expansions. The
-loop cannot use runtime `break` or `proceed`, and neither `Field<T, F>` nor a
-field pack has a runtime representation. This exact loop form is valid only
-inside a `behavior ... => structure` method. It is not general compile-time
+loop cannot use runtime `break`, `proceed`, or `jumpto`, and neither
+`Field<T, F>` nor a field pack has a runtime representation. This exact loop
+form is valid only inside a `behavior ... => structure` method. It is not general compile-time
 iteration and is invalid in ordinary functions, interface bodies, and enum
 behaviors.
 
@@ -465,6 +478,11 @@ and `F`, and failed operation. Expansion obeys the existing generic depth,
 declaration, and token budgets. Exceeding a budget is a compile-time error.
 
 ## Deliberately deferred
+
+Control flow for compile-time field iteration remains an open follow-up:
+iteration-local `jumpto` would require hygienic positions and boundary checks;
+`break` and `proceed` need explicit whole-expansion and next-field semantics.
+All three remain rejected in LANG-03.
 
 The initial design does not include:
 

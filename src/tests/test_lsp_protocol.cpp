@@ -482,6 +482,36 @@ TEST_F(LspProtocolTests, MapsDecorationKeywordsToAdvertisedKeywordTokenType) {
               std::string::npos);
 }
 
+TEST_F(LspProtocolTests, MapsBoundedReflectionTokens) {
+    FakeAnalyzer analyzer;
+    ProtocolServer server(analyzer);
+    Initialize(server);
+    const std::filesystem::path file = root / "main.fl";
+    const std::string text = "for\nF\nField\nfield\nget\nversion\n";
+    const std::string document =
+        "{\"textDocument\":{\"uri\":" +
+        flecha::analyzer::json::Quote(flecha::lsp::PathToFileUri(file));
+    ASSERT_EQ(server
+                  .Handle(Notification("textDocument/didOpen",
+                                       document + ",\"version\":1,\"text\":" +
+                                           flecha::analyzer::json::Quote(text) +
+                                           "}}"))
+                  .size(),
+              1u);
+    analyzer.semanticTokens = {{{file, 0, 3}, "keyword", false},
+                               {{file, 4, 5}, "typeParameter", true},
+                               {{file, 6, 11}, "typeParameter", false},
+                               {{file, 12, 17}, "typeParameter", true},
+                               {{file, 18, 21}, "function", false},
+                               {{file, 22, 29}, "field", false}};
+    auto response = server.Handle(
+        Request("2", "textDocument/semanticTokens/full", document + "}}"));
+    ASSERT_EQ(response.size(), 1u);
+    EXPECT_NE(response.front().find("\"data\":[0,0,3,8,0,1,0,1,6,1,1,0,5,6,0,1,"
+                                    "0,5,6,1,1,0,3,0,0,1,0,7,3,0]"),
+              std::string::npos);
+}
+
 TEST_F(LspProtocolTests, DistinguishesSelfFromOrdinaryParameters) {
     FakeAnalyzer analyzer;
     ProtocolServer server(analyzer);

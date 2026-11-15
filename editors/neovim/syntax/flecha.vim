@@ -23,7 +23,8 @@ syntax keyword flechaTypeSetKeyword typeset nextgroup=flechaTypeSetName skipwhit
 syntax match flechaTypeSetName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 syntax keyword flechaTest test
 syntax keyword flechaConditional if else also match
-syntax keyword flechaRepeat while for loop range
+syntax keyword flechaRepeat while loop range
+syntax keyword flechaRepeat for nextgroup=flechaFieldIteration skipwhite skipnl
 syntax keyword flechaStatement return yield proceed break defer enum structure interface build
 syntax keyword flechaStatement module nextgroup=flechaModuleName skipwhite
 syntax match flechaNamespaceAttachment /\<under\>\_s\+namespace\>/
@@ -70,6 +71,13 @@ syntax region flechaBlockComment start=/\/\*/ end=/\*\// contains=flechaTodo
 syntax keyword flechaStatement behavior nextgroup=flechaBehaviorName skipwhite skipnl
 syntax match flechaBehaviorName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
 highlight default link flechaBehaviorName flechaType
+" Field and its type binders are contextual to bounded iteration headers.
+syntax region flechaFieldIteration contained matchgroup=flechaOperator start=/</ end=/=/ contains=flechaFieldBinder,flechaFieldDescriptor
+syntax match flechaFieldBinder /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
+syntax match flechaFieldDescriptor /\<Field\>/ contained
+highlight default link flechaFieldBinder flechaType
+highlight default link flechaFieldDescriptor flechaType
+
 syntax keyword flechaStatement decoration nextgroup=flechaDecorationName skipwhite skipnl
 syntax match flechaDecorationName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained nextgroup=flechaDecorationBody skipwhite skipnl
 syntax region flechaDecorationBody transparent start=/{/ end=/}/ contained contains=ALLBUT,flechaDecorationTarget,flechaDecorationName
