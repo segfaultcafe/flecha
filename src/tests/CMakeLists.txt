@@ -194,13 +194,21 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DPROJECT_ROOT=${PROJECT_SOURCE_DIR}
-        -DPROJECT_VERSION=${PROJECT_VERSION}
+        -DFLECHA_BUILD_VERSION=${FLECHA_BUILD_VERSION}
         -DANALYZER_INPUT=${CMAKE_CURRENT_BINARY_DIR}/analyzer-stdio-input.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_analyzer_stdio.cmake
 )
 add_test(NAME CliTests.LongbowVersion COMMAND $<TARGET_FILE:longbow> --version)
 set_tests_properties(CliTests.LongbowVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^longbow ${PROJECT_VERSION}"
+)
+add_test(
+    NAME BuildVersionTests.TaglessDevelopmentVersion
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/build-version
+        -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_build_version.cmake
 )
 
 add_test(

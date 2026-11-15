@@ -1,4 +1,4 @@
-foreach(required FLECHA_COMPILER PROJECT_ROOT PROJECT_VERSION ANALYZER_INPUT)
+foreach(required FLECHA_COMPILER PROJECT_ROOT FLECHA_BUILD_VERSION ANALYZER_INPUT)
     if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
         message(FATAL_ERROR "${required} is required")
     endif()
@@ -56,7 +56,7 @@ endif()
 
 foreach(expected
         "\"id\":1"
-        "\"compilerVersion\":\"${PROJECT_VERSION}\""
+        "\"compilerVersion\":\"${FLECHA_BUILD_VERSION}\""
         "\"id\":2,\"result\":{\"status\":\"applied\"}"
         "\"id\":3,\"result\":{\"path\":\"${documentPath}\",\"version\":1,\"diagnostics\":[{"
         "\"id\":4,\"result\":{\"status\":\"applied\"}"

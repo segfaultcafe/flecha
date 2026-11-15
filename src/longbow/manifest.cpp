@@ -533,6 +533,19 @@ bool VersionRequirement::Matches(const SemanticVersion& version) const {
     return true;
 }
 
+bool VersionRequirement::MatchesToolchain(const SemanticVersion& version) const {
+    // CMake's Git-derived suffix identifies a build of the base release,
+    // rather than a SemVer prerelease of it. Keep package matching unchanged.
+    if (version.prerelease.size() == 1 &&
+        std::regex_match(version.prerelease.front(),
+                         std::regex("([0-9]+|dev)-g[0-9a-f]+(-dirty)?"))) {
+        auto release = version;
+        release.prerelease.clear();
+        return Matches(release);
+    }
+    return Matches(version);
+}
+
 bool ValidIdentifier(const std::string& name) {
     diagnostics::DiagnosticBag diagnostics;
     const auto tokens = core::Tokenizer(name, diagnostics).Tokenize();

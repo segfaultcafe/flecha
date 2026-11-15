@@ -177,6 +177,30 @@ run_cached(42 "${TEST_ROOT}/git-app" run)
 file(REMOVE_RECURSE "${TEST_ROOT}/git-leaf")
 run_cached(42 "${TEST_ROOT}/git-app" run)
 # Package compatibility is diagnosed during resolution, before compiler work.
+run(0 "${TEST_ROOT}" --version)
+if(NOT last_output MATCHES "^longbow ([0-9]+\\.[0-9]+\\.[0-9]+)")
+    message(FATAL_ERROR "missing toolchain version: ${last_output}")
+endif()
+set(toolchain_base "${CMAKE_MATCH_1}")
+run(0 "${TEST_ROOT}" new compatible --lib)
+file(READ "${TEST_ROOT}/compatible/longbow.toml" compatible_manifest)
+foreach(requirement "=${toolchain_base}" ">=${toolchain_base}" "<=${toolchain_base}")
+    string(REPLACE "kind = \"library\""
+        "kind = \"library\"\nflecha = \"${requirement}\""
+        manifest_with_requirement "${compatible_manifest}")
+    file(WRITE "${TEST_ROOT}/compatible/longbow.toml" "${manifest_with_requirement}")
+    run(0 "${TEST_ROOT}/compatible" fetch)
+endforeach()
+foreach(requirement "<${toolchain_base}" ">${toolchain_base}")
+    string(REPLACE "kind = \"library\""
+        "kind = \"library\"\nflecha = \"${requirement}\""
+        manifest_with_requirement "${compatible_manifest}")
+    file(WRITE "${TEST_ROOT}/compatible/longbow.toml" "${manifest_with_requirement}")
+    run(1 "${TEST_ROOT}/compatible" fetch)
+    if(NOT last_errors MATCHES "requires Flecha ${requirement}")
+        message(FATAL_ERROR "incompatible base release was not diagnosed: ${last_errors}")
+    endif()
+endforeach()
 run(0 "${TEST_ROOT}" new incompatible)
 file(READ "${TEST_ROOT}/incompatible/longbow.toml" incompatible_manifest)
 string(REPLACE "kind = \"program\""
