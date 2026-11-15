@@ -1,0 +1,2 @@
+module helpers;
+export A identity<A>(A value) { return value; }

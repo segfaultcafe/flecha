@@ -1,0 +1,9 @@
+module expansion_mutable;
+decoration meta { application() target structure; };
+interface Change { void change(&self) virtual; i32 read(&const self) virtual; };
+behavior meta<T> => structure << Change {
+ void T::change(&self) override { for<F> Field<T, F> field = T::fields() { field::get(self) = 42; } }
+ i32 T::read(&const self) override { return self->value; }
+};
+@meta structure Item { private i32 value; };
+i32 main() { Item item; { &Change view = item as &Change; view->change(); } return item.read(); }

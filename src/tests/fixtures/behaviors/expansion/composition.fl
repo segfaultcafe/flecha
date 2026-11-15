@@ -1,0 +1,26 @@
+module expansion_composition;
+decoration first { application() target structure; };
+decoration second { application() target structure; };
+interface Base { i32 inherited(&const self) default; i32 sealed(&const self) final; };
+i32 Base::inherited(&const self) { return 2; }
+i32 Base::sealed(&const self) { return 3; }
+interface Read << Base { i32 read(&const self) default; };
+i32 Read::read(&const self) { return 0; }
+interface Other { i32 other(&const self) virtual; };
+interface Explicit { i32 explicitValue(&const self) virtual; };
+behavior first<T> => structure << Read {
+ i32 T::read(&const self) override { return Read::read(self) + self->inherited() + self->sealed() + 30; }
+};
+behavior second<T> => structure << Other {
+ i32 T::other(&const self) override { return 5; }
+};
+@second @first structure Item << Explicit {};
+i32 Item::explicitValue(&const self) override { return 2; }
+i32 base(&const Base value) { return value->inherited() + value->sealed(); }
+i32 main() {
+ Item item;
+ &const Read read = item as &const Read;
+ &const Base parent = read;
+ &const Other other = item as &const Other;
+ return read->read() + other->other() + item.explicitValue() + base(parent) - 5;
+}

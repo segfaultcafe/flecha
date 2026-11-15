@@ -1,0 +1,7 @@
+module expansion_variadic_shape;
+// expect FLECHA-S0065
+decoration meta { application() target structure; };
+interface Values { i32 sum(&const self, values...) virtual; };
+behavior meta<T> => structure << Values {};
+@meta structure Item {};
+i32 Item::sum(&const self, i32 value) { return value; }

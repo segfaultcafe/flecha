@@ -1,0 +1,9 @@
+module expansion_borrow_contract;
+// expect FLECHA-S0065
+decoration meta { application() target structure; };
+interface Borrow { &const i32 read(&const self, &const i32 other) virtual <-self; };
+behavior meta<T> => structure << Borrow {
+ &const i32 T::read(&const self, &const i32 other) override <-self { return &self->value; }
+};
+@meta structure Item { i32 value; };
+&const i32 Item::read(&const self, &const i32 other) override <-other { return other; }

@@ -1,0 +1,7 @@
+module expansion_final;
+// expect FLECHA-S0078
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) final; };
+behavior meta<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+i32 Read::read(&const self) { return 0; }
+@meta structure Item {};

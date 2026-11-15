@@ -1,0 +1,7 @@
+module expansion_horizontal;
+// expect FLECHA-S0079
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+interface Other { i32 read(&const self) virtual; };
+@meta structure Item << Other {};

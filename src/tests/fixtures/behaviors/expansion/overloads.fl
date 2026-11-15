@@ -1,0 +1,7 @@
+module expansion_overloads;
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+@meta structure Item {};
+i32 Item::read(&const self, i32 extra) { return extra; }
+i32 main() { Item item; return item.read() + item.read(0); }

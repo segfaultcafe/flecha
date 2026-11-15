@@ -1,0 +1,12 @@
+module expansion_private_fields;
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read {
+ i32 T::read(&const self) override {
+  i32 sum = 0;
+  for<F> Field<T, F> field = T::fields() { sum += field::get(self); }
+  return sum;
+ }
+};
+@meta structure Item { private i32 first = 20; private i32 second = 22; };
+i32 main() { item := Item::init(); return item.read(); }

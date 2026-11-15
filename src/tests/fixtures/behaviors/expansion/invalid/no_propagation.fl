@@ -1,0 +1,8 @@
+module expansion_no_propagation;
+// expect FLECHA-S0018
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+@meta structure Inner {};
+structure Outer { Inner inner; };
+i32 use(&const Outer value) { return value->read(); }

@@ -1,0 +1,5 @@
+module main;
+@imports :: root::metadata as m;
+@m::derive structure Item { private i32 value = 22; };
+@m::derive enum Choice { A }
+i32 main() { item := Item::init(); Choice choice = Choice.A; &const m::Read view = item as &const m::Read; return view->read() + choice.read(); }

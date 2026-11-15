@@ -1,0 +1,7 @@
+module expansion_parameters;
+// expect FLECHA-S0065
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read {};
+@meta structure Item {};
+i32 Item::read(&const self, i32 extra) { return extra; }

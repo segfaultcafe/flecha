@@ -1,0 +1,8 @@
+module expansion_interface_metadata;
+// expect FLECHA-S0018
+decoration meta { application() target structure; application() target interface; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read { i32 T::read(&const self) override { return 42; } };
+@meta interface Metadata {};
+structure Item << Metadata {};
+i32 use(&const Item value) { return value->read(); }

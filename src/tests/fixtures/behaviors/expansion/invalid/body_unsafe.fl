@@ -1,0 +1,8 @@
+module expansion_body_unsafe;
+// expect FLECHA-S0025
+decoration meta { application() target structure; };
+interface Run { void run(&self) virtual; };
+behavior meta<T> => structure << Run {
+ void T::run(&self) override { pointer, err := new<i32>(42); if err != none { return; } }
+};
+@meta structure Item {};

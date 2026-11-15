@@ -1,0 +1,9 @@
+module expansion_atomic;
+// expect FLECHA-S0011
+decoration first { application() target structure; };
+decoration second { application() target structure; };
+interface Good { i32 good(&const self) virtual; };
+interface Bad { i32 bad(&const self) virtual; };
+behavior first<T> => structure << Good { i32 T::good(&const self) override { return 42; } };
+behavior second<T> => structure << Bad { i32 T::bad(&const self) override { return "wrong"; } };
+@first @second structure Item {};

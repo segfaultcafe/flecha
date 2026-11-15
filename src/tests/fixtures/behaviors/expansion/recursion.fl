@@ -1,0 +1,10 @@
+module expansion_recursion;
+decoration meta { application() target structure; };
+interface Count { i32 first(&const self, i32 n) virtual; i32 second(&const self, i32 n) virtual; i32 recurse(&const self, i32 n) virtual; };
+behavior meta<T> => structure << Count {
+ i32 T::first(&const self, i32 n) override { if n == 0 { return 20; } return self->second(n - 1); }
+ i32 T::second(&const self, i32 n) override { if n == 0 { return 20; } return self->first(n - 1); }
+ i32 T::recurse(&const self, i32 n) override { if n == 0 { return 22; } return self->recurse(n - 1); }
+};
+@meta structure Item {};
+i32 main() { Item item; &const Count view = item as &const Count; return view->first(3) + item.recurse(2); }

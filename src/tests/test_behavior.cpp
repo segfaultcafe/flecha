@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <regex>
 #include <string>
 
 #include "analyzer/analysis_session.hpp"
@@ -47,7 +48,7 @@ std::string Messages(const diagnostics::DiagnosticBag& diagnostics) {
     return result;
 }
 
-TEST(BehaviorTests, ParsesAndRegistersBothTargetKindsWithoutAnalyzingBodies) {
+TEST(BehaviorTests, ParsesAndRegistersBothTargetKinds) {
     auto result = AnalyzeBehavior(Fixture("records.fl"));
     ASSERT_FALSE(result.diagnostics.HasErrors())
         << Messages(result.diagnostics);
@@ -88,12 +89,12 @@ TEST(BehaviorTests, AggregatesDirectAndFieldMetadataAndExcludesInterfaces) {
             EXPECT_EQ(structure->conformances.front().type->displayName,
                       "Child");
         } else {
-            EXPECT_TRUE(structure->conformances.empty());
-            EXPECT_TRUE(structure->conformanceClosure.empty());
+            EXPECT_EQ(structure->conformances.size(), 1u);
+            EXPECT_EQ(structure->conformanceClosure.size(), 1u);
+            EXPECT_TRUE(structure->methods.contains("write"));
         }
-        EXPECT_FALSE(structure->methods.contains("write"));
     }
-    EXPECT_TRUE(result.model.Enums().front()->conformances.empty());
+    EXPECT_EQ(result.model.Enums().front()->conformances.size(), 1u);
 }
 
 TEST(BehaviorTests, DiscoversDistinctGenericTargetSpecializations) {
@@ -108,10 +109,10 @@ TEST(BehaviorTests, DiscoversDistinctGenericTargetSpecializations) {
     EXPECT_EQ(first.applications.size(), 2u);
     EXPECT_EQ(second.applications.size(), 2u);
     for (const auto& structure : result.model.Structures())
-        EXPECT_TRUE(structure->conformances.empty());
+        EXPECT_EQ(structure->conformances.size(), 1u);
 }
 
-TEST(BehaviorTests, EmitsNoBehaviorMethodsOrInterfaceTables) {
+TEST(BehaviorTests, EmitsBehaviorMethodsAndInterfaceTables) {
     auto result = AnalyzeBehavior(Fixture("records.fl"));
     ASSERT_FALSE(result.diagnostics.HasErrors())
         << Messages(result.diagnostics);
@@ -121,14 +122,18 @@ TEST(BehaviorTests, EmitsNoBehaviorMethodsOrInterfaceTables) {
     ASSERT_NE(program, nullptr);
     ASSERT_FALSE(result.diagnostics.HasErrors())
         << Messages(result.diagnostics);
+    std::size_t methods = 0, tables = 0;
     for (const auto& function : program->Functions())
-        EXPECT_FALSE(function->Symbol().Name().contains("write"));
+        methods += function->Symbol().Name().contains("write");
     for (const auto& table : program->InterfaceTables())
-        EXPECT_NE(table.providerMap.root->displayName, "Writable");
+        tables += table.providerMap.root->displayName == "Writable";
+    EXPECT_EQ(methods, 3u);
+    EXPECT_EQ(tables, 3u);
 }
 
-TEST(BehaviorTests, AddingBehaviorDeclarationsDoesNotChangeGeneratedIR) {
-    std::string source = Fixture("records.fl");
+TEST(BehaviorTests, UnactivatedBehaviorDeclarationsDoNotChangeGeneratedIR) {
+    std::string source = std::regex_replace(
+        Fixture("records.fl"), std::regex(R"(@meta(\([^)]*\))?\s*)"), "");
     auto withBehaviors = AnalyzeBehavior(source);
     ASSERT_FALSE(withBehaviors.diagnostics.HasErrors());
     for (auto it = withBehaviors.model.Behaviors().rbegin();

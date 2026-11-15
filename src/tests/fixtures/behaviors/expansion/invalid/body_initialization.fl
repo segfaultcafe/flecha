@@ -1,0 +1,8 @@
+// expect FLECHA-S0021
+module expansion_body_initialization;
+decoration meta { application() target structure; };
+interface Read { i32 read(&const self) virtual; };
+behavior meta<T> => structure << Read {
+ i32 T::read(&const self) override { while true { jumpto end; const i32 result = 42; #end return result; } return 0; }
+};
+@meta structure Item {};

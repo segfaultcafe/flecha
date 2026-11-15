@@ -1,0 +1,14 @@
+module expansion_variadic;
+decoration meta { application() target structure; };
+interface Values {
+ i32 sum(&const self, values...) virtual;
+ &const i32 borrow(&const self, values...) virtual <-...values;
+};
+i32 sum(&const Item target, i32 a, i32 b) { return a + b; }
+&const i32 borrowed(&const Item target, &const i32 value) <-value { return value; }
+behavior meta<T> => structure << Values {
+ i32 T::sum(&const self, values...) override { return sum(self, values...); }
+ &const i32 T::borrow(&const self, values...) override <-...values { return borrowed(self, values...); }
+};
+@meta structure Item {};
+i32 main() { Item item; i32 n = 20; &const Values view = item as &const Values; return view->sum(20, 2) + *view->borrow(&n); }
