@@ -1,0 +1,4 @@
+module borrowed_array;
+@imports :: lib::json::json;
+@json(structure)
+structure Record { []i32 values; };

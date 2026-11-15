@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- JSON serialization and deserialization now belong to Flecha library
+  behaviors. The compiler no longer recognizes a special `json` decoration,
+  generates JSON methods, or provides `__json_slice_append`. Upgrade to the
+  behavior-based JSON library and replace `T::fromJson(source)` with
+  `json::from<T>(source)`. See [migration details](docs/json-library-migration.md).
+
 ### Added
 
 - Owning-slice type patterns such as `T.isof<own []Element>` bind an element

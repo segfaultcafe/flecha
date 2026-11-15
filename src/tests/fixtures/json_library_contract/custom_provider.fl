@@ -1,0 +1,12 @@
+module custom_provider;
+@imports :: lib::json::json;
+@json(structure)
+structure Record { i32 value; };
+error Record::writeJson(&const self, &json::Writer writer) override {
+    return writer->write(self->value);
+}
+void use() {
+    value := Record::init();
+    output, err := value.json();
+    decoded, readErr := json::from<Record>("{\"value\":42}".cast<[]const u8>);
+}

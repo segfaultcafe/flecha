@@ -1,0 +1,4 @@
+module duplicate_names;
+@imports :: lib::json::json;
+@json(structure)
+structure Record { i32 value; @json("value") i32 other; };

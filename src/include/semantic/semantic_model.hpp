@@ -146,22 +146,6 @@ struct BehaviorExpansionPlan final {
     bool valid = true;
 };
 
-enum class JsonDecorationMode { Default, Explicit };
-
-struct JsonFieldMetadata final {
-    const core::StructureField* field;
-    std::string name;
-};
-
-struct JsonStructureMetadata final {
-    JsonDecorationMode mode;
-    std::vector<JsonFieldMetadata> fields;
-    const StructureType* writer = nullptr;
-    std::string writerTypeName;
-    const StructureType* reader = nullptr;
-    std::string readerTypeName;
-};
-
 class SemanticModel final {
    public:
     SemanticModel() = default;
@@ -254,11 +238,6 @@ class SemanticModel final {
         const auto found = _decorationContracts.find(&declaration);
         return found == _decorationContracts.end() ? nullptr : &found->second;
     }
-    [[nodiscard]] const JsonStructureMetadata* JsonMetadataFor(
-        const core::StructureDeclaration& structure) const {
-        const auto found = _jsonMetadata.find(&structure);
-        return found == _jsonMetadata.end() ? nullptr : &found->second;
-    }
     [[nodiscard]] const Scope& GlobalScope() const { return *_scopes.front(); }
     [[nodiscard]] const std::vector<std::unique_ptr<Symbol>>& Symbols() const {
         return _symbols;
@@ -291,8 +270,6 @@ class SemanticModel final {
     std::vector<std::unique_ptr<StructureType>> _structures;
     std::vector<std::unique_ptr<EnumType>> _enums;
     std::vector<std::unique_ptr<InterfaceType>> _interfaces;
-    std::unordered_map<const core::StructureDeclaration*, JsonStructureMetadata>
-        _jsonMetadata;
     std::vector<std::unique_ptr<core::FunctionDeclaration>> _generatedFunctions;
     std::vector<const core::FunctionDeclaration*> _anonymousFunctions;
     std::unordered_map<const core::FunctionDeclaration*,

@@ -2,7 +2,8 @@
 
 Status: accepted by [IFG 2026-0006](IFG/IFG_2026_0006.txt); typed decorations,
 behavior declarations, bounded reflection, concrete derivation, and ordinary
-lowering are implemented. Migration of compiler-owned JSON remains separate.
+lowering are implemented. JSON serialization now belongs to library behaviors;
+the compiler-owned derivation path has been removed.
 
 The compiler resolves behavior ownership, interface roots, method contracts,
 and direct activation candidates. Each activation has a `BehaviorExpansionPlan`
@@ -39,8 +40,9 @@ Missing metadata guards, descriptor escapes, invalid operations, and unsupported
 loop transfers are errors. `proceed` skips the current expanded field and
 `break` exits the field iteration. `jumpto` remains rejected.
 
-Existing compiler-owned JSON derivation is unchanged. Replacing it with native
-Flecha interfaces and behaviors is a subsequent migration and parity exercise.
+JSON uses these same general interfaces and behaviors. See
+[JSON library migration](json-library-migration.md) for the retired compiler
+contract and consumer API changes.
 
 Behaviors let a library derive an interface implementation for a structure or
 enum from typed decoration metadata. They are deliberately narrower than
@@ -445,8 +447,7 @@ for<F> Field<T, F> field = T::fields() {
 
 This operation does not introduce general compile-time execution, mutable
 reflection collections, nested field iteration, or JSON-specific compiler
-logic. The existing compiler-owned JSON path remains unchanged until the
-library migration.
+logic. JSON field-selection and duplicate-name policies are library code.
 
 ### Compile-time requirements and type selection
 
