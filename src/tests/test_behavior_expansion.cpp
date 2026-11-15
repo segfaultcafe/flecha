@@ -341,4 +341,54 @@ TEST(BehaviorExpansion, CompositeFieldTypesKeepCrossModuleNominalIdentity) {
     ASSERT_TRUE(result.semanticModel);
     EXPECT_EQ(result.semanticModel->BehaviorPlans().size(), 1u);
 }
+TEST(BehaviorExpansion, RollbackPreservesUnrelatedSemanticQueries) {
+    // Exercise rollback before planning, during body checking, after generic
+    // reanalysis, and after a normal body fails despite a valid activation.
+    for (const auto* fixture :
+         {"invalid/explicit_collision.fl", "invalid/missing.fl",
+          "invalid/body_type.fl", "invalid/generic_field.fl", "structure.fl"}) {
+        SCOPED_TRACE(fixture);
+        const auto file = root / fixture;
+        const auto source = Read(file) + R"(
+            i32 independent(i32 parameter) { return parameter; }
+            i32 unrelated() { i32 local = independent(42); return local; }
+            void other_error() { unknown_name; }
+        )";
+        analyzer::AnalysisSession session(root);
+        ASSERT_EQ(session.Open(file, source, 1),
+                  analyzer::OverlayUpdateResult::Applied);
+        auto result = session.Analyze(file);
+        ASSERT_TRUE(result.HasErrors());
+        ASSERT_TRUE(result.semanticModel);
+        EXPECT_TRUE(result.semanticModel->BehaviorPlans().empty());
+        for (const auto& type : result.semanticModel->Structures())
+            EXPECT_EQ(type->conformances.size(),
+                      type->syntax->Conformances().size());
+        for (const auto& function : result.semanticModel->GeneratedFunctions())
+            EXPECT_FALSE(function->sourceId.starts_with("$behavior$"));
+        for (const auto& [use, declaration] :
+             {std::pair{"return parameter", "i32 parameter"},
+              std::pair{"return local", "i32 local"},
+              std::pair{"= independent", "i32 independent"}}) {
+            const auto useOffset =
+                source.find(use) + std::string(use).find(' ') + 1;
+            const auto declarationOffset = source.find(declaration) + 4;
+            const auto definition = result.Definition(file, useOffset);
+            ASSERT_TRUE(definition) << use;
+            EXPECT_EQ(definition->start.file, file.string());
+            EXPECT_EQ(definition->start.offset, declarationOffset);
+            EXPECT_TRUE(result.Hover(file, useOffset)) << use;
+            const auto occurrence = result.OccurrenceAt(file, useOffset);
+            ASSERT_TRUE(occurrence) << use;
+            EXPECT_FALSE(occurrence->type.empty());
+            const auto references = result.References(file, declarationOffset);
+            ASSERT_TRUE(references) << use;
+            EXPECT_EQ(references->size(), 2u);
+        }
+        lowering::Lowerer lowerer;
+        EXPECT_EQ(lowerer.Lower(*result.unit, *result.semanticModel,
+                                result.diagnostics),
+                  nullptr);
+    }
+}
 }  // namespace

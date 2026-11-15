@@ -2941,7 +2941,8 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     ValidateDecorations(unit);
     ResolveCallableTypes(unit);
     RegisterBehaviors(unit);
-    const bool hasBehaviors = !_model._behaviorActivations.empty();
+    const bool hasBehaviors =
+        !_behaviorBaseline && !_model._behaviorActivations.empty();
     const auto declarationsBeforeBehaviors = unit.Declarations().size();
     const auto aliasesBeforeBehaviors = unit.genericAliases;
     const auto rollbackBehaviors = [&]() {
@@ -2953,6 +2954,9 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
         for (auto& declaration : declarations)
             unit.AddDeclaration(std::move(declaration));
         unit.genericAliases = aliasesBeforeBehaviors;
+        // Recovery analyzes ordinary bodies without derived members. Keep the
+        // original diagnostics rather than reporting errors caused by those
+        // deliberately absent members a second time.
         diagnostics::DiagnosticBag ignored;
         SemanticAnalyzer baseline(ignored);
         baseline._behaviorBaseline = true;
@@ -2968,9 +2972,11 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     GenerateInitializers();
     GenerateJsonMethods();
     BindImports(unit);
-    if (_behaviorBaseline) return std::move(_model);
     if (hasBehaviors && _diagnostics.HasErrors()) return rollbackBehaviors();
-    PlanBehaviors(unit);
+    if (_behaviorBaseline)
+        ValidateInterfaceConformance();
+    else
+        PlanBehaviors(unit);
     if (!_diagnostics.HasErrors() &&
         unit.Declarations().size() != declarationsBeforeBehaviors) {
         if (_behaviorExpansionDepth >= 64) {
