@@ -1,0 +1,4 @@
+module private_field;
+@imports :: lib::json::json;
+@json(structure)
+structure Record { @json("secret") private string secret; };

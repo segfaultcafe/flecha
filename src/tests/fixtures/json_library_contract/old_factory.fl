@@ -1,0 +1,5 @@
+module old_factory;
+@imports :: lib::json::json;
+@json(structure)
+structure Record { i32 value; };
+void use([]const u8 source) { value, err := Record::fromJson(source); }

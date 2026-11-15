@@ -322,7 +322,7 @@ Makefile                Convenient build, test, and example targets
 - [`docs/semantic_analysis.md`](docs/semantic_analysis.md) — name binding, types, scopes, and analysis pipeline
 - [`docs/llvm_codegen.md`](docs/llvm_codegen.md) — current LLVM backend scope and limitations
 - [`docs/modules.md`](docs/modules.md) — current modules, imports, and package libraries
-- [`docs/decorations.md`](docs/decorations.md) — declarative decoration metadata and the JSON derivation proof of concept
+- [`docs/decorations.md`](docs/decorations.md) — typed decoration contracts and library-defined JSON behaviors
 - [`docs/interfaces-v0.4.md`](docs/interfaces-v0.4.md) — implemented v0.4
   signature-only interfaces, composition, conformance, and dispatch
 - [`docs/IFG/IFG_2026_0001.txt`](docs/IFG/IFG_2026_0001.txt) — accepted v0.4

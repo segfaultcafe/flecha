@@ -862,138 +862,7 @@ TEST(SemanticInterfaceCallTests, RejectsUseAfterVariadicPackMove) {
                             }));
 }
 
-TEST(SemanticTests, DerivesDeterministicJsonFieldMetadata) {
-    Analysis analysis = Analyze(R"(
-        decoration json;
-
-        @json(structure)
-        structure DefaultResponse {
-            i32 value;
-            @json("test") string testMe;
-            private string secret;
-        };
-
-        structure ExplicitResponse {
-            i32 ignored;
-            @json("value") i32 value;
-            @json("test") string testMe;
-            private string secret;
-        };
-
-        @json(structure)
-        structure EmptyObject {
-            private i32 internal;
-        };
-
-        structure Writer {};
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::write(&self, i32 value) { return none; }
-        error Writer::write(&self, string value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-    )");
-
-    ASSERT_FALSE(analysis.diagnostics.HasErrors());
-    ASSERT_GE(analysis.unit->Declarations().size(), 4u);
-    const auto& defaults = static_cast<const StructureDeclaration&>(
-        *analysis.unit->Declarations()[1]);
-    const JsonStructureMetadata* defaultMetadata =
-        analysis.model.JsonMetadataFor(defaults);
-    ASSERT_NE(defaultMetadata, nullptr);
-    EXPECT_EQ(defaultMetadata->mode, JsonDecorationMode::Default);
-    ASSERT_EQ(defaultMetadata->fields.size(), 2u);
-    EXPECT_EQ(defaultMetadata->fields[0].name, "value");
-    EXPECT_EQ(defaultMetadata->fields[1].name, "test");
-
-    const auto& explicitResponse = static_cast<const StructureDeclaration&>(
-        *analysis.unit->Declarations()[2]);
-    const JsonStructureMetadata* explicitMetadata =
-        analysis.model.JsonMetadataFor(explicitResponse);
-    ASSERT_NE(explicitMetadata, nullptr);
-    EXPECT_EQ(explicitMetadata->mode, JsonDecorationMode::Explicit);
-    ASSERT_EQ(explicitMetadata->fields.size(), 2u);
-    EXPECT_EQ(explicitMetadata->fields[0].name, "value");
-    EXPECT_EQ(explicitMetadata->fields[1].name, "test");
-
-    const auto& empty = static_cast<const StructureDeclaration&>(
-        *analysis.unit->Declarations()[3]);
-    const JsonStructureMetadata* emptyMetadata =
-        analysis.model.JsonMetadataFor(empty);
-    ASSERT_NE(emptyMetadata, nullptr);
-    EXPECT_EQ(emptyMetadata->mode, JsonDecorationMode::Default);
-    EXPECT_TRUE(emptyMetadata->fields.empty());
-}
-
-TEST(SemanticTests, RejectsInvalidJsonDecorations) {
-    Analysis analysis = Analyze(R"(
-        decoration json;
-        decoration other;
-
-        @missing
-        structure UnknownDecoration { i32 value; };
-
-        @json(structure)
-        structure InvalidFields {
-            @json("secret") private string secret;
-            @json("same") i32 first;
-            @json("same") i32 second;
-            @json(structure) i32 invalidArgument;
-        };
-
-        @json(structure)
-        i32 invalidTarget() { return 0; }
-
-        structure Writer {};
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::write(&self, i32 value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-    )");
-
-    std::size_t invalidDecorations = 0;
-    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
-        if (diagnostic.code == DiagnosticCode::InvalidDecoration)
-            ++invalidDecorations;
-    EXPECT_GE(invalidDecorations, 5u);
-}
-
-TEST(SemanticTests, RejectsLegacyJsonStructureModes) {
-    Analysis analysis = Analyze(R"(
-        decoration json;
-
-        @json
-        structure MissingTarget { i32 value; };
-
-        @json(default)
-        structure LegacyDefault { i32 value; };
-
-        @json(explicit)
-        structure LegacyExplicit { @json("value") i32 value; };
-
-        structure Writer {};
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::write(&self, i32 value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-    )");
-
-    std::size_t invalidDecorations = 0;
-    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
-        if (diagnostic.code == DiagnosticCode::InvalidDecoration)
-            ++invalidDecorations;
-    EXPECT_GE(invalidDecorations, 3u);
-}
-
-TEST(SemanticTests, RejectsDecorationsWithoutCompilerCounterparts) {
+TEST(SemanticTests, RejectsDecorationsWithoutApplicationContracts) {
     Analysis analysis = Analyze(R"(
         decoration bobby;
 
@@ -1006,7 +875,7 @@ TEST(SemanticTests, RejectsDecorationsWithoutCompilerCounterparts) {
     std::size_t invalidDecorations = 0;
     for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
         if (diagnostic.code == DiagnosticCode::InvalidDecoration &&
-            diagnostic.message.find("no compiler implementation") !=
+            diagnostic.message.find("requires a typed application contract") !=
                 std::string::npos)
             ++invalidDecorations;
     EXPECT_EQ(invalidDecorations, 2u);
@@ -1014,353 +883,23 @@ TEST(SemanticTests, RejectsDecorationsWithoutCompilerCounterparts) {
 
 TEST(SemanticTests, PreservesDecorationsOnGenericSpecializations) {
     Analysis analysis = Analyze(R"(
-        decoration json;
-
-        @json(structure)
-        structure Box<T> {
+        decoration json {
+            application(structure) target structure;
+            application(stringv name) target structure::field;
+        };
+        @json(structure) structure Box<T> {
             @json("item") T value;
             private i32 internal;
         };
-
         void use(Box<i32> value) {}
-
-        structure Writer {};
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::write(&self, i32 value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
     )");
-
     ASSERT_FALSE(analysis.diagnostics.HasErrors());
-    const JsonStructureMetadata* metadata = nullptr;
-    for (const auto& declaration : analysis.unit->Declarations()) {
-        if (declaration->Kind() != AstNodeKind::StructureDeclaration) continue;
-        const auto& structure =
-            static_cast<const StructureDeclaration&>(*declaration);
-        metadata = analysis.model.JsonMetadataFor(structure);
-        if (metadata) break;
-    }
-    ASSERT_NE(metadata, nullptr);
-    ASSERT_EQ(metadata->fields.size(), 1u);
-    EXPECT_EQ(metadata->fields[0].name, "item");
-}
-
-TEST(SemanticTests, GeneratesJsonWritersForEveryDecoratedStructure) {
-    Analysis analysis = Analyze(R"(
-        decoration json;
-
-        structure Writer {};
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::write(&self, i32 value) { return none; }
-        error Writer::write(&self, string value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-
-        @json(structure)
-        structure Inner { i32 value; };
-
-        @json(structure)
-        structure Outer {
-            Inner inner;
-            @json("label") string text;
-            private i32 hidden;
-        };
-
-        structure Explicit { @json("value") i32 value; };
-
-        @json(structure)
-        structure Empty { private i32 hidden; };
-    )");
-
-    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
-        ADD_FAILURE() << diagnostic.message;
-
-    std::unordered_map<std::string, const FunctionDeclaration*> writers;
-    std::unordered_map<std::string, const FunctionDeclaration*> facades;
-    for (const auto& function : analysis.model.GeneratedFunctions())
-        if (function->Name() == "writeJson")
-            writers.emplace(function->Owner(), function.get());
-        else if (function->Name() == "json")
-            facades.emplace(function->Owner(), function.get());
-
-    ASSERT_EQ(writers.size(), 4u);
-    ASSERT_EQ(facades.size(), 4u);
-    ASSERT_TRUE(writers.contains("Inner"));
-    ASSERT_TRUE(writers.contains("Outer"));
-    ASSERT_TRUE(writers.contains("Explicit"));
-    ASSERT_TRUE(writers.contains("Empty"));
-    ASSERT_TRUE(facades.contains("Inner"));
-    ASSERT_TRUE(facades.contains("Outer"));
-    ASSERT_TRUE(facades.contains("Explicit"));
-    ASSERT_TRUE(facades.contains("Empty"));
-    EXPECT_EQ(writers.at("Inner")->Body().Statements().size(), 7u);
-    EXPECT_EQ(writers.at("Outer")->Body().Statements().size(), 11u);
-    EXPECT_EQ(writers.at("Explicit")->Body().Statements().size(), 7u);
-    EXPECT_EQ(writers.at("Empty")->Body().Statements().size(), 3u);
-}
-
-TEST(SemanticTests, GeneratesJsonReadersForEveryDecoratedStructure) {
-    Analysis analysis = Analyze(R"(
-        decoration json;
-
-        structure Writer {};
-        Writer Writer::init() override { return build Writer {}; }
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::write(&self, i32 value) { return none; }
-        error Writer::write(&self, string value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-
-        structure Reader {};
-        Reader Reader::init([]const u8 source) override {
-            return build Reader {};
-        }
-        error Reader::beginObject(&self) { return none; }
-        (bool, error) Reader::nextObjectField(&self) {
-            return (false, none);
-        }
-        bool Reader::keyIs(&const self, stringv expected) { return false; }
-        error Reader::read(&self, &i32 output) { return none; }
-        (string, error) Reader::readString(&self) { return ("", none); }
-        error Reader::skipValue(&self) { return none; }
-        error Reader::finish(&self) { return none; }
-
-        @json(structure)
-        structure Inner { i32 value; };
-
-        @json(structure)
-        structure Outer { Inner inner; string name; };
-
-        structure Explicit { @json("value") i32 value; };
-
-        @json(structure)
-        structure Empty { private i32 hidden; };
-    )");
-
-    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
-        ADD_FAILURE() << diagnostic.message;
-
-    std::unordered_map<std::string, const FunctionDeclaration*> readers;
-    std::unordered_map<std::string, const FunctionDeclaration*> factories;
-    for (const auto& function : analysis.model.GeneratedFunctions())
-        if (function->Name() == "readJson")
-            readers.emplace(function->Owner(), function.get());
-        else if (function->Name() == "fromJson")
-            factories.emplace(function->Owner(), function.get());
-
-    ASSERT_EQ(readers.size(), 4u);
-    ASSERT_EQ(factories.size(), 4u);
-    EXPECT_TRUE(readers.contains("Inner"));
-    EXPECT_TRUE(readers.contains("Outer"));
-    EXPECT_TRUE(readers.contains("Explicit"));
-    EXPECT_TRUE(readers.contains("Empty"));
-    EXPECT_TRUE(factories.contains("Inner"));
-    EXPECT_TRUE(factories.contains("Outer"));
-    EXPECT_TRUE(factories.contains("Explicit"));
-    EXPECT_TRUE(factories.contains("Empty"));
-}
-
-TEST(SemanticTests, AllowsExactJsonReaderOverridesAndRejectsBadOnes) {
-    const std::string prelude = R"(
-        decoration json;
-        structure Writer {};
-        Writer Writer::init() override { return build Writer {}; }
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::write(&self, i32 value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-        structure Reader {};
-        Reader Reader::init([]const u8 source) override {
-            return build Reader {};
-        }
-        error Reader::beginObject(&self) { return none; }
-        (bool, error) Reader::nextObjectField(&self) {
-            return (false, none);
-        }
-        bool Reader::keyIs(&const self, stringv expected) { return false; }
-        error Reader::read(&self, &i32 output) { return none; }
-        error Reader::skipValue(&self) { return none; }
-        error Reader::finish(&self) { return none; }
-    )";
-
-    Analysis valid = Analyze(prelude + R"(
-        @json(structure)
-        structure Response { i32 value; };
-        error Response::readJson(&self, &Reader reader) override {
-            return none;
-        }
-        (Response, error) Response::fromJson([]const u8 source) override {
-            return (Response::init(), none);
-        }
-    )");
-    ASSERT_FALSE(valid.diagnostics.HasErrors());
-    for (const auto& function : valid.model.GeneratedFunctions()) {
-        EXPECT_FALSE(function->Name() == "readJson" &&
-                     function->Owner() == "Response");
-        EXPECT_FALSE(function->Name() == "fromJson" &&
-                     function->Owner() == "Response");
-    }
-
-    Analysis invalid = Analyze(prelude + R"(
-        @json(structure)
-        structure Response { i32 value; };
-        error Response::readJson(&const self, &Reader reader) override {
-            return none;
-        }
-    )");
-    EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::InvalidDecoration),
-              nullptr);
-}
-
-TEST(SemanticTests, AllowsExactJsonWriterOverrideAndRejectsBadOverrides) {
-    const std::string prelude = R"(
-        decoration json;
-        structure Writer {};
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::write(&self, i32 value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-    )";
-
-    Analysis valid = Analyze(prelude + R"(
-        @json(structure)
-        structure Response { i32 value; };
-        error Response::writeJson(&const self, &Writer writer) override {
-            return none;
-        }
-    )");
-    ASSERT_FALSE(valid.diagnostics.HasErrors());
-    for (const auto& function : valid.model.GeneratedFunctions())
-        EXPECT_FALSE(function->Name() == "writeJson" &&
-                     function->Owner() == "Response");
-
-    Analysis invalid = Analyze(prelude + R"(
-        @json(structure)
-        structure Response { i32 value; };
-        error Response::writeJson(&self, &Writer writer) override {
-            return none;
-        }
-    )");
-    EXPECT_NE(FindDiagnostic(invalid, DiagnosticCode::InvalidDecoration),
-              nullptr);
-}
-
-TEST(SemanticTests, RejectsJsonFieldsWithoutAWriterRepresentation) {
-    Analysis analysis = Analyze(R"(
-        decoration json;
-        structure Writer {};
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-
-        @json(structure)
-        structure Response { [2]i32 values; };
-    )");
-
-    const Diagnostic* diagnostic =
-        FindDiagnostic(analysis, DiagnosticCode::InvalidDecoration);
-    ASSERT_NE(diagnostic, nullptr);
-    EXPECT_NE(diagnostic->message.find("is not JSON serializable"),
-              std::string::npos);
-}
-
-TEST(SemanticTests, RejectsBorrowedStringViewsForJsonReading) {
-    Analysis analysis = Analyze(R"(
-        decoration json;
-        structure Writer {};
-        Writer Writer::init() override { return build Writer {}; }
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::write(&self, stringv value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-        structure Reader {};
-        Reader Reader::init([]const u8 source) override {
-            return build Reader {};
-        }
-        error Reader::beginObject(&self) { return none; }
-        (bool, error) Reader::nextObjectField(&self) {
-            return (false, none);
-        }
-        bool Reader::keyIs(&const self, stringv expected) { return false; }
-        error Reader::skipValue(&self) { return none; }
-        error Reader::finish(&self) { return none; }
-
-        @json(structure)
-        structure Response { stringv borrowed; };
-    )");
-
-    const Diagnostic* diagnostic =
-        FindDiagnostic(analysis, DiagnosticCode::InvalidDecoration);
-    ASSERT_NE(diagnostic, nullptr);
-    EXPECT_NE(diagnostic->message.find("cannot be JSON deserialized"),
-              std::string::npos);
-}
-
-TEST(SemanticTests, RejectsBorrowedSlicesForJsonReadingPrecisely) {
-    Analysis analysis = Analyze(R"(
-        decoration json;
-        structure Writer {};
-        Writer Writer::init() override { return build Writer {}; }
-        error Writer::beginObject(&self) { return none; }
-        error Writer::endObject(&self) { return none; }
-        error Writer::key(&self, stringv name) { return none; }
-        error Writer::beginArray(&self) { return none; }
-        error Writer::endArray(&self) { return none; }
-        error Writer::write(&self, i32 value) { return none; }
-        (own []u8, error) Writer::finish(&const self) {
-            return new<own []u8>(0);
-        }
-        structure Reader {};
-        Reader Reader::init([]const u8 source) override {
-            return build Reader {};
-        }
-        error Reader::beginObject(&self) { return none; }
-        (bool, error) Reader::nextObjectField(&self) {
-            return (false, none);
-        }
-        bool Reader::keyIs(&const self, stringv expected) { return false; }
-        error Reader::beginArray(&self) { return none; }
-        (bool, error) Reader::nextArrayElement(&self) {
-            return (false, none);
-        }
-        error Reader::skipValue(&self) { return none; }
-        error Reader::finish(&self) { return none; }
-
-        @json(structure)
-        structure Response { []const i32 borrowed; };
-    )");
-
-    const Diagnostic* diagnostic = nullptr;
-    for (const Diagnostic& candidate : analysis.diagnostics.Diagnostics())
-        if (candidate.code == DiagnosticCode::InvalidDecoration &&
-            candidate.message.find("field 'borrowed'") != std::string::npos &&
-            candidate.message.find("does not own its decoded value") !=
-                std::string::npos) {
-            diagnostic = &candidate;
-            break;
-        }
-    ASSERT_NE(diagnostic, nullptr);
+    ASSERT_EQ(analysis.model.Decorations().size(), 2u);
+    const auto& field = analysis.model.Decorations()[1];
+    EXPECT_EQ(field.application->arguments[0].value, "item");
+    ASSERT_EQ(field.target->Kind(), AstNodeKind::StructureField);
+    const auto& syntax = static_cast<const flecha::core::StructureField&>(*field.target);
+    EXPECT_EQ(syntax.Name(), "value");
 }
 
 TEST(SemanticTests, AcceptsTrailingDefaultArgumentsAtDirectCallsAndMethods) {
@@ -9543,9 +9082,6 @@ TEST(SemanticDecorationTests, RegistersMetadataWithoutJsonDerivation) {
     const auto& records = analysis.model.Decorations();
     EXPECT_NE(records[1].target, records[2].target);
     EXPECT_EQ(records[1].owner, records[2].owner);
-    const auto& structure = static_cast<const StructureDeclaration&>(
-        *analysis.unit->Declarations()[1]);
-    EXPECT_EQ(analysis.model.JsonMetadataFor(structure), nullptr);
     for (const auto& function : analysis.model.GeneratedFunctions()) {
         EXPECT_NE(function->Name(), "json");
         EXPECT_NE(function->Name(), "writeJson");
@@ -9662,4 +9198,50 @@ TEST(SemanticGenericTests, OwnedSlicePatternsKeepOrdinaryLoopAndBranchChecking) 
         i32 main() { check<own []i32>(false); return 0; }
     )");
     EXPECT_TRUE(analysis.diagnostics.HasErrors());
+}
+
+TEST(SemanticDecorationTests, LegacyJsonHasNoCompilerCounterpart) {
+    auto analysis = Analyze(R"(
+        decoration json;
+        @json(structure) structure Record { @json("key") i32 value; };
+    )");
+    std::size_t missingContracts = 0;
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        if (diagnostic.code == DiagnosticCode::InvalidDecoration &&
+            diagnostic.message.find("requires a typed application contract") !=
+                std::string::npos)
+            ++missingContracts;
+    EXPECT_EQ(missingContracts, 2u);
+    for (const auto& function : analysis.model.GeneratedFunctions()) {
+        EXPECT_NE(function->Name(), "json");
+        EXPECT_NE(function->Name(), "writeJson");
+        EXPECT_NE(function->Name(), "readJson");
+        EXPECT_NE(function->Name(), "fromJson");
+    }
+}
+
+TEST(SemanticDecorationTests, JsonMethodNamesHaveOrdinaryContracts) {
+    auto analysis = Analyze(R"(
+        decoration json { application(structure) target structure; };
+        @json(structure) structure Record {};
+        i32 Record::json(&self) { return 1; }
+        bool Record::writeJson(&const self) { return true; }
+        void Record::readJson(&self, i32 value) {}
+        i32 Record::fromJson() { return 2; }
+    )");
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    auto invalid = Analyze(R"(
+        decoration json { application(structure) target structure; };
+        @json(structure) structure Record {};
+        i32 Record::json(&self) override { return 1; }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(invalid, DiagnosticCode::InvalidLifecycle),
+              nullptr);
+}
+
+TEST(SemanticDecorationTests, JsonSliceAppendIsNotAnIntrinsic) {
+    auto analysis = Analyze(R"(
+        void use() { __json_slice_append(); }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(analysis, DiagnosticCode::UnknownName), nullptr);
 }

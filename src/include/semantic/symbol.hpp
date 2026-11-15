@@ -50,8 +50,7 @@ enum class BuiltInFunction {
     StorageRelocate,
     StorageExtract,
     StorageDestroy,
-    StorageFree,
-    JsonSliceAppend
+    StorageFree
 };
 
 class Symbol {

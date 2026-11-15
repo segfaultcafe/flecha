@@ -96,7 +96,6 @@ class SemanticAnalyzer final {
     void RegisterFunction(const core::FunctionDeclaration& function,
                           bool generated = false);
     void GenerateInitializers();
-    void GenerateJsonMethods();
     SemanticType AnalyzeBuild(const core::BuildExpression& expression);
     SemanticType AnalyzeMethodCall(const core::MemberCallExpression& expression,
                                    SemanticType receiver);
@@ -154,8 +153,6 @@ class SemanticAnalyzer final {
     SemanticType AnalyzeAllocationCall(const core::CallExpression& expression,
                                        BuiltInFunction intrinsic);
     SemanticType AnalyzeHashCall(const core::CallExpression& expression);
-    SemanticType AnalyzeJsonSliceAppendCall(
-        const core::CallExpression& expression);
     SemanticType AnalyzeStorageCall(const core::CallExpression& expression,
                                     BuiltInFunction intrinsic);
     SemanticType AnalyzeCall(const core::CallExpression& expression);

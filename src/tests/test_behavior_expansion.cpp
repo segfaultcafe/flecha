@@ -255,8 +255,8 @@ TEST(BehaviorExpansion, GeneratedMethodsMatchHandwrittenIRTablesAndLayout) {
         << Messages(handwritten.diagnostics);
     EXPECT_EQ(CanonicalIR(generated), CanonicalIR(handwritten));
 }
-TEST(BehaviorExpansion, LegacyCompilerOwnedJsonIRIsUnchanged) {
-    const auto source = Read(root / "legacy_json.fl");
+TEST(BehaviorExpansion, LibraryJsonIRIsUnchangedByUnrelatedBehaviors) {
+    const auto source = Read(root / "library_json.fl");
     auto before = Analyze(source);
     auto after = Analyze(source + R"(
         decoration meta { application() target structure; };
