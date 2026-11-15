@@ -7,7 +7,7 @@ Status: Accepted
 Created: 2026-11-14
 Target: Flecha 0.4
 Requires: interface dispatch
-Implementation: In Progress
+Implementation: Complete
 Release-Impact: Blocker
 
 Abstract
@@ -291,20 +291,25 @@ parsing, semantic analysis, runtime layout, and generated code.
 Validation and completion
 -------------------------
 
-The native JSON package is the release proof. Completion requires:
+Completion of the general language mechanism requires:
 
-- JSON interfaces and behavior implemented in Flecha source;
-- parity for structures, field-name overrides, supported enums, nested values,
-  errors, ownership, allocation failures, and invalid applications;
-- collision and handwritten-override fixtures;
-- confirmation that metadata and interface conversion do not allocate;
-- sanitizer coverage for generated read and write paths;
-- compiler, analyzer, formatter, VS Code, and Neovim coverage; and
-- removal of the compiler-owned JSON derivation only after parity passes.
+- legal activation and combined interface-graph validation;
+- canonical provider selection before any surviving body expansion;
+- complete prospective registration, including recursion and inherited providers;
+- atomic concrete conformance and ordinary generated-method analysis;
+- concrete/interface calls, casts, composed tables, and variadic adapters using
+  the existing interface ABI;
+- distinct closed generic specializations and deterministic emission;
+- no runtime metadata, hidden storage, layout change, or implicit allocation;
+- failure isolation and original-source diagnostic/tooling provenance; and
+- compiler, runtime, analyzer, editor, and sanitizer coverage.
 
-The IFG implementation state becomes Implemented when the complete language
-contract and JSON migration are delivered. Stable requires subsequent release
-and standard-library use without reopening the accepted language boundary.
+The native JSON package remains the next library proof and migration. It must
+establish parity for structures, field-name overrides, supported enums, nested
+values, errors, ownership, allocation failures, and invalid applications before
+the compiler-owned JSON implementation is removed. General behavior completion
+does not authorize that removal. Stable requires subsequent release and
+standard-library use without reopening the accepted language boundary.
 
 Rejected alternatives
 ---------------------

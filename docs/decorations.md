@@ -162,9 +162,9 @@ Typed declarations only validate metadata, including when named `json`. They
 do not invoke the compiler-owned JSON path, create methods, add conformance,
 or emit runtime metadata. Existing `export decoration json;` declarations and
 JSON derivation remain unchanged. LANG-02 registers behavior contracts and
-activation candidates as described below. LANG-03 builds typed field-reflection
-plans in detached semantic models. Method generation, concrete conformance,
-and the JSON library migration remain deferred.
+activation candidates as described below. Bounded reflection plans feed
+transactional provider selection, concrete conformance, ordinary method
+analysis, and lowering. The JSON library migration remains deferred.
 
 Contract diagnostics use stable identifiers `FLECHA-S0066` through
 `FLECHA-S0074`, alongside existing parse, unresolved-name/type, and duplicate
@@ -257,12 +257,12 @@ method keys are rejected, including the prospective union with explicit
 conformance and other active behaviors. Repeated field applications activate
 a behavior once and preserve all field metadata.
 
-LANG-02 produces semantic records only. It does not add concrete conformance,
-generate methods or vtables, specialize/check bodies, or change compiler-owned
-JSON derivation. Missing virtual implementations are deferred until expansion;
-empty behavior bodies can therefore be registered. `T::fields()`, `Field<T,F>`,
-and `for<F>` are implemented by LANG-03 below. JSON migration and runtime
-representation changes remain deferred.
+Behavior registration produces semantic records before expansion. Active
+behaviors must satisfy every virtual requirement after exact handwritten
+providers and inherited defaults/finals are selected. An inactive behavior may
+omit implementations; an activated one may not leave a virtual unresolved.
+`T::fields()`, `Field<T,F>`, and `for<F>` feed the bounded plans below. The
+compiler-owned JSON path and runtime representation remain unchanged.
 
 Behavior diagnostics use `FLECHA-S0075` (invalid declaration/owner/root),
 `FLECHA-S0076` (target parameter), `FLECHA-S0077` (duplicate behavior),
@@ -274,9 +274,11 @@ Typed metadata is evaluated in the module-constant scalar domain and exposed
 through a `TypedDecorationRecord`. Bounded field iteration and target metadata
 queries produce detached `BehaviorExpansionPlan` records. Field descriptors
 retain declaration identity, exact closed field types and ownership, and source
-order. Reflection-bearing body candidates use the ordinary semantic and borrow
-checks after projection and metadata substitution; nothing is registered as a
-concrete method or passed to lowering.
+order. Provider selection precedes expansion: an exact handwritten `override`
+suppresses its behavior body completely. All surviving signatures are staged
+before checking any body. Expanded functions then use ordinary semantic, borrow,
+allocation, generic, and lowering machinery. Only successful transactions expose
+concrete methods and conformance; failures leave the concrete graph unchanged.
 
 Reflection diagnostics use `FLECHA-S0080` (iteration shape), `FLECHA-S0081`
 (context/control flow), `FLECHA-S0082` (operation or receiver), `FLECHA-S0083`
@@ -285,5 +287,10 @@ Reflection diagnostics use `FLECHA-S0080` (iteration shape), `FLECHA-S0081`
 Ordinary type, ownership, and borrow diagnostics retain their identifiers and
 include related behavior, activation, target, and field locations.
 
-See [behaviors-v0.4.md](behaviors-v0.4.md) for the implemented planning boundary
-and the deferred concrete derivation stages.
+Behavior-derived interface calls use the existing composed-table ABI. No field
+pack, decoration record, or reflection operation reaches runtime. Generated
+method navigation and diagnostics retain their original source provenance.
+`break`, `proceed`, and `jumpto` inside compile-time field loops remain rejected.
+
+See [behaviors-v0.4.md](behaviors-v0.4.md) for provider selection, publication,
+and the separately deferred JSON migration.
