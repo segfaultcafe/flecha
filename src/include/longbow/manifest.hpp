@@ -31,6 +31,7 @@ class VersionRequirement final {
     static std::optional<VersionRequirement> Parse(const std::string& text,
                                                    std::string& error);
     [[nodiscard]] bool Matches(const SemanticVersion& version) const;
+    [[nodiscard]] bool MatchesToolchain(const SemanticVersion& version) const;
     [[nodiscard]] const std::string& String() const { return _text; }
 
    private:
