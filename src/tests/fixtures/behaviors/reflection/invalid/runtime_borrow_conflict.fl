@@ -1,7 +1,7 @@
-module reflection_runtime_range;
-// expect FLECHA-S0081
+module runtime_borrow_conflict;
+// expect FLECHA-S0029
 decoration meta { application(stringv name) target structure; application(stringv name) target structure::field; application(stringv name) target enum; application(stringv name) target interface; };
 interface Inspect { void inspect(&self) virtual; };
 structure Other { i32 first; private i32 hidden; };
-behavior meta<T> => structure << Inspect { void T::inspect(&self) override { for<F> Field<T, F> field = T::fields() { for i32 value = range(0, 2) { field::name(); } } } };
+behavior meta<T> => structure << Inspect { void T::inspect(&self) override { while true { for<F> Field<T, F> field = T::fields() { &F first = &field::get(self); &F second = &field::get(self); *first = *second; } } } };
 structure Item { @meta("first") i32 first; i32 second; };

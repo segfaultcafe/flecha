@@ -1,21 +1,8 @@
 module json;
 
 export interface JsonReadable {
-    error readJson(&self, &Reader reader) default;
-    protected error readJsonField(&self, &Reader reader) virtual;
+    error readJson(&self, &Reader reader) virtual;
 };
-
-error JsonReadable::readJson(&self, &Reader reader) {
-    error err = reader->beginObject();
-    if err != none { return err; }
-    more, nextError := reader->nextObjectField();
-    while more and nextError == none {
-        err = self->readJsonField(reader);
-        if err != none { return err; }
-        more, nextError = reader->nextObjectField();
-    }
-    return nextError;
-}
 
 export (T, error) from<T: JsonReadable>([]const u8 source) {
     T value = T::zero();
@@ -24,7 +11,3 @@ export (T, error) from<T: JsonReadable>([]const u8 source) {
     if err == none { err = reader.finish(); }
     return (value, err);
 }
-
-error readValue(&Reader reader, &i32 output) { return reader->read(output); }
-error readValue(&Reader reader, &bool output) { return reader->read(output); }
-error readValue(&Reader reader, &JsonReadable output) { return output->readJson(reader); }

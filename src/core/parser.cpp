@@ -2182,6 +2182,11 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
     auto body = ParseBlockStatement();
     if (body == nullptr) return nullptr;
     const source::SourceRange range{keyword.range.start, body->Range().end};
+    std::vector<const AstNode*> syntaxChildren;
+    for (const auto& type : types)
+        if (type) syntaxChildren.push_back(type.get());
+    syntaxChildren.push_back(source.get());
+    syntaxChildren.push_back(body.get());
     // '$' cannot occur in source identifiers, so these names cannot collide.
     const std::string suffix = std::to_string(_rangeId++);
     const std::string sourceName = "$range" + suffix;
@@ -2251,7 +2256,7 @@ std::unique_ptr<RangeStatement> Parser::ParseRangeStatement() {
         std::move(update)));
     return std::make_unique<RangeStatement>(
         range, std::make_unique<BlockStatement>(range, std::move(outer)),
-        sourceDeclaration, indexBinding);
+        sourceDeclaration, indexBinding, std::move(syntaxChildren));
 }
 
 std::unique_ptr<ProceedStatement> Parser::ParseProceedStatement() {

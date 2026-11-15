@@ -315,6 +315,16 @@ form is valid only inside a `behavior ... => structure` method. It is not genera
 iteration and is invalid in ordinary functions, interface bodies, and enum
 behaviors.
 
+Field iteration may occur inside `while`, counted `loop`, and `for ... range`
+loops. Conversely, runtime loops may use reflected projections, metadata, and
+closed `F` types inside a field iteration. Expansion happens once per direct
+field at compile time; only the resulting ordinary code runs repeatedly. This
+does not introduce runtime descriptors or data-dependent expansion. Ordinary
+borrow, move, initialization, and effect checks apply to the expanded loops.
+`break`, `proceed`, and `jumpto` anywhere inside a field iteration remain
+unsupported, including inside a nested runtime loop. Runtime loop control
+outside the field iteration retains its ordinary meaning.
+
 The loop variable is a unique compile-time descriptor type, not a runtime
 value and not the field's value type. `F` is the value type. Two fields with
 the same `F` remain distinct through a hidden declaration identity,
@@ -404,8 +414,8 @@ error.
 
 Selection must also be known at expansion time. Folded-away branches register
 no keys. A validation statement under an unresolved `if`, `else if`, `else`,
-or `also` condition is rejected. The existing prohibitions on reflection in
-runtime loops and closures remain in force. Validation is performed when the
+or `also` condition, or inside a runtime loop, is rejected. Put compile-time
+validations before runtime iteration. Reflection remains prohibited in closures. Validation is performed when the
 method is expanded, regardless of whether runtime execution would reach the
 statement; it has no return value, cannot be deferred, and cannot escape into
 an expression. Exact handwritten providers still suppress the entire derived
@@ -464,7 +474,7 @@ for<F> Field<T, F> field = T::fields() {
 ```
 
 This does not permit references to owned strings, general compile-time calls,
-or reflection inside runtime loops and closures. New concrete generic types
+or reflection inside closures. New concrete generic types
 needed by closed query targets enter the existing expansion fixed point and
 are rolled back if the transaction fails.
 

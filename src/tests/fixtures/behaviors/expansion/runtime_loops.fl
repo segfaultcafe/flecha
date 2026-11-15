@@ -1,0 +1,65 @@
+module runtime_loops;
+decoration meta { application() target structure; };
+interface Sum {
+    i32 sum(&const self) virtual;
+    i32 inner(&const self) virtual;
+};
+behavior meta<T> => structure << Sum {
+    i32 T::sum(&const self) override {
+        i32 total = 0;
+        i32 iteration = 0;
+        while iteration < 2 {
+            for<F> Field<T, F> field = T::fields() {
+                if F.isof<i32> and !field::isPrivate() {
+                    F value = field::get(self);
+                    total = total + value;
+                }
+            }
+            iteration++;
+        }
+        loop i32 i = 0; i < 2; i++ {
+            for<F> Field<T, F> field = T::fields() {
+                if F.isof<i32> and !field::isPrivate() {
+                    total = total + field::get(self);
+                }
+            }
+        }
+        [2]i32 rounds = [0, 1];
+        for (u32 index, i32 round) = range rounds {
+            for<F> Field<T, F> field = T::fields() {
+                if F.isof<i32> and !field::isPrivate() {
+                    total = total + field::get(self);
+                }
+            }
+        }
+        return total;
+    }
+    i32 T::inner(&const self) override {
+        i32 total = 0;
+        for<F> Field<T, F> field = T::fields() {
+            if F.isof<i32> and !field::isPrivate() {
+                [2]F values = [field::get(self), field::get(self)];
+                for (usize index, F value) = range values {
+                    i32 iteration = 0;
+                    while iteration < 1 {
+                        stringv name = field::name();
+                        total = total + value;
+                        iteration++;
+                    }
+                }
+            }
+        }
+        return total;
+    }
+};
+@meta structure Item<G> { G first; i32 second; private bool hidden; };
+@meta structure Empty {};
+i32 main() {
+    item := Item<i32>::init();
+    item.first = 3; item.second = 4;
+    empty := Empty::init();
+    if empty.sum() != 0 or empty.inner() != 0 { return 1; }
+    if item.inner() != 14 { return 2; }
+    &const Sum view = item as &const Sum;
+    return view->sum();
+}

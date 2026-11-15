@@ -4,6 +4,10 @@
 
 ### Added
 
+- Behavior field iteration composes with `while`, counted `loop`, and range
+  loops. Reflected metadata, field projections, and type queries expand before
+  ordinary runtime analysis. Compile-time validations remain outside runtime
+  selection; descriptor escapes and unsupported loop transfers remain errors.
 - Behavior field reflection now supports `field::isPrivate()` and bounded
   `field::requireUnique(key)` validation. Libraries can exclude private fields
   and reject duplicate compile-time names without generating runtime checks.
@@ -27,6 +31,13 @@
 - The Neovim plugin now starts `flecha-lsp` automatically for Flecha buffers,
   discovers Longbow workspace roots, reuses an existing compatible client, and
   supports explicit server/compiler overrides for development checkouts.
+
+### Fixed
+
+- Managed owning slices returned through interfaces retain automatic cleanup
+  instead of being tracked as raw allocations, including tuple results.
+- Prospective behavior conformance recognizes imported decoration shorthand
+  such as `@json`, consistently with semantic decoration resolution.
 
 ## 0.3.3 - 2026-11-15
 

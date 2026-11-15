@@ -403,6 +403,13 @@ class Expander {
         }
         const auto* declaration =
             LookupFrom(name, context, application.range, false);
+        // Match decoration resolution: @alias also names the exported
+        // decoration with that name in the imported module.
+        if (application.path.size() == 1 &&
+            (!declaration ||
+             declaration->Kind() != AstNodeKind::DecorationDeclaration))
+            declaration = LookupFrom(name + "::" + name, context,
+                                     application.range, false);
         return declaration &&
                        declaration->Kind() == AstNodeKind::DecorationDeclaration
                    ? static_cast<const DecorationDeclaration*>(declaration)

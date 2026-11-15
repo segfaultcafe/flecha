@@ -234,9 +234,7 @@ class BehaviorPlanner {
                     if (c.restricted)
                         Error(DiagnosticCode::InvalidReflectionContext,
                               query.Range(),
-                              "type reflection cannot be used in a runtime "
-                              "loop or closure",
-                              c);
+                              "type reflection cannot be used in a closure", c);
                     Occurrence(
                         name.Range(), name.Name(), "compile-time type query",
                         true,
@@ -259,7 +257,7 @@ class BehaviorPlanner {
                 Error(DiagnosticCode::InvalidReflectionContext,
                       loop.keywordRange,
                       "field iteration requires a structure behavior method "
-                      "outside runtime loops and closures",
+                      "outside closures and other field iterations",
                       c);
             if (loop.binder == _currentBehavior->declaration->targetParameter ||
                 loop.target != _currentBehavior->declaration->targetParameter ||
@@ -305,9 +303,7 @@ class BehaviorPlanner {
             Validate(*loop.body, c);
             return;
         }
-        if (n.Kind() == AstNodeKind::AnonymousFunctionExpression ||
-            n.Kind() == AstNodeKind::WhileStatement ||
-            n.Kind() == AstNodeKind::RangeStatement)
+        if (n.Kind() == AstNodeKind::AnonymousFunctionExpression)
             c.restricted = true;
         if (c.loop && (n.Kind() == AstNodeKind::BreakStatement ||
                        n.Kind() == AstNodeKind::ProceedStatement ||
@@ -321,9 +317,7 @@ class BehaviorPlanner {
             if (c.restricted)
                 Error(DiagnosticCode::InvalidReflectionContext,
                       call->MemberRange(),
-                      "reflection cannot be used in a runtime loop or nested "
-                      "closure",
-                      c);
+                      "reflection cannot be used in a nested closure", c);
             const auto& op = call->Member();
             bool valid =
                 op == "decorated" || op == "decorator" || op == "require" ||
@@ -390,8 +384,7 @@ class BehaviorPlanner {
             if (c.loop && t.Name() == c.loop->binder) {
                 if (c.restricted)
                     Error(DiagnosticCode::InvalidReflectionContext, t.Range(),
-                          "a field-type binding cannot escape into a closure "
-                          "or runtime loop",
+                          "a field-type binding cannot escape into a closure",
                           c);
                 Occurrence(t.Range(), c.loop->binder,
                            "exact field type (bound per iteration)", true,
@@ -582,6 +575,11 @@ class BehaviorPlanner {
     }
     Tokens Rewrite(const AstNode& n, Context c) {
         if (_generatedTokens > 1000000) return {};
+        // Reflection expands once, even inside runtime loops. Requirements
+        // still cannot depend on runtime selection or execution counts.
+        if (n.Kind() == AstNodeKind::WhileStatement ||
+            n.Kind() == AstNodeKind::RangeStatement)
+            c.runtimeConditional = true;
         if (n.Kind() == AstNodeKind::ExpressionStatement) {
             const auto* call =
                 Operation(static_cast<const ExpressionStatement&>(n).Value());
@@ -851,12 +849,15 @@ class BehaviorPlanner {
         if (n.Kind() == AstNodeKind::NameExpression && c.field &&
             static_cast<const NameExpression&>(n).Name() == c.loop->binder)
             return One(TokenType::Identifier, c.fieldTypeAlias, n.Range());
-        // Runtime loops and closures cannot contain reflection. Preserve their
-        // original syntax, including the parser's ordinary loop desugarings.
-        if (n.Kind() == AstNodeKind::RangeStatement ||
-            n.Kind() == AstNodeKind::AnonymousFunctionExpression)
+        // Closures cannot capture reflection. Range loops retain their source
+        // children so the parser's synthetic cursor declarations are not
+        // mistaken for source expressions during token substitution.
+        if (n.Kind() == AstNodeKind::AnonymousFunctionExpression)
             return Raw(n.Range());
-        auto children = Children(n);
+        auto children =
+            n.Kind() == AstNodeKind::RangeStatement
+                ? static_cast<const RangeStatement&>(n).SyntaxChildren()
+                : Children(n);
         std::sort(children.begin(), children.end(), [](auto* a, auto* b) {
             return a->Range().start.offset < b->Range().start.offset;
         });

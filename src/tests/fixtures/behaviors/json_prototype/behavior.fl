@@ -1,28 +1,47 @@
 module json;
 
 behavior json<T> => structure << JsonReadable {
-    protected error T::readJsonField(&self, &Reader reader) override {
+    error T::readJson(&self, &Reader reader) override {
         for<F> Field<T, F> field = T::fields() {
             field::require(!field::isPrivate() or !field::decorated(), "private fields cannot be decorated with json");
             if !field::isPrivate() and (T::decorated() or field::decorated()) {
-                stringv name = field::name();
                 if field::decorated() {
                     field::requireUnique(field::decorator().name);
-                    name = field::decorator().name;
                 } else {
                     field::requireUnique(field::name());
                 }
-                if reader->keyIs(name) {
-                    if F.isof<string> {
-                        value, err := reader->readString();
-                        if err == none { field::get(self) = value; }
-                        return err;
-                    } else {
-                        return readValue(reader, &field::get(self));
+            }
+        }
+        error err = reader->beginObject();
+        if err != none { return err; }
+        more, nextError := reader->nextObjectField();
+        while more and nextError == none {
+            bool matched = false;
+            for<F> Field<T, F> field = T::fields() {
+                if !field::isPrivate() and (T::decorated() or field::decorated()) {
+                    stringv name = field::name();
+                    if field::decorated() { name = field::decorator().name; }
+                    if !matched and reader->keyIs(name) {
+                        matched = true;
+                        if F.isof<string> {
+                            value, readError := reader->readString();
+                            err = readError;
+                            if err == none { field::get(self) = value; }
+                        } else if F.isof<JsonReadable> {
+                            err = field::get(self).readJson(reader);
+                        } else {
+                            err = reader->read(&field::get(self));
+                        }
+                        if err != none { return err; }
                     }
                 }
             }
+            if !matched {
+                err = reader->skipValue();
+                if err != none { return err; }
+            }
+            more, nextError = reader->nextObjectField();
         }
-        return reader->skipValue();
+        return nextError;
     }
 };

@@ -423,7 +423,8 @@ TEST(BehaviorReflection,
      ExpandedMethodsHaveDeterministicIRWithoutReflectionArtifacts) {
     for (const std::string fixture :
          {"fields.fl", "prospective_siblings.fl", "prospective_recursive.fl",
-          "prospective_mutual.fl", "prospective_default.fl"}) {
+          "prospective_mutual.fl", "prospective_default.fl",
+          "../expansion/runtime_loops.fl"}) {
         SCOPED_TRACE(fixture);
         auto source = Fixture(fixture);
         auto with = Analyze(source);
@@ -489,3 +490,25 @@ TEST(BehaviorReflection, CyclicConstantsFailWithoutRecursingInPlans) {
 }
 
 }  // namespace
+
+TEST(BehaviorReflection, RuntimeLoopReflectionRetainsEditorInformation) {
+    const auto root =
+        std::filesystem::path(FLECHA_BEHAVIOR_FIXTURE_DIR) / "expansion";
+    analyzer::AnalysisSession session(root);
+    const auto file = root / "runtime_loops.fl";
+    const auto source = Fixture("../expansion/runtime_loops.fl");
+    auto result = session.Analyze(file);
+    ASSERT_FALSE(result.HasErrors()) << Messages(result.diagnostics);
+    const auto offset = source.find("field::get") + 7;
+    const auto hover = result.Hover(file, offset);
+    ASSERT_TRUE(hover);
+    EXPECT_NE(hover->type.find("field place"), std::string::npos);
+    // get() projects several fields, so its definition is intentionally
+    // ambiguous. The type binding still navigates to this lexical for<F>.
+    const auto definition = result.Definition(file, source.find("F value"));
+    ASSERT_TRUE(definition);
+    EXPECT_EQ(definition->start.offset, source.find("for<F>") + 4);
+    const auto occurrence = result.OccurrenceAt(file, offset);
+    ASSERT_TRUE(occurrence);
+    EXPECT_EQ(occurrence->kind, analyzer::SemanticItemKind::Function);
+}
