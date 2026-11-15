@@ -69,21 +69,31 @@ bool SemanticType::ContainsOwnedSlice() const {
 }
 
 bool SemanticType::ContainsReference() const {
-    if (_kind == SemanticTypeKind::Reference) return true;
-    if (_kind == SemanticTypeKind::Structure) {
-        if (!_structure->validLayout) return false;
-        for (const auto& field : _structure->fields)
-            if (field.type.ContainsReference()) return true;
-    }
-    if (_kind == SemanticTypeKind::Array ||
-        _kind == SemanticTypeKind::OwnedBuffer ||
-        _kind == SemanticTypeKind::OwnedSlice ||
-        _kind == SemanticTypeKind::Slice)
-        return Target()->ContainsReference();
-    if (_kind == SemanticTypeKind::Tuple)
-        for (const auto& element : Elements())
-            if (element.ContainsReference()) return true;
-    return false;
+    // Slices and owners can lead back to an already visited structure even
+    // when every concrete layout is valid. Search each structure once, while
+    // still checking fields after a recursive edge for actual references.
+    std::unordered_set<const StructureType*> visited;
+    const auto contains = [&](const auto& self,
+                              const SemanticType& type) -> bool {
+        if (type.Kind() == SemanticTypeKind::Reference) return true;
+        if (type.Kind() == SemanticTypeKind::Structure) {
+            const StructureType* structure = type.Structure();
+            if (!structure->validLayout || !visited.insert(structure).second)
+                return false;
+            for (const auto& field : structure->fields)
+                if (self(self, field.type)) return true;
+        }
+        if (type.Kind() == SemanticTypeKind::Array ||
+            type.Kind() == SemanticTypeKind::OwnedBuffer ||
+            type.Kind() == SemanticTypeKind::OwnedSlice ||
+            type.Kind() == SemanticTypeKind::Slice)
+            return self(self, *type.Target());
+        if (type.Kind() == SemanticTypeKind::Tuple)
+            for (const auto& element : type.Elements())
+                if (self(self, element)) return true;
+        return false;
+    };
+    return contains(contains, *this);
 }
 
 bool SemanticType::ContainsInvalidDefaultConstruction() const {

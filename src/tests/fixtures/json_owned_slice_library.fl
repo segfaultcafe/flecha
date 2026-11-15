@@ -1,11 +1,11 @@
 module audit;
 @imports :: lib::json::json;
 @json(structure)
-structure Child { string name; own []i32 numbers; };
+structure Child { string name; own []i32 numbers; own []Child descendants; };
 @json(structure)
 structure Document { own []Child children; own []own []string names; };
 i32 main() {
-    document, err := json::from<Document>("{\"children\":[{\"name\":\"Ada\",\"numbers\":[1,2,3]},{\"name\":\"Grace\",\"numbers\":[4]}],\"names\":[[\"first\",\"second\"],[\"third\"]],\"names\":[[\"replacement\"]]}".cast<[]const u8>);
+    document, err := json::from<Document>("{\"children\":[{\"name\":\"Ada\",\"numbers\":[1,2,3],\"descendants\":[{\"name\":\"recursive\",\"numbers\":[8],\"descendants\":[{\"name\":\"leaf\"}]}]},{\"name\":\"Grace\",\"numbers\":[4]}],\"names\":[[\"first\",\"second\"],[\"third\"]],\"names\":[[\"replacement\"]]}".cast<[]const u8>);
     if err == AllocationError.OutOfMemory { return 42; }
     if err != none { return 1; }
     encoded, writeErr := document.json();

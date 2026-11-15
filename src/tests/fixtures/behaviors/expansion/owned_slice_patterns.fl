@@ -16,6 +16,8 @@ behavior meta<T> => structure << Inspect {
 };
 @meta(structure)
 structure Data { own []i32 a; own []own []i32 b; i32 c; };
+@meta(structure)
+structure Node { own []Node children; };
 bool shape<T>() { return T.isof<own []Element>; }
 bool exact<T, Element>() { return T.isof<own []Element>; }
 i32 main() {
@@ -25,5 +27,12 @@ i32 main() {
     if shape<[]i32>() or shape<[2]i32>() { return 3; }
     if !exact<own []i32, i32>() or exact<own []i32, u32>() { return 4; }
     if depth<own []own []own []i32>() != 3 { return 5; }
+    node := Node::init();
+    children, err := new<own []Node>(2);
+    if err != none { return 6; }
+    node.children = children;
+    if node.inspect() != 1 or node.children[0].inspect() != 1 {
+        return 7;
+    }
     return 42;
 }

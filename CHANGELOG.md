@@ -41,6 +41,9 @@
 
 ### Fixed
 
+- Recursive owning-slice structures no longer overflow the compiler stack
+  during reference analysis or destruction generation. Recursive cleanup
+  preserves custom teardown and reverse element destruction order.
 - Managed owning slices returned through interfaces retain automatic cleanup
   instead of being tracked as raw allocations, including tuple results.
 - Prospective behavior conformance recognizes imported decoration shorthand

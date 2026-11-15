@@ -95,6 +95,32 @@ TEST(SemanticTypeTests, RepresentsEverySyntaxPrimitive) {
                               SemanticType(SemanticTypeKind::U8)));
 }
 
+TEST(SemanticTypeTests, FindsReferencesThroughRecursiveSliceGraphs) {
+    StructureType first;
+    StructureType second;
+    first.validLayout = second.validLayout = true;
+    first.fields.push_back({"children", SemanticType(
+        SemanticTypeKind::OwnedSlice, SemanticType(&first)), nullptr});
+    EXPECT_FALSE(SemanticType(&first).ContainsReference());
+    first.fields.push_back({"others", SemanticType(
+        SemanticTypeKind::OwnedSlice, SemanticType(&second)), nullptr});
+    second.fields.push_back({"parents", SemanticType(
+        SemanticTypeKind::Slice, SemanticType(&first)), nullptr});
+    EXPECT_FALSE(SemanticType(&first).ContainsReference());
+    EXPECT_FALSE(SemanticType(&second).ContainsReference());
+    second.fields.push_back({"reference", SemanticType(
+        SemanticTypeKind::Reference, SemanticType(SemanticTypeKind::I32)),
+        nullptr});
+    EXPECT_TRUE(SemanticType(&first).ContainsReference());
+    EXPECT_TRUE(SemanticType(&second).ContainsReference());
+    second.fields.pop_back();
+    first.fields.push_back({"reference", SemanticType(
+        SemanticTypeKind::Reference, SemanticType(SemanticTypeKind::I32)),
+        nullptr});
+    EXPECT_TRUE(SemanticType(&first).ContainsReference());
+    EXPECT_TRUE(SemanticType(&second).ContainsReference());
+}
+
 TEST(SemanticInterfaceTests, RegistersInterfacesAndResolvesNominalRelations) {
     Analysis analysis = Analyze(R"(
         interface Readable {};

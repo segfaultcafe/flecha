@@ -86,6 +86,9 @@ class LlvmCodeGenerator final {
     bool EmitDefaultInto(llvm::Value* destination, semantic::SemanticType type,
                          bool semanticZero);
     void EmitDestroyAt(llvm::Value* storage, semantic::SemanticType type);
+    void EmitStructureDestroyAt(llvm::Value* storage,
+                                semantic::SemanticType type);
+    llvm::Function* StructureDestroyer(semantic::SemanticType type);
     void EmitArrayElements(llvm::Value* storage, semantic::SemanticType type,
                            bool reverse,
                            const std::function<void(llvm::Value*)>& action);
@@ -287,6 +290,9 @@ class LlvmCodeGenerator final {
         _closureEnvironmentTypes;
     std::unordered_map<const semantic::FunctionSymbol*, llvm::Function*>
         _closureDestroyers;
+    std::unordered_map<const semantic::StructureType*, llvm::Function*>
+        _structureDestroyers;
+    std::unordered_set<const semantic::StructureType*> _destroyingStructures;
     std::unordered_map<const void*,
                        std::unordered_map<const semantic::InterfaceType*,
                                           InterfaceTableLocation>>
