@@ -29,7 +29,7 @@ elseif(FLECHA_BUILD_VERSION STREQUAL "")
         else()
             execute_process(
                 COMMAND "${GIT_EXECUTABLE}" describe --always --dirty
-                    --abbrev=12
+                    --abbrev=12 --match "v${PROJECT_VERSION}"
                 WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
                 RESULT_VARIABLE revisionResult
                 OUTPUT_VARIABLE revisionOutput

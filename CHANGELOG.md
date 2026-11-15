@@ -17,6 +17,17 @@
   discovers Longbow workspace roots, reuses an existing compatible client, and
   supports explicit server/compiler overrides for development checkouts.
 
+## 0.3.3 - 2026-11-15
+
+Flecha 0.3.3 fixes Longbow compatibility checks for Git-derived development
+toolchains.
+
+### Fixed
+
+- Longbow now evaluates Git-derived Flecha versions against their base release,
+  so builds such as `0.3.3-dev-g<commit>` satisfy compatible `0.3` toolchain
+  requirements while preserving normal SemVer prerelease rules for packages.
+
 ## 0.3.2 - 2026-11-09
 
 Flecha 0.3.2 introduces the compiler-side analyzer protocol used by language

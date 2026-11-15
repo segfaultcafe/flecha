@@ -228,6 +228,14 @@ add_test(NAME CliTests.LongbowVersion COMMAND $<TARGET_FILE:longbow> --version)
 set_tests_properties(CliTests.LongbowVersion PROPERTIES
     PASS_REGULAR_EXPRESSION "^longbow ${PROJECT_VERSION}"
 )
+add_test(
+    NAME BuildVersionTests.TaglessDevelopmentVersion
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/build-version
+        -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_build_version.cmake
+)
 
 add_test(
     NAME DocumentationExampleTests.CheckBuildRun
