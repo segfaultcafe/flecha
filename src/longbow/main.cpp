@@ -623,7 +623,7 @@ int Run(int argc, char** argv) {
         std::string requirementError;
         const auto requirement = flecha::longbow::VersionRequirement::Parse(
             package.flecha, requirementError);
-        if (!requirement || !requirement->Matches(*toolchainVersion))
+        if (!requirement || !requirement->MatchesToolchain(*toolchainVersion))
             throw std::runtime_error(
                 "package '" + package.identity + "' requires Flecha " +
                 package.flecha + ", but the toolchain is " + flecha::VERSION);

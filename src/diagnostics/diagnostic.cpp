@@ -162,6 +162,20 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-S0078";
         case DiagnosticCode::ConflictingBehaviorRoots:
             return "FLECHA-S0079";
+        case DiagnosticCode::InvalidFieldIteration:
+            return "FLECHA-S0080";
+        case DiagnosticCode::InvalidReflectionContext:
+            return "FLECHA-S0081";
+        case DiagnosticCode::InvalidReflectionOperation:
+            return "FLECHA-S0082";
+        case DiagnosticCode::ReflectionEscape:
+            return "FLECHA-S0083";
+        case DiagnosticCode::MissingDecorationProof:
+            return "FLECHA-S0084";
+        case DiagnosticCode::InvalidMetadataMember:
+            return "FLECHA-S0085";
+        case DiagnosticCode::InvalidBehaviorExpansion:
+            return "FLECHA-S0086";
         case DiagnosticCode::InvalidInterface:
             return "FLECHA-S0065";
         case DiagnosticCode::InvalidGeneric:

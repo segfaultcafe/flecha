@@ -41,6 +41,7 @@ enum class AstNodeKind {
     IfStatement,
     WhileStatement,
     RangeStatement,
+    FieldIterationStatement,
     ProceedStatement,
     BreakStatement,
     JumpToStatement,
@@ -1430,6 +1431,21 @@ class RangeStatement final : public Statement {
     std::unique_ptr<BlockStatement> _expansion;
     const VariableDeclarationStatement* _source;
     const VariableDeclarationStatement* _indexBinding;
+};
+
+// A bounded compiler-only field pack iteration; never a runtime loop.
+class FieldIterationStatement final : public Statement {
+   public:
+    explicit FieldIterationStatement(source::SourceRange range)
+        : Statement(range) {}
+    AstNodeKind Kind() const override {
+        return AstNodeKind::FieldIterationStatement;
+    }
+    source::SourceRange keywordRange, binderRange, fieldRange, targetRange,
+        valueTypeRange, descriptorRange, packRange;
+    std::string binder, target, valueType, descriptor;
+    std::unique_ptr<Expression> pack;
+    std::unique_ptr<BlockStatement> body;
 };
 
 class LiteralExpression final : public Expression {

@@ -1,0 +1,3 @@
+module reflection_decoration_body;
+// expect FLECHA-P0001
+decoration meta { for<F> Field<T,F> field = T::fields() {} };

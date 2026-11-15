@@ -1,0 +1,23 @@
+module prospective_siblings;
+decoration meta { application() target structure; };
+interface Inspect {
+    void inspect(&self) virtual;
+    i32 helper(&const self, i32 value) virtual;
+    bool helper(&const self, bool value) virtual;
+};
+behavior meta<T> => structure << Inspect {
+    void T::inspect(&self) override {
+        i32 number = self->helper(7);
+        bool flag = self->helper(true);
+        for<F> Field<T, F> field = T::fields() {
+            F value = field::get(self);
+        }
+    }
+    i32 T::helper(&const self, i32 value) override { return value; }
+    bool T::helper(&const self, bool value) override { return value; }
+};
+@meta structure Item { i32 value; };
+@meta structure Manual { i32 value; };
+i32 Manual::helper(&const self, i32 value) { return value + 1; }
+i32 call_manual(&const Manual item) { return item->helper(4); }
+i32 main() { return 0; }

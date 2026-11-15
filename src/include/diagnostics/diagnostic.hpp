@@ -100,6 +100,13 @@ enum class DiagnosticCode {
     DuplicateBehavior,
     InvalidBehaviorMethod,
     ConflictingBehaviorRoots,
+    InvalidFieldIteration,
+    InvalidReflectionContext,
+    InvalidReflectionOperation,
+    ReflectionEscape,
+    MissingDecorationProof,
+    InvalidMetadataMember,
+    InvalidBehaviorExpansion,
 
     NativeTargetUnavailable,
     ObjectEmissionFailed,

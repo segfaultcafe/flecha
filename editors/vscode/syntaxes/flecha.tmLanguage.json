@@ -5,6 +5,7 @@
   "patterns": [
     { "include": "#decorationDeclarations" },
     { "include": "#behaviorDeclarations" },
+    { "include": "#fieldIteration" },
     {"include": "#comments"},
     {"include": "#strings"},
     {"include": "#characters"},
@@ -38,6 +39,17 @@
     {"include": "#variables"}
   ],
   "repository": {
+    "fieldIteration": {
+      "match": "\\b(for)\\s*<\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*>\\s*(Field)\\s*<\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*,\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*>\\s*([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.flecha" },
+        "2": { "name": "entity.name.type.parameter.flecha" },
+        "3": { "name": "entity.name.type.flecha" },
+        "4": { "name": "entity.name.type.parameter.flecha" },
+        "5": { "name": "entity.name.type.parameter.flecha" },
+        "6": { "name": "variable.other.field-descriptor.flecha" }
+      }
+    },
     "behaviorDeclarations": {
       "match": "\\b(behavior)\\s+([A-Za-z_][A-Za-z0-9_:]*)",
       "captures": {

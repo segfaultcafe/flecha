@@ -49,6 +49,8 @@ SemanticItemKind ItemKind(semantic::SymbolKind kind) {
             return SemanticItemKind::InterfaceType;
         case SymbolKind::CallableType:
             return SemanticItemKind::CallableType;
+        case SymbolKind::TypeBinding:
+            return SemanticItemKind::TypeParameter;
     }
     return SemanticItemKind::Expression;
 }
@@ -187,6 +189,13 @@ std::vector<SemanticOccurrence> BehaviorOccurrences(
             }
         }
     }
+    for (const auto& item : model.ReflectionOccurrences())
+        add(item.range, item.name, item.description,
+            item.type            ? SemanticItemKind::TypeParameter
+            : item.name == "for" ? SemanticItemKind::Keyword
+            : item.operation     ? SemanticItemKind::Function
+                                 : SemanticItemKind::Field,
+            item.definition);
     return result;
 }
 

@@ -1,0 +1,5 @@
+module metadata;
+under namespace root;
+behavior meta<T> => enum << Inspect {
+    void T::inspect(&self) override { stringv name = T::decorator().name; }
+};

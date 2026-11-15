@@ -19,6 +19,8 @@ class SemanticAnalyzer final {
     [[nodiscard]] SemanticModel Analyze(core::CompilationUnit& unit);
 
    private:
+    friend class BehaviorPlanner;
+    void PlanBehaviors(const core::CompilationUnit& unit);
     void SetSource(const std::string& id);
     void BindImports(const core::CompilationUnit& unit);
     void RegisterBehaviors(const core::CompilationUnit& unit);
@@ -176,6 +178,11 @@ class SemanticAnalyzer final {
     SemanticModel _model;
     Scope* _currentScope = nullptr;
     const FunctionSymbol* _currentFunction = nullptr;
+    // Signature-only lookup overlay populated exclusively in detached behavior
+    // analyzers. Never inserted into concrete method tables or ordinary scopes.
+    std::vector<const FunctionSymbol*> _prospectiveMethods;
+    std::unordered_map<const FunctionSymbol*, const MethodContract*>
+        _prospectiveContracts;
     std::unordered_map<std::string, source::SourceRange> _positions;
     std::unordered_set<const Symbol*> _localStringBorrows;
     std::unordered_set<const StructureType*> _warnedDefaults;

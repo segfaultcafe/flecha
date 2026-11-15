@@ -213,6 +213,32 @@ TEST(LongbowVersionTests, MatchesCaretTildePartialAndComparatorRequirements) {
     EXPECT_TRUE(prerelease.Matches(Version("0.3.1-beta")));
 }
 
+TEST(LongbowVersionTests, MatchesGitToolchainsAgainstTheirBaseRelease) {
+    const auto range = Requirement(">=0.3.0, <0.4.0");
+    for (const std::string suffix :
+         {"", "-122-g0a00eaf", "-122-g0a00eaf-dirty", "-0-g0a00eaf-dirty",
+          "-dev-g0a00eaf", "-dev-g0a00eaf-dirty"}) {
+        SCOPED_TRACE(suffix);
+        EXPECT_TRUE(range.MatchesToolchain(Version("0.3.2" + suffix)));
+        EXPECT_TRUE(range.MatchesToolchain(Version("0.3.0" + suffix)));
+        EXPECT_FALSE(range.MatchesToolchain(Version("0.2.9" + suffix)));
+        EXPECT_FALSE(range.MatchesToolchain(Version("0.4.0" + suffix)));
+        EXPECT_TRUE(Requirement("=0.3.2").MatchesToolchain(
+            Version("0.3.2" + suffix)));
+        EXPECT_TRUE(Requirement("*").MatchesToolchain(
+            Version("0.3.2" + suffix)));
+    }
+    // Git-looking package versions still follow normal prerelease rules.
+    EXPECT_FALSE(range.Matches(Version("0.3.2-122-g0a00eaf")));
+    for (const std::string suffix :
+         {"-alpha", "-rc.1", "-122-gxyz", "-122-g0a00eaf.extra"}) {
+        SCOPED_TRACE(suffix);
+        EXPECT_FALSE(range.MatchesToolchain(Version("0.3.2" + suffix)));
+    }
+    EXPECT_TRUE(Requirement(">=0.3.2-alpha, <0.3.2")
+                    .MatchesToolchain(Version("0.3.2-beta")));
+}
+
 class LongbowManifestTests : public ::testing::Test {
    protected:
     fs::path root;

@@ -346,6 +346,11 @@ call feedkeys("ibehavior meta<T> => structure << Writable {\<CR>i32 T::write(&co
 call assert_equal(['behavior meta<T> => structure << Writable {', '    i32 T::write(&const self) override {', '        return 0;', '    }', '};'], getline(1, '$'))
 call assert_equal('flechaStatement', synIDattr(synID(1, 1, 1), 'name'))
 call assert_equal('flechaBehaviorName', synIDattr(synID(1, 10, 1), 'name'))
+call setline(1, 'for<F> Field<T, F> field = T::fields() {')
+syntax sync fromstart
+call assert_equal('flechaFieldBinder', synIDattr(synID(1, 5, 1), 'name'))
+call assert_equal('flechaFieldDescriptor', synIDattr(synID(1, 8, 1), 'name'))
+call assert_equal('flechaFieldBinder', synIDattr(synID(1, 14, 1), 'name'))
 
 bwipeout!
 

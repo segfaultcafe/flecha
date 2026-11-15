@@ -10,6 +10,11 @@ packages ship both tools; keeping them together is the supported setup on
 Linux, Windows, and macOS. See the [compiler guide](compiler.md) for the
 development-version format.
 
+Flecha compatibility ranges use the base release of Git-derived toolchain
+builds: `0.3.2-122-g0a00eaf` satisfies `>=0.3.0, <0.4.0` as `0.3.2` does.
+This also applies to dirty builds and the `-dev-g<commit>` fallback format.
+Package dependency versions retain normal SemVer prerelease matching rules.
+
 Longbow can move to its own repository and release cycle when Flecha supports
 self-hosting and Longbow can be implemented directly in Flecha. Until then,
 the shared release version identifies the tested toolchain snapshot.

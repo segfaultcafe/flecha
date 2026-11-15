@@ -1,0 +1,10 @@
+module reflection_numeric_fold;
+// expect FLECHA-S0009
+decoration meta { application(i32 value) target structure; };
+interface Inspect { void inspect(&self) virtual; };
+behavior meta<T> => structure << Inspect {
+    void T::inspect(&self) override {
+        if T::decorator().value == (1 as u8) { }
+    }
+};
+@meta(1) structure Item { i32 value; };

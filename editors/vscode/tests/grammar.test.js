@@ -77,3 +77,13 @@ test("behavior headers distinguish the keyword and owning decoration", () => {
   assert.equal(behavior.captures["1"].name, "keyword.control.flecha");
   assert.equal(behavior.captures["2"].name, "entity.name.type.behavior.flecha");
 });
+
+test("bounded field iteration scopes only contextual binders", () => {
+  const iteration = grammar.repository.fieldIteration;
+  assert.match("for<F> Field<T, F> field = T::fields() {", new RegExp(iteration.match));
+  assert.match("for < Value > Field < Target, Value > descriptor", new RegExp(iteration.match));
+  assert.doesNotMatch("i32 fields() { return 1; }", new RegExp(iteration.match));
+  assert.doesNotMatch("Field value;", new RegExp(iteration.match));
+  assert.equal(iteration.captures["2"].name, "entity.name.type.parameter.flecha");
+  assert.equal(iteration.captures["6"].name, "variable.other.field-descriptor.flecha");
+});

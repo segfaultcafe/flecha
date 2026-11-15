@@ -1,0 +1,4 @@
+module reflection_interface_body;
+// expect FLECHA-S0081
+interface Root { void inspect(&self) default; };
+void Root::inspect(&self) { for<F> Field<T,F> field = T::fields() {} }
