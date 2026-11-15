@@ -327,9 +327,13 @@ A field descriptor provides only bounded, typed information through type-level
 - its owning type is `T`;
 - its field type is `F`;
 - `field::name()` is its source declaration name as a compile-time `stringv`;
+- `field::isPrivate()` is a compile-time `bool`, including fields declared in
+  a `private { ... }` block;
 - `field::decorated()` reports direct presence of the behavior's decoration;
 - `field::decorator()` exposes that application's typed argument record; and
-- `field::get(receiver)` is a hygienic projection of that exact field.
+- `field::get(receiver)` is a hygienic projection of that exact field; and
+- `field::requireUnique(key)` validates a compile-time `stringv` key against
+  earlier keys in the same field iteration, without emitting runtime code.
 
 The target type has corresponding direct-decoration operations:
 
@@ -378,6 +382,55 @@ over unrelated types. A structure behavior body receives target-method access
 to the target's private fields because applying the decoration is an explicit
 opt-in by the type author. The behavior may still inspect visibility and
 deliberately apply a public-only policy such as JSON's v0.3 contract.
+
+### Bounded field-key validation
+
+`field::requireUnique(key);` is a statement available only inside a bounded
+field iteration. Each expansion of a lexical `for<F>` owns a fresh key set.
+All validation sites in that loop share the set, including sites in different
+compile-time branches. Sets do not cross loops, methods, activations, or
+generic specializations. Validation follows field source order, and duplicate
+keys produce `FLECHA-S0087` with the first and conflicting field locations,
+the behavior, and its activation.
+
+The key must evaluate to `stringv` from string literals, `field::name()`, or
+typed decoration names using the existing scalar evaluator. Runtime locals,
+calls, and unresolved template names are rejected. Module constants can be
+passed through typed decoration arguments, where ordinary name resolution
+has already taken place. Equality compares the evaluated string
+contents exactly, including empty strings. Each reached validation statement
+registers a key; registering the same key twice, even for one field, is an
+error.
+
+Selection must also be known at expansion time. Folded-away branches register
+no keys. A validation statement under an unresolved `if`, `else if`, `else`,
+or `also` condition is rejected. The existing prohibitions on reflection in
+runtime loops and closures remain in force. Validation is performed when the
+method is expanded, regardless of whether runtime execution would reach the
+statement; it has no return value, cannot be deferred, and cannot escape into
+an expression. Exact handwritten providers still suppress the entire derived
+body, including its validations.
+
+For example, a library can select public fields, support explicit-only field
+applications, and validate both renamed and original names together:
+
+```flecha
+for<F> Field<T, F> field = T::fields() {
+    if !field::isPrivate() and (T::decorated() or field::decorated()) {
+        if field::decorated() {
+            field::requireUnique(field::decorator().name);
+        } else {
+            field::requireUnique(field::name());
+        }
+        // Emit the selected field using the same naming policy.
+    }
+}
+```
+
+This operation does not introduce general compile-time execution, mutable
+reflection collections, nested field iteration, or JSON-specific compiler
+logic. The existing compiler-owned JSON path remains unchanged until the
+library migration.
 
 ## Explicit implementations and conflicts
 

@@ -1974,7 +1974,10 @@ foreach(fixture IN ITEMS
     prospective_siblings
     prospective_recursive
     prospective_mutual
-    prospective_default)
+    prospective_default
+    visibility
+    unique_keys
+    unique_scopes)
     string(REPLACE "/" "_" fixture_name "${fixture}")
     add_test(NAME BehaviorReflection.${fixture_name}
         COMMAND $<TARGET_FILE:flecha> check
@@ -2037,9 +2040,23 @@ add_behavior_reflection_failure(interface_body FLECHA-S0081)
 add_behavior_reflection_failure(decoration_body FLECHA-P0001)
 add_behavior_reflection_failure(jumpto FLECHA-S0081)
 add_behavior_reflection_failure(numeric_fold FLECHA-S0009)
+add_behavior_reflection_failure(duplicate_keys FLECHA-S0087)
+add_behavior_reflection_failure(duplicate_renamed_keys FLECHA-S0087)
+add_behavior_reflection_failure(duplicate_empty_keys FLECHA-S0087)
+add_behavior_reflection_failure(unique_runtime_guard FLECHA-S0081)
+add_behavior_reflection_failure(unique_runtime_else FLECHA-S0081)
+add_behavior_reflection_failure(unique_runtime_outer FLECHA-S0081)
+add_behavior_reflection_failure(unique_runtime_also FLECHA-S0081)
+add_behavior_reflection_failure(unique_runtime_key FLECHA-S0082)
+add_behavior_reflection_failure(unique_type FLECHA-S0082)
+add_behavior_reflection_failure(unique_value FLECHA-S0082)
+add_behavior_reflection_failure(unique_defer FLECHA-S0082)
+add_behavior_reflection_failure(unique_arity FLECHA-S0082)
+add_behavior_reflection_failure(visibility_arity FLECHA-S0082)
+add_behavior_reflection_failure(visibility_runtime_loop FLECHA-S0081)
 
 # LANG-04: execute each positive fixture through the ordinary interface ABI.
-foreach(fixture borrow composition enum field_only_empty generic generic_methods
+foreach(fixture borrow composition enum field_only_empty field_validation generic generic_methods
         legacy_json mutable overloads private_fields protected recursion structure suppression variadic)
     add_test(NAME BehaviorExpansion.runtime_${fixture}
         COMMAND ${CMAKE_COMMAND}

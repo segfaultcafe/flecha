@@ -283,9 +283,18 @@ concrete methods and conformance; failures leave the concrete graph unchanged.
 Reflection diagnostics use `FLECHA-S0080` (iteration shape), `FLECHA-S0081`
 (context/control flow), `FLECHA-S0082` (operation or receiver), `FLECHA-S0083`
 (compile-time artifact escape), `FLECHA-S0084` (missing decoration proof),
-`FLECHA-S0085` (metadata member), and `FLECHA-S0086` (evaluation/expansion).
+`FLECHA-S0085` (metadata member), `FLECHA-S0086` (evaluation/expansion), and
+`FLECHA-S0087` (duplicate reflected field key).
 Ordinary type, ownership, and borrow diagnostics retain their identifiers and
 include related behavior, activation, target, and field locations.
+
+`field::isPrivate()` lets a behavior select public fields before expansion.
+`field::requireUnique(key);` checks compile-time `stringv` keys across selected
+fields within one lexical loop expansion. It is erased before ordinary body
+analysis and lowering; runtime-dependent selection or keys are rejected. See
+[bounded field-key validation](behaviors-v0.4.md#bounded-field-key-validation)
+for scope and selection rules. These operations do not change the existing
+compiler-owned JSON implementation.
 
 Behavior-derived interface calls use the existing composed-table ABI. No field
 pack, decoration record, or reflection operation reaches runtime. Generated

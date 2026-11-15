@@ -1,0 +1,16 @@
+module reflection_duplicate_renamed_keys;
+// expect FLECHA-S0087
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+};
+interface Inspect { void inspect(&self, bool runtime) virtual; };
+behavior meta<T> => structure << Inspect {
+    void T::inspect(&self, bool runtime) override {
+        for<F> Field<T, F> field = T::fields() {
+            if field::decorated() { field::requireUnique(field::decorator().name); }
+            else { field::requireUnique(field::name()); }
+        }
+    }
+};
+@meta structure Item { @meta("second") i32 first; bool second; };

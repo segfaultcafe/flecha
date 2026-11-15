@@ -1,0 +1,26 @@
+module expansion_field_validation;
+decoration meta { application() target structure; application(stringv name) target structure::field; };
+interface Sum { i32 sum(&const self) virtual; };
+behavior meta<T> => structure << Sum {
+    i32 T::sum(&const self) override {
+        i32 total = 0;
+        for<F> Field<T, F> field = T::fields() {
+            if !field::isPrivate() {
+                if field::decorated() { field::requireUnique(field::decorator().name); }
+                else { field::requireUnique(field::name()); }
+                total = total + field::get(self);
+            }
+        }
+        return total;
+    }
+};
+@meta structure Item {
+    @meta("answer") i32 value;
+    @meta("answer") private bool secret;
+    private { string hidden; }
+};
+i32 main() {
+    Item item; item.value = 42;
+    &const Sum view = item as &const Sum;
+    return view->sum();
+}

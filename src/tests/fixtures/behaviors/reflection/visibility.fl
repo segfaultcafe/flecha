@@ -1,0 +1,25 @@
+module reflection_visibility;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+};
+interface Inspect { void inspect(&self, bool runtime) virtual; };
+behavior meta<T> => structure << Inspect {
+    void T::inspect(&self, bool runtime) override {
+        for<F> Field<T, F> field = T::fields() {
+            bool privateField = field::isPrivate();
+            if field::isPrivate() {
+                if field::name() == "publicValue" { invalid(); }
+            } else {
+                if field::name() != "publicValue" { invalid(); }
+                F value = field::get(self);
+            }
+        }
+    }
+};
+@meta structure Item {
+    i32 publicValue;
+    private bool inlinePrivate;
+    private { string groupedPrivate; }
+};
+@meta structure Empty {};

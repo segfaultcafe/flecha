@@ -4,6 +4,8 @@ interface Inspect { void inspect(&self) virtual; };
 behavior meta<T> => structure << Inspect {
     void T::inspect(&self) override {
         for<F> Field<T, F> field = T::fields() {
+            bool privateField = field::isPrivate();
+            field::requireUnique(field::name());
             h::accept(field::name());
             if field::decorated() { h::accept(field::decorator().name); }
             F value = field::get(self);

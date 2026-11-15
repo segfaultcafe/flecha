@@ -1,0 +1,24 @@
+module reflection_unique_scopes;
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+};
+interface Inspect { void inspect(&self, bool runtime) virtual; void verify(&self) virtual; };
+behavior meta<T> => structure << Inspect {
+    void T::inspect(&self, bool runtime) override {
+        for<F> Field<T, F> field = T::fields() {
+            field::requireUnique(field::name());
+        }
+        for<F> Field<T, F> field = T::fields() {
+            field::requireUnique(field::name());
+        }
+    }
+    void T::verify(&self) override {
+        for<F> Field<T, F> field = T::fields() {
+            field::requireUnique(field::name());
+        }
+    }
+};
+@meta structure Box<A> { A value; private bool hidden; };
+void use(Box<i32> a, Box<bool> b) {}
+@meta structure Other { i32 value; };

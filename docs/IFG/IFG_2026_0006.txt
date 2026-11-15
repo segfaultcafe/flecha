@@ -186,11 +186,23 @@ fields therefore have different descriptors even though both bind F to i32.
 The bounded descriptor operations are:
 
 - field::name(), which returns the source declaration name as stringv;
+- field::isPrivate(), which returns declaration visibility as a compile-time
+  bool, including fields in private blocks;
 - field::decorated(), which reports whether the current behavior decoration is
   applied directly to the field;
 - field::decorator(), which returns that application's typed argument record;
   and
-- field::get(receiver), which projects this exact field hygienically.
+- field::get(receiver), which projects this exact field hygienically; and
+- field::requireUnique(key), a compile-time statement requiring a stringv key
+  to be unique among selected fields in the same bounded iteration.
+
+Each lexical field loop expansion has its own validation set, shared by all
+validation sites within the loop and isolated from other loops, methods, and
+concrete targets. Keys and branch selection must be compile-time values;
+runtime-controlled validation is rejected. Duplicate keys are diagnosed in
+field source order with both field locations. Validation emits no runtime
+code, cannot be used as a value, and is suppressed along with a derived body
+when an exact handwritten provider is selected.
 
 The target type provides the corresponding T::decorated() and T::decorator()
 operations for a direct target application. A decorator() call must be guarded

@@ -107,6 +107,7 @@ enum class DiagnosticCode {
     MissingDecorationProof,
     InvalidMetadataMember,
     InvalidBehaviorExpansion,
+    DuplicateBehaviorFieldKey,
 
     NativeTargetUnavailable,
     ObjectEmissionFailed,

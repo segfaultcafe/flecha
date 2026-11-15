@@ -1,0 +1,15 @@
+module reflection_visibility_runtime_loop;
+// expect FLECHA-S0081
+decoration meta {
+    application() target structure;
+    application(stringv name) target structure::field;
+};
+interface Inspect { void inspect(&self, bool runtime) virtual; };
+behavior meta<T> => structure << Inspect {
+    void T::inspect(&self, bool runtime) override {
+        for<F> Field<T, F> field = T::fields() {
+            while runtime { bool hidden = field::isPrivate(); }
+        }
+    }
+};
+@meta structure Item { i32 first; i32 second; };

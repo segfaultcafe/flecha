@@ -106,6 +106,96 @@ TEST(BehaviorReflection, GenericFieldsBindDistinctClosedTypes) {
     EXPECT_EQ(a.pack.fields[0].type.Kind(), semantic::SemanticTypeKind::I32);
     EXPECT_EQ(b.pack.fields[0].type.Kind(), semantic::SemanticTypeKind::Bool);
 }
+TEST(BehaviorReflection, DuplicateKeysHaveBothFieldsAndStableProvenance) {
+    const auto source = Fixture("invalid/duplicate_renamed_keys.fl");
+    for (int pass = 0; pass < 2; ++pass) {
+        auto result = Analyze(source);
+        ASSERT_EQ(result.diagnostics.Diagnostics().size(), 1u)
+            << Messages(result.diagnostics);
+        const auto& diagnostic = result.diagnostics.Diagnostics().front();
+        EXPECT_EQ(diagnostic.code,
+                  diagnostics::DiagnosticCode::DuplicateBehaviorFieldKey);
+        EXPECT_EQ(diagnostic.message, "duplicate reflected field key 'second'");
+        EXPECT_EQ(diagnostic.range.start.offset,
+                  source.find("field::requireUnique(field::name())"));
+        bool first = false, second = false, activation = false;
+        for (const auto& related : diagnostic.related) {
+            first |= related.range.start.offset == source.find("first;");
+            second |= related.range.start.offset == source.find("second;");
+            activation |= related.message == "behavior activated here";
+        }
+        EXPECT_TRUE(first);
+        EXPECT_TRUE(second);
+        EXPECT_TRUE(activation);
+        EXPECT_TRUE(result.model.BehaviorPlans().empty());
+        for (const auto& type : result.model.Structures()) {
+            EXPECT_TRUE(type->conformances.empty());
+            EXPECT_FALSE(type->methods.contains("inspect"));
+        }
+    }
+}
+TEST(BehaviorReflection, ValidationScopesResetAcrossMethodsAndSpecializations) {
+    auto source = Fixture("unique_scopes.fl");
+    source += R"(
+        decoration other { application() target structure; };
+        interface More { void check(&self) virtual; };
+        behavior other<T> => structure << More {
+            void T::check(&self) override {
+                for<F> Field<T, F> field = T::fields() {
+                    field::requireUnique(field::name());
+                }
+            }
+        };
+        @other structure Second { i32 value; };
+    )";
+    auto result = Analyze(source);
+    ASSERT_FALSE(result.diagnostics.HasErrors())
+        << Messages(result.diagnostics);
+    EXPECT_EQ(result.model.BehaviorPlans().size(), 4u);
+}
+TEST(BehaviorReflection, HandwrittenProviderSuppressesDuplicateKeyValidation) {
+    auto result = Analyze(Fixture("invalid/duplicate_keys.fl") + R"(
+        void Item::inspect(&self, bool runtime) override {}
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors())
+        << Messages(result.diagnostics);
+    ASSERT_EQ(result.model.BehaviorPlans().size(), 1u);
+    EXPECT_TRUE(result.model.BehaviorPlans().front().bodies.empty());
+}
+TEST(BehaviorReflection, FieldValidationEditorQueriesAndErrorRecovery) {
+    const auto root =
+        std::filesystem::path(FLECHA_BEHAVIOR_FIXTURE_DIR) / "reflection";
+    analyzer::AnalysisSession session(root);
+    const auto source = Fixture("unique_keys.fl");
+    auto result = session.Analyze(root / "unique_keys.fl");
+    ASSERT_FALSE(result.HasErrors()) << Messages(result.diagnostics);
+    for (const std::string name : {"isPrivate", "requireUnique"}) {
+        const auto offset = source.find("field::" + name) + 7;
+        const auto hover = result.Hover(root / "unique_keys.fl", offset);
+        ASSERT_TRUE(hover) << name;
+        EXPECT_NE(hover->type.find("compile-time"), std::string::npos);
+        const auto occurrence =
+            result.OccurrenceAt(root / "unique_keys.fl", offset);
+        ASSERT_TRUE(occurrence);
+        EXPECT_EQ(occurrence->kind, analyzer::SemanticItemKind::Function);
+        const auto definition =
+            result.Definition(root / "unique_keys.fl", offset - 7);
+        ASSERT_TRUE(definition);
+        EXPECT_EQ(definition->start.offset, source.find("field ="));
+    }
+    const auto invalid = Fixture("invalid/duplicate_keys.fl") + R"(
+        i32 unrelated(i32 parameter) { return parameter; }
+    )";
+    const auto file = root / "validation_recovery.fl";
+    ASSERT_EQ(session.Open(file, invalid, 1),
+              analyzer::OverlayUpdateResult::Applied);
+    auto failed = session.Analyze(file);
+    ASSERT_TRUE(failed.HasErrors());
+    const auto definition =
+        failed.Definition(file, invalid.find("return parameter") + 7);
+    ASSERT_TRUE(definition);
+    EXPECT_EQ(definition->start.offset, invalid.find("i32 parameter") + 4);
+}
 TEST(BehaviorReflection, TypedMetadataDomain) {
     auto r = Analyze(Fixture("metadata.fl"));
     ASSERT_FALSE(r.diagnostics.HasErrors()) << Messages(r.diagnostics);
