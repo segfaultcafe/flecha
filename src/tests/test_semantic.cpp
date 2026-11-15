@@ -8303,6 +8303,47 @@ TEST(SemanticMemoryTests, MutableOwnerCallsCannotReceiveTheirFieldAliases) {
     EXPECT_TRUE(result.diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests, InterfaceReturnsPreserveManagedSliceCleanup) {
+    auto analysis = Analyze(R"(
+        interface Encode {
+            (own []u8, error) encode(&const self) default;
+            own []u8 empty(&const self) default;
+            (own []u8, error) custom(&const self) virtual;
+        };
+        (own []u8, error) Encode::encode(&const self) {
+            return new<own []u8>(1);
+        }
+        own []u8 Encode::empty(&const self) { return none; }
+        structure Item << Encode {};
+        (own []u8, error) Item::custom(&const self) override {
+            return new<own []u8>(1);
+        }
+        void inspect(&const Encode value) {
+            loop usize i = 0; i < 2; i++ {
+                bytes, err := value->encode();
+                if err != none { return; }
+                view := bytes[:];
+                view.len();
+                empty := value->empty();
+                empty[:].len();
+                custom, failure := value->custom();
+                if failure != none { return; }
+                custom[:].len();
+            }
+        }
+        void use() {
+            item := Item::init();
+            bytes, err := item.encode();
+            if err != none { return; }
+            bytes[:].len();
+            inspect(&item);
+        }
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(analysis.diagnostics.HasErrors());
+}
+
 TEST(SemanticMemoryTests, InterfaceContractsRejectUnprovenRawEffects) {
     for (const std::string& source : {
              R"(

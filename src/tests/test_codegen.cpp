@@ -821,6 +821,59 @@ TEST(NativeCompilerTests, RunsOwningStringSlicesAcrossMovesAndFailures) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsManagedSliceReturnsThroughInterfaces) {
+    GeneratedSource result = Generate(R"(
+        interface Encode {
+            (own []u8, error) encode(&const self) default;
+            (own []u8, error) custom(&const self) virtual;
+        };
+        (own []u8, error) Encode::encode(&const self) {
+            bytes, err := new<own []u8>(1);
+            if err != none { return (none, err); }
+            bytes[0] = 21;
+            return (bytes, none);
+        }
+        structure Item << Encode {};
+        (own []u8, error) Item::custom(&const self) override {
+            bytes, err := new<own []u8>(1);
+            if err != none { return (none, err); }
+            bytes[0] = 21;
+            return (bytes, none);
+        }
+        i32 inspect(&const Encode value) {
+            first, a := value->encode();
+            if a != none { return 1; }
+            second, b := value->custom();
+            if b != none { return 2; }
+            x := first[:];
+            y := second[:];
+            return x[0].cast<i32> + y[0].cast<i32>;
+        }
+        i32 main() {
+            item := Item::init();
+            return inspect(&item);
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_native_interface_managed_return_test";
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "interface_managed_return_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsManagedSlicesStoredAsStructureBorrows) {
     GeneratedSource result = Generate(R"(
         structure Buffer { own []i32 values; };
