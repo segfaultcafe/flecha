@@ -37,6 +37,7 @@ class Parser {
 
    private:
     bool _headerParsed = false;
+    bool _inBehaviorMethod = false;
     std::string _moduleName;
     bool _modulePrivate = false;
     std::optional<NamespaceAttachment> _namespaceAttachment;
@@ -112,6 +113,7 @@ class Parser {
     std::unique_ptr<WhileStatement> ParseWhileStatement();
     std::unique_ptr<Statement> ParseLoopStatement();
     std::unique_ptr<RangeStatement> ParseRangeStatement();
+    std::unique_ptr<Statement> ParseFieldIterationStatement();
     std::unique_ptr<ProceedStatement> ParseProceedStatement();
     std::unique_ptr<BreakStatement> ParseBreakStatement();
     std::unique_ptr<JumpToStatement> ParseJumpToStatement();

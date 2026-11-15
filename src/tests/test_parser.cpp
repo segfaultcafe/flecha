@@ -2599,3 +2599,39 @@ TEST(ParserTests, RecoversIncompleteDecorationBodies) {
                   AstNodeKind::StructureDeclaration);
     }
 }
+
+TEST(ParserTests, BoundedFieldIterationRetainsExplicitSyntaxAndRanges) {
+    const std::string source =
+        "behavior meta<T> => structure << Root { void T::run(&self) override { "
+        "for<F> Field<T, F> field = T::fields() { field::get(self); } } };";
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(source, diagnostics);
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 1u);
+    const auto& behavior =
+        static_cast<const BehaviorDeclaration&>(*unit->Declarations()[0]);
+    ASSERT_EQ(behavior.methods.size(), 1u);
+    const auto& statement = *behavior.methods[0]->Body().Statements()[0];
+    ASSERT_EQ(statement.Kind(), AstNodeKind::FieldIterationStatement);
+    const auto& loop = static_cast<const FieldIterationStatement&>(statement);
+    const auto spelling = [&](SourceRange range) {
+        return source.substr(range.start.offset, range.Length());
+    };
+    EXPECT_EQ(spelling(loop.keywordRange), "for");
+    EXPECT_EQ(spelling(loop.binderRange), "F");
+    EXPECT_EQ(spelling(loop.fieldRange), "Field");
+    EXPECT_EQ(spelling(loop.targetRange), "T");
+    EXPECT_EQ(spelling(loop.valueTypeRange), "F");
+    EXPECT_EQ(spelling(loop.descriptorRange), "field");
+    EXPECT_EQ(spelling(loop.packRange), "T::fields()");
+    EXPECT_EQ(spelling(loop.body->Range()), "{ field::get(self); }");
+}
+
+TEST(ParserTests, ReflectionWordsRemainOrdinaryIdentifiers) {
+    DiagnosticBag diagnostics;
+    auto tokens = Lex("Field fields decorated decorator name get", diagnostics);
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(tokens.size(), 7u);
+    for (std::size_t index = 0; index < 6; ++index)
+        EXPECT_EQ(tokens[index].type, TokenType::Identifier);
+}

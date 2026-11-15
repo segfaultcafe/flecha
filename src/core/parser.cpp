@@ -1385,7 +1385,9 @@ std::unique_ptr<BehaviorDeclaration> Parser::ParseBehaviorDeclaration() {
     std::vector<std::unique_ptr<FunctionDeclaration>> methods;
     while (!Check(TokenType::RCurly) && !IsAtEnd()) {
         const std::size_t before = _position;
+        _inBehaviorMethod = true;
         auto method = ParseFunctionDeclaration(parameter);
+        _inBehaviorMethod = false;
         if (method)
             methods.push_back(std::move(method));
         else {
@@ -1751,6 +1753,8 @@ std::unique_ptr<Statement> Parser::ParseStatement() {
         return ParseWhileStatement();
     }
     if (Check(TokenType::Loop)) return ParseLoopStatement();
+    if (Check(TokenType::For) && Peek(1).type == TokenType::Less)
+        return ParseFieldIterationStatement();
     if (Check(TokenType::For)) return ParseRangeStatement();
     if (Check(TokenType::Proceed)) return ParseProceedStatement();
     if (Check(TokenType::Break)) return ParseBreakStatement();
@@ -1768,6 +1772,64 @@ std::unique_ptr<Statement> Parser::ParseStatement() {
         semicolon == nullptr ? expression->Range().end : semicolon->range.end;
     return std::make_unique<ExpressionStatement>(
         source::SourceRange{start, end}, std::move(expression));
+}
+
+std::unique_ptr<Statement> Parser::ParseFieldIterationStatement() {
+    const Token keyword = Advance();
+    if (!_inBehaviorMethod)
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::InvalidReflectionContext,
+            keyword.range,
+            "field iteration requires a structure behavior method");
+    Advance();  // '<'
+    const auto fail = [&]() -> std::unique_ptr<Statement> {
+        _diagnostics.Report(
+            diagnostics::DiagnosticCode::InvalidFieldIteration, Current().range,
+            "expected for<F> Field<T, F> field = T::fields() { ... }");
+        // Stop at a block boundary or a new declaration during editor recovery.
+        while (!IsAtEnd() && !Check(TokenType::LCurly) &&
+               !Check(TokenType::RCurly) && !Check(TokenType::SemiColon) &&
+               !StartsTopLevelOnlyDeclaration())
+            Advance();
+        if (Check(TokenType::LCurly)) return ParseBlockStatement();
+        Match(TokenType::SemiColon);
+        return nullptr;
+    };
+    if (!Check(TokenType::Identifier)) return fail();
+    const Token binder = Advance();
+    if (!Match(TokenType::Greater)) return fail();
+    if (!Check(TokenType::Identifier) || Current().value != "Field")
+        return fail();
+    const Token field = Advance();
+    if (!Match(TokenType::Less) || !Check(TokenType::Identifier)) return fail();
+    const Token target = Advance();
+    if (!Match(TokenType::Comma) || !Check(TokenType::Identifier))
+        return fail();
+    const Token valueType = Advance();
+    if (!Match(TokenType::Greater) || !Check(TokenType::Identifier))
+        return fail();
+    const Token descriptor = Advance();
+    if (!Match(TokenType::Assign)) return fail();
+    auto pack = ParseExpression();
+    if (!pack || !Check(TokenType::LCurly)) return fail();
+    auto body = ParseBlockStatement();
+    if (!body) return nullptr;
+    auto result = std::make_unique<FieldIterationStatement>(
+        source::SourceRange{keyword.range.start, body->Range().end});
+    result->keywordRange = keyword.range;
+    result->binderRange = binder.range;
+    result->fieldRange = field.range;
+    result->targetRange = target.range;
+    result->valueTypeRange = valueType.range;
+    result->descriptorRange = descriptor.range;
+    result->packRange = pack->Range();
+    result->binder = binder.value;
+    result->target = target.value;
+    result->valueType = valueType.value;
+    result->descriptor = descriptor.value;
+    result->pack = std::move(pack);
+    result->body = std::move(body);
+    return result;
 }
 
 bool Parser::HasParenthesizedBindings() const {
@@ -2587,11 +2649,15 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
 std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
     source::SourceLocation& end, std::vector<bool>* expandedArguments) {
     std::vector<std::unique_ptr<Expression>> arguments;
-    while (!Check(TokenType::RParen) && !IsAtEnd()) {
+    while (!Check(TokenType::RParen) && !IsAtEnd() &&
+           !Check(TokenType::RCurly) && !Check(TokenType::LCurly) &&
+           !StartsTopLevelOnlyDeclaration()) {
         std::unique_ptr<Expression> argument = ParseExpression();
         if (argument == nullptr) {
             while (!IsAtEnd() && !Check(TokenType::Comma) &&
-                   !Check(TokenType::RParen) && !Check(TokenType::SemiColon)) {
+                   !Check(TokenType::RParen) && !Check(TokenType::SemiColon) &&
+                   !Check(TokenType::RCurly) && !Check(TokenType::LCurly) &&
+                   !StartsTopLevelOnlyDeclaration()) {
                 Advance();
             }
         } else {
@@ -2616,7 +2682,9 @@ std::vector<std::unique_ptr<Expression>> Parser::ParseArgumentList(
                                 Current().range,
                                 "expected ',' or ')' after argument");
             while (!IsAtEnd() && !Check(TokenType::RParen) &&
-                   !Check(TokenType::SemiColon)) {
+                   !Check(TokenType::SemiColon) && !Check(TokenType::RCurly) &&
+                   !Check(TokenType::LCurly) &&
+                   !StartsTopLevelOnlyDeclaration()) {
                 Advance();
             }
         }
@@ -3044,9 +3112,11 @@ void Parser::SynchronizeTopLevel() {
 }
 
 void Parser::SynchronizeStatement() {
-    if (!IsAtEnd()) Advance();
+    if (!IsAtEnd() && !Check(TokenType::RCurly) &&
+        !StartsTopLevelOnlyDeclaration())
+        Advance();
     while (!IsAtEnd() && !Check(TokenType::SemiColon) &&
-           !Check(TokenType::RCurly)) {
+           !Check(TokenType::RCurly) && !StartsTopLevelOnlyDeclaration()) {
         Advance();
     }
     Match(TokenType::SemiColon);
