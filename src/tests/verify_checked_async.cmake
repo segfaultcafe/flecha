@@ -1,5 +1,7 @@
+# Both checked and forwarding fixtures run this helper concurrently.
+get_filename_component(fixture_name "${FLECHA_SOURCE}" NAME_WE)
+set(artifact "${CMAKE_CURRENT_BINARY_DIR}/checked-async-${fixture_name}-output")
 foreach(mode IN ITEMS check build --emit-llvm --emit-object)
-    set(artifact "${CMAKE_CURRENT_BINARY_DIR}/checked-async-output")
     file(REMOVE "${artifact}")
     set(arguments "${mode}" "${FLECHA_SOURCE}")
     if(NOT mode STREQUAL "check")

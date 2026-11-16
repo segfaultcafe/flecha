@@ -1,0 +1,217 @@
+{
+  "format": "flecha-test-runner-benchmark-v1",
+  "date": "2026-11-16",
+  "environment": {
+    "revision": "868427d22b2c6702ed32e69ea1f589be36701fb9",
+    "platform": "Linux-7.1.8-arch1-3-x86_64-with-glibc2.44",
+    "cpus": 12,
+    "started": "2026-11-16T20:28:48-0300",
+    "cmake": "cmake version 4.4.2"
+  },
+  "build_type": "unspecified (existing Makefile default)",
+  "compiler": "GNU C/C++ 16.2.1",
+  "llvm": "22.1.8",
+  "jobs": 4,
+  "clean_build_seconds": 81.44613610114902,
+  "scope": "matched 1636-test cohort before updating from master and adding live progress",
+  "notes": [
+    "Compilation was prepared separately. Timings include no-op incremental build and runner overhead.",
+    "Baseline and uncached/cold/focused cases each have one sample; warm full has two samples.",
+    "Focused runs use explicit changed path src/tests/test_parser.cpp and intentionally have narrower coverage.",
+    "Final upstream integration and progress output are validated separately."
+  ],
+  "runs": [
+    {
+      "case": "baseline",
+      "command": "make test",
+      "wall_seconds": 212.79939250508323,
+      "returncode": 0,
+      "selected": 1636,
+      "executed": 1636,
+      "cached": 0,
+      "passed": 1636,
+      "phase_seconds": {},
+      "console_lines": 3328
+    },
+    {
+      "case": "final-uncached",
+      "command": [
+        "make",
+        "test-full",
+        "TEST_JOBS=4",
+        "TEST_ARGS=--report .cache/test-runner-benchmark/current-report.json"
+      ],
+      "wall_seconds": 56.06425217608921,
+      "returncode": 0,
+      "selected": 1636,
+      "executed": 1636,
+      "cached": 0,
+      "passed": 1636,
+      "phase_seconds": {
+        "configure_seconds": 0.3458846500143409,
+        "build_seconds": 0.013776317005977035,
+        "selection_seconds": 0.37720430502668023,
+        "cache_lookup_seconds": 6.889458745718002e-07,
+        "test_seconds": 55.24800450401381,
+        "cache_write_seconds": 2.491287887096405e-07,
+        "total_seconds": 55.99222736200318
+      },
+      "console_lines": 5
+    },
+    {
+      "case": "full-cold",
+      "command": [
+        "make",
+        "test",
+        "TEST_JOBS=4",
+        "TEST_ARGS=--report .cache/test-runner-benchmark/current-report.json"
+      ],
+      "wall_seconds": 58.62459771404974,
+      "returncode": 0,
+      "selected": 1636,
+      "executed": 1636,
+      "cached": 0,
+      "passed": 1636,
+      "phase_seconds": {
+        "configure_seconds": 0.2818190660327673,
+        "build_seconds": 0.013813965022563934,
+        "selection_seconds": 0.3784006361383945,
+        "cache_lookup_seconds": 0.25951108196750283,
+        "test_seconds": 56.97754193795845,
+        "cache_write_seconds": 0.6412825190927833,
+        "total_seconds": 58.56769047793932
+      },
+      "console_lines": 5
+    },
+    {
+      "case": "full-warm",
+      "command": [
+        "make",
+        "test",
+        "TEST_JOBS=4",
+        "TEST_ARGS=--report .cache/test-runner-benchmark/current-report.json"
+      ],
+      "wall_seconds": 56.00247414200567,
+      "returncode": 0,
+      "selected": 1636,
+      "executed": 1004,
+      "cached": 632,
+      "passed": 1004,
+      "phase_seconds": {
+        "configure_seconds": 0.2688272900413722,
+        "build_seconds": 0.013457770925015211,
+        "selection_seconds": 0.3793443110771477,
+        "cache_lookup_seconds": 0.2564405919983983,
+        "test_seconds": 54.3784945178777,
+        "cache_write_seconds": 0.6335320950020105,
+        "total_seconds": 55.94649796187878
+      },
+      "console_lines": 5
+    },
+    {
+      "case": "full-warm-repeat",
+      "command": [
+        "make",
+        "test",
+        "TEST_JOBS=4",
+        "TEST_ARGS=--report .cache/test-runner-benchmark/current-report.json"
+      ],
+      "wall_seconds": 53.79234244301915,
+      "returncode": 0,
+      "selected": 1636,
+      "executed": 1004,
+      "cached": 632,
+      "passed": 1004,
+      "phase_seconds": {
+        "configure_seconds": 0.2673978360835463,
+        "build_seconds": 0.013229093980044127,
+        "selection_seconds": 0.37141778599470854,
+        "cache_lookup_seconds": 0.2545254770666361,
+        "test_seconds": 52.183168423129246,
+        "cache_write_seconds": 0.6281637568026781,
+        "total_seconds": 53.733699826058
+      },
+      "console_lines": 5
+    },
+    {
+      "case": "focused-cold",
+      "command": [
+        "python3",
+        "tools/test_runner.py",
+        "--build-dir",
+        "build-tests",
+        "--changed",
+        "src/tests/test_parser.cpp",
+        "--jobs",
+        "4",
+        "--refresh",
+        "--report",
+        ".cache/test-runner-benchmark/current-report.json"
+      ],
+      "wall_seconds": 2.244720660848543,
+      "returncode": 0,
+      "selected": 119,
+      "executed": 119,
+      "cached": 0,
+      "passed": 119,
+      "phase_seconds": {
+        "build_seconds": 0.013655686983838677,
+        "selection_seconds": 0.3919812091626227,
+        "cache_lookup_seconds": 0.25574683281593025,
+        "test_seconds": 0.8900080230087042,
+        "cache_write_seconds": 0.6337755280546844,
+        "total_seconds": 2.1924136760644615
+      },
+      "console_lines": 2
+    },
+    {
+      "case": "focused-warm",
+      "command": [
+        "python3",
+        "tools/test_runner.py",
+        "--build-dir",
+        "build-tests",
+        "--changed",
+        "src/tests/test_parser.cpp",
+        "--jobs",
+        "4",
+        "--report",
+        ".cache/test-runner-benchmark/current-report.json"
+      ],
+      "wall_seconds": 1.4965884438715875,
+      "returncode": 0,
+      "selected": 119,
+      "executed": 0,
+      "cached": 119,
+      "passed": 0,
+      "phase_seconds": {
+        "build_seconds": 0.014717740938067436,
+        "selection_seconds": 0.3950681600254029,
+        "cache_lookup_seconds": 0.25754432496614754,
+        "test_seconds": 3.4994445741176605e-07,
+        "cache_write_seconds": 0.7656627011019737,
+        "total_seconds": 1.441727289929986
+      },
+      "console_lines": 2
+    }
+  ],
+  "final_validation": {
+    "base_revision": "6ee42d3",
+    "suite": {
+      "selected": 1659,
+      "executed": 1659,
+      "cached": 0,
+      "passed": 1659,
+      "timings": {
+        "configure_seconds": 0.26469827396795154,
+        "build_seconds": 9.002720617922023,
+        "selection_seconds": 0.3971429239027202,
+        "cache_lookup_seconds": 9.699724614620209e-07,
+        "test_seconds": 55.797795647988096,
+        "cache_write_seconds": 1.5995465219020844e-07,
+        "total_seconds": 65.47113267611712
+      }
+    },
+    "runner_regression_tests": 61
+  }
+}

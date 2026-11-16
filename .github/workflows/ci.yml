@@ -102,6 +102,9 @@ jobs:
       - name: Validate deterministic performance policy
         run: python3 tools/performance.py self-test
 
+      - name: Validate test selection and result-cache safety
+        run: python3 -m unittest discover -s tools -p 'test_test_*.py'
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -143,7 +146,17 @@ jobs:
           -P src/tests/run_hardening_soak.cmake
 
       - name: Run compiler and runtime tests
-        run: ctest --test-dir build-tests --output-on-failure
+        # Always execute the complete integration suite; local result reuse and
+        # changed-file selection must never weaken the merge gate.
+        run: python3 tools/test_runner.py --build-dir build-tests --full --no-cache --jobs 4
+
+      - name: Retain test summary and failure details
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-test-results
+          path: build-tests/test-results/
+          if-no-files-found: ignore
 
       - name: Run Neovim syntax tests
         run: make test-neovim

@@ -15,3 +15,7 @@ editors/vscode/*.vsix
 
 .agents/
 .codex/
+
+# Python test tooling
+__pycache__/
+*.pyc

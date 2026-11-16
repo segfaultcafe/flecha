@@ -198,11 +198,28 @@ Build the compiler and Longbow with:
 make build
 ```
 
-Run the complete test suite with:
+During iteration, run regression tests and the affected subsystems:
+
+```sh
+make test-changed
+make test-changed TEST_ARGS='--regression ^ParserTests\.'
+```
+
+Shared compiler/runtime changes and unknown paths select the full suite.
+`make test-plan` explains the choice. Once the relevant checks pass, rerun only
+after further changes or to resolve a failure.
+
+Validate the complete suite with local successful-result reuse:
 
 ```sh
 make test
 ```
+
+The integration boundary is `make test-full`: all tests execute without result
+caching. CI enforces this policy before merge. Use `TEST_JOBS` to bound workers;
+the default is four. See [the runner guide](docs/test_runner.md) for cache scope
+and machine-readable reports. Runner changes also require
+`make test-runner-self-test`.
 
 Useful focused checks include:
 
