@@ -47,6 +47,7 @@ enum class TokenType {
     ShiftLeft,
     ShiftRight,
     Bang,
+    Question,
     Equal,
     NotEqual,
     StrictEqual,

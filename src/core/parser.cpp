@@ -2582,10 +2582,15 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             }
             if (member == nullptr) return expression;
             if (access == TokenType::Dot && member->value == "await") {
+                const bool forwardsFailure = Match(TokenType::Question);
+                const source::SourceRange operation{
+                    member->range.start, forwardsFailure
+                                             ? _tokens[_position - 1].range.end
+                                             : member->range.end};
                 const source::SourceRange range{expression->Range().start,
-                                                member->range.end};
+                                                operation.end};
                 expression = std::make_unique<AwaitExpression>(
-                    range, std::move(expression), member->range);
+                    range, std::move(expression), operation, forwardsFailure);
                 continue;
             }
             if (member->value == "isof" && Match(TokenType::Less)) {

@@ -27,6 +27,12 @@ struct CheckedAsyncResult final {
     bool creation = false;
 };
 
+struct AwaitResult final {
+    SemanticType completed;
+    const Symbol* destination = nullptr;
+    bool forwardsFailure = false;
+};
+
 class SemanticModel;
 
 enum class TransferKind { Copy, Move, Direct };
@@ -202,6 +208,11 @@ class SemanticModel final {
         const auto found = _asyncPlans.find(&function);
         return found == _asyncPlans.end() ? nullptr : found->second.get();
     }
+    const AwaitResult* AwaitResultFor(
+        const core::AwaitExpression& expression) const {
+        const auto found = _awaitResults.find(&expression);
+        return found == _awaitResults.end() ? nullptr : &found->second;
+    }
     const Symbol* CheckedErrorFor(const Symbol& value) const {
         for (const auto& [statement, checked] : _checkedAsyncResults)
             if (checked.value == &value) return checked.error;
@@ -317,6 +328,7 @@ class SemanticModel final {
         _fields;
     std::unordered_map<const core::FunctionDeclaration*,
                        std::shared_ptr<const AsyncFramePlan>> _asyncPlans;
+    std::unordered_map<const core::AwaitExpression*, AwaitResult> _awaitResults;
     std::unordered_map<const core::DestructureStatement*, CheckedAsyncResult>
         _checkedAsyncResults;
     std::unordered_map<const core::SpawnExpression*, const VariableSymbol*> _asyncTasks;

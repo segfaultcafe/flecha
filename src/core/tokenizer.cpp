@@ -319,6 +319,8 @@ Token Tokenizer::NextToken() {
     };
 
     switch (character) {
+        case '?':
+            return makeToken(TokenType::Question);
         case ';':
             return makeToken(TokenType::SemiColon);
         case ',':

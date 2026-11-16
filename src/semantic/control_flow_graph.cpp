@@ -47,7 +47,7 @@ class GraphBuilder final {
         for (NodeId id = 0; id < _graph.nodes.size(); ++id) {
             const FlowNode& node = _graph.nodes[id];
             if (!node.reachable) continue;
-            if (node.memoryReturn) {
+            if (node.memoryReturn || node.failureExit) {
                 _graph.taskScopeExits.push_back({id, std::nullopt,
                     TaskScopeExitKind::CancelAndDrain,
                     {node.scopes.rbegin(), node.scopes.rend()}});
@@ -306,6 +306,61 @@ class GraphBuilder final {
     }
 
     NodeId BuildStatement(const core::Statement& statement, NodeId next) {
+        const core::Expression* expression = nullptr;
+        switch (statement.Kind()) {
+            case core::AstNodeKind::VariableDeclarationStatement:
+                expression =
+                    static_cast<const core::VariableDeclarationStatement&>(
+                        statement)
+                        .Initializer();
+                break;
+            case core::AstNodeKind::DestructureStatement:
+                expression =
+                    &static_cast<const core::DestructureStatement&>(statement)
+                         .Value();
+                break;
+            case core::AstNodeKind::ReturnStatement:
+                expression =
+                    static_cast<const core::ReturnStatement&>(statement)
+                        .Value();
+                break;
+            case core::AstNodeKind::ExpressionStatement:
+                expression =
+                    &static_cast<const core::ExpressionStatement&>(statement)
+                         .Value();
+                break;
+            default:
+                break;
+        }
+        const auto* await = expression && Unwrap(*expression).Kind() ==
+                                              core::AstNodeKind::AwaitExpression
+                                ? &static_cast<const core::AwaitExpression&>(
+                                      Unwrap(*expression))
+                                : nullptr;
+        const auto* result = await ? _model.AwaitResultFor(*await) : nullptr;
+        if (!result) return BuildStatementBody(statement, next);
+        const NodeId success = BuildStatementBody(statement, next);
+        _graph.nodes[success].awaitOutcome = await;
+        NodeId failure;
+        const auto failureStart = _graph.nodes.size();
+        if (result->forwardsFailure) {
+            const NodeId exit = AddNode({});
+            _graph.nodes[exit].failureExit = await;
+            failure = BuildEvaluation(*expression, exit);
+        } else {
+            // Void completion constructs only its error binding on either
+            // outcome. There is no success-only value and no dummy void slot.
+            failure = BuildStatementBody(statement, next);
+        }
+        _graph.nodes[failure].awaitOutcome = await;
+        for (NodeId id = failureStart; id < _graph.nodes.size(); ++id)
+            _graph.nodes[id].asyncSuccess = false;
+        const NodeId dispatch = AddNode({success, failure});
+        _graph.nodes[dispatch].awaitDispatch = await;
+        return dispatch;
+    }
+
+    NodeId BuildStatementBody(const core::Statement& statement, NodeId next) {
         switch (statement.Kind()) {
             case core::AstNodeKind::RangeStatement:
                 return BuildBlock(

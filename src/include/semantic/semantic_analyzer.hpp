@@ -137,6 +137,10 @@ class SemanticAnalyzer final {
     void AnalyzeBranch(const core::ConditionalBranch& branch);
     void CollectPositions(const core::BlockStatement& block,
                           std::size_t loopDepth);
+    enum class AsyncResultUse { Destructure, Binding, Return, Discard };
+    SemanticType AnalyzeImmediateAsync(const core::Expression& expression,
+                                       SemanticType expected,
+                                       AsyncResultUse use);
     SemanticType AnalyzeExpression(
         const core::Expression& expression,
         SemanticType expected = SemanticType::Error());
@@ -183,6 +187,7 @@ class SemanticAnalyzer final {
                            const CallableSignature& signature,
                            const FunctionSymbol* function);
     const core::Expression* _checkedAsyncExpression = nullptr;
+    AsyncResultUse _asyncResultUse = AsyncResultUse::Destructure;
     const core::Expression* _asyncOperand = nullptr;
     diagnostics::DiagnosticBag& _diagnostics;
     SemanticModel _model;

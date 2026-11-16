@@ -597,9 +597,9 @@ class BorrowChecker final {
                     std::ranges::find(exit.scopes, scope->second) !=
                         exit.scopes.end())
                     Report(Code::InvalidAsync, symbol->DeclarationRange(),
-                           "implicit child-join failure handling is not "
-                           "specified yet; explicitly await and check the "
-                           "child before normal scope exit");
+                           "child execution failure could go unobserved; "
+                           "explicitly await the child before normal scope "
+                           "exit and check its error or use .await?");
             }
         }
     }

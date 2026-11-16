@@ -43,6 +43,11 @@ struct FlowNode final {
     // Success/failure actions share syntax but differ in initialization,
     // argument transfer and task publication. Checked errors are correlated
     // with these paths before the dataflow passes run.
+    const core::AwaitExpression* awaitDispatch = nullptr;
+    const core::AwaitExpression* awaitOutcome = nullptr;
+    // A forwarded execution failure exits through cancellation and draining,
+    // without evaluating a return expression or constructing its value.
+    const core::AwaitExpression* failureExit = nullptr;
     bool asyncSuccess = true;
     bool checkedInitialization = false;
     const core::DeferStatement* deferRegistration = nullptr;

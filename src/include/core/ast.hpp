@@ -1657,18 +1657,23 @@ class AwaitExpression final : public Expression {
    public:
     AwaitExpression(source::SourceRange range,
                     std::unique_ptr<Expression> operand,
-                    source::SourceRange operatorRange)
-        : Expression(range), _operand(std::move(operand)),
-          _operatorRange(operatorRange) {}
+                    source::SourceRange operatorRange,
+                    bool forwardsFailure = false)
+        : Expression(range),
+          _operand(std::move(operand)),
+          _operatorRange(operatorRange),
+          _forwardsFailure(forwardsFailure) {}
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::AwaitExpression;
     }
     [[nodiscard]] const Expression& Operand() const { return *_operand; }
     [[nodiscard]] source::SourceRange OperatorRange() const { return _operatorRange; }
+    [[nodiscard]] bool ForwardsFailure() const { return _forwardsFailure; }
 
    private:
     std::unique_ptr<Expression> _operand;
     source::SourceRange _operatorRange;
+    bool _forwardsFailure;
 };
 
 class SpawnExpression final : public Expression {
