@@ -1,0 +1,391 @@
+IFG: 2026-0007
+Title: Scoped Single-Threaded Async
+Author: Flecha Project
+Type: Standards Track
+Topic: Language
+Status: Draft
+Created: 2026-11-15
+Implementation: Not Started
+Release-Impact: None
+
+Abstract
+--------
+
+Explore scoped asynchronous tasks on one executor thread, with a general
+model for suspendable computations rather than an I/O-specific compiler
+feature. Retain Flecha's explicit ownership, exclusive mutable borrowing,
+and deterministic cleanup responsibilities.
+
+The agreed starting direction is scoped, single-threaded async. The syntax
+decisions below have been selected during design discussion; the IFG as a
+whole remains Draft. Other policies are recommendations for review. Public
+APIs, runtime representation, and an implementation release remain undecided.
+This proposal does not block Flecha 0.4 or reserve keywords in the compiler.
+The documentation foundation can be reviewed before v0.4 without committing
+async implementation to that release. See ../async-design.md for a short guide.
+
+Decision status
+---------------
+
+Selected foundation:
+
+- Single-threaded execution of scoped tasks; spawn creates no OS thread.
+- async functions and explicit postfix .await.
+- Unawaited high-level async calls are errors, except explicit task creation.
+- spawn and >>- are equivalent spellings for child-task creation.
+- High-level async and low-level future/polling control share one model.
+- Channels belong in the standard library over general waiting primitives.
+
+Still under review:
+
+- Scope boundaries and the normal-exit/early-exit cleanup policy.
+- Synchronous entry, task allocation, cancellation, and error propagation.
+- Future representation, polling/wakeup APIs, and low-level future access.
+- Full grammar, scheduling policy, and portable backend integration.
+
+Selected decisions are design inputs. They do not imply that this incomplete
+Standards Track IFG has been accepted or that the compiler supports the syntax.
+
+Motivation and boundary
+-----------------------
+
+A useful first experiment is servicing multiple network connections while
+waiting for sockets and timers on one thread. This is a proposed validation
+workload, not a decision to introduce a particular networking API.
+
+Only one task executes Flecha code at a time. Suspending one task allows another
+to run. This provides concurrency of waiting, not parallel execution of CPU
+work. A blocking call or computation that never yields can stall every task.
+
+Threads, work stealing, detached tasks, shared-memory parallelism, atomics,
+and a general concurrent memory model are outside this first design. The
+concurrency gate in ../memory_safety_invariants.md remains in force. Acceptance
+would need to document precisely the single-threaded subset that is enabled;
+this draft does not relax that gate or authorize implementation of safe async.
+
+Terminology
+-----------
+
+A task is an execution that can suspend and later resume. Its frame stores
+the state needed across suspension, including live owned values and borrows.
+
+A task scope owns its child tasks and bounds their execution lifetimes. A
+child may own another task scope. No child execution escapes its owning scope.
+
+An executor selects ready tasks and handles wake notifications from operations.
+A join waits for a child's completion. Draining a scope waits until every
+child and its pending operations have finished the required cleanup.
+
+Cancellation is a cooperative request to stop unfinished work. It is not
+permission to free a live task frame or borrowed I/O buffer immediately.
+
+Selected high-level syntax
+--------------------------
+
+Suspendable functions use an async modifier. Their written return type is the
+completed result type. Postfix .await explicitly waits for a result and may
+suspend the current task; an immediately available result need not suspend.
+
+    async i32 calculate() {
+        return 42;
+    }
+
+    async i32 example() {
+        value := calculate().await;
+        return value + 1;
+    }
+
+For the initial high-level surface, calling an async operation requires an
+async function. An ordinary async call without .await is a compile error:
+
+    calculate().await;       // Await completion; discard the result.
+    calculate();            // Error: unawaited async call.
+
+Explicit child-task creation is the exception: spawn schedules an independent
+child within the owning task scope and produces a task handle. The symbolic
+prefix >>- is an exact synonym, not a different scheduling or ownership mode.
+These are alternative spellings of the same expression:
+
+    first := spawn calculate();
+    first := >>- calculate();
+
+The handle can be awaited to join the child and obtain its completed result:
+
+    async i32 combined() {
+        first := spawn calculate();
+        second := >>- calculate();
+        a := first.await;
+        b := second.await;
+        return a + b;
+    }
+
+Both children are scheduled before either is joined. Awaiting their handles
+in sequence does not make their execution sequential. Neither spelling implies
+another OS thread or detached execution. Exact child start timing is still open.
+
+An ordinary call followed by .await does not independently schedule a child.
+For example, calculate().await followed by another calculate().await performs
+those computations sequentially within the current task. Explicit task creation
+provides independent scheduling; awaiting a task handle joins that child.
+
+The lexical task-scope boundary, async block syntax, synchronous executor entry,
+task-handle type, and task creation failure behavior remain to be specified.
+The full grammar also needs precedence and tokenization rules, including how
+>>- interacts with existing right-shift and unary-minus expressions. Whichever
+rules are chosen, both child-creation spellings must have identical semantics
+and diagnostics. This section records design choices, not implemented syntax.
+
+General high-level and low-level model
+-------------------------------------
+
+The intended direction is to support both compiler-managed async functions and
+low-level control of futures and polling through one execution contract. That
+contract is not restricted to sockets: messages, application events, external
+completions, and computations split into resumable steps are also use cases.
+
+Ordinary callers should not need to implement polling or handle wake tokens.
+Library authors should be able to supply awaitable operations without adding
+compiler primitives for each operation. The exact future API, wakeup protocol,
+and cancellation contract remain open, as does the explicit low-level mechanism
+for managing a future without violating the high-level unawaited-call rule.
+
+The interoperability goal is that a library-defined future can be awaited by
+high-level code, and compiler-generated async work can be managed through the
+low-level contract. These are two ways to express work, not separate runtimes.
+Low-level access must preserve the same ownership and cleanup guarantees.
+
+A candidate protocol, expressed as pseudocode rather than Flecha declarations,
+is:
+
+    poll(context) -> Ready(result) | Pending
+
+Polling is synchronous and nonblocking. Pending requires a valid way to arrange
+another attempt when progress becomes possible; it is not a request for a busy
+loop. Completion includes the operation's ordinary result or error values.
+Whether this exact protocol is adopted remains open. No public Future, Poll,
+Context, or wake-handle type name is selected by this pseudocode.
+
+The generic progression is: running work becomes waiting, a notification makes
+it runnable, and the executor resumes it. Execution state remains alive while
+waiting. A task may repeat this sequence many times before completing. An OS
+event is one possible notification source; another task or a library event can
+also notify a waiter. Registration and suspension must not lose a notification
+that arrives between checking the operation and becoming a waiter.
+
+Channels are intended as standard-library abstractions over the same general
+waiting and wakeup machinery, not channel-specific compiler operations. Their
+endpoint types, allocation, capacity, closure, and error contracts need review.
+
+No protocol can make arbitrary blocking code nonblocking automatically. Work
+must offer notifications, support resumable steps, or execute elsewhere. A
+worker-thread bridge would require a separate contract beyond this initial
+single-threaded scope.
+
+Recommended lifetime policy -- pending review
+--------------------------------------------
+
+On normal scope fallthrough, wait for all children to finish, then complete
+scope cleanup. On a control-flow exit that abandons the scope's remaining work,
+request cancellation of unfinished children and drain them before leaving.
+An explicit cancellation request should also be possible; its API is open.
+
+The motivation is that scope ownership entails responsibility for completion
+or cleanup. Discarding a task handle must not detach the execution or release
+its live borrows. Handle ownership and result-consumption rules remain open.
+
+An error value alone is not a cancellation event. Flecha's ordinary error
+handling should continue to govern control flow. Returning an error out of a
+task scope would follow the same early-exit rule as another return. Handling
+an error and continuing within the scope would not implicitly cancel siblings.
+
+Whether a child failure automatically cancels siblings is a separate, open
+decision. The draft does not assume exception propagation or fail-fast task
+groups. Result collection, unobserved failures, and cancellation outcomes need
+an explicit contract before implementation.
+
+The async scope boundary should make its potential wait visible to the caller.
+An early return can therefore wait for child cleanup. This is recommended only
+within a context explicitly permitted to suspend, not in ordinary synchronous
+functions, deferred calls, or teardown. The syntax and effect rules that make
+this visible still need approval.
+
+Every transfer that crosses the scope boundary needs a defined policy,
+including return and outer-loop break/proceed. Whether jumpto may cross such a
+boundary remains open; it must not silently bypass task cleanup. A transfer
+within a scope is distinct from abandoning that scope.
+
+Cooperative cancellation provides no bounded completion time. A child that
+never reaches a cancellation observation point can prevent scope exit. The
+observation points, cancellation masking, and treatment of partially completed
+operations are unresolved. A timeout cannot safely force destruction of a
+frame still accessible to an operation.
+
+Ownership and suspension requirements
+-------------------------------------
+
+The existing rules in ../memory_model.md and ../memory_safety_invariants.md
+provide the safety constraints for any proposed implementation:
+
+- A borrow held by a suspended task remains live. Single-threaded scheduling
+  does not grant the parent or another child conflicting access.
+- A parent cannot move, replace, destroy, or invalidate storage while a child
+  or an outstanding operation borrows it.
+- Multiple read-only captures can coexist. Overlapping mutable captures, or a
+  mutable capture overlapping a read-only capture, require rejection.
+- A child's execution cannot outlive its scope. Captured storage must survive
+  draining, including cancellation and nested-child cleanup.
+- Returning a borrowed result does not erase its origin. Completing the task
+  alone cannot release a borrow still carried by that result.
+- Moving an owner into a task transfers cleanup responsibility exactly once.
+  Task creation failure must have a defined ownership outcome.
+- Frame relocation cannot invalidate references into that frame. Immovable
+  values and references to task locals need a supported stable-storage rule
+  or an explicit rejection rule, not an assumption that frames are movable.
+
+The initial checker should reuse Flecha's conservative region model. Proving
+disjoint array ranges is not a prerequisite. Whether an explicit join can end
+capture loans before the lexical scope ends is an open precision decision.
+
+Cleanup and external operations
+-------------------------------
+
+Child cleanup has to finish before cleanup invalidates its captured storage.
+Merely appending a join after existing local destruction is insufficient.
+Conversely, retaining a reference to a local that has already left its own
+scope is invalid even if the enclosing task scope remains active.
+
+Existing relative ordering of ordinary owners and deferred calls should be
+preserved wherever their lifetimes are valid. The exact placement of task
+draining among scope cleanup actions needs a specification and tests. Ordinary
+teardown and deferred calls should remain synchronous and non-failing.
+Asynchronous protocol shutdown would need an explicit operation before final
+synchronous resource release.
+
+Cancellation of an I/O wait must ensure that neither the backend nor a late
+notification can access released task storage or buffers. Readiness removal
+and completion-based cancellation may require different runtime mechanisms.
+Repeated notifications must be handled without duplicate or reentrant task
+execution. Resuming a completed task or accepting a stale event for a reused
+task slot must be prevented.
+
+Foreign callbacks must not reenter suspended or running task code in a way
+that violates exclusive access. Work performed by the OS does not authorize
+concurrent Flecha callbacks. Backend buffer-access contracts need review even
+when only one thread executes Flecha code.
+
+Immediate process termination remains distinct from graceful scope exit. This
+proposal does not add unwinding guarantees to existing fatal safety failures.
+
+Behavioral examples -- notation only
+------------------------------------
+
+These are event sequences, not proposed Flecha syntax.
+
+1. Normal completion:
+   Parent creates a scope and starts two child operations. One suspends on a
+   socket; the other completes. Parent reaches scope end. The scope waits for
+   the first operation and drains before releasing captured storage.
+
+2. Early exit, under the recommended policy:
+   Parent chooses to return while a child waits on I/O. It requests child
+   cancellation. The backend makes the pending operation safe to retire;
+   child cleanup finishes; parent cleanup and return can then finish.
+
+3. Invalid overlapping access:
+   Child holds a mutable borrow of a buffer and suspends. Parent reads or
+   writes that buffer before the loan ends. Reject, despite one executor
+   thread and despite the child not currently executing.
+
+4. Invalid escape:
+   Parent attempts to return an independently runnable child that borrows a
+   local. Reject. No detached-task escape is part of this design.
+
+5. Borrowed result:
+   Child returns a view into a parent-owned buffer. Joining the child does not
+   allow destruction or replacement of the buffer while the view is live.
+
+6. Liveness limit:
+   Child runs an infinite computation without yielding. Other tasks and scope
+   cancellation cannot progress. Single-threaded async does not prevent this.
+
+Compiler, runtime, and tooling consequences
+-----------------------------------------
+
+Before implementation, decide how the selected suspension syntax is represented
+in callable types, generic constraints, interface dispatch, and diagnostics.
+The high-level syntax does not select stackful versus state-machine execution,
+nor does it settle the public low-level future protocol or task type names.
+
+A compiler-transformed design would need frame liveness, borrow origins across
+suspension, initialization and cleanup state, and all scope exit edges modeled
+before lowering. A library-only design would still need to prove that its safe
+API cannot bypass the ownership and lifetime requirements above.
+
+The executor needs an explicit ownership boundary, readiness registration,
+wakeup deduplication, task retirement, and a documented reentrancy policy.
+Frame allocation, executor allocation, resource limits, and allocation failure
+must be explicit in the eventual contract. No hidden thread pool is assumed.
+
+Diagnostics should identify the capture, suspension or outstanding task, and
+conflicting use. Analyzer navigation and hover should expose any eventual
+suspension effects without claiming draft syntax is implemented.
+
+Validation and implementation sequence
+--------------------------------------
+
+1. Resolve remaining policy and grammar questions; review ownership and cleanup traces.
+   Accept a normative contract before enabling a safe language surface.
+2. Prototype the chosen execution model with a deterministic test executor.
+   Validate library-defined completions and high-/low-level interoperability,
+   borrowed captures, results, nested scopes, and failure cleanup. Prove the
+   model works without socket-specific compiler support.
+3. Add timer and socket experiments with injected readiness and cancellation
+   races. Check pending operations and storage retirement, not just output.
+4. Exercise a bounded multi-connection service, slow clients, partial reads
+   and writes, allocation failure, and shutdown with outstanding operations.
+5. Complete diagnostics, analyzer support, backend qualification, and release
+   documentation before describing async as supported.
+
+Tests should cover every legal scope exit, repeated cancellation, simultaneous
+completion and cancellation, nested scope draining, and unconsumed results.
+Ownership tests should count destruction and deferred calls and verify their
+order. Scheduling tests should explore multiple legal interleavings; tests
+must not assume an ordering the final contract does not guarantee.
+Both spawn spellings need equivalent semantic and runtime coverage. Negative
+cases must include a bare async call and awaiting from a synchronous function
+outside any future explicitly approved executor-entry construct. Completion
+tests need ready-before-wait, notification-during-registration, repeated wakeup,
+and cancellation-before-completion cases using synthetic events as well as I/O.
+
+Alternatives and open decisions
+-------------------------------
+
+Always joining on every exit is simple but can retain unwanted work after an
+early return. Requiring explicit joins on every exit makes waits visible but
+needs a clear rule for early exits and outstanding borrows. Cancel-and-drain is
+the current recommendation, not an approved choice.
+
+Detached tasks and multithreaded scheduling are deferred because they require
+additional lifetime and sharing contracts. Blocking I/O behind an async-looking
+API would not validate the intended overlap of waits.
+
+Open decisions requiring review include:
+
+- Scope exit policy and syntax, suspension effects, and boundary-crossing jumps.
+- Full spawn/>>- grammar, tokenization, precedence, and compatibility.
+- Low-level future access, polling, wakeups, and interoperability with .await.
+- Cancellation observation points and behavior of interrupted operations.
+- Child errors, sibling cancellation, result collection, and unobserved errors.
+- Task start timing, explicit yield, fairness, and executor reentrancy.
+- Frame placement, address stability, allocation policy, and failure ownership.
+- Lifetime precision after joining and treatment of borrowed results.
+- First I/O surface and portable backend requirements.
+
+Compatibility
+-------------
+
+This draft changes no compiler behavior, runtime ABI, standard-library API, or
+keyword set. Existing programs retain their synchronous execution semantics.
+Any eventual syntax, allocation effects, or compatibility changes require
+separate review as this draft becomes precise. Acceptance is distinct from
+implementation and from selection for a release.
