@@ -733,3 +733,35 @@ TEST_F(AnalysisSessionTests, RecoversWhileEditingTypedDecorationBody) {
               OverlayUpdateResult::Applied);
     EXPECT_FALSE(session.Analyze("main.fl").HasErrors());
 }
+
+TEST_F(AnalysisSessionTests,
+       CheckedAsyncBindingsExposeTypesChecksAndNavigation) {
+    const std::string source =
+        "module main; async i32 f() { return 1; } async i32 main() { "
+        "child, ce := shoot f(); if ce != none { return 0; } "
+        "value, e := child.await; if e != none { return 0; } return value; }";
+    Write("main.fl", source);
+    AnalysisSession session(_root);
+    auto snapshot = session.Analyze("main.fl");
+    ASSERT_TRUE(snapshot.semanticModel);
+    const auto child = snapshot.Hover("main.fl", source.find("child.await"));
+    ASSERT_TRUE(child);
+    EXPECT_EQ(child->type, "task<i32> (initialized when ce == none)");
+    const auto value = snapshot.Hover("main.fl", source.rfind("value"));
+    ASSERT_TRUE(value);
+    EXPECT_EQ(value->type, "i32 (initialized when e == none)");
+    const auto error = snapshot.Hover("main.fl", source.find("e != none"));
+    ASSERT_TRUE(error);
+    EXPECT_EQ(error->type, "error");
+    const auto expression = snapshot.Hover("main.fl", source.find("shoot"));
+    ASSERT_TRUE(expression);
+    EXPECT_EQ(expression->type, "checked-async<task<i32>>");
+    const auto definition =
+        snapshot.Definition("main.fl", source.rfind("value"));
+    ASSERT_TRUE(definition);
+    EXPECT_EQ(definition->start.offset, source.find("value, e"));
+    const auto occurrences = snapshot.Occurrences("main.fl");
+    EXPECT_TRUE(std::ranges::any_of(occurrences, [](const auto& item) {
+        return item.name == "value" && item.type == "i32" && item.isDeclaration;
+    }));
+}

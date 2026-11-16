@@ -2150,3 +2150,15 @@ add_behavior_reflection_failure(runtime_const_write FLECHA-S0005)
 add_behavior_reflection_failure(runtime_closure FLECHA-S0081)
 add_behavior_reflection_failure(runtime_borrow_conflict FLECHA-S0029)
 add_behavior_reflection_failure(runtime_move_twice FLECHA-S0046)
+
+add_test(NAME AsyncFixtures.checked_results_remain_gated
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async/checked.fl
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_checked_async.cmake)
+add_test(NAME AsyncFixtures.reject_unchecked_value
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async/unchecked.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0021
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)

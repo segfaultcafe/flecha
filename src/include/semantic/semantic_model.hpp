@@ -19,6 +19,13 @@ namespace flecha::semantic {
 
 class SemanticAnalyzer;
 class BehaviorPlanner;
+// Internal success-only binding contract, never a source-level tuple/ABI.
+struct CheckedAsyncResult final {
+    const Symbol* value = nullptr;
+    const Symbol* error = nullptr;
+    bool creation = false;
+};
+
 class SemanticModel;
 
 enum class TransferKind { Copy, Move, Direct };
@@ -189,6 +196,16 @@ class SemanticModel final {
         const auto found = _fields.find(&expression);
         return found == _fields.end() ? nullptr : found->second;
     }
+    const Symbol* CheckedErrorFor(const Symbol& value) const {
+        for (const auto& [statement, checked] : _checkedAsyncResults)
+            if (checked.value == &value) return checked.error;
+        return nullptr;
+    }
+    const CheckedAsyncResult* CheckedResultFor(
+        const core::DestructureStatement& statement) const {
+        const auto found = _checkedAsyncResults.find(&statement);
+        return found == _checkedAsyncResults.end() ? nullptr : &found->second;
+    }
     const VariableSymbol* TaskFor(const core::SpawnExpression& expression) const {
         const auto found = _asyncTasks.find(&expression);
         return found == _asyncTasks.end() ? nullptr : found->second;
@@ -292,6 +309,8 @@ class SemanticModel final {
     std::unordered_map<const core::MemberAccessExpression*,
                        const StructureField*>
         _fields;
+    std::unordered_map<const core::DestructureStatement*, CheckedAsyncResult>
+        _checkedAsyncResults;
     std::unordered_map<const core::SpawnExpression*, const VariableSymbol*> _asyncTasks;
     std::unordered_map<const core::MemberCallExpression*, const FunctionSymbol*>
         _methods;

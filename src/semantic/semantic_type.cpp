@@ -161,7 +161,9 @@ bool SemanticType::IsTriviallyZeroable() const {
 }
 
 bool SemanticType::IsCopyable() const {
-    if (_kind == SemanticTypeKind::Task) return false;
+    if (_kind == SemanticTypeKind::Task ||
+        _kind == SemanticTypeKind::CheckedAsyncResult)
+        return false;
     if (_kind == SemanticTypeKind::Function ||
         _kind == SemanticTypeKind::Interface)
         return false;
@@ -181,6 +183,8 @@ bool SemanticType::IsCopyable() const {
 }
 
 bool SemanticType::IsImmovable() const {
+    if (_kind == SemanticTypeKind::CheckedAsyncResult)
+        return Target()->IsImmovable();
     if (_kind == SemanticTypeKind::Structure) {
         if (!_structure->validLayout) return false;
         if (_structure->tear && _structure->tear->IsUnsafe()) return true;
@@ -195,6 +199,7 @@ bool SemanticType::IsImmovable() const {
 }
 
 bool SemanticType::OwnsStorage() const {
+    if (_kind == SemanticTypeKind::Task) return true;
     // Every structure has a lifetime even when its default tear is empty.
     if (_kind == SemanticTypeKind::Structure) return true;
     if (_kind == SemanticTypeKind::Array) return Target()->OwnsStorage();
@@ -343,6 +348,8 @@ std::string SemanticType::Name() const {
             return "null";
         case SemanticTypeKind::None:
             return "none";
+        case SemanticTypeKind::CheckedAsyncResult:
+            return "checked-async<" + Target()->Name() + ">";
         case SemanticTypeKind::Task:
             return "task<" + Target()->Name() + ">";
         case SemanticTypeKind::Function:

@@ -129,15 +129,24 @@ void AnalyzeDefiniteAssignment(const core::FunctionDeclaration& function,
                   return left.expression->Range().start.offset <
                          right.expression->Range().start.offset;
               });
+    std::unordered_set<const core::NameExpression*> reported;
     for (const InvalidRead& invalid : uninitialized) {
+        if (!reported.insert(invalid.expression).second) continue;
         const auto code =
             invalid.moved ? diagnostics::DiagnosticCode::MovedValue
                           : diagnostics::DiagnosticCode::UninitializedVariable;
-        diagnostics.Report(
-            code, invalid.expression->Range(),
-            "variable '" + invalid.expression->Name() +
-                (invalid.moved ? "' may have been moved"
-                               : "' may be read before it is initialized"));
+        const Symbol* symbol = model.SymbolFor(*invalid.expression);
+        const Symbol* error = symbol ? model.CheckedErrorFor(*symbol) : nullptr;
+        const std::string message =
+            !invalid.moved && error
+                ? "checked async value '" + invalid.expression->Name() +
+                      "' is uninitialized unless '" + error->Name() +
+                      "' is proven none"
+                : "variable '" + invalid.expression->Name() +
+                      (invalid.moved
+                           ? "' may have been moved"
+                           : "' may be read before it is initialized");
+        diagnostics.Report(code, invalid.expression->Range(), message);
     }
 }
 }  // namespace flecha::semantic

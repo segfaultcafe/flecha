@@ -1,0 +1,6 @@
+module unchecked;
+async i32 operation() { return 42; }
+async i32 main() {
+    value, err := operation().await;
+    return value;
+}

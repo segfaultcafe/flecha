@@ -1,5 +1,8 @@
 #include "semantic/control_flow_graph.hpp"
 
+#include <algorithm>
+#include <map>
+#include <set>
 #include <utility>
 namespace flecha::semantic {
 namespace {
@@ -17,6 +20,7 @@ class GraphBuilder final {
                 _graph.nodes[jump].successors.push_back(target->second);
             }
         }
+        SpecializeCheckedPaths();
         for (NodeId node = 0; node < _graph.nodes.size(); ++node) {
             for (NodeId successor : _graph.nodes[node].successors) {
                 _graph.nodes[successor].predecessors.push_back(node);
@@ -98,6 +102,203 @@ class GraphBuilder final {
         return next;
     }
 
+    static const core::Expression& Unwrap(const core::Expression& expression) {
+        if (expression.Kind() == core::AstNodeKind::ParenthesizedExpression)
+            return Unwrap(
+                static_cast<const core::ParenthesizedExpression&>(expression)
+                    .Inner());
+        return expression;
+    }
+
+    NodeId BuildDestructure(const core::DestructureStatement& destructure,
+                            NodeId next, bool success) {
+        const auto* checked = _model.CheckedResultFor(destructure);
+        for (auto binding = destructure.Bindings().rbegin();
+             binding != destructure.Bindings().rend(); ++binding) {
+            const Symbol* target = _model.DestructureTarget(**binding);
+            if (!target) continue;
+            const NodeId store = AddNode({next});
+            _graph.nodes[store].checkedInitialization = checked != nullptr;
+            if (!checked || success || target == checked->error)
+                _graph.nodes[store].write = target;
+            if (_model.DeclaredSymbol(**binding)) {
+                _graph.nodes[store].reset = target;
+                _graph.symbolScopes.emplace(target, _scopes.back());
+            }
+            next = store;
+        }
+        const NodeId memoryStore = AddNode({next});
+        _graph.nodes[memoryStore].memoryDestructure = &destructure;
+        // Only the direct argument transfer is conditional. Side effects and
+        // transfers inside argument preparation remain ordinary evaluations.
+        const auto previous = _failedTransfers;
+        if (checked && checked->creation && !success) {
+            const auto& spawn = static_cast<const core::SpawnExpression&>(
+                Unwrap(destructure.Value()));
+            const auto& call = Unwrap(spawn.Operand());
+            std::vector<const core::Expression*> arguments;
+            if (call.Kind() == core::AstNodeKind::CallExpression)
+                arguments = _model.ArgumentsFor(
+                    static_cast<const core::CallExpression&>(call));
+            else if (call.Kind() == core::AstNodeKind::MemberCallExpression) {
+                const auto& method =
+                    static_cast<const core::MemberCallExpression&>(call);
+                arguments = _model.ArgumentsFor(method);
+                arguments.push_back(&method.Receiver());
+            }
+            for (const auto* argument : arguments)
+                _failedTransfers.insert(&Unwrap(*argument));
+        }
+        const NodeId body = BuildExpression(destructure.Value(), memoryStore);
+        _failedTransfers = previous;
+        const NodeId action = AddNode({body});
+        _graph.nodes[action].destructure = &destructure;
+        _graph.nodes[action].asyncSuccess = success;
+        return action;
+    }
+
+    // Preserve correlations only while their error binding is live. A checked
+    // result is not an always-initialized tuple: merging success and failure
+    // before the check would lose both definite assignment and ownership facts.
+    // Specialization shares identical (node, live outcomes) states, including
+    // loop backedges, and leaves all ordinary CFGs unchanged.
+    void SpecializeCheckedPaths() {
+        using Outcomes = std::map<const Symbol*, bool>;
+        std::set<const Symbol*> errors;
+        for (const auto& node : _graph.nodes)
+            if (node.destructure)
+                if (const auto* checked =
+                        _model.CheckedResultFor(*node.destructure))
+                    errors.insert(checked->error);
+        if (errors.empty()) return;
+        const auto original = std::move(_graph.nodes);
+        _graph.nodes.clear();
+        std::vector<std::set<const Symbol*>> live(original.size());
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (NodeId id = 0; id < original.size(); ++id) {
+                auto next = std::set<const Symbol*>{};
+                for (auto successor : original[id].successors)
+                    next.insert(live[successor].begin(), live[successor].end());
+                const auto& node = original[id];
+                if (!node.checkedInitialization) {
+                    next.erase(node.write);
+                    next.erase(node.reset);
+                }
+                if (node.destructure)
+                    if (const auto* checked =
+                            _model.CheckedResultFor(*node.destructure))
+                        next.erase(checked->error);
+                if (node.condition && node.condition->Kind() ==
+                                          core::AstNodeKind::BinaryExpression) {
+                    const auto& binary =
+                        static_cast<const core::BinaryExpression&>(
+                            *node.condition);
+                    for (const auto* operand :
+                         {&binary.Left(), &binary.Right()}) {
+                        const auto& inner = Unwrap(*operand);
+                        if (inner.Kind() == core::AstNodeKind::NameExpression) {
+                            const auto* symbol = _model.SymbolFor(
+                                static_cast<const core::NameExpression&>(
+                                    inner));
+                            if (errors.contains(symbol)) next.insert(symbol);
+                        }
+                    }
+                }
+                if (node.read) {
+                    const auto* symbol = _model.SymbolFor(*node.read);
+                    if (errors.contains(symbol)) next.insert(symbol);
+                }
+                if (next != live[id]) {
+                    live[id] = std::move(next);
+                    changed = true;
+                }
+            }
+        }
+        using Key = std::pair<NodeId, Outcomes>;
+        std::map<Key, NodeId> ids;
+        std::vector<Key> pending;
+        auto intern = [&](NodeId id, Outcomes outcomes) {
+            std::erase_if(outcomes, [&](const auto& entry) {
+                return !live[id].contains(entry.first);
+            });
+            Key key{id, std::move(outcomes)};
+            const auto [it, inserted] = ids.emplace(key, ids.size());
+            if (inserted) {
+                pending.push_back(key);
+                _graph.nodes.push_back(original[id]);
+                _graph.nodes.back().successors.clear();
+            }
+            return it->second;
+        };
+        // Keep a unique exit even when it is unreachable.
+        _graph.exit = intern(_graph.exit, {});
+        _graph.entry = intern(_graph.entry, {});
+        for (std::size_t cursor = 0; cursor < pending.size(); ++cursor) {
+            const auto [old, incoming] = pending[cursor];
+            const NodeId id = ids.at(pending[cursor]);
+            auto outcomes = incoming;
+            const auto& node = original[old];
+            if (!node.checkedInitialization) {
+                outcomes.erase(node.write);
+                outcomes.erase(node.reset);
+            }
+            if (node.destructure)
+                if (const auto* checked =
+                        _model.CheckedResultFor(*node.destructure))
+                    outcomes[checked->error] = node.asyncSuccess;
+            if (node.memoryExpression &&
+                node.memoryExpression->Kind() ==
+                    core::AstNodeKind::UnaryExpression) {
+                const auto& unary = static_cast<const core::UnaryExpression&>(
+                    *node.memoryExpression);
+                const auto& operand = Unwrap(unary.Operand());
+                if (unary.OperatorType() == TokenType::Ampersand &&
+                    operand.Kind() == core::AstNodeKind::NameExpression)
+                    outcomes.erase(_model.SymbolFor(
+                        static_cast<const core::NameExpression&>(operand)));
+            }
+            if (node.captureRead)
+                outcomes.erase(_model.CaptureSource(*node.captureRead));
+            std::optional<bool> condition;
+            if (node.condition && node.successors.size() == 2) {
+                const auto& expression = Unwrap(*node.condition);
+                if (expression.Kind() == core::AstNodeKind::BinaryExpression) {
+                    const auto& binary =
+                        static_cast<const core::BinaryExpression&>(expression);
+                    const auto op = binary.OperatorType();
+                    if (op == TokenType::Equal || op == TokenType::NotEqual ||
+                        op == TokenType::StrictEqual ||
+                        op == TokenType::StrictNotEqual) {
+                        const auto* name = &Unwrap(binary.Left());
+                        const auto* none = &Unwrap(binary.Right());
+                        if (_model.TypeOf(*name).Kind() ==
+                            SemanticTypeKind::None)
+                            std::swap(name, none);
+                        if (name->Kind() == core::AstNodeKind::NameExpression &&
+                            _model.TypeOf(*none).Kind() ==
+                                SemanticTypeKind::None) {
+                            const auto* symbol = _model.SymbolFor(
+                                static_cast<const core::NameExpression&>(
+                                    *name));
+                            if (outcomes.contains(symbol))
+                                condition = outcomes.at(symbol) ==
+                                            (op == TokenType::Equal ||
+                                             op == TokenType::StrictEqual);
+                        }
+                    }
+                }
+            }
+            for (std::size_t edge = 0; edge < node.successors.size(); ++edge) {
+                if (condition && edge != (*condition ? 0U : 1U)) continue;
+                const NodeId successor =
+                    intern(node.successors[edge], outcomes);
+                _graph.nodes[id].successors.push_back(successor);
+            }
+        }
+    }
+
     NodeId BuildBranch(const core::ConditionalBranch& branch, NodeId next,
                        NodeId alternative) {
         const NodeId body = BuildBlock(branch.Body(), next, branch.Also());
@@ -136,25 +337,14 @@ class GraphBuilder final {
             case core::AstNodeKind::DestructureStatement: {
                 const auto& destructure =
                     static_cast<const core::DestructureStatement&>(statement);
-                for (auto binding = destructure.Bindings().rbegin();
-                     binding != destructure.Bindings().rend(); ++binding) {
-                    const Symbol* target = _model.DestructureTarget(**binding);
-                    if (target == nullptr) continue;
-                    const NodeId store = AddNode({next});
-                    _graph.nodes[store].write = target;
-                    if (_model.DeclaredSymbol(**binding) != nullptr) {
-                        _graph.nodes[store].reset = target;
-                        _graph.symbolScopes.emplace(target, _scopes.back());
-                    }
-                    next = store;
+                if (_model.CheckedResultFor(destructure)) {
+                    const NodeId success =
+                        BuildDestructure(destructure, next, true);
+                    const NodeId failure =
+                        BuildDestructure(destructure, next, false);
+                    return AddNode({success, failure});
                 }
-                const NodeId memoryStore = AddNode({next});
-                _graph.nodes[memoryStore].memoryDestructure = &destructure;
-                const NodeId body =
-                    BuildExpression(destructure.Value(), memoryStore);
-                const NodeId action = AddNode({body});
-                _graph.nodes[action].destructure = &destructure;
-                return action;
+                return BuildDestructure(destructure, next, true);
             }
             case core::AstNodeKind::DeferStatement: {
                 const auto& deferred =
@@ -407,7 +597,8 @@ class GraphBuilder final {
                 return BuildExpression(match.Value(), dispatch);
             }
             case core::AstNodeKind::NameExpression: {
-                if (_model.TransferOf(expression) == TransferKind::Move) {
+                if (_model.TransferOf(expression) == TransferKind::Move &&
+                    !_failedTransfers.contains(&expression)) {
                     const NodeId move = AddNode({next});
                     _graph.nodes[move].move = _model.SymbolFor(
                         static_cast<const core::NameExpression&>(expression));
@@ -538,6 +729,7 @@ class GraphBuilder final {
         }
     }
 
+    std::set<const core::Expression*> _failedTransfers;
     const SemanticModel& _model;
     ControlFlowGraph _graph;
     std::vector<const core::BlockStatement*> _scopes;

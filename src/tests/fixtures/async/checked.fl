@@ -1,0 +1,15 @@
+module checked;
+async i32 operation() { return 42; }
+async i32 main() {
+    first, firstError := shoot operation();
+    if firstError != none { return 1; }
+    second, secondError := >>- operation();
+    if secondError != none { return 2; }
+    a, aError := first.await;
+    if aError != none { return 3; }
+    b, bError := second.await;
+    if bError != none { return 4; }
+    c, cError := operation().await;
+    if cError != none { return 5; }
+    return a + b + c;
+}

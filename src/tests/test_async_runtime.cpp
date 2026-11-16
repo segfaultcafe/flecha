@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory_resource>
 #include <new>
+#include <optional>
 #include <vector>
 
 #include "runtime/async_executor.hpp"
@@ -538,4 +540,141 @@ TEST(AsyncRuntimeTests, RecursiveDirectAwaitsCompleteWithoutIndependentTasks) {
     EXPECT_TRUE(computation.Release());
     EXPECT_EQ(observation.destroyed, 9);
     EXPECT_EQ(resource.live, 0);
+}
+
+namespace {
+struct CompletionCounts {
+    int constructed = 0;
+    int destroyed = 0;
+    int taken = 0;
+    int argumentsDestroyed = 0;
+};
+struct CountedDelete {
+    CompletionCounts* counts;
+    void operator()(int* value) const noexcept {
+        ++counts->argumentsDestroyed;
+        delete value;
+    }
+};
+using CountedOwner = std::unique_ptr<int, CountedDelete>;
+struct ErrorCompletion {
+    // An ordinary error inside T, distinct from PollResult::AllocationFailed.
+    int error;
+    CountedOwner owner;
+    CompletionCounts* counts;
+    ErrorCompletion(int e, CountedOwner value, CompletionCounts* c)
+        : error(e), owner(std::move(value)), counts(c) {
+        ++counts->constructed;
+    }
+    ErrorCompletion(ErrorCompletion&& other) noexcept
+        : error(other.error),
+          owner(std::move(other.owner)),
+          counts(other.counts) {
+        ++counts->constructed;
+    }
+    ErrorCompletion() = delete;
+    ErrorCompletion(const ErrorCompletion&) = delete;
+    ~ErrorCompletion() { ++counts->destroyed; }
+};
+struct CheckedArguments {
+    CountedOwner owner;
+    CompletionCounts* counts;
+    bool failExecution;
+};
+struct CheckedFrame {
+    CheckedArguments arguments;
+    std::optional<ErrorCompletion> completion;
+};
+void InitializeChecked(void* storage, void* arguments) noexcept {
+    new (storage)
+        CheckedFrame{std::move(*static_cast<CheckedArguments*>(arguments)), {}};
+}
+PollResult PollChecked(void* storage, const PollContext&) noexcept {
+    auto& frame = *static_cast<CheckedFrame*>(storage);
+    if (frame.arguments.failExecution) return PollResult::AllocationFailed;
+    frame.completion.emplace(73, std::move(frame.arguments.owner),
+                             frame.arguments.counts);
+    return PollResult::Ready;
+}
+void DestroyChecked(void* storage) noexcept {
+    std::destroy_at(static_cast<CheckedFrame*>(storage));
+}
+void TakeChecked(void* storage, void* destination) noexcept {
+    auto& frame = *static_cast<CheckedFrame*>(storage);
+    ++frame.arguments.counts->taken;
+    new (destination) ErrorCompletion(std::move(*frame.completion));
+}
+constexpr FrameLayout CHECKED_LAYOUT{sizeof(CheckedFrame),
+                                     alignof(CheckedFrame),
+                                     {PollChecked, DestroyChecked, TakeChecked},
+                                     InitializeChecked};
+}  // namespace
+
+TEST(AsyncRuntimeTests,
+     CreationFailuresCanRetryWithoutTransferringOrDestroyingOwner) {
+    for (int failAt : {0, 1, 2}) {
+        CompletionCounts counts;
+        FailingResource resource(failAt);
+        CheckedArguments arguments{
+            CountedOwner(new int(42), CountedDelete{&counts}), &counts, false};
+        {
+            Executor executor(&resource);
+            TaskHandle task;
+            EXPECT_FALSE(
+                executor.TryCreateTask(CHECKED_LAYOUT, &arguments, task));
+            ASSERT_NE(arguments.owner, nullptr);
+            EXPECT_EQ(counts.argumentsDestroyed, 0);
+            EXPECT_EQ(counts.constructed, 0);
+            EXPECT_EQ(executor.Status(task), TaskStatus::Invalid);
+            resource.failAt = -1;
+            ASSERT_TRUE(
+                executor.TryCreateTask(CHECKED_LAYOUT, &arguments, task));
+            EXPECT_EQ(arguments.owner, nullptr);
+            executor.RequestCancellation(task);
+            executor.Step();
+            EXPECT_TRUE(executor.Release(task));
+            EXPECT_FALSE(executor.Release(task));
+        }
+        EXPECT_EQ(counts.constructed, 0);
+        EXPECT_EQ(counts.argumentsDestroyed, 1);
+        EXPECT_EQ(resource.live, 0);
+    }
+}
+
+TEST(AsyncRuntimeTests,
+     ExecutionFailureNeverConstructsMoveOnlyErrorCompletion) {
+    for (bool fail : {false, true}) {
+        CompletionCounts counts;
+        FailingResource resource(-1);
+        CheckedArguments arguments{
+            CountedOwner(new int(42), CountedDelete{&counts}), &counts, fail};
+        Computation computation;
+        ASSERT_TRUE(Computation::TryCreate(CHECKED_LAYOUT, &arguments,
+                                           &resource, computation));
+        EXPECT_EQ(counts.constructed, 0);
+        EXPECT_EQ(computation.Poll({{}, false}),
+                  fail ? PollResult::AllocationFailed : PollResult::Ready);
+        alignas(ErrorCompletion) unsigned char storage[sizeof(ErrorCompletion)];
+        std::fill(std::begin(storage), std::end(storage), 0xA5);
+        EXPECT_EQ(computation.TakeResult(storage), !fail);
+        if (fail) {
+            EXPECT_TRUE(std::all_of(std::begin(storage), std::end(storage),
+                                    [](auto b) { return b == 0xA5; }));
+            EXPECT_EQ(counts.constructed, 0);
+            EXPECT_EQ(counts.taken, 0);
+        } else {
+            auto* result =
+                std::launder(reinterpret_cast<ErrorCompletion*>(storage));
+            EXPECT_EQ(result->error, 73);
+            ASSERT_NE(result->owner, nullptr);
+            EXPECT_EQ(*result->owner, 42);
+            EXPECT_FALSE(computation.TakeResult(storage));
+            std::destroy_at(result);
+        }
+        EXPECT_TRUE(computation.Release());
+        EXPECT_TRUE(computation.Release());
+        EXPECT_EQ(counts.argumentsDestroyed, 1);
+        EXPECT_EQ(counts.constructed, counts.destroyed);
+        EXPECT_EQ(resource.live, 0);
+    }
 }

@@ -35,6 +35,11 @@ struct FlowNode final {
     const core::ReturnStatement* borrowReturn = nullptr;
     const core::VariableDeclarationStatement* declaration = nullptr;
     const core::DestructureStatement* destructure = nullptr;
+    // Success/failure actions share syntax but differ in initialization,
+    // argument transfer and task publication. Checked errors are correlated
+    // with these paths before the dataflow passes run.
+    bool asyncSuccess = true;
+    bool checkedInitialization = false;
     const core::DeferStatement* deferRegistration = nullptr;
     // Post-order events for allocation analysis; never consume the borrow
     // actions above in the memory pass (that would evaluate effects twice).
