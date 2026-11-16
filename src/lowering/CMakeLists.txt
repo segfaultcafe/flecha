@@ -1,4 +1,5 @@
 add_library(lowering STATIC
+    async_lowerer.cpp
     bound_ir_dumper.cpp
     interface_layout.cpp
     lowerer.cpp
