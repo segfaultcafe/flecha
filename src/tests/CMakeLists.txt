@@ -1,4 +1,5 @@
 add_executable(test_flecha
+    test_try.cpp
     test_async_runtime.cpp
     test_async.cpp
     test_async_plan.cpp

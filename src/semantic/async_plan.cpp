@@ -331,7 +331,9 @@ AsyncFramePlan BuildAsyncFramePlan(const core::FunctionDeclaration& function,
             if (!node.awaitOutcome->ForwardsFailure() || !node.asyncSuccess)
                 state.writes.push_back(contract.error);
         }
-        if (node.memoryReturn && node.memoryReturn->Value() && plan.returnValue)
+        if (((node.memoryReturn && node.memoryReturn->Value()) ||
+             node.propagationReturn) &&
+            plan.returnValue)
             state.writes.push_back(*plan.returnValue);
         if (node.memoryDefer) {
             const auto* syntax = node.memoryDefer;

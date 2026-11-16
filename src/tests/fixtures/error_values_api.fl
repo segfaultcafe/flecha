@@ -138,3 +138,21 @@ i32 error_defer_test() {
     if calls != 3 { return 6; }
     return 42;
 }
+
+(i32, i32, MathError) propagated_pair(bool fail) {
+    try named_error(fail);
+    return (20, 22, none);
+}
+
+(i32, error) propagated_sum(bool fail) {
+    first, second := try propagated_pair(fail);
+    return (first + second, none);
+}
+
+i32 error_try_test() {
+    value, err := propagated_sum(false);
+    if value != 42 or err != none { return 1; }
+    value, err = propagated_sum(true);
+    if value != 0 or err != MathError.Overflow { return 2; }
+    return 42;
+}

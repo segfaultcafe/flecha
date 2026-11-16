@@ -343,6 +343,12 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                                                        std::move(value));
     }
     switch (expression.Kind()) {
+        case core::AstNodeKind::TryExpression:
+            return std::make_unique<BoundTryExpression>(
+                expression.Range(), type,
+                LowerExpression(
+                    static_cast<const core::TryExpression&>(expression)
+                        .Operand()));
         case core::AstNodeKind::AnonymousFunctionExpression: {
             const auto& anonymous =
                 static_cast<const core::AnonymousFunctionExpression&>(

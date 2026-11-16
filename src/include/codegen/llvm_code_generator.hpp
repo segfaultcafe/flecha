@@ -45,6 +45,27 @@ class LlvmCodeGenerator final {
         llvm::Value* storage;
         semantic::SemanticType type;
     };
+    // Values already transferred out of their source but not yet committed to
+    // a call/aggregate/defer. A nested try must destroy them on its return
+    // edge.
+    struct PendingOwner final {
+        llvm::Value* value;
+        semantic::SemanticType type;
+        bool allocation = false;
+    };
+    struct PendingOwnerScope final {
+        std::vector<PendingOwner>& owners;
+        std::size_t count;
+        explicit PendingOwnerScope(std::vector<PendingOwner>& values)
+            : owners(values), count(values.size()) {}
+        ~PendingOwnerScope() {
+            owners.erase(owners.begin() + count, owners.end());
+        }
+    };
+    void HoldPending(llvm::Value* value, semantic::SemanticType type);
+    llvm::Value* EmitTry(const lowering::BoundTryExpression& expression);
+    std::vector<PendingOwner> _pendingOwners;
+
     struct CleanupScope final {
         const lowering::BoundBlockStatement* block;
         std::vector<OwnedStorage> ownedValues;

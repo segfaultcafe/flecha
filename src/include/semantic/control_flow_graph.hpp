@@ -48,6 +48,11 @@ struct FlowNode final {
     // A forwarded execution failure exits through cancellation and draining,
     // without evaluating a return expression or constructing its value.
     const core::AwaitExpression* failureExit = nullptr;
+    // Ordinary try returns a completed error value, not an execution failure.
+    const core::TryExpression* propagationReturn = nullptr;
+    const core::TryExpression* propagationDispatch = nullptr;
+    // Allocated storage whose initializer is abandoned by this try return.
+    std::vector<const core::CallExpression*> abandonedAllocations;
     bool asyncSuccess = true;
     bool checkedInitialization = false;
     const core::DeferStatement* deferRegistration = nullptr;

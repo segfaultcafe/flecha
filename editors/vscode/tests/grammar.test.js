@@ -140,3 +140,9 @@ test("arrow creation and shift/minus retain operator scopes", () => {
   }
   assert.equal(grammar.repository.operators.name, "keyword.operator.flecha");
 });
+
+test("try is ordinary error propagation syntax", () => {
+  const control = new RegExp(grammar.repository.control.match);
+  assert.match("value := try parse();", control);
+  assert.doesNotMatch("retry();", control);
+});

@@ -47,6 +47,7 @@ const KeywordMap KEYWORDS = {
     {"unsafe", TokenType::Unsafe},
     {"async", TokenType::Async},
     {"shoot", TokenType::Shoot},
+    {"try", TokenType::Try},
     {"export", TokenType::Export},
     {"quiver", TokenType::Quiver},
     {"extern", TokenType::Extern},

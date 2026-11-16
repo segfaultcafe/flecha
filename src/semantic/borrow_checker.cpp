@@ -371,6 +371,11 @@ class BorrowChecker final {
                 CollectUses(assignment.Value(), uses);
                 break;
             }
+            case Kind::TryExpression:
+                CollectUses(static_cast<const core::TryExpression&>(expression)
+                                .Operand(),
+                            uses);
+                break;
             case Kind::AwaitExpression:
                 CollectUses(static_cast<const core::AwaitExpression&>(expression).Operand(), uses);
                 break;
@@ -483,10 +488,25 @@ class BorrowChecker final {
             if (_graph.deferredCaptures.contains(symbol) || handle.pendingTask)
                 _active.insert(symbol);
         _temporaries.clear();
+        _reservations.clear();
         _pinned.clear();
         _nextTemporary = 1;
         const FlowNode& node = _graph.nodes[id];
         _asyncSuccess = node.asyncSuccess;
+        if (node.propagationReturn && node.evaluation) {
+            // Replay precisely the evaluated prefix on this return edge. The
+            // compiler-local sentinel stops parent transfers/registrations;
+            // generated code uses an ordinary branch and return.
+            _propagationFailure = node.propagationReturn;
+            try {
+                (void)Evaluate(*node.evaluation);
+            } catch (const PropagationExit&) {
+            }
+            _propagationFailure = nullptr;
+            _spawnCaptures = nullptr;
+            _spawnCall = nullptr;
+            return;
+        }
         if (node.declaration != nullptr) {
             const Symbol* symbol = _model.DeclaredSymbol(*node.declaration);
             // A backward jump can execute a declaration again while another
@@ -1059,6 +1079,19 @@ class BorrowChecker final {
             return Borrow(Evaluate(expression, false),
                           !implicit.Target()->IsConst(), expression.Range());
         switch (expression.Kind()) {
+            case Kind::TryExpression: {
+                const auto& attempt =
+                    static_cast<const core::TryExpression&>(expression);
+                Value result = Evaluate(attempt.Operand());
+                if (_propagationFailure == &attempt) throw PropagationExit{};
+                if (_model.TypeOf(attempt.Operand()).Kind() !=
+                    SemanticTypeKind::Tuple)
+                    return {};
+                if (result.elements.empty()) return {};
+                result.elements.pop_back();
+                if (result.elements.size() == 1) return result.elements.front();
+                return result;
+            }
             case Kind::SpawnExpression: {
                 const auto& spawn = static_cast<const core::SpawnExpression&>(expression);
                 const Symbol* task = _model.TaskFor(spawn);
@@ -1654,6 +1687,8 @@ class BorrowChecker final {
         }
     }
 
+    struct PropagationExit {};
+    const core::TryExpression* _propagationFailure = nullptr;
     bool _asyncSuccess = true;
     const SemanticModel& _model;
     diagnostics::DiagnosticBag& _diagnostics;

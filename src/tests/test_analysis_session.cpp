@@ -792,3 +792,16 @@ TEST_F(AnalysisSessionTests, AwaitForwardingAndVoidErrorHaveAccurateHover) {
     ASSERT_TRUE(definition);
     EXPECT_EQ(definition->start.offset, source.find("value :="));
 }
+
+TEST_F(AnalysisSessionTests, TryHasResultTypeAndReturnedErrorHover) {
+    const std::string source =
+        "module main; (i32, error) work() { return (42, none); } "
+        "error main() { value := try work(); return none; }";
+    Write("main.fl", source);
+    AnalysisSession session(_root);
+    auto snapshot = session.Analyze("main.fl");
+    ASSERT_TRUE(snapshot.semanticModel);
+    const auto hover = snapshot.Hover("main.fl", source.find("try"));
+    ASSERT_TRUE(hover);
+    EXPECT_EQ(hover->type, "i32 (propagates returned error)");
+}

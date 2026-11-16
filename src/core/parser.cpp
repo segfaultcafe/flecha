@@ -2468,6 +2468,13 @@ std::unique_ptr<Expression> Parser::ParseBinaryExpression(
 }
 
 std::unique_ptr<Expression> Parser::ParseUnaryExpression() {
+    if (Check(TokenType::Try)) {
+        const auto start = Advance().range.start;
+        auto operand = ParseUnaryExpression();
+        if (!operand) return nullptr;
+        const source::SourceRange range{start, operand->Range().end};
+        return std::make_unique<TryExpression>(range, std::move(operand));
+    }
     // Compose >>- only in prefix position. Infix x>>-y keeps its existing
     // ShiftRight/Sub tokenization, including when there is no whitespace.
     const bool symbolicSpawn = Check(TokenType::ShiftRight) &&

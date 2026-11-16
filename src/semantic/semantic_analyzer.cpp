@@ -3001,7 +3001,9 @@ void SemanticAnalyzer::AnalyzeDefaultArguments(
             function.Parameters()[index]->DefaultValue();
         if (value == nullptr) continue;
         const SemanticType expected = functionSymbol->ParameterTypes()[index];
+        _inDefaultArgument = true;
         const SemanticType actual = AnalyzeExpression(*value, expected);
+        _inDefaultArgument = false;
         CheckTransfer(*value, expected,
                       functionSymbol->ParameterContract(index) ==
                           core::OwnershipContract::Own);
@@ -4000,6 +4002,90 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
     }
 }
 
+SemanticType SemanticAnalyzer::AnalyzeTry(
+    const core::TryExpression& expression) {
+    const SemanticType input = AnalyzeExpression(expression.Operand());
+    const core::Expression* call = &expression.Operand();
+    while (call->Kind() == core::AstNodeKind::ParenthesizedExpression)
+        call =
+            &static_cast<const core::ParenthesizedExpression&>(*call).Inner();
+    if (call->Kind() != core::AstNodeKind::CallExpression &&
+        call->Kind() != core::AstNodeKind::MemberCallExpression) {
+        Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
+               "try requires an ordinary error-returning call; use .await? for "
+               "async execution failure");
+        return SemanticType::Error();
+    }
+    const auto errorOf = [](SemanticType type) {
+        if (type.Kind() == SemanticTypeKind::Tuple && !type.Elements().empty())
+            return type.Elements().back();
+        return type;
+    };
+    const SemanticType error = errorOf(input);
+    if (!error.IsErrorValue()) {
+        if (!input.IsError())
+            Report(diagnostics::DiagnosticCode::InvalidOperand,
+                   expression.Range(),
+                   "try requires error or a tuple with a final error field");
+        return SemanticType::Error();
+    }
+    if (!_currentFunction || _buildDepth || _inDefaultArgument) {
+        Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
+               "try is only permitted in a function body, outside build blocks "
+               "and default arguments");
+        return SemanticType::Error();
+    }
+    const SemanticType destination = _currentFunction->ReturnType();
+    const SemanticType destinationError = errorOf(destination);
+    if (!destinationError.IsErrorValue()) {
+        Report(diagnostics::DiagnosticCode::InvalidReturnType,
+               expression.Range(),
+               "try requires the enclosing function to return error or a tuple "
+               "with a final error field");
+        return SemanticType::Error();
+    }
+    if (!IsAssignable(destinationError, error))
+        Report(diagnostics::DiagnosticCode::IncompatibleType,
+               expression.Range(),
+               "cannot propagate " + error.Name() + " into " +
+                   destinationError.Name());
+    // The implicit return has the same defaults and effects as (none, ...,
+    // error).
+    const auto defaultable = [&](const auto& self, SemanticType type) -> bool {
+        if (type.Kind() == SemanticTypeKind::Tuple) {
+            for (const auto& element : type.Elements())
+                if (!self(self, element)) return false;
+            return true;
+        }
+        if (type.Kind() == SemanticTypeKind::Array)
+            return self(self, *type.Target());
+        return IsAssignable(type, SemanticType(SemanticTypeKind::None));
+    };
+    if (destination.Kind() == SemanticTypeKind::Tuple)
+        for (std::size_t i = 0; i + 1 < destination.Elements().size(); ++i) {
+            const SemanticType value = destination.Elements()[i];
+            if (!defaultable(defaultable, value))
+                Report(diagnostics::DiagnosticCode::InvalidReturnType,
+                       expression.Range(),
+                       "try cannot default the failure return field of type '" +
+                           value.Name() + "'");
+            if (value.IsImmovable()) RequireUnsafe(expression.Range());
+            WarnForNontrivialDefault(value, expression.Range());
+            RecordZeroDependency(value);
+            RecordCleanupEffects(value);
+        }
+    if (input.IsImmovable())
+        Report(
+            diagnostics::DiagnosticCode::NonCopyableValue, expression.Range(),
+            "try cannot extract an immovable completion from a returned tuple");
+    if (input.Kind() != SemanticTypeKind::Tuple)
+        return SemanticType(SemanticTypeKind::Void);
+    std::vector<SemanticType> values(input.Elements().begin(),
+                                     input.Elements().end() - 1);
+    if (values.size() == 1) return values.front();
+    return SemanticType(std::move(values));
+}
+
 SemanticType SemanticAnalyzer::AnalyzeExpression(
     const core::Expression& expression, SemanticType expected) {
     SemanticType type = SemanticType::Error();
@@ -4053,6 +4139,10 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
         case core::AstNodeKind::AssignmentExpression:
             type = AnalyzeAssignment(
                 static_cast<const core::AssignmentExpression&>(expression));
+            break;
+        case core::AstNodeKind::TryExpression:
+            type =
+                AnalyzeTry(static_cast<const core::TryExpression&>(expression));
             break;
         case core::AstNodeKind::AwaitExpression:
             type = AnalyzeAsyncOperation(expression,
@@ -8266,7 +8356,8 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
             type, consumingOwnership);
         return;
     }
-    if (expression.Kind() == core::AstNodeKind::BuildExpression ||
+    if (expression.Kind() == core::AstNodeKind::TryExpression ||
+        expression.Kind() == core::AstNodeKind::BuildExpression ||
         expression.Kind() == core::AstNodeKind::CallExpression ||
         expression.Kind() == core::AstNodeKind::AnonymousFunctionExpression) {
         _model._transfers.insert_or_assign(&expression, TransferKind::Direct);

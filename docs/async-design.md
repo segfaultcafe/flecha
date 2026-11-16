@@ -142,6 +142,12 @@ value, return value, or expression statement, allowing parentheses around the
 whole operation. Nested suspension inside a larger expression is diagnosed
 until temporary storage and evaluation sequencing are lowered. `?` is not a
 general error operator and does not apply to `shoot` or ordinary calls.
+Ordinary returned errors use prefix `try call()` instead; see
+[error propagation](error_values.md#explicit-propagation-with-try). `try` requires
+a compatible final error field in the enclosing completed return type, while
+`.await?` forwards execution failure independently of that type. Ordinary `try`
+returns take the normal return cleanup path, storing the completed error result
+before cancellation/draining; they do not enter the failed terminal state.
 `AwaitResult` records preserve completed types, destinations, and forwarding;
 frame plans have a separate saved execution error and failed terminal state.
 
@@ -311,6 +317,7 @@ function's completed-value storage. Void awaits allocate no completed-value slot
 | Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional creation, and separate allocation failure outcome. |
 | Frame/suspension planning | Verified internal plans, conservative stable slots, initialization/move alternatives, read liveness, and suspendable scope-exit continuations, saved execution errors and distinct failed terminals; deterministic dumps and corruption tests. |
 | Resumable code generation | Not implemented. Async declarations issue `FLECHA-S0089` and cannot reach synchronous lowering. |
+| Ordinary returned-error propagation | Prefix `try` implemented through CFG, borrow/allocation analysis, synchronous lowering and native code generation; supports error-only and multiple success fields. |
 | Public Flecha futures/results | Checked destructuring, void await and `.await?` implemented in the frontend; public low-level future API and executable integration remain. |
 | Tooling | VS Code and Neovim syntax highlighting; checked expression types, success-condition and failure-forwarding hover, and binding navigation/occurrence tests. |
 

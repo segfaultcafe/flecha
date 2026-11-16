@@ -62,6 +62,7 @@ enum class AstNodeKind {
     UnaryExpression,
     BinaryExpression,
     AssignmentExpression,
+    TryExpression,
     AwaitExpression,
     SpawnExpression,
     CallExpression,
@@ -1651,6 +1652,21 @@ class AssignmentExpression final : public Expression {
     std::unique_ptr<Expression> _target;
     std::unique_ptr<Expression> _value;
     TokenType _operatorType;
+};
+
+// Ordinary returned-error propagation; distinct from async execution failure.
+class TryExpression final : public Expression {
+   public:
+    TryExpression(source::SourceRange range,
+                  std::unique_ptr<Expression> operand)
+        : Expression(range), _operand(std::move(operand)) {}
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::TryExpression;
+    }
+    [[nodiscard]] const Expression& Operand() const { return *_operand; }
+
+   private:
+    std::unique_ptr<Expression> _operand;
 };
 
 class AwaitExpression final : public Expression {

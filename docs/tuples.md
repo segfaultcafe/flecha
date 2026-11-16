@@ -142,5 +142,7 @@ Errors use `FLECHA-S0039` for unsupported tuple contents/layout and
 mutability, and borrow failures retain their existing diagnostics.
 
 Named and generic [error values](error_values.md) work as tuple elements, with
-implicit named-to-generic widening. Allocator APIs and propagation sugar remain
-separate later features.
+implicit named-to-generic widening. `try call()` removes only the final error
+field on success, preserving nested payloads and all preceding fields; on
+failure it returns the error with ordinary defaults for the enclosing result
+fields. See [explicit propagation](error_values.md#explicit-propagation-with-try).

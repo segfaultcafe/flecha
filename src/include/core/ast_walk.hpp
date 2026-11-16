@@ -27,6 +27,11 @@ inline void WalkAst(const AstNode& input,
             list(n.typeArguments);
             break;
         }
+        case AstNodeKind::TryExpression: {
+            NODE(TryExpression);
+            visit(n.Operand());
+            break;
+        }
         case AstNodeKind::AwaitExpression: {
             NODE(AwaitExpression);
             visit(n.Operand());

@@ -180,6 +180,7 @@ class SemanticAnalyzer final {
     void Report(diagnostics::DiagnosticCode code, source::SourceRange range,
                 std::string message);
 
+    SemanticType AnalyzeTry(const core::TryExpression& expression);
     SemanticType AnalyzeAsyncOperation(const core::Expression& expression,
                                        const core::Expression& operand,
                                        bool spawn);
@@ -222,6 +223,7 @@ class SemanticAnalyzer final {
     const Symbol* _buildSelf = nullptr;
     bool _allowBuildSelf = false;
     std::size_t _buildDepth = 0;
+    bool _inDefaultArgument = false;
     bool _analyzingCallCallee = false;
     bool _callCalleeCrashable = false;
 };

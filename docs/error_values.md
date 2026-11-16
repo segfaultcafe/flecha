@@ -95,9 +95,63 @@ i32 value, error failure = divide(1, 0);
 Tuple construction, return, assignment, and destructuring keep their existing
 single-evaluation rules. No compiler rule associates the first result's validity
 with the error result: the function and caller define that contract. Ignoring an
-error is permitted in this milestone; no `try`, `?`, or automatic propagation is
-introduced. Deferred calls capture error arguments by value at registration.
+error is permitted. Explicit `try` propagation is described below. Deferred calls
+capture error arguments by value at registration.
 Returning a failure runs normal scope-exit defers just like any other return.
+
+## Explicit propagation with `try`
+
+`try` is a prefix expression on an ordinary call returning `error`, a named
+error family, or a tuple whose final field is one of those error types:
+
+```flecha
+(i32, error) calculate(i32 a, i32 b) {
+    quotient := try divide(a, b);
+    return (quotient, none);
+}
+
+// Error-only calls yield no value on success.
+try save();
+// Multiple success fields remain available for destructuring.
+first, second := try read_pair();
+// Crashability is independent: the call still requires !.
+array := try parse_array_string!(text);
+```
+
+`none` means success. For `(T, error)`, success yields `T`; for
+`(A, B, ..., error)`, it yields the tuple `(A, B, ...)`. Nested tuples and errors
+inside those values are preserved. For an error-only call, success yields no
+value, so `try operation();` is a valid statement.
+
+Failure immediately returns the final error from the enclosing function. That
+function must itself return an error or a tuple with a final error field; its
+error type must accept the propagated error. Named errors may widen to generic
+`error`, but generic errors cannot narrow and distinct named families cannot
+convert. Other return fields receive their ordinary `none` defaults, exactly as
+in an explicit `return (none, ..., err)`. A field that cannot be defaulted (for
+example a reference) makes this implicit return invalid. Default constructors
+retain their ordinary effects and unsafe requirements.
+
+The operand is evaluated once, in normal expression order. Failure skips the
+rest of the expression and runs normal scope-exit defers and owned-value cleanup,
+including values moved into earlier arguments or partially constructed
+aggregates. Raw allocation ownership obligations remain the same as for an
+explicit return. An ordinary call's success fields are real values even when
+it returns an error, and managed fields are cleaned up on failure.
+
+`try` is allowed in function bodies, including methods and closures. Like an
+explicit early return, it cannot escape a `build` block. Default arguments have
+no caller return context and cannot contain `try`. Calls with another result
+shape, storing an error tuple and then applying `try` to that variable, and
+postfix `ordinary_call()?` are rejected. Existing ownership rules still apply:
+`try` cannot extract an immovable value from a returned tuple.
+
+This is an ordinary branch and return, not exception handling or runtime stack
+unwinding. `!` still denotes an unrecoverable crash. Async `.await?` is separate:
+it forwards the async execution failure and does not require an error field in
+the async function's completed result. Ordinary `try` inside an async function
+returns a completed error value; it does not turn that value into an execution
+failure. Async executable lowering remains gated.
 
 ## Representation and validation
 

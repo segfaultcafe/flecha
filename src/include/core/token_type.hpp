@@ -100,6 +100,7 @@ enum class TokenType {
     Unsafe,
     Async,
     Shoot,
+    Try,
     Export,
     Quiver,
     Extern,

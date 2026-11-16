@@ -266,6 +266,9 @@ Immediate checked destructuring and explicit .await? failure forwarding are
 selected. Void await returns only an error, with none meaning success. Normal
 scope exits with potentially unobserved child execution failures are rejected.
 There is no implicit exception propagation selected by this document.
+Ordinary returned errors use prefix try call(), requiring a compatible final
+error field in the enclosing completed result. This is distinct from .await?,
+which forwards execution failure independently of the written completed type.
 
 Cancellation is observed before first execution and at await/scope-drain
 boundaries. A pending operation must acknowledge safe retirement before its
