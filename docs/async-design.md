@@ -306,6 +306,51 @@ supported suspension remain ordinary expression-lowering work; no hidden async a
 Forwarded failure preserves its error through cleanup without reading the
 function's completed-value storage. Void awaits allocate no completed-value slot.
 
+## Internal resumable control lowering
+
+`LowerAsyncMachine` accepts only a verified plan published by semantic analysis,
+with no errors other than the async execution gate. It lowers continuations to
+an immutable internal machine and synthesizes cancellation paths for the active
+lexical scopes. `DumpAsyncMachine` exposes the control instructions for tests.
+This API is separate from the synchronous lowerer and has no command-line switch.
+
+`GenerateAsyncMachine` emits LLVM initialization and poll functions. The generated
+native control code saves its continuation on Pending, resumes the same operation,
+and caches terminal results. It tracks actual initialization and operation
+activation with frame-owned guard arrays; static may-initialization masks are
+not cleanup guards. Reservation precedes argument initialization. Argument move
+guards change when initialization transfers ownership, before polling can suspend,
+and not on reservation failure. Postorder analysis events do not evaluate async
+operands again. A completed value is published only on Ready.
+
+Cancellation before first execution skips the body. Cancellation at an await
+first retires the active operation, then cancels/drains lexical children and
+runs defers and guarded destruction from inner to outer scope. A pending drain
+cannot reach destruction. Cancellation during a return's drain discards the saved
+owned return value only after retirement. Inactive task scopes and defer stacks
+are skipped. Backend callbacks must be nonthrowing and must not allocate while
+reporting failure or retiring storage; invalid outcome encodings trap as an
+internal protocol error.
+
+This is **control lowering, not complete source-to-native async compilation**.
+The private backend binding still supplies synchronous value actions, concrete
+stable value storage, argument initialization, task admission, operation polling,
+result transfer, dynamic defer storage, and destruction. These callbacks are an
+internal code-generation boundary, not a public future API. Flow bindings consume
+postorder value events; they must not execute whole source expressions again.
+The first control form handles binary branches; unsupported continuation shapes
+fail internal lowering rather than silently selecting a branch.
+
+`AsyncLoweringTests` JIT-compile and execute the generated control functions with
+explicit test backend bindings. They cover pending/ready/failure paths, both shoot
+spellings, void completion, ordinary-error completion, ordinary `try` returns,
+loop reuse, ownership guards, nested cancellation, saved returns, real private
+executor wakeups, recursive computation frames, and injected frame-allocation
+failure. These are native control-flow tests, not end-to-end compiled Flecha
+programs. Production value bindings, target frame layout, generated `async main`,
+and full generated-program ownership/borrow validation remain required before
+removing `FLECHA-S0089` or the synchronous lowering gate.
+
 ## Implementation status
 
 | Area | Current status |
@@ -316,7 +361,7 @@ function's completed-value storage. Void awaits allocate no completed-value slot
 | Borrow analysis | Outcome-sensitive captures and argument moves, explicit join release, aggregate borrowed-result origins, and consumed-handle checks. Generated-frame/suspension validation remains. |
 | Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional creation, and separate allocation failure outcome. |
 | Frame/suspension planning | Verified internal plans, conservative stable slots, initialization/move alternatives, read liveness, and suspendable scope-exit continuations, saved execution errors and distinct failed terminals; deterministic dumps and corruption tests. |
-| Resumable code generation | Not implemented. Async declarations issue `FLECHA-S0089` and cannot reach synchronous lowering. |
+| Resumable code generation | Internal machine lowering and LLVM poll/resume control functions with native execution tests. Production value/operation bindings, concrete frame layout, and executable entry integration remain. Async declarations still issue `FLECHA-S0089` and cannot reach synchronous lowering. |
 | Ordinary returned-error propagation | Prefix `try` implemented through CFG, borrow/allocation analysis, synchronous lowering and native code generation; supports error-only and multiple success fields. |
 | Public Flecha futures/results | Checked destructuring, void await and `.await?` implemented in the frontend; public low-level future API and executable integration remain. |
 | Tooling | VS Code and Neovim syntax highlighting; checked expression types, success-condition and failure-forwarding hover, and binding navigation/occurrence tests. |
@@ -330,7 +375,7 @@ remain until lowering, cleanup, failure handling, and interoperability are
 validated together.
 
 With a testing build configured, run the focused checks with
-`ctest --test-dir <build-directory> -R 'AsyncFrontendTests|AsyncRuntimeTests|AsyncPlanTests' --output-on-failure`.
-The runtime tests use injected allocation failures and handwritten recursive
-frames. Generated state-machine coverage is still required before enabling
-async execution.
+`ctest --test-dir <build-directory> -R 'AsyncFrontendTests|AsyncRuntimeTests|AsyncPlanTests|AsyncLoweringTests' --output-on-failure`.
+Runtime and native control tests use injected allocation failures and recursive
+frames. Full source-to-native generated-program coverage is still required
+before enabling async execution.

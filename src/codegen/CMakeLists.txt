@@ -20,6 +20,7 @@ set(FLECHA_LLVM_RUNTIME_DIRS
 )
 
 add_library(llvm_codegen STATIC
+    async_code_generator.cpp
     llvm_code_generator.cpp
     native_compiler.cpp
 )
