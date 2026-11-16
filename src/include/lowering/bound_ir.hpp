@@ -54,6 +54,7 @@ enum class BoundNodeKind {
     FloatingConstantExpression,
     OverflowingArithmeticExpression,
     AssignmentExpression,
+    TryExpression,
     CallExpression,
     InterfaceCallExpression,
     IndirectCallExpression,
@@ -103,6 +104,20 @@ class BoundExpression : public BoundNode {
 class BoundStatement : public BoundNode {
    public:
     using BoundNode::BoundNode;
+};
+
+class BoundTryExpression final : public BoundExpression {
+   public:
+    BoundTryExpression(source::SourceRange range, semantic::SemanticType type,
+                       std::unique_ptr<BoundExpression> operand)
+        : BoundExpression(range, type), _operand(std::move(operand)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::TryExpression;
+    }
+    [[nodiscard]] const BoundExpression& Operand() const { return *_operand; }
+
+   private:
+    std::unique_ptr<BoundExpression> _operand;
 };
 
 class BoundLiteralExpression final : public BoundExpression {

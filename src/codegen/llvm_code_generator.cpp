@@ -1043,11 +1043,16 @@ llvm::AllocaInst* LlvmCodeGenerator::CreateOwnedStringTemporary(
 llvm::Value* LlvmCodeGenerator::EmitValueCopy(llvm::Value* value,
                                               semantic::SemanticType type,
                                               bool temporary) {
-    if (type.OwnsStorage() && !type.IsCopyable()) {
+    if ((type.OwnsStorage() || type.ContainsStructure()) &&
+        !type.IsCopyable()) {
         const auto fresh = _freshOwnedValues.find(value);
         if (fresh != _freshOwnedValues.end()) {
-            _builder.CreateStore(llvm::Constant::getNullValue(MapType(type)),
-                                 fresh->second);
+            if (type.ContainsStructure())
+                _builder.CreateStore(llvm::ConstantInt::getFalse(_context),
+                                     LifetimeFlag(fresh->second));
+            else
+                _builder.CreateStore(
+                    llvm::Constant::getNullValue(MapType(type)), fresh->second);
             _freshOwnedValues.erase(fresh);
             return value;
         }
@@ -1293,6 +1298,7 @@ void LlvmCodeGenerator::InitializeDeferredScope(const CleanupScope& scope) {
 
 bool LlvmCodeGenerator::EmitDefer(
     const lowering::BoundDeferStatement& statement) {
+    PendingOwnerScope pending(_pendingOwners);
     const CleanupScope& scope = *_cleanupScopes.back();
     std::size_t site = 0;
     while (scope.deferredCalls[site].statement != &statement) ++site;
@@ -1338,6 +1344,10 @@ bool LlvmCodeGenerator::EmitDefer(
              type.ContainsStructure()) &&
             !deferred.captureOwnershipTransfers[index])
             value = EmitValueCopy(value, type, false);
+        HoldPending(value, type.Kind() == semantic::SemanticTypeKind::StringView
+                               ? semantic::SemanticType(
+                                     semantic::SemanticTypeKind::String)
+                               : type);
         captured.push_back(value);
     }
     // This alloca is deliberately at registration, not in the entry block:
@@ -2472,9 +2482,11 @@ llvm::CallInst* LlvmCodeGenerator::EmitFunctionCall(
 llvm::Value* LlvmCodeGenerator::EmitIndirectCall(
     const lowering::BoundIndirectCallExpression& expression,
     llvm::Value* destination) {
+    PendingOwnerScope pending(_pendingOwners);
     llvm::Value* callable = EmitExpression(expression.Callee());
     if (callable == nullptr) return nullptr;
     const auto& signature = expression.Callee().Type().Signature();
+    if (signature.isOnce) HoldPending(callable, expression.Callee().Type());
     llvm::Value* invoke =
         _builder.CreateExtractValue(callable, 0, "function.invoke");
     llvm::Value* environment =
@@ -2495,6 +2507,8 @@ llvm::Value* LlvmCodeGenerator::EmitIndirectCall(
             CoerceValue(value, argument.Type(), signature.parameters[index]);
         if (value == nullptr) return nullptr;
         value = EmitValueCopy(value, signature.parameters[index], true);
+        if (!signature.parameters[index].IsCopyable())
+            HoldPending(value, signature.parameters[index]);
         if (value == nullptr) return nullptr;
         arguments.push_back(value);
     }
@@ -2512,6 +2526,7 @@ llvm::Value* LlvmCodeGenerator::EmitIndirectCall(
 llvm::Value* LlvmCodeGenerator::EmitInterfaceCall(
     const lowering::BoundInterfaceCallExpression& expression,
     llvm::Value* destination) {
+    PendingOwnerScope pending(_pendingOwners);
     const semantic::MethodContract& contract = expression.Contract();
     const semantic::MethodContract* origin = &contract;
     while (origin->inherited != nullptr) origin = origin->inherited;
@@ -2594,6 +2609,7 @@ llvm::Value* LlvmCodeGenerator::EmitInterfaceCall(
         value = CoerceValue(value, argument.Type(), parameterType);
         if (value == nullptr) return nullptr;
         value = EmitValueCopy(value, parameterType, true);
+        if (!parameterType.IsCopyable()) HoldPending(value, parameterType);
         if (value == nullptr) return nullptr;
         arguments.push_back(value);
     }
@@ -4249,6 +4265,7 @@ llvm::Value* LlvmCodeGenerator::EmitArray(
     const lowering::BoundArrayExpression& expression) {
     llvm::Type* type = MapType(expression.Type());
     if (!expression.IsRepeat()) {
+        PendingOwnerScope pending(_pendingOwners);
         llvm::Value* result = llvm::Constant::getNullValue(type);
         unsigned index = 0;
         for (const auto& element : expression.Elements()) {
@@ -4257,6 +4274,8 @@ llvm::Value* LlvmCodeGenerator::EmitArray(
             value = CoerceValue(value, element->Type(),
                                 *expression.Type().Target());
             if (value == nullptr) return nullptr;
+            if (!expression.Type().Target()->IsCopyable())
+                HoldPending(value, *expression.Type().Target());
             result = _builder.CreateInsertValue(result, value, index++,
                                                 "array.element");
         }
@@ -4461,6 +4480,129 @@ llvm::Value* LlvmCodeGenerator::EmitAddress(
             .Pointer());
 }
 
+void LlvmCodeGenerator::HoldPending(llvm::Value* value,
+                                    semantic::SemanticType type) {
+    if (type.OwnsStorage() || type.ContainsStructure())
+        _pendingOwners.emplace_back(value, type);
+}
+
+llvm::Value* LlvmCodeGenerator::EmitTry(
+    const lowering::BoundTryExpression& expression) {
+    using Kind = semantic::SemanticTypeKind;
+    const auto inputType = expression.Operand().Type();
+    llvm::Value* input = EmitExpression(expression.Operand());
+    if (!input) return nullptr;
+    if (!inputType.IsCopyable() &&
+        (inputType.OwnsStorage() || inputType.ContainsStructure()) &&
+        !_freshOwnedValues.contains(input)) {
+        // Built-in allocations yield a detached value, unlike ordinary calls.
+        auto* storage = CreateOwnedValueTemporary(inputType, "try.operand");
+        EmitValueStorageCleanup(storage, inputType);
+        _builder.CreateStore(input, storage);
+        if (inputType.ContainsStructure())
+            _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
+                                 LifetimeFlag(storage));
+        input = _builder.CreateLoad(MapType(inputType), storage);
+        _freshOwnedValues.emplace(input, storage);
+    }
+    const bool tuple = inputType.Kind() == Kind::Tuple;
+    const auto errorType = tuple ? inputType.Elements().back() : inputType;
+    llvm::Value* error =
+        tuple ? _builder.CreateExtractValue(
+                    input, inputType.Elements().size() - 1, "try.error")
+              : input;
+    llvm::Value* code = errorType.Kind() == Kind::ErrorValue
+                            ? _builder.CreateExtractValue(error, 1)
+                            : error;
+    auto* success =
+        llvm::BasicBlock::Create(_context, "try.success", _currentFunction);
+    auto* failure =
+        llvm::BasicBlock::Create(_context, "try.return", _currentFunction);
+    _builder.CreateCondBr(
+        _builder.CreateICmpEQ(code,
+                              llvm::Constant::getNullValue(code->getType())),
+        success, failure);
+    _builder.SetInsertPoint(failure);
+    // These detached values precede the failing operand. They must be released
+    // before constructing defaults, which can reuse the caller's return
+    // storage.
+    for (auto it = _pendingOwners.rbegin(); it != _pendingOwners.rend(); ++it) {
+        if (it->allocation) {
+            auto release = _module->getOrInsertFunction(
+                "flecha_runtime_v1_free",
+                llvm::FunctionType::get(llvm::Type::getVoidTy(_context),
+                                        {it->value->getType()}, false));
+            _builder.CreateCall(release, {it->value});
+        } else
+            EmitValueDestroy(it->value, it->type);
+    }
+    const bool returnTuple = _currentReturnType.Kind() == Kind::Tuple;
+    const auto destinationError =
+        returnTuple ? _currentReturnType.Elements().back() : _currentReturnType;
+    error = CoerceValue(error, errorType, destinationError);
+    if (!error) return nullptr;
+    llvm::Value* returned = error;
+    if (returnTuple) {
+        llvm::Value* storage =
+            _currentReturnType.ContainsStructure()
+                ? _returnStorage
+                : CreateTemporaryAlloca(MapType(_currentReturnType),
+                                        "try.return.value");
+        if (!EmitDefaultInto(storage, _currentReturnType, true)) return nullptr;
+        _builder.CreateStore(
+            error,
+            _builder.CreateStructGEP(MapType(_currentReturnType), storage,
+                                     _currentReturnType.Elements().size() - 1));
+        if (!_currentReturnType.ContainsStructure())
+            returned =
+                _builder.CreateLoad(MapType(_currentReturnType), storage);
+    }
+    EmitCleanupsTo(0);
+    if (_currentReturnType.ContainsStructure())
+        _builder.CreateRetVoid();
+    else
+        _builder.CreateRet(returned);
+    _builder.SetInsertPoint(success);
+    if (!tuple)
+        return llvm::ConstantInt::get(llvm::Type::getInt8Ty(_context), 0);
+    llvm::Value* value;
+    if (inputType.Elements().size() == 2)
+        value = _builder.CreateExtractValue(input, 0, "try.value");
+    else {
+        value = llvm::PoisonValue::get(MapType(expression.Type()));
+        for (std::size_t i = 0; i + 1 < inputType.Elements().size(); ++i)
+            value = _builder.CreateInsertValue(
+                value, _builder.CreateExtractValue(input, i), i);
+    }
+    if (!expression.Type().IsCopyable() &&
+        (expression.Type().OwnsStorage() ||
+         expression.Type().ContainsStructure())) {
+        // The call temporary owns every ordinary result, including on failure.
+        // Transfer only on success; retain its cleanup on the failure edge.
+        const auto fresh = _freshOwnedValues.find(input);
+        if (fresh == _freshOwnedValues.end())
+            return Fail("try operand has no owned result storage"), nullptr;
+        if (inputType.ContainsStructure())
+            _builder.CreateStore(llvm::ConstantInt::getFalse(_context),
+                                 LifetimeFlag(fresh->second));
+        else
+            _builder.CreateStore(
+                llvm::Constant::getNullValue(MapType(inputType)),
+                fresh->second);
+        _freshOwnedValues.erase(fresh);
+        auto* storage =
+            CreateOwnedValueTemporary(expression.Type(), "try.result");
+        EmitValueStorageCleanup(storage, expression.Type());
+        _builder.CreateStore(value, storage);
+        if (expression.Type().ContainsStructure())
+            _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
+                                 LifetimeFlag(storage));
+        value = _builder.CreateLoad(MapType(expression.Type()), storage);
+        _freshOwnedValues.emplace(value, storage);
+    }
+    return value;
+}
+
 llvm::Value* LlvmCodeGenerator::EmitExpression(
     const lowering::BoundExpression& expression) {
     switch (expression.Kind()) {
@@ -4501,7 +4643,11 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
         case lowering::BoundNodeKind::SliceExpression:
             return EmitSlice(
                 static_cast<const lowering::BoundSliceExpression&>(expression));
+        case lowering::BoundNodeKind::TryExpression:
+            return EmitTry(
+                static_cast<const lowering::BoundTryExpression&>(expression));
         case lowering::BoundNodeKind::TupleExpression: {
+            PendingOwnerScope pending(_pendingOwners);
             const auto& tuple =
                 static_cast<const lowering::BoundTupleExpression&>(expression);
             llvm::Value* result = llvm::PoisonValue::get(MapType(tuple.Type()));
@@ -4513,6 +4659,8 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                                     tuple.Type().Elements()[i]);
                 if (field == nullptr) return nullptr;
                 field = EmitValueCopy(field, tuple.Type().Elements()[i], true);
+                if (!tuple.Type().Elements()[i].IsCopyable())
+                    HoldPending(field, tuple.Type().Elements()[i]);
                 result = _builder.CreateInsertValue(result, field, i);
             }
             return result;
@@ -4813,8 +4961,13 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 if (!EmitInto(call, storage, call.Type())) return nullptr;
                 _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
                                      LifetimeFlag(storage));
-                return _builder.CreateLoad(MapType(call.Type()), storage);
+                llvm::Value* result =
+                    _builder.CreateLoad(MapType(call.Type()), storage);
+                if (!call.Type().IsCopyable())
+                    _freshOwnedValues.emplace(result, storage);
+                return result;
             }
+            PendingOwnerScope pending(_pendingOwners);
             std::vector<llvm::Value*> arguments;
             arguments.reserve(call.Arguments().size());
             std::size_t argumentIndex = 0;
@@ -4835,6 +4988,8 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                     value = EmitValueCopy(
                         value, call.Function().ParameterTypes()[argumentIndex],
                         true);
+                if (!argument->Type().IsCopyable())
+                    HoldPending(value, argument->Type());
                 arguments.push_back(value);
                 ++argumentIndex;
             }
@@ -4903,7 +5058,11 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 if (EmitInterfaceCall(call, storage) == nullptr) return nullptr;
                 _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
                                      LifetimeFlag(storage));
-                return _builder.CreateLoad(MapType(call.Type()), storage);
+                llvm::Value* result =
+                    _builder.CreateLoad(MapType(call.Type()), storage);
+                if (!call.Type().IsCopyable())
+                    _freshOwnedValues.emplace(result, storage);
+                return result;
             }
             llvm::Value* result = EmitInterfaceCall(call);
             if (!result || !call.Type().OwnsStorage()) return result;
@@ -4928,7 +5087,11 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                 if (!EmitIndirectCall(call, storage)) return nullptr;
                 _builder.CreateStore(llvm::ConstantInt::getTrue(_context),
                                      LifetimeFlag(storage));
-                return _builder.CreateLoad(MapType(call.Type()), storage);
+                llvm::Value* result =
+                    _builder.CreateLoad(MapType(call.Type()), storage);
+                if (!call.Type().IsCopyable())
+                    _freshOwnedValues.emplace(result, storage);
+                return result;
             }
             llvm::Value* result = EmitIndirectCall(call);
             if (!result || !call.Type().OwnsStorage()) return result;
@@ -5268,6 +5431,7 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
     if (expression.Kind() == Node::CallExpression && type.ContainsStructure()) {
         const auto& call =
             static_cast<const lowering::BoundCallExpression&>(expression);
+        PendingOwnerScope pending(_pendingOwners);
         std::vector<llvm::Value*> arguments{destination};
         for (std::size_t i = 0; i < call.Arguments().size(); ++i) {
             llvm::Value* argument = EmitExpression(*call.Arguments()[i]);
@@ -5275,6 +5439,8 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
             argument = CoerceValue(argument, call.Arguments()[i]->Type(),
                                    call.Function().ParameterTypes()[i]);
             if (!argument) return false;
+            if (!call.Function().ParameterTypes()[i].IsCopyable())
+                HoldPending(argument, call.Function().ParameterTypes()[i]);
             arguments.push_back(argument);
         }
         EmitFunctionCall(call.Function(), arguments);
@@ -5300,16 +5466,20 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
         type.ContainsStructure()) {
         const auto& tuple =
             static_cast<const lowering::BoundTupleExpression&>(expression);
-        for (std::size_t i = 0; i < tuple.Elements().size(); ++i)
-            if (!EmitInto(
-                    *tuple.Elements()[i],
-                    _builder.CreateStructGEP(MapType(type), destination, i),
-                    type.Elements()[i]))
+        PendingOwnerScope pending(_pendingOwners);
+        for (std::size_t i = 0; i < tuple.Elements().size(); ++i) {
+            llvm::Value* field =
+                _builder.CreateStructGEP(MapType(type), destination, i);
+            if (!EmitInto(*tuple.Elements()[i], field, type.Elements()[i]))
                 return false;
+            HoldPending(_builder.CreateLoad(MapType(type.Elements()[i]), field),
+                        type.Elements()[i]);
+        }
         return true;
     }
     if (expression.Kind() == Node::ArrayExpression &&
         type.ContainsStructure()) {
+        PendingOwnerScope pending(_pendingOwners);
         const auto& array =
             static_cast<const lowering::BoundArrayExpression&>(expression);
         if (array.IsRepeat() && !type.Target()->IsCopyable() &&
@@ -5345,6 +5515,8 @@ bool LlvmCodeGenerator::EmitInto(const lowering::BoundExpression& expression,
                      llvm::ConstantInt::get(indexType, i)});
                 if (!EmitInto(*array.Elements()[i], slot, *type.Target()))
                     return false;
+                HoldPending(_builder.CreateLoad(MapType(*type.Target()), slot),
+                            *type.Target());
             }
         return true;
     }
@@ -5395,6 +5567,8 @@ llvm::Value* LlvmCodeGenerator::EmitAllocation(
         success, failure);
     _builder.SetInsertPoint(success);
     if (!dynamic) {
+        PendingOwnerScope pending(_pendingOwners);
+        _pendingOwners.push_back({pointer, expression.ElementType(), true});
         if (!EmitInto(expression.Initializer(), pointer,
                       expression.ElementType()))
             return nullptr;

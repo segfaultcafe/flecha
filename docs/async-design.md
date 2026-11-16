@@ -2,8 +2,9 @@
 
 **Implementation in progress; async programs are not executable yet.** This
 summarizes the selected foundation of [IFG 2026-0007](IFG/IFG_2026_0007.txt).
-The IFG remains Draft while low-level future APIs and remaining failure details
-are under review. Checked result destructuring is implemented in the gated frontend.
+The IFG remains Draft while low-level future APIs and remaining interoperability details
+are under review. Checked result destructuring, void await, and explicit failure forwarding are
+implemented in the gated frontend.
 Async is not a v0.4 release requirement.
 
 ## Selected language operations
@@ -12,6 +13,7 @@ Async is not a v0.4 release requirement.
 | --- | --- |
 | `async` | Modifies a named function that can suspend. Its written return type is its completed value type. |
 | `.await` | Awaits an async call or joins a scoped child. Pending work suspends the current task. |
+| `.await?` | Awaits and forwards execution failure after scope cleanup; success yields the completed value, or no value for `void`. |
 | `shoot` or `>>-` | Creates and queues a child owned by the current lexical block. Both spellings have identical semantics. |
 
 A task is not an OS thread. All tasks in the initial model share one executor
@@ -64,8 +66,8 @@ form is `child, err := >>- calculate()`. These examples show the approved
 contract, not executable compiler support yet.
 
 On failure the value binding is uninitialized. The compiler must reject access
-until the corresponding error is proven to be `none`. Initially, fallible
-creation and await results require immediate destructuring. This is not an
+until the corresponding error is proven to be `none`. Fallible creation requires immediate checked destructuring. Non-void await
+supports either checked destructuring or explicit `.await?` forwarding. This is not an
 ordinary always-initialized `(T, error)` tuple: no dummy reference or owned value
 is constructed. An ordinary error returned by the function remains part of T,
 and is not silently flattened into the execution-failure slot. No public
@@ -79,7 +81,7 @@ identifier again, including in existing synchronous process APIs.
 
 The frontend uses an internal `CheckedAsyncResult` semantic kind, displayed as
 `checked-async<T>` in expression type records. It is not a tuple or a public
-wrapper. Immediate destructuring currently requires two fresh, named bindings
+wrapper. Checked two-result destructuring currently requires two fresh, named bindings
 with `:=`; discards, reused destinations, storing, forwarding, returning, and
 nested creation/await shorthand are diagnosed. The AST retains its existing
 destructure, spawn, and await nodes; the semantic model links each success-only
@@ -103,17 +105,72 @@ non-default-constructible, move-only completions containing ordinary errors to
 check that failure leaves result storage untouched and cleans up exactly once.
 
 Allocation no longer adds a crashable effect or changes callee lookup. Explicit
-crashable callees retain the ordinary `!` call/effect rules. Void await completion
-and normal scope exits with potentially unobserved child execution failures
-receive explicit unsupported diagnostics. Early-exit cancellation/drain planning
-is preserved. Failure forwarding and argument-evaluation timing remain unresolved;
-this frontend analysis does not select an executable evaluation schedule.
-Calls, assignments, increments, construction, closures, or ownership moves nested
-inside argument preparation must first be bound in a separate statement. Simple
-prepared bindings, literals, and borrow/projection expressions remain accepted.
-This restriction also applies to the receiver of a directly awaited/spawned
-method; it avoids selecting the order of argument effects and fallible frame
-allocation while that policy remains open.
+crashable callees retain the ordinary `!` call/effect rules.
+
+### Void completion and explicit failure forwarding
+
+A void await produces only an execution error: `err := operation().await;` or
+`err := child.await;`. `none` means success. There is no completed-value binding
+or dummy `void` value.
+
+The postfix `.await?` forwards execution failure as the enclosing async
+function's execution failure. On success its type is the callee's completed
+`T`, including ordinary errors inside `T`; it does not flatten or forward them.
+For example:
+
+```flecha
+async i32 calculate() {
+    value := operation().await?;
+    return value;
+}
+
+async void finish() {
+    operationReturningVoid().await?;
+}
+```
+
+`child.await?;` is also valid for a void child. Void forwarding is a standalone
+statement with no binding or returned value. Failure exits cancel and drain
+owned children from inner to outer scope, run deferred calls and guarded
+cleanup, then complete with the original execution error. They construct no
+completed value. A forwarded failure is distinct from returning an ordinary
+error as a successful completed value. Joining consumes a child on either
+outcome.
+
+This frontend chunk supports `.await?` as a whole initializer, destructuring
+value, return value, or expression statement, allowing parentheses around the
+whole operation. Nested suspension inside a larger expression is diagnosed
+until temporary storage and evaluation sequencing are lowered. `?` is not a
+general error operator and does not apply to `shoot` or ordinary calls.
+Ordinary returned errors use prefix `try call()` instead; see
+[error propagation](error_values.md#explicit-propagation-with-try). `try` requires
+a compatible final error field in the enclosing completed return type, while
+`.await?` forwards execution failure independently of that type. Ordinary `try`
+returns take the normal return cleanup path, storing the completed error result
+before cancellation/draining; they do not enter the failed terminal state.
+`AwaitResult` records preserve completed types, destinations, and forwarding;
+frame plans have a separate saved execution error and failed terminal state.
+
+Normal scope exits must not leave potentially unobserved child execution
+failures: explicitly await the child and inspect its error or use `.await?`.
+Such unobserved exits are rejected, rather than implicitly forwarding failures.
+Early exits retain cancellation/drain semantics.
+
+### Argument evaluation ordering
+
+Frame storage and scheduler admission resources must be reserved before
+argument evaluation, including method receiver preparation. If reservation
+fails, argument expressions do not run, no argument ownership transfers, and
+no task handle is published. Once reservation succeeds, argument effects are
+not rolled back if execution later fails. This is the approved ordering for
+future executable lowering, not an implemented evaluation schedule.
+
+Until allocation-first lowering is implemented, calls, assignments, increments,
+construction, closures, or ownership moves nested inside argument preparation
+must first be bound in a separate statement. Simple prepared bindings,
+literals, and borrow/projection expressions remain accepted. This restriction
+also applies to directly awaited/spawned method receivers. Effects in a prior
+statement naturally happen before a later shoot/await allocation attempt.
 
 Root allocation failure has a separate approved policy: the generated entry
 wrapper reports a diagnostic and returns a nonzero process status before user
@@ -122,8 +179,7 @@ code executes or argument ownership transfers.
 The private runtime reserves scheduler and stable frame storage before
 transferring arguments or publishing a task. Failure leaves ownership with the
 caller. Initialization transfers already prepared arguments without executing
-the async body. Public argument-evaluation rules still need specification alongside the
-selected checked-destructuring contract. Failure reporting and retirement
+the async body. Generated argument preparation must follow the allocation-first rule above. Failure reporting and retirement
 must work without a further successful allocation.
 
 ## Lexical scope ownership and cleanup
@@ -149,8 +205,9 @@ exit can wait indefinitely for a child that does not reach a cancellation point.
 
 An ordinary error value alone neither cancels siblings nor propagates
 implicitly. Returning an error follows the same early-exit cleanup rules as
-any other return. Public handling of an unobserved execution failure during
-implicit scope joining remains to be specified with the result API.
+any other return. Normal scope exit with a potentially unobserved child execution failure is
+rejected; explicitly await it. `.await?` observes and forwards execution failure
+through the same early-exit cleanup sequence.
 
 ## Scheduling and low-level interoperability
 
@@ -227,7 +284,8 @@ A cleanup guard must use the actual runtime state, not treat a static "possibly
 initialized" result as a value. Operation and task-scope records likewise need
 runtime activation guards. The CFG outcome events describe analysis facts,
 not an executable argument-evaluation schedule; future lowering must implement
-transactional allocation/transfer and guarded polling explicitly.
+allocation before argument evaluation, transactional transfer, and guarded
+polling explicitly.
 
 Scope exits expand into inner-to-outer cancellation requests (for early exits),
 draining, synchronous deferred calls, and guarded owner destruction. A drain
@@ -244,22 +302,24 @@ initialization/read consistency, suspension retention, and retirement-before-
 cleanup. It also checks correspondence to the validated CFG and storage plan.
 This establishes an inspectable input for subsequent lowering, not correctness
 of generated state machines. General expression temporaries that cannot span a
-supported suspension remain ordinary expression-lowering work; no hidden async
-argument effects or unresolved void/implicit-join policies are enabled.
+supported suspension remain ordinary expression-lowering work; no hidden async argument effects or nested expression suspension are enabled.
+Forwarded failure preserves its error through cleanup without reading the
+function's completed-value storage. Void awaits allocate no completed-value slot.
 
 ## Implementation status
 
 | Area | Current status |
 | --- | --- |
 | Parser and AST | Named async functions, postfix await, `shoot`/`>>-`, AST traversal. |
-| Semantic records | Async callable effect, scoped task type, explicit checked-result kind and value/error binding records; immediate destructuring and unsupported-use diagnostics. |
-| Scope analysis | Success/failure CFG paths and conditional definite assignment; inner-to-outer join/cancel-and-drain plans, unsupported implicit-join failure and cross-scope jump diagnostics. |
+| Semantic records | Async callable effect, scoped task type, explicit checked-result kind, value/error bindings, and void/forwarding await records; unsupported-use diagnostics. |
+| Scope analysis | Success/failure CFG paths and conditional definite assignment; inner-to-outer join/cancel-and-drain plans, forwarded-failure exits, unobserved child-failure and cross-scope jump diagnostics. |
 | Borrow analysis | Outcome-sensitive captures and argument moves, explicit join release, aggregate borrowed-result origins, and consumed-handle checks. Generated-frame/suspension validation remains. |
 | Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional creation, and separate allocation failure outcome. |
-| Frame/suspension planning | Verified internal plans, conservative stable slots, initialization/move alternatives, read liveness, and suspendable scope-exit continuations; deterministic dumps and corruption tests. |
+| Frame/suspension planning | Verified internal plans, conservative stable slots, initialization/move alternatives, read liveness, and suspendable scope-exit continuations, saved execution errors and distinct failed terminals; deterministic dumps and corruption tests. |
 | Resumable code generation | Not implemented. Async declarations issue `FLECHA-S0089` and cannot reach synchronous lowering. |
-| Public Flecha futures/results | Checked destructuring implemented in the frontend; public low-level future API and executable integration remain. |
-| Tooling | VS Code and Neovim syntax highlighting; checked expression types, success-condition hover, and binding navigation/occurrence tests. |
+| Ordinary returned-error propagation | Prefix `try` implemented through CFG, borrow/allocation analysis, synchronous lowering and native code generation; supports error-only and multiple success fields. |
+| Public Flecha futures/results | Checked destructuring, void await and `.await?` implemented in the frontend; public low-level future API and executable integration remain. |
+| Tooling | VS Code and Neovim syntax highlighting; checked expression types, success-condition and failure-forwarding hover, and binding navigation/occurrence tests. |
 
 Tests cover ready and delayed synthetic events, registration-time notifications,
 stale callbacks, reentrancy, cancellation, allocation failure injection, result

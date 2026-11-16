@@ -1,4 +1,5 @@
 add_executable(test_flecha
+    test_try.cpp
     test_async_runtime.cpp
     test_async.cpp
     test_async_plan.cpp
@@ -2163,3 +2164,8 @@ add_test(NAME AsyncFixtures.reject_unchecked_value
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async/unchecked.fl
         -DEXPECTED_DIAGNOSTIC=FLECHA-S0021
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME AsyncFixtures.forwarding_remains_gated
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async/forwarding.fl
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_checked_async.cmake)

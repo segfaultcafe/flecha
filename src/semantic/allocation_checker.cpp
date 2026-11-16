@@ -1257,6 +1257,11 @@ class AllocationChecker final {
     // evaluated; the statement boundary then drops all remaining temporaries.
     void ForgetChildren(State& state, const core::Expression& expression) {
         switch (expression.Kind()) {
+            case AstNodeKind::TryExpression:
+                state.values.erase(
+                    &static_cast<const core::TryExpression&>(expression)
+                         .Operand());
+                break;
             case AstNodeKind::ParenthesizedExpression:
                 state.values.erase(
                     &static_cast<const core::ParenthesizedExpression&>(
@@ -1327,6 +1332,17 @@ class AllocationChecker final {
 
     Value Evaluate(State& state, const core::Expression& expression) {
         switch (expression.Kind()) {
+            case AstNodeKind::TryExpression: {
+                const auto& attempt =
+                    static_cast<const core::TryExpression&>(expression);
+                Value result = Get(state, attempt.Operand());
+                if (result.kind != ValueKind::Aggregate ||
+                    result.elements.empty())
+                    return {};
+                result.elements.pop_back();
+                if (result.elements.size() == 1) return result.elements.front();
+                return result;
+            }
             case AstNodeKind::LiteralExpression: {
                 const auto& literal =
                     static_cast<const core::LiteralExpression&>(expression);
@@ -1694,6 +1710,10 @@ class AllocationChecker final {
     void Drop(State& state, const core::Expression& expression) {
         state.values.erase(&expression);
         switch (expression.Kind()) {
+            case AstNodeKind::TryExpression:
+                Drop(state, static_cast<const core::TryExpression&>(expression)
+                                .Operand());
+                break;
             case AstNodeKind::ParenthesizedExpression:
                 Drop(state, static_cast<const core::ParenthesizedExpression&>(
                                 expression)
@@ -2044,10 +2064,39 @@ class AllocationChecker final {
                         result = Get(output, *node.memoryReturn->Value());
                         Drop(output, *node.memoryReturn->Value());
                     }
+                    if (node.propagationReturn) {
+                        Value source =
+                            Get(output, node.propagationReturn->Operand());
+                        for (const auto* allocation :
+                             node.abandonedAllocations) {
+                            if (auto resource =
+                                    output.resources.find(allocation);
+                                resource != output.resources.end())
+                                resource->second.live = false;
+                            Drop(output, *allocation);
+                        }
+                        Value error = source.kind == ValueKind::Aggregate &&
+                                              !source.elements.empty()
+                                          ? source.elements.back()
+                                          : source;
+                        const SemanticType returned =
+                            Function(function)->ReturnType();
+                        result = error;
+                        if (returned.Kind() == SemanticTypeKind::Tuple) {
+                            result.kind = ValueKind::Aggregate;
+                            result.elements.assign(returned.Elements().size(),
+                                                   Value{ValueKind::Null});
+                            result.elements.back() = error;
+                        }
+                        Drop(output, node.propagationReturn->Operand());
+                    }
                     const core::AstNode& at =
-                        node.memoryReturn ? static_cast<const core::AstNode&>(
-                                                *node.memoryReturn)
-                                          : function.Body();
+                        node.propagationReturn
+                            ? static_cast<const core::AstNode&>(
+                                  *node.propagationReturn)
+                        : node.memoryReturn ? static_cast<const core::AstNode&>(
+                                                  *node.memoryReturn)
+                                            : function.Body();
                     // The synthetic fallthrough exit has no scopes. Usually
                     // cleanup already ran on its incoming edge.
                     for (State& finished : Leave(std::move(output), node, {})) {
@@ -2098,6 +2147,18 @@ class AllocationChecker final {
                         ((condition.kind == ValueKind::True && edge != 0) ||
                          (condition.kind == ValueKind::False && edge != 1)))
                         continue;
+                    if (node.propagationDispatch) {
+                        Value source =
+                            Get(output, node.propagationDispatch->Operand());
+                        const Value error =
+                            source.kind == ValueKind::Aggregate &&
+                                    !source.elements.empty()
+                                ? source.elements.back()
+                                : source;
+                        if ((error.kind == ValueKind::Null && edge != 0) ||
+                            (error.kind == ValueKind::Error && edge != 1))
+                            continue;
+                    }
                     State outgoing = output;
                     if (node.condition) {
                         const auto& conditionExpression =

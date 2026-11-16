@@ -779,6 +779,12 @@ different static error types, and error versus literal `none`, are unequal.
 Error values support ordinary const, aggregate, and borrowing rules. They are
 not eligible for initializer omission; spell `= none` to initialize success.
 They are allocation-free and copyable, with no payloads or automatic propagation.
+Explicit `try call()` propagates an error-only result or the final error field of
+a tuple. Success yields the preceding field(s), or no value for an error-only
+call. Failure returns that error with `none` defaults for other result fields
+and normal scope cleanup. The enclosing result must end in a compatible error
+type and its other fields must support those defaults. `try` does not recover
+from crashable `!` calls. Async `.await?` separately forwards execution failure.
 See [error_values.md](docs/error_values.md) for implemented behavior and the
 compiler-private representation. The allocator example above still depends on
 future allocation APIs.
@@ -1289,7 +1295,6 @@ The following decisions are intentionally not finalized:
 - compile-time execution and metaprogramming;
 - tuple layout and ABI rules;
 - optional values distinct from primitive zero;
-- error propagation syntax;
 - generator and coroutine syntax using the reserved `yield` keyword;
 - concurrency and memory-model rules;
 - cross-compilation targets and stable aggregate calling conventions;

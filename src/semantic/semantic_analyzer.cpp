@@ -1753,11 +1753,8 @@ void SemanticAnalyzer::AnalyzeDestructure(
         operation =
             &static_cast<const core::ParenthesizedExpression*>(operation)
                  ->Inner();
-    const auto previousChecked = _checkedAsyncExpression;
-    _checkedAsyncExpression = operation;
-    const SemanticType value =
-        AnalyzeExpression(statement.Value(), SemanticType(expected));
-    _checkedAsyncExpression = previousChecked;
+    const SemanticType value = AnalyzeImmediateAsync(
+        statement.Value(), SemanticType(expected), AsyncResultUse::Destructure);
     const bool checked = value.Kind() == SemanticTypeKind::CheckedAsyncResult;
     if (!checked && value.Kind() != SemanticTypeKind::Tuple) {
         if (!value.IsError())
@@ -3004,7 +3001,9 @@ void SemanticAnalyzer::AnalyzeDefaultArguments(
             function.Parameters()[index]->DefaultValue();
         if (value == nullptr) continue;
         const SemanticType expected = functionSymbol->ParameterTypes()[index];
+        _inDefaultArgument = true;
         const SemanticType actual = AnalyzeExpression(*value, expected);
+        _inDefaultArgument = false;
         CheckTransfer(*value, expected,
                       functionSymbol->ParameterContract(index) ==
                           core::OwnershipContract::Own);
@@ -3583,7 +3582,8 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                 MarkDirectConstruction(_directConstructions,
                                        *variable.Initializer(), true);
                 initializerType =
-                    AnalyzeExpression(*variable.Initializer(), declaredType);
+                    AnalyzeImmediateAsync(*variable.Initializer(), declaredType,
+                                          AsyncResultUse::Binding);
                 MarkDirectConstruction(_directConstructions,
                                        *variable.Initializer(), false);
             }
@@ -3649,6 +3649,22 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                     SymbolKind::LocalVariable, variable.Name(), variableType,
                     variable.NameRange(), !variableType.IsConst()),
                 variable);
+            if (symbol != nullptr && variable.Initializer()) {
+                const core::Expression* initializer = variable.Initializer();
+                while (initializer->Kind() ==
+                       core::AstNodeKind::ParenthesizedExpression)
+                    initializer =
+                        &static_cast<const core::ParenthesizedExpression&>(
+                             *initializer)
+                             .Inner();
+                if (initializer->Kind() == core::AstNodeKind::AwaitExpression) {
+                    const auto* await =
+                        static_cast<const core::AwaitExpression*>(initializer);
+                    if (auto found = _model._awaitResults.find(await);
+                        found != _model._awaitResults.end())
+                        found->second.destination = symbol;
+                }
+            }
             if (symbol != nullptr) RecordCleanupEffects(variableType);
             if (symbol != nullptr && variable.Initializer() != nullptr &&
                 variableType.Kind() == SemanticTypeKind::StringView &&
@@ -3782,7 +3798,8 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
             const auto& value =
                 static_cast<const core::ExpressionStatement&>(statement)
                     .Value();
-            const SemanticType type = AnalyzeExpression(value);
+            const SemanticType type = AnalyzeImmediateAsync(
+                value, SemanticType::Error(), AsyncResultUse::Discard);
             const core::Expression* effect = &value;
             while (effect->Kind() == core::AstNodeKind::ParenthesizedExpression)
                 effect =
@@ -3809,7 +3826,8 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
             if (returnStatement.Value()) {
                 MarkDirectConstruction(_directConstructions,
                                        *returnStatement.Value(), true);
-                actual = AnalyzeExpression(*returnStatement.Value(), expected);
+                actual = AnalyzeImmediateAsync(
+                    *returnStatement.Value(), expected, AsyncResultUse::Return);
                 MarkDirectConstruction(_directConstructions,
                                        *returnStatement.Value(), false);
             }
@@ -3984,6 +4002,90 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
     }
 }
 
+SemanticType SemanticAnalyzer::AnalyzeTry(
+    const core::TryExpression& expression) {
+    const SemanticType input = AnalyzeExpression(expression.Operand());
+    const core::Expression* call = &expression.Operand();
+    while (call->Kind() == core::AstNodeKind::ParenthesizedExpression)
+        call =
+            &static_cast<const core::ParenthesizedExpression&>(*call).Inner();
+    if (call->Kind() != core::AstNodeKind::CallExpression &&
+        call->Kind() != core::AstNodeKind::MemberCallExpression) {
+        Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
+               "try requires an ordinary error-returning call; use .await? for "
+               "async execution failure");
+        return SemanticType::Error();
+    }
+    const auto errorOf = [](SemanticType type) {
+        if (type.Kind() == SemanticTypeKind::Tuple && !type.Elements().empty())
+            return type.Elements().back();
+        return type;
+    };
+    const SemanticType error = errorOf(input);
+    if (!error.IsErrorValue()) {
+        if (!input.IsError())
+            Report(diagnostics::DiagnosticCode::InvalidOperand,
+                   expression.Range(),
+                   "try requires error or a tuple with a final error field");
+        return SemanticType::Error();
+    }
+    if (!_currentFunction || _buildDepth || _inDefaultArgument) {
+        Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
+               "try is only permitted in a function body, outside build blocks "
+               "and default arguments");
+        return SemanticType::Error();
+    }
+    const SemanticType destination = _currentFunction->ReturnType();
+    const SemanticType destinationError = errorOf(destination);
+    if (!destinationError.IsErrorValue()) {
+        Report(diagnostics::DiagnosticCode::InvalidReturnType,
+               expression.Range(),
+               "try requires the enclosing function to return error or a tuple "
+               "with a final error field");
+        return SemanticType::Error();
+    }
+    if (!IsAssignable(destinationError, error))
+        Report(diagnostics::DiagnosticCode::IncompatibleType,
+               expression.Range(),
+               "cannot propagate " + error.Name() + " into " +
+                   destinationError.Name());
+    // The implicit return has the same defaults and effects as (none, ...,
+    // error).
+    const auto defaultable = [&](const auto& self, SemanticType type) -> bool {
+        if (type.Kind() == SemanticTypeKind::Tuple) {
+            for (const auto& element : type.Elements())
+                if (!self(self, element)) return false;
+            return true;
+        }
+        if (type.Kind() == SemanticTypeKind::Array)
+            return self(self, *type.Target());
+        return IsAssignable(type, SemanticType(SemanticTypeKind::None));
+    };
+    if (destination.Kind() == SemanticTypeKind::Tuple)
+        for (std::size_t i = 0; i + 1 < destination.Elements().size(); ++i) {
+            const SemanticType value = destination.Elements()[i];
+            if (!defaultable(defaultable, value))
+                Report(diagnostics::DiagnosticCode::InvalidReturnType,
+                       expression.Range(),
+                       "try cannot default the failure return field of type '" +
+                           value.Name() + "'");
+            if (value.IsImmovable()) RequireUnsafe(expression.Range());
+            WarnForNontrivialDefault(value, expression.Range());
+            RecordZeroDependency(value);
+            RecordCleanupEffects(value);
+        }
+    if (input.IsImmovable())
+        Report(
+            diagnostics::DiagnosticCode::NonCopyableValue, expression.Range(),
+            "try cannot extract an immovable completion from a returned tuple");
+    if (input.Kind() != SemanticTypeKind::Tuple)
+        return SemanticType(SemanticTypeKind::Void);
+    std::vector<SemanticType> values(input.Elements().begin(),
+                                     input.Elements().end() - 1);
+    if (values.size() == 1) return values.front();
+    return SemanticType(std::move(values));
+}
+
 SemanticType SemanticAnalyzer::AnalyzeExpression(
     const core::Expression& expression, SemanticType expected) {
     SemanticType type = SemanticType::Error();
@@ -4037,6 +4139,10 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
         case core::AstNodeKind::AssignmentExpression:
             type = AnalyzeAssignment(
                 static_cast<const core::AssignmentExpression&>(expression));
+            break;
+        case core::AstNodeKind::TryExpression:
+            type =
+                AnalyzeTry(static_cast<const core::TryExpression&>(expression));
             break;
         case core::AstNodeKind::AwaitExpression:
             type = AnalyzeAsyncOperation(expression,
@@ -4110,6 +4216,23 @@ void SemanticAnalyzer::ValidateAsyncCall(
                "indirect async calls and async interface dispatch are not supported yet");
 }
 
+SemanticType SemanticAnalyzer::AnalyzeImmediateAsync(
+    const core::Expression& expression, SemanticType expected,
+    AsyncResultUse use) {
+    const core::Expression* root = &expression;
+    while (root->Kind() == core::AstNodeKind::ParenthesizedExpression)
+        root =
+            &static_cast<const core::ParenthesizedExpression&>(*root).Inner();
+    const auto* previous = _checkedAsyncExpression;
+    const auto previousUse = _asyncResultUse;
+    _checkedAsyncExpression = root;
+    _asyncResultUse = use;
+    const auto type = AnalyzeExpression(expression, expected);
+    _checkedAsyncExpression = previous;
+    _asyncResultUse = previousUse;
+    return type;
+}
+
 SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
     const core::Expression& expression, const core::Expression& operand,
     bool spawn) {
@@ -4121,10 +4244,16 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
         inner = &static_cast<const core::ParenthesizedExpression*>(inner)->Inner();
     const core::Expression* previous = _asyncOperand;
     _asyncOperand = inner;
-    if (_checkedAsyncExpression != &expression)
-        Report(diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),
-               "async creation and await require immediate checked "
-               "destructuring: value, error := operation");
+    const bool immediate = _checkedAsyncExpression == &expression;
+    const bool forwards =
+        !spawn &&
+        static_cast<const core::AwaitExpression&>(expression).ForwardsFailure();
+    if (!immediate || (spawn && _asyncResultUse != AsyncResultUse::Destructure))
+        Report(
+            diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),
+            "async operations require immediate checked bindings; .await? "
+            "must be a whole initializer, destructuring value, return value, "
+            "or expression statement (nested suspension is not supported yet)");
     const SemanticType value = AnalyzeExpression(operand);
     _asyncOperand = previous;
     bool asyncCall = false;
@@ -4175,7 +4304,8 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
                     case core::AstNodeKind::NameExpression:
                         // A direct prepared binding transfers only on creation
                         // success. Moves used to construct an argument first
-                        // need the still-unselected evaluation-failure policy.
+                        // need allocation-first lowering before they can run
+                        // here.
                         unsupported |=
                             &node != root &&
                             _model.TransferOf(
@@ -4187,11 +4317,12 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
                 }
             });
             if (unsupported)
-                Report(diagnostics::DiagnosticCode::InvalidAsync,
-                       argument->Range(),
-                       "argument-preparation effects on async creation failure "
-                       "are not specified yet; prepare this argument in a "
-                       "separate statement before shoot or await");
+                Report(
+                    diagnostics::DiagnosticCode::InvalidAsync,
+                    argument->Range(),
+                    "argument-preparation effects require allocation-first "
+                    "lowering, which is not implemented yet; prepare this "
+                    "argument in a separate statement before shoot or await");
         }
     }
     if (spawn) {
@@ -4214,12 +4345,29 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
     }
     if (value.Kind() == SemanticTypeKind::Task || asyncCall) {
         const SemanticType completed = asyncCall ? value : *value.Target();
-        if (completed.Kind() == SemanticTypeKind::Void) {
+        const bool isVoid = completed.Kind() == SemanticTypeKind::Void;
+        if (forwards || isVoid) {
+            if (isVoid &&
+                (forwards ? _asyncResultUse != AsyncResultUse::Discard
+                          : _asyncResultUse != AsyncResultUse::Binding)) {
+                Report(diagnostics::DiagnosticCode::InvalidAsync,
+                       expression.Range(),
+                       "void await requires err := operation.await or the "
+                       "standalone statement operation.await?;");
+                return SemanticType::Error();
+            }
+            if (immediate)
+                _model._awaitResults.insert_or_assign(
+                    &static_cast<const core::AwaitExpression&>(expression),
+                    AwaitResult{completed, nullptr, forwards});
+            return forwards ? completed
+                            : SemanticType(SemanticTypeKind::ErrorValue);
+        }
+        if (_asyncResultUse != AsyncResultUse::Destructure)
             Report(diagnostics::DiagnosticCode::InvalidAsync,
                    expression.Range(),
-                   "checked await of void completion is not specified yet");
-            return SemanticType::Error();
-        }
+                   "non-void await requires value, error := operation.await "
+                   "or .await? to forward execution failure");
         return SemanticType(SemanticTypeKind::CheckedAsyncResult, completed);
     }
     if (!value.IsError())
@@ -8144,6 +8292,15 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
     while (source->Kind() == core::AstNodeKind::ParenthesizedExpression)
         source =
             &static_cast<const core::ParenthesizedExpression&>(*source).Inner();
+    if (source->Kind() == core::AstNodeKind::AwaitExpression &&
+        static_cast<const core::AwaitExpression&>(*source).ForwardsFailure()) {
+        if (type.IsImmovable())
+            Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                   expression.Range(),
+                   "an immovable async completion cannot be transferred");
+        _model._transfers.insert_or_assign(&expression, TransferKind::Direct);
+        return;
+    }
     const bool semanticDefault = IsNoneLiteral(*source);
     const SemanticType sourceType = _model.TypeOf(expression);
     if (CanImplicitlyConvertInterfaceReference(sourceType, type))
@@ -8199,7 +8356,8 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
             type, consumingOwnership);
         return;
     }
-    if (expression.Kind() == core::AstNodeKind::BuildExpression ||
+    if (expression.Kind() == core::AstNodeKind::TryExpression ||
+        expression.Kind() == core::AstNodeKind::BuildExpression ||
         expression.Kind() == core::AstNodeKind::CallExpression ||
         expression.Kind() == core::AstNodeKind::AnonymousFunctionExpression) {
         _model._transfers.insert_or_assign(&expression, TransferKind::Direct);

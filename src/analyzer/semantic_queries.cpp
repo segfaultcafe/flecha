@@ -298,10 +298,21 @@ std::optional<SemanticQueries::Match> SemanticQueries::Find(
 
     for (const auto& [expression, type] : _model._types) {
         if (type.IsError()) continue;
+        std::string displayType = type.Name();
+        if (expression->Kind() == core::AstNodeKind::TryExpression)
+            displayType += " (propagates returned error)";
+        if (expression->Kind() == core::AstNodeKind::AwaitExpression) {
+            const auto& await =
+                static_cast<const core::AwaitExpression&>(*expression);
+            if (const auto* result = _model.AwaitResultFor(await))
+                displayType += result->forwardsFailure
+                                   ? " (forwards execution failure)"
+                                   : " (none means success)";
+        }
         consider({expression->Range(),
                   {},
                   {},
-                  type.Name(),
+                  std::move(displayType),
                   SemanticItemKind::Expression,
                   TargetKind::None,
                   nullptr});

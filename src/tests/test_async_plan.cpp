@@ -423,9 +423,9 @@ TEST(AsyncPlanTests, CompletionTypesAndChildConsumptionAreExplicit) {
     EXPECT_TRUE(create.checked->transactionalCreation);
     EXPECT_EQ(create.checked->callee->Name(), "f");
     EXPECT_EQ(await.checked->consumedChild, Slot(plan, "child"));
-    EXPECT_EQ(plan.slots[await.checked->value].type.Kind(),
+    EXPECT_EQ(plan.slots[*await.checked->value].type.Kind(),
               SemanticTypeKind::Tuple);
-    EXPECT_EQ(plan.slots[await.checked->value].type.Elements()[1].Kind(),
+    EXPECT_EQ(plan.slots[*await.checked->value].type.Elements()[1].Kind(),
               SemanticTypeKind::ErrorValue);
     EXPECT_NE(await.checked->value, await.checked->error);
 }
@@ -528,4 +528,154 @@ TEST(AsyncPlanTests, ConflictingBorrowedOwningSliceAccessPreventsPlanning) {
             return diagnostic.code == DiagnosticCode::BorrowConflict;
         }));
 }
+TEST(AsyncPlanTests, ForwardedFailureHasAnErrorTerminalAndNoCompletedValue) {
+    Analysis analysis(answer + "async i32 main() { return answer().await?; }");
+    analysis.ExpectValid();
+    ASSERT_NE(analysis.Plan(), nullptr);
+    const auto& plan = *analysis.Plan();
+    ASSERT_TRUE(plan.executionError);
+    ASSERT_TRUE(plan.returnValue);
+    const auto& await = State(plan, AsyncStateKind::DirectAwait);
+    ASSERT_NE(await.awaitOperation, nullptr);
+    ASSERT_TRUE(await.checked);
+    ASSERT_TRUE(await.checked->value);
+    EXPECT_EQ(await.checked->error, *plan.executionError);
+    const auto& failure = plan.states[await.edges[1].target];
+    EXPECT_TRUE(failure.writes.size() == 1 &&
+                failure.writes.front() == *plan.executionError);
+    EXPECT_FALSE(Contains(failure.writes, *await.checked->value));
+    const auto& failed = State(plan, AsyncStateKind::Failed);
+    EXPECT_EQ(failed.read, plan.executionError);
+    EXPECT_EQ(failed.initialization[*plan.returnValue], 1);
+    EXPECT_EQ(failed.initialization[*plan.executionError], 2);
+    const auto dump = DumpAsyncFramePlan(plan);
+    EXPECT_NE(dump.find("execution-error"), std::string::npos);
+    EXPECT_NE(dump.find("forward=1"), std::string::npos);
+    EXPECT_NE(dump.find("failed"), std::string::npos);
+    flecha::lowering::Lowerer lowerer;
+    DiagnosticBag empty;
+    EXPECT_EQ(lowerer.Lower(*analysis.unit, analysis.model, empty), nullptr);
+}
+
+TEST(AsyncPlanTests, VoidAwaitsNeverAllocateCompletedValueStorage) {
+    for (const std::string body : {"err := work().await;", "work().await?;"}) {
+        Analysis analysis("async void work() {} async void main() { " + body +
+                          " }");
+        analysis.ExpectValid();
+        ASSERT_NE(analysis.Plan(), nullptr);
+        const auto& plan = *analysis.Plan();
+        const auto& await = State(plan, AsyncStateKind::DirectAwait);
+        ASSERT_TRUE(await.checked);
+        EXPECT_FALSE(await.checked->value);
+        EXPECT_FALSE(plan.returnValue);
+        EXPECT_FALSE(std::ranges::any_of(plan.slots, [](const auto& slot) {
+            return slot.kind == AsyncSlotKind::AwaitValue;
+        }));
+        if (body.front() == 'e') {
+            EXPECT_FALSE(plan.executionError);
+            EXPECT_EQ(plan.slots[await.checked->error].symbol->Name(), "err");
+        } else
+            EXPECT_TRUE(plan.executionError);
+        EXPECT_NE(DumpAsyncFramePlan(plan).find("value=void"),
+                  std::string::npos);
+    }
+}
+
+TEST(AsyncPlanTests, ForwardedFailureCancelsDrainsAndRunsDefersBeforeFailing) {
+    Analysis analysis(
+        answer +
+        "void cleanup(i32 n) {} async i32 main() { "
+        "child, ce := shoot answer(); if ce != none { return 0; } "
+        "defer cleanup(1); { defer cleanup(2); value := answer().await?; } "
+        "return child.await?; }");
+    analysis.ExpectValid();
+    ASSERT_NE(analysis.Plan(), nullptr);
+    const auto& plan = *analysis.Plan();
+    bool nested = false;
+    for (const auto& exit : plan.flow.taskScopeExits) {
+        if (!plan.flow.nodes[exit.source].failureExit ||
+            exit.scopes.size() != 2)
+            continue;
+        nested = true;
+        EXPECT_EQ(exit.kind, TaskScopeExitKind::CancelAndDrain);
+        EXPECT_FALSE(exit.successor);
+        auto id = plan.states[exit.source].edges.front().target;
+        std::vector<AsyncStateKind> kinds;
+        while (plan.states[id].kind != AsyncStateKind::Failed) {
+            const auto& state = plan.states[id];
+            kinds.push_back(state.kind);
+            const auto edge = std::ranges::find_if(state.edges, [](auto edge) {
+                return edge.kind != AsyncEdgeKind::Pending;
+            });
+            ASSERT_NE(edge, state.edges.end());
+            id = edge->target;
+            ASSERT_LT(kinds.size(), 20);
+        }
+        EXPECT_EQ(
+            kinds,
+            (std::vector<AsyncStateKind>{
+                AsyncStateKind::RunDefers, AsyncStateKind::CleanupScope,
+                AsyncStateKind::CancelChildren, AsyncStateKind::DrainChildren,
+                AsyncStateKind::RunDefers, AsyncStateKind::CleanupScope}));
+    }
+    EXPECT_TRUE(nested);
+}
+
+TEST(AsyncPlanTests, ForwardedChildJoinConsumesOnceOnEitherOutcome) {
+    for (const std::string shoot : {"shoot", ">>-"}) {
+        Analysis analysis(
+            answer + "async i32 main() { child, ce := " + shoot +
+            " answer(); if ce != none { return 0; } return child.await?; }");
+        analysis.ExpectValid();
+        ASSERT_NE(analysis.Plan(), nullptr);
+        const auto& plan = *analysis.Plan();
+        const auto& await = State(plan, AsyncStateKind::ChildAwait);
+        ASSERT_TRUE(await.checked);
+        EXPECT_EQ(await.checked->consumedChild, Slot(plan, "child"));
+        const auto& failed = State(plan, AsyncStateKind::Failed);
+        EXPECT_EQ(failed.initialization[*plan.executionError], 2);
+        EXPECT_TRUE(std::ranges::any_of(plan.states, [&](const auto& state) {
+            return Contains(state.moves, Slot(plan, "child"));
+        }));
+    }
+}
+
+TEST(AsyncPlanTests,
+     ForwardingInLoopsKeepsBorrowedOwnersAndErrorStorageStable) {
+    Analysis analysis(
+        "async []const u8 view([]const u8 bytes) <- bytes { return bytes; } "
+        "async u8 main(bool again) { [8]u8 owner = none; while again { "
+        "bytes := view(owner[:]).await?; if bytes[0] == 0 { break; } } return "
+        "0; }");
+    analysis.ExpectValid();
+    ASSERT_NE(analysis.Plan(), nullptr);
+    const auto& plan = *analysis.Plan();
+    const auto& await = State(plan, AsyncStateKind::DirectAwait);
+    EXPECT_TRUE(Contains(await.retained, Slot(plan, "owner")));
+    EXPECT_TRUE(Contains(await.retained, *plan.executionError));
+    ASSERT_TRUE(await.checked->value);
+    EXPECT_EQ(plan.slots[*await.checked->value].type.Kind(),
+              SemanticTypeKind::Slice);
+}
+
+TEST(AsyncPlanTests, VerifierRejectsForwardingCleanupAndValueCorruption) {
+    Analysis analysis(answer + "async i32 main() { return answer().await?; }");
+    analysis.ExpectValid();
+    ASSERT_NE(analysis.Plan(), nullptr);
+    for (int mutation = 0; mutation < 4; ++mutation) {
+        auto plan = *analysis.Plan();
+        for (auto& state : plan.states) {
+            if (mutation == 0 && state.kind == AsyncStateKind::Failed)
+                state.read = plan.returnValue;
+            if (mutation == 1 && state.kind == AsyncStateKind::CheckedFailure)
+                state.writes.clear();
+            if (mutation == 2 && state.kind == AsyncStateKind::DirectAwait)
+                state.checked->value.reset();
+            if (mutation == 3 && state.kind == AsyncStateKind::CleanupScope)
+                state.edges.clear();
+        }
+        EXPECT_FALSE(VerifyAsyncFramePlan(plan, analysis.model).empty());
+    }
+}
+
 }  // namespace

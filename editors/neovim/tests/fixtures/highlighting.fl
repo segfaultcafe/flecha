@@ -154,3 +154,5 @@ decoration typedMeta {
     application(stringv name) target interface;
 };
 i32 application(i32 target) { return target; }
+
+value := try parse();

@@ -20,7 +20,9 @@ enum class AsyncSlotKind {
     Computation,
     ChildJoin,
     TaskScope,
-    ReturnValue
+    ReturnValue,
+    AwaitValue,
+    ExecutionError
 };
 enum class AsyncStateKind {
     Flow,
@@ -33,7 +35,8 @@ enum class AsyncStateKind {
     DrainChildren,
     RunDefers,
     CleanupScope,
-    Complete
+    Complete,
+    Failed
 };
 enum class AsyncEdgeKind { Next, Success, Failure, Pending, Retired };
 struct AsyncEdge final {
@@ -71,7 +74,7 @@ struct AsyncScopePlan final {
 struct AsyncOperationPlan final {
     const FunctionSymbol* callee = nullptr;  // null for a child join
     std::vector<const core::Expression*> arguments;
-    AsyncSlotId value;
+    std::optional<AsyncSlotId> value;
     AsyncSlotId error;
     std::optional<AsyncSlotId> consumedChild;
     // Creation reserves frame/scheduler storage before transferring arguments.
@@ -85,7 +88,7 @@ struct AsyncOperationPlan final {
 // Flow states retain CFG events; checked operation states describe an atomic
 // operation with outcome continuations. Pending resumes the same operation,
 // using its guarded storage, without re-evaluating arguments or transferring
-// them again. Argument evaluation order remains a separate lowering decision.
+// them again. Lowering must reserve resources before evaluating arguments.
 struct AsyncState final {
     AsyncStateKind kind = AsyncStateKind::Flow;
     std::optional<NodeId> flowNode;
@@ -93,6 +96,7 @@ struct AsyncState final {
     std::vector<AsyncScopeId> scopes;
     std::optional<AsyncScopeId> cleanupScope;
     const core::DestructureStatement* operation = nullptr;
+    const core::AwaitExpression* awaitOperation = nullptr;
     std::optional<AsyncSlotId> storage;
     std::optional<AsyncOperationPlan> checked;
     std::optional<AsyncSlotId> read;
@@ -118,6 +122,7 @@ struct AsyncFramePlan final {
     std::vector<AsyncState> states;
     AsyncStateId entry = 0;
     std::optional<AsyncSlotId> returnValue;
+    std::optional<AsyncSlotId> executionError;
 };
 
 // Called only after semantic/borrow validation (the execution gate is allowed).

@@ -316,7 +316,7 @@ TEST(AsyncFrontendTests, ResultsCannotBeStoredForwardedReturnedOrDiscarded) {
                     DiagnosticCode::InvalidAsync));
 }
 
-TEST(AsyncFrontendTests, VoidCompletionAndImplicitJoinFailureStayUnsupported) {
+TEST(AsyncFrontendTests, RejectsVoidValueBindingsAndUnobservedChildFailures) {
     EXPECT_TRUE(Has(
         Analyze("async void f() {} async void main() { v, e := f().await; }"),
         DiagnosticCode::InvalidAsync));
@@ -545,8 +545,7 @@ TEST(AsyncFrontendTests,
                     DiagnosticCode::MovedValue));
 }
 
-TEST(AsyncFrontendTests,
-     UnresolvedArgumentPreparationRequiresSeparateStatement) {
+TEST(AsyncFrontendTests, ArgumentPreparationWaitsForAllocationFirstLowering) {
     for (const std::string operation :
          {"shoot f(make())", ">>- f(make())", "f(make()).await"}) {
         const auto result = Analyze(
@@ -611,6 +610,211 @@ TEST(AsyncFrontendTests, CrashableBodiesKeepOrdinaryExplicitCallEffects) {
     EXPECT_TRUE(Has(Analyze("async i32 f!() { return 1; } async void main() { "
                             "child, e := shoot f!(); return; }"),
                     DiagnosticCode::InvalidCrashable));
+}
+
+TEST(AsyncFrontendTests, ForwardingPostfixHasPreciseSyntaxAndCompletedType) {
+    const std::string source =
+        "async i32 f() { return 1; } async i32 main() { v := f().await?; "
+        "return v; }";
+    auto result = Analyze(source);
+    ExpectChecked(result);
+    const auto& variable = static_cast<const VariableDeclarationStatement&>(
+        *Function(result, 1).Body().Statements()[0]);
+    const auto& await =
+        static_cast<const AwaitExpression&>(*variable.Initializer());
+    EXPECT_TRUE(await.ForwardsFailure());
+    EXPECT_EQ(source.substr(await.OperatorRange().start.offset,
+                            await.OperatorRange().Length()),
+              "await?");
+    EXPECT_EQ(result.model.TypeOf(await).Kind(), SemanticTypeKind::I32);
+    const auto* contract = result.model.AwaitResultFor(await);
+    ASSERT_NE(contract, nullptr);
+    EXPECT_TRUE(contract->forwardsFailure);
+    EXPECT_EQ(contract->destination, result.model.DeclaredSymbol(variable));
+}
+
+TEST(AsyncFrontendTests, VoidAwaitProducesOnlyAnExecutionError) {
+    for (const std::string operation : {"work()", "child"}) {
+        const auto result = Analyze(
+            "async void work() {} async i32 main() { " +
+            std::string(
+                operation == "child"
+                    ? "child, ce := shoot work(); if ce != none { return 1; } "
+                    : "") +
+            "err := " + operation +
+            ".await; if err != none { return 2; } return 0; }");
+        ExpectChecked(result);
+        WalkAst(Function(result, 1), [&](AstNode& node, bool entering) {
+            if (!entering || node.Kind() != AstNodeKind::AwaitExpression)
+                return;
+            const auto& await = static_cast<const AwaitExpression&>(node);
+            EXPECT_EQ(result.model.TypeOf(await).Kind(),
+                      SemanticTypeKind::ErrorValue);
+            ASSERT_NE(result.model.AwaitResultFor(await), nullptr);
+            EXPECT_EQ(result.model.AwaitResultFor(await)->completed.Kind(),
+                      SemanticTypeKind::Void);
+        });
+    }
+}
+
+TEST(AsyncFrontendTests, VoidForwardingWorksAsAStandaloneStatement) {
+    for (const std::string shoot : {"shoot", ">>-"})
+        ExpectChecked(Analyze(
+            "async void work() {} async void main() { work().await?; "
+            "child, ce := " +
+            shoot + " work(); if ce != none { return; } child.await?; }"));
+    ExpectChecked(Analyze(
+        "async void work() {} async i32 main() { work().await?; return 42; }"));
+}
+
+TEST(AsyncFrontendTests, ForwardingSupportsReturnsBranchesLoopsAndRecursion) {
+    ExpectChecked(
+        Analyze("async i32 f(i32 n) { if n == 0 { return 1; } "
+                "previous := n - 1; return f(previous).await?; }"));
+    ExpectChecked(Analyze(
+        "async i32 f() { return 1; } async i32 main(bool again) { "
+        "i32 result; while again { if again { result = 1; v := f().await?; "
+        "if v == 1 { break; } proceed; } } return f().await?; }"));
+    auto missing = Analyze(
+        "async i32 f() { return 1; } async i32 main() { v := f().await?; }");
+    EXPECT_TRUE(Has(missing, DiagnosticCode::InvalidReturnType));
+}
+
+TEST(AsyncFrontendTests,
+     ForwardingPreservesMoveOnlyCompletionAndCreationFailureOwnership) {
+    for (const std::string shoot : {"shoot", ">>-"}) {
+        const std::string prefix =
+            "structure Owner { i32 value; }; void Owner::tear(&self) override "
+            "{} "
+            "async Owner work(Owner owner) { return owner; } async i32 main() "
+            "{ "
+            "Owner owner = none; child, ce := " +
+            shoot +
+            " work(owner); "
+            "if ce != none { return owner.value; } result := child.await?; ";
+        ExpectChecked(Analyze(prefix + "return result.value; }"));
+        EXPECT_TRUE(
+            Has(Analyze(prefix + "copy := result; return result.value; }"),
+                DiagnosticCode::MovedValue));
+    }
+    ExpectChecked(Analyze(
+        "structure Owner {}; void Owner::tear(&self) override {} "
+        "async Owner work(Owner owner) { return owner; } "
+        "async Owner main(Owner owner) { return work(owner).await?; }"));
+}
+
+TEST(AsyncFrontendTests, ForwardingPreservesBorrowOriginsAndRejectsEscapes) {
+    for (const bool child : {false, true}) {
+        const std::string prefix =
+            "async []const u8 view([]const u8 bytes) <- bytes { return bytes; "
+            "} "
+            "async u8 main() { [8]u8 buffer = none; " +
+            std::string(child ? "task, ce := shoot view(buffer[:]); if ce != "
+                                "none { return 0; } result := task.await?; "
+                              : "result := view(buffer[:]).await?; ");
+        ExpectChecked(Analyze(prefix + "return result[0]; }"));
+        EXPECT_TRUE(Has(Analyze(prefix + "buffer[0] = 7; return result[0]; }"),
+                        DiagnosticCode::BorrowConflict));
+    }
+    const auto escape = Analyze(
+        "async []const u8 view([]const u8 bytes) <- bytes { return bytes; } "
+        "async []const u8 main([]const u8 input) <- input { [8]u8 local = "
+        "none; return view(local[:]).await?; }");
+    EXPECT_TRUE(Has(escape, DiagnosticCode::InvalidBorrowContract));
+}
+
+TEST(AsyncFrontendTests,
+     ForwardingDoesNotFlattenOrdinaryErrorsOrBorrowedTuples) {
+    ExpectChecked(
+        Analyze("async error work() { return none; } async error main() { "
+                "return work().await?; }"));
+    ExpectChecked(
+        Analyze("async (i32, error) work() { return (42, none); } "
+                "async i32 main() { value, ordinaryError := work().await?; if "
+                "ordinaryError != none { return 0; } return value; }"));
+    ExpectChecked(
+        Analyze("async ([]const u8, i32) view([]const u8 bytes) <- bytes { "
+                "return (bytes, 1); } "
+                "async u8 main() { [8]u8 buffer = none; bytes, count := "
+                "view(buffer[:]).await?; return bytes[0]; }"));
+}
+
+TEST(AsyncFrontendTests, VoidAndForwardingAwaitsConsumeChildOnBothOutcomes) {
+    const std::string prefix =
+        "async void work() {} async void main() { "
+        "child, ce := shoot work(); if ce != none { return; } ";
+    for (const std::string body :
+         {"child.await?; child.await?;", "err := child.await; child.await?;",
+          "err := child.await; if err != none { child.await?; }"})
+        EXPECT_TRUE(
+            Has(Analyze(prefix + body + " }"), DiagnosticCode::MovedReference));
+    EXPECT_TRUE(Has(Analyze("async void work() {} async void main() { "
+                            "child, ce := shoot work(); child.await?; }"),
+                    DiagnosticCode::UninitializedVariable));
+}
+
+TEST(AsyncFrontendTests,
+     ForwardingRejectsUnsupportedContextsAndKeepsCrashableEffects) {
+    for (const std::string body :
+         {"value := 1 + work().await?;", "use(work().await?);",
+          "defer work().await?;", "if work().await? == 1 { return; }"}) {
+        const auto result = Analyze(
+            "async i32 work() { return 1; } void use(i32 n) {} async void "
+            "main() { " +
+            body + " }");
+        EXPECT_TRUE(Has(result, DiagnosticCode::InvalidAsync));
+    }
+    EXPECT_TRUE(
+        Has(Analyze("async void work() {} void main() { work().await?; }"),
+            DiagnosticCode::InvalidAsync));
+    EXPECT_TRUE(
+        Has(Analyze("void work() {} async void main() { work().await?; }"),
+            DiagnosticCode::InvalidAwait));
+    EXPECT_TRUE(Has(Analyze("async i32 work!() { return 1; } async i32 main() "
+                            "{ return work!().await?; }"),
+                    DiagnosticCode::InvalidCrashable));
+    ExpectChecked(
+        Analyze("async i32 work!() { return 1; } async i32 main!() { return "
+                "work!().await?; }"));
+}
+
+TEST(AsyncFrontendTests,
+     VoidAwaitRejectsDummyBindingsAndDiscardedUncheckedErrors) {
+    for (const std::string body :
+         {"v, e := work().await;", "v := work().await?;", "work().await;",
+          "return work().await;"})
+        EXPECT_TRUE(Has(
+            Analyze("async void work() {} async void main() { " + body + " }"),
+            DiagnosticCode::InvalidAsync));
+}
+
+TEST(AsyncFrontendTests, QuestionIsNotAGeneralPropagationOperator) {
+    for (const std::string body :
+         {"v := work()?;", "v := (work().await)?;", "v := work().await??;",
+          "child := shoot? work();"}) {
+        const auto result =
+            Analyze("async i32 work() { return 1; } async void main() { " +
+                    body + " }");
+        EXPECT_TRUE(Has(result, DiagnosticCode::UnexpectedToken) ||
+                    Has(result, DiagnosticCode::ExpectedToken));
+    }
+}
+
+TEST(AsyncFrontendTests, ForwardingMethodsAndVoidJoinsPreserveBorrowRules) {
+    ExpectChecked(
+        Analyze("structure Box { i32 value; }; async i32 Box::read(&const "
+                "self) { return self->value; } "
+                "async i32 main() { Box box = none; value := "
+                "(box.read().await?); return value; }"));
+    const std::string prefix =
+        "async void fill([]u8 bytes) { bytes[0] = 42; } "
+        "async void main() { [8]u8 buffer = none; child, ce := shoot "
+        "fill(buffer[:]); "
+        "if ce != none { return; } ";
+    ExpectChecked(Analyze(prefix + "child.await?; buffer[0] = 7; }"));
+    ExpectChecked(Analyze(prefix + "err := child.await; buffer[0] = 7; }"));
+    EXPECT_TRUE(Has(Analyze(prefix + "buffer[0] = 7; child.await?; }"),
+                    DiagnosticCode::BorrowConflict));
 }
 
 }  // namespace

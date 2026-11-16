@@ -765,3 +765,43 @@ TEST_F(AnalysisSessionTests,
         return item.name == "value" && item.type == "i32" && item.isDeclaration;
     }));
 }
+
+TEST_F(AnalysisSessionTests, AwaitForwardingAndVoidErrorHaveAccurateHover) {
+    const std::string source =
+        "module main; async void work() {} async i32 number() { return 1; } "
+        "async i32 main() { err := work().await; work().await?; "
+        "value := number().await?; return value; }";
+    Write("main.fl", source);
+    AnalysisSession session(_root);
+    auto snapshot = session.Analyze("main.fl");
+    ASSERT_TRUE(snapshot.semanticModel);
+    const auto checked = snapshot.Hover("main.fl", source.find("await;"));
+    ASSERT_TRUE(checked);
+    EXPECT_EQ(checked->type, "error (none means success)");
+    const auto forwardedVoid = snapshot.Hover("main.fl", source.find('?'));
+    ASSERT_TRUE(forwardedVoid);
+    EXPECT_EQ(forwardedVoid->type, "void (forwards execution failure)");
+    const auto forwardedValue = snapshot.Hover("main.fl", source.rfind('?'));
+    ASSERT_TRUE(forwardedValue);
+    EXPECT_EQ(forwardedValue->type, "i32 (forwards execution failure)");
+    const auto value = snapshot.Hover("main.fl", source.rfind("value"));
+    ASSERT_TRUE(value);
+    EXPECT_EQ(value->type, "i32");
+    const auto definition =
+        snapshot.Definition("main.fl", source.rfind("value"));
+    ASSERT_TRUE(definition);
+    EXPECT_EQ(definition->start.offset, source.find("value :="));
+}
+
+TEST_F(AnalysisSessionTests, TryHasResultTypeAndReturnedErrorHover) {
+    const std::string source =
+        "module main; (i32, error) work() { return (42, none); } "
+        "error main() { value := try work(); return none; }";
+    Write("main.fl", source);
+    AnalysisSession session(_root);
+    auto snapshot = session.Analyze("main.fl");
+    ASSERT_TRUE(snapshot.semanticModel);
+    const auto hover = snapshot.Hover("main.fl", source.find("try"));
+    ASSERT_TRUE(hover);
+    EXPECT_EQ(hover->type, "i32 (propagates returned error)");
+}

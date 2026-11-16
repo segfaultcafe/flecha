@@ -132,6 +132,10 @@ const char* Name(AsyncSlotKind kind) {
             return "task-scope";
         case AsyncSlotKind::ReturnValue:
             return "return-value";
+        case AsyncSlotKind::AwaitValue:
+            return "await-value";
+        case AsyncSlotKind::ExecutionError:
+            return "execution-error";
     }
     return "invalid";
 }
@@ -159,6 +163,8 @@ const char* Name(AsyncStateKind kind) {
             return "cleanup-scope";
         case AsyncStateKind::Complete:
             return "complete";
+        case AsyncStateKind::Failed:
+            return "failed";
     }
     return "invalid";
 }
@@ -242,6 +248,32 @@ AsyncFramePlan BuildAsyncFramePlan(const core::FunctionDeclaration& function,
                 addSlot(AsyncSlotKind::TaskScope, nullptr,
                         plan.scopes[scope].syntax, scope);
     }
+    std::map<const core::AwaitExpression*, AsyncOperationPlan> awaits;
+    std::map<const core::AwaitExpression*, AsyncSlotId> awaitStorage;
+    for (const auto& node : plan.flow.nodes) {
+        const auto* syntax = node.awaitDispatch;
+        if (!syntax || awaits.contains(syntax)) continue;
+        const auto& result = *model.AwaitResultFor(*syntax);
+        const auto scope = scopes.at(node.scopes.back());
+        std::optional<AsyncSlotId> value;
+        if (result.completed.Kind() != SemanticTypeKind::Void)
+            value = addSlot(AsyncSlotKind::AwaitValue, nullptr, syntax, scope,
+                            result.completed);
+        if (result.forwardsFailure && !plan.executionError)
+            plan.executionError =
+                addSlot(AsyncSlotKind::ExecutionError, nullptr, &function, {},
+                        SemanticType(SemanticTypeKind::ErrorValue));
+        const auto error = result.forwardsFailure
+                               ? *plan.executionError
+                               : symbols.at(result.destination);
+        awaits.emplace(
+            syntax, AsyncOperationPlan{nullptr, {}, value, error, {}, false});
+        const bool child = model.TypeOf(Unwrap(syntax->Operand())).Kind() ==
+                           SemanticTypeKind::Task;
+        awaitStorage.emplace(syntax, addSlot(child ? AsyncSlotKind::ChildJoin
+                                                   : AsyncSlotKind::Computation,
+                                             nullptr, syntax, scope));
+    }
     plan.states.resize(plan.flow.nodes.size());
     for (NodeId id = 0; id < plan.flow.nodes.size(); ++id) {
         const auto& node = plan.flow.nodes[id];
@@ -277,7 +309,31 @@ AsyncFramePlan BuildAsyncFramePlan(const core::FunctionDeclaration& function,
                         static_cast<const core::NameExpression&>(operand))))
                     state.moves.push_back(*slot);
         }
-        if (node.memoryReturn && node.memoryReturn->Value() && plan.returnValue)
+        if (node.memoryExpression && node.memoryExpression->Kind() ==
+                                         core::AstNodeKind::AwaitExpression) {
+            const auto* syntax = static_cast<const core::AwaitExpression*>(
+                node.memoryExpression);
+            if (const auto found = awaits.find(syntax); found != awaits.end() &&
+                                                        found->second.value &&
+                                                        node.asyncSuccess)
+                state.moves.push_back(*found->second.value);
+        }
+        if (node.awaitOutcome) {
+            state.awaitOperation = node.awaitOutcome;
+            state.kind = node.asyncSuccess ? AsyncStateKind::CheckedSuccess
+                                           : AsyncStateKind::CheckedFailure;
+            const auto& contract = awaits.at(node.awaitOutcome);
+            if (contract.value) {
+                state.resets.push_back(*contract.value);
+                if (node.asyncSuccess) state.writes.push_back(*contract.value);
+            }
+            // Keep the forwarded error outside lexical cleanup storage.
+            if (!node.awaitOutcome->ForwardsFailure() || !node.asyncSuccess)
+                state.writes.push_back(contract.error);
+        }
+        if (((node.memoryReturn && node.memoryReturn->Value()) ||
+             node.propagationReturn) &&
+            plan.returnValue)
             state.writes.push_back(*plan.returnValue);
         if (node.memoryDefer) {
             const auto* syntax = node.memoryDefer;
@@ -304,40 +360,53 @@ AsyncFramePlan BuildAsyncFramePlan(const core::FunctionDeclaration& function,
                 state.writes.push_back(
                     *plan.scopes[scopes.at(node.scopes.back())].children);
         }
-        if (!node.checkedDispatch) continue;
+        if (!node.checkedDispatch && !node.awaitDispatch) continue;
         state.operation = node.checkedDispatch;
-        const auto* checked = model.CheckedResultFor(*state.operation);
-        if (checked->creation) {
+        state.awaitOperation = node.awaitDispatch;
+        const auto* checked = state.operation
+                                  ? model.CheckedResultFor(*state.operation)
+                                  : nullptr;
+        const bool creation = checked && checked->creation;
+        const auto& expression =
+            state.operation
+                ? Unwrap(state.operation->Value())
+                : static_cast<const core::Expression&>(*state.awaitOperation);
+        if (creation) {
             state.kind = AsyncStateKind::CreateChild;
             state.storage = plan.scopes[scopes.at(node.scopes.back())].children;
         } else {
-            const auto& await = static_cast<const core::AwaitExpression&>(
-                Unwrap(state.operation->Value()));
+            const auto& await =
+                static_cast<const core::AwaitExpression&>(expression);
             const bool child = model.TypeOf(Unwrap(await.Operand())).Kind() ==
                                SemanticTypeKind::Task;
             state.kind = child ? AsyncStateKind::ChildAwait
                                : AsyncStateKind::DirectAwait;
-            if (!operations.contains(state.operation))
-                operations.emplace(
-                    state.operation,
-                    addSlot(child ? AsyncSlotKind::ChildJoin
-                                  : AsyncSlotKind::Computation,
-                            nullptr, &await, scopes.at(node.scopes.back())));
-            state.storage = operations.at(state.operation);
+            if (state.awaitOperation) {
+                state.storage = awaitStorage.at(state.awaitOperation);
+            } else {
+                if (!operations.contains(state.operation))
+                    operations.emplace(
+                        state.operation,
+                        addSlot(child ? AsyncSlotKind::ChildJoin
+                                      : AsyncSlotKind::Computation,
+                                nullptr, &await,
+                                scopes.at(node.scopes.back())));
+                state.storage = operations.at(state.operation);
+            }
         }
-        const auto& expression = Unwrap(state.operation->Value());
-        const auto& operand =
-            Unwrap(checked->creation
-                       ? static_cast<const core::SpawnExpression&>(expression)
-                             .Operand()
-                       : static_cast<const core::AwaitExpression&>(expression)
-                             .Operand());
-        AsyncOperationPlan contract{nullptr,
-                                    {},
-                                    symbols.at(checked->value),
-                                    symbols.at(checked->error),
-                                    {},
-                                    checked->creation};
+        const auto& operand = Unwrap(
+            creation ? static_cast<const core::SpawnExpression&>(expression)
+                           .Operand()
+                     : static_cast<const core::AwaitExpression&>(expression)
+                           .Operand());
+        AsyncOperationPlan contract =
+            checked ? AsyncOperationPlan{nullptr,
+                                         {},
+                                         symbols.at(checked->value),
+                                         symbols.at(checked->error),
+                                         {},
+                                         creation}
+                    : awaits.at(state.awaitOperation);
         if (operand.Kind() == core::AstNodeKind::CallExpression) {
             const auto& call =
                 static_cast<const core::CallExpression&>(operand);
@@ -384,8 +453,11 @@ AsyncFramePlan BuildAsyncFramePlan(const core::FunctionDeclaration& function,
             next = *exit.successor;
         else {
             AsyncState complete;
-            complete.kind = AsyncStateKind::Complete;
-            complete.read = plan.returnValue;
+            const bool failed =
+                plan.flow.nodes[exit.source].failureExit != nullptr;
+            complete.kind =
+                failed ? AsyncStateKind::Failed : AsyncStateKind::Complete;
+            complete.read = failed ? plan.executionError : plan.returnValue;
             next = addState(std::move(complete));
         }
         for (auto scope = exit.scopes.rbegin(); scope != exit.scopes.rend();
@@ -406,7 +478,8 @@ AsyncFramePlan BuildAsyncFramePlan(const core::FunctionDeclaration& function,
                     cleanup.resets.push_back(slot);
             for (AsyncSlotId slot = plan.slots.size(); slot-- > 0;) {
                 const auto& value = plan.slots[slot];
-                if (value.scope == sid && value.symbol &&
+                if (value.scope == sid &&
+                    (value.symbol || value.kind == AsyncSlotKind::AwaitValue) &&
                     value.type.OwnsStorage() &&
                     !plan.flow.deferredCaptures.contains(value.symbol))
                     cleanup.destroys.push_back(slot);
@@ -489,9 +562,10 @@ std::vector<std::string> VerifyAsyncFramePlan(const AsyncFramePlan& plan,
             if (slot && *slot >= plan.slots.size())
                 fail("invalid frame slot reference");
         if (state.checked) {
-            for (auto slot : {state.checked->value, state.checked->error})
-                if (slot >= plan.slots.size())
-                    fail("invalid checked-result slot");
+            if ((state.checked->value &&
+                 *state.checked->value >= plan.slots.size()) ||
+                state.checked->error >= plan.slots.size())
+                fail("invalid checked-result slot");
             if (state.checked->consumedChild &&
                 *state.checked->consumedChild >= plan.slots.size())
                 fail("invalid consumed child slot");
@@ -524,17 +598,35 @@ std::vector<std::string> VerifyAsyncFramePlan(const AsyncFramePlan& plan,
         if (state.kind == AsyncStateKind::CreateChild ||
             state.kind == AsyncStateKind::DirectAwait ||
             state.kind == AsyncStateKind::ChildAwait) {
-            if (!state.operation || !model.CheckedResultFor(*state.operation)) {
+            if ((state.operation && state.awaitOperation) ||
+                (state.operation
+                     ? !model.CheckedResultFor(*state.operation)
+                     : !state.awaitOperation ||
+                           !model.AwaitResultFor(*state.awaitOperation))) {
                 fail("operation lacks checked-result contract");
                 continue;
             }
-            const auto* contract = model.CheckedResultFor(*state.operation);
-            if (!state.checked ||
-                plan.slots[state.checked->value].symbol != contract->value ||
-                plan.slots[state.checked->error].symbol != contract->error)
-                fail(
-                    "checked bindings lost their conditional initialization "
-                    "contract");
+            if (state.operation) {
+                const auto* contract = model.CheckedResultFor(*state.operation);
+                if (!state.checked || !state.checked->value ||
+                    plan.slots[*state.checked->value].symbol !=
+                        contract->value ||
+                    plan.slots[state.checked->error].symbol != contract->error)
+                    fail(
+                        "checked bindings lost their conditional "
+                        "initialization contract");
+            } else {
+                const auto& contract =
+                    *model.AwaitResultFor(*state.awaitOperation);
+                if (!state.checked ||
+                    state.checked->value.has_value() !=
+                        (contract.completed.Kind() != SemanticTypeKind::Void) ||
+                    (contract.forwardsFailure
+                         ? state.checked->error != plan.executionError
+                         : plan.slots[state.checked->error].symbol !=
+                               contract.destination))
+                    fail("await lost its void or failure-forwarding contract");
+            }
             if (state.checked && state.kind == AsyncStateKind::ChildAwait &&
                 (!state.checked->consumedChild || state.checked->callee))
                 fail(
@@ -552,7 +644,9 @@ std::vector<std::string> VerifyAsyncFramePlan(const AsyncFramePlan& plan,
                     state.edges, [&](auto e) { return e.kind == edgeKind; });
                 if (edge == state.edges.end() ||
                     plan.states[edge->target].kind != targetKind ||
-                    plan.states[edge->target].operation != state.operation)
+                    plan.states[edge->target].operation != state.operation ||
+                    plan.states[edge->target].awaitOperation !=
+                        state.awaitOperation)
                     fail("operation has invalid checked continuation");
             }
         }
@@ -572,7 +666,8 @@ std::vector<std::string> VerifyAsyncFramePlan(const AsyncFramePlan& plan,
     // retire them before deferred calls or owner destruction; a saved return
     // cannot skip this chain. Pending edges are deliberately not followed.
     for (const auto& exit : plan.flow.taskScopeExits) {
-        if (exit.source >= plan.states.size()) {
+        if (exit.source >= plan.states.size() ||
+            exit.source >= plan.flow.nodes.size()) {
             fail("invalid cleanup source");
             continue;
         }
@@ -626,9 +721,12 @@ std::vector<std::string> VerifyAsyncFramePlan(const AsyncFramePlan& plan,
             }
             target = terminal.front().target;
         }
-        if (!valid || (exit.successor ? target != *exit.successor
-                                      : plan.states[target].kind !=
-                                            AsyncStateKind::Complete))
+        if (!valid ||
+            (exit.successor ? target != *exit.successor
+                            : plan.states[target].kind !=
+                                  (plan.flow.nodes[exit.source].failureExit
+                                       ? AsyncStateKind::Failed
+                                       : AsyncStateKind::Complete)))
             fail("scope exit has incorrect cleanup order or destination");
     }
     // Reconstructing the structural contract catches omitted exits, forged
@@ -638,6 +736,7 @@ std::vector<std::string> VerifyAsyncFramePlan(const AsyncFramePlan& plan,
         const auto expected = BuildAsyncFramePlan(*plan.function, model);
         if (plan.entry != expected.entry ||
             plan.returnValue != expected.returnValue ||
+            plan.executionError != expected.executionError ||
             plan.flow != expected.flow || plan.slots != expected.slots ||
             plan.scopes != expected.scopes || plan.states != expected.states)
             fail(
@@ -675,12 +774,19 @@ std::string DumpAsyncFramePlan(const AsyncFramePlan& plan) {
         if (state.flowNode) out << " flow=" << *state.flowNode;
         if (state.operation)
             out << " operation@" << state.operation->Range().start.offset;
+        if (state.awaitOperation)
+            out << " await@" << state.awaitOperation->Range().start.offset
+                << " forward=" << state.awaitOperation->ForwardsFailure();
         if (state.cleanupScope) out << " cleanup=b" << *state.cleanupScope;
         if (state.storage) out << " storage=f" << *state.storage;
         if (state.read) out << " read=f" << *state.read;
         if (state.checked) {
-            out << " value=f" << state.checked->value << " error=f"
-                << state.checked->error << " transactional-create="
+            if (state.checked->value)
+                out << " value=f" << *state.checked->value;
+            else
+                out << " value=void";
+            out << " error=f" << state.checked->error
+                << " transactional-create="
                 << state.checked->transactionalCreation;
             if (state.checked->callee)
                 out << " callee=" << state.checked->callee->Name();

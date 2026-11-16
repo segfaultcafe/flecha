@@ -69,10 +69,22 @@ Additional approved decisions:
   allocation alone must not force every async declaration to be crashable.
 - Child creation is also recoverable, superseding the earlier crashing
   allocation policy. An async-specific AsyncResult<T> wrapper is not selected.
-- Fallible creation and await initially require immediate destructuring:
+- Fallible creation and checked non-void await require immediate destructuring:
   child, err := shoot f(); or value, err := f().await. A value binding is
   uninitialized on failure and usable only after its error is proven none.
   No dummy T is constructed and ordinary returned errors are not flattened.
+- Void await binds only an execution error: err := operation().await;
+  none means success. operation().await?; and child.await?; are valid void
+  statements with no completed value.
+- .await? yields completed T on success and forwards execution failure after
+  cancellation, draining, and cleanup. Ordinary errors within T stay within T.
+- Explicit awaits are required wherever child execution failure could otherwise
+  go unobserved at normal scope exit; no implicit failure propagation is added.
+- Reserve frame and scheduler admission resources before evaluating arguments
+  or method receivers. Reservation failure runs no argument effects, transfers
+  no ownership, and publishes no handle. Later execution failure does not roll
+  back effects. Prepared-argument restrictions remain until lowering supports
+  this allocation-first ordering.
 - Root allocation failure reports a diagnostic and exits nonzero before user
   code runs or ownership transfers.
 - A private C++ polling/wakeup ABI is approved as an intermediate stage only.
@@ -80,10 +92,8 @@ Additional approved decisions:
 
 Still under review:
 
-- Void completion, explicit failure forwarding, and unobserved execution
-  failures during implicit scope joins. Checked destructuring itself is selected.
 - Public future/polling/wakeup APIs and explicit low-level future access.
-- Language argument evaluation on creation failure and portable backends.
+- Portable backends and explicit cancellation/yield APIs.
 
 Selected decisions are design inputs. They do not imply that this incomplete
 Standards Track IFG has been accepted or that executable async is supported.
@@ -252,9 +262,13 @@ an error follows the same early-exit rules as any return.
 
 Await now needs a recoverable execution-failure outcome distinct from the
 function's completed T, including when deeper recursive frame creation fails.
-Immediate checked destructuring is selected. Explicit failure forwarding and
-handling of unobserved execution failure at implicit scope joins remain open.
+Immediate checked destructuring and explicit .await? failure forwarding are
+selected. Void await returns only an error, with none meaning success. Normal
+scope exits with potentially unobserved child execution failures are rejected.
 There is no implicit exception propagation selected by this document.
+Ordinary returned errors use prefix try call(), requiring a compatible final
+error field in the enclosing completed result. This is distinct from .await?,
+which forwards execution failure independently of the written completed type.
 
 Cancellation is observed before first execution and at await/scope-drain
 boundaries. A pending operation must acknowledge safe retirement before its
@@ -427,11 +441,8 @@ API would not validate the intended overlap of waits.
 
 Open decisions requiring review include:
 
-- Void completion, explicit failure forwarding, and implicit-join failures.
-  Immediate checked destructuring with success-only values is selected.
 - Low-level future access, polling, wakeups, and interoperability with .await.
 - Explicit cancellation/yield APIs and interrupted operation contracts.
-- Argument-evaluation semantics when creation fails before ownership transfer.
 - First I/O surface and portable backend requirements.
 
 The implementation must also complete resumable lowering, cleanup state,

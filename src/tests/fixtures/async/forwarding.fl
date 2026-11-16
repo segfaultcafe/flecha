@@ -1,0 +1,15 @@
+async void finish() {}
+async i32 answer() { return 42; }
+
+async i32 main() {
+    err := finish().await;
+    if err != none { return 1; }
+    finish().await?;
+    first, firstError := shoot finish();
+    if firstError != none { return 2; }
+    first.await?;
+    child, createError := >>- answer();
+    if createError != none { return 3; }
+    value := child.await?;
+    return value;
+}

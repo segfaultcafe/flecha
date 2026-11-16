@@ -284,6 +284,13 @@ class Dumper final {
                 _stream << ")";
                 break;
             }
+            case BoundNodeKind::TryExpression:
+                _stream << "(try ";
+                WriteExpression(
+                    static_cast<const BoundTryExpression&>(expression)
+                        .Operand());
+                _stream << ")";
+                break;
             case BoundNodeKind::TupleExpression: {
                 const auto& tuple =
                     static_cast<const BoundTupleExpression&>(expression);

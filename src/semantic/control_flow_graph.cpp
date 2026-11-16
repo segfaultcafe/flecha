@@ -4,6 +4,8 @@
 #include <map>
 #include <set>
 #include <utility>
+
+#include "core/ast_walk.hpp"
 namespace flecha::semantic {
 namespace {
 class GraphBuilder final {
@@ -43,11 +45,39 @@ class GraphBuilder final {
     }
 
    private:
+    bool HasTry(const core::Expression& expression) const {
+        bool found = false;
+        unsigned functions = 0;
+        core::WalkAst(expression, [&](core::AstNode& node, bool entering) {
+            if (node.Kind() == core::AstNodeKind::AnonymousFunctionExpression) {
+                if (entering)
+                    ++functions;
+                else
+                    --functions;
+            }
+            if (entering && functions == 0 &&
+                node.Kind() == core::AstNodeKind::TryExpression)
+                found = true;
+        });
+        return found;
+    }
+
+    NodeId BuildTryAction(const core::Expression& expression, NodeId action,
+                          bool deferred = false) {
+        const auto* previous = _tryEvaluation;
+        _tryEvaluation = &expression;
+        const NodeId body = deferred ? BuildExpressionBody(expression, action)
+                                     : BuildExpression(expression, action);
+        _tryEvaluation = previous;
+        return body;
+    }
+
     void PlanTaskScopeExits() {
         for (NodeId id = 0; id < _graph.nodes.size(); ++id) {
             const FlowNode& node = _graph.nodes[id];
             if (!node.reachable) continue;
-            if (node.memoryReturn) {
+            if (node.memoryReturn || node.failureExit ||
+                node.propagationReturn) {
                 _graph.taskScopeExits.push_back({id, std::nullopt,
                     TaskScopeExitKind::CancelAndDrain,
                     {node.scopes.rbegin(), node.scopes.rend()}});
@@ -148,6 +178,14 @@ class GraphBuilder final {
             }
             for (const auto* argument : arguments)
                 _failedTransfers.insert(&Unwrap(*argument));
+        }
+        if (HasTry(destructure.Value())) {
+            const NodeId action = AddNode({memoryStore});
+            _graph.nodes[action].destructure = &destructure;
+            _graph.nodes[action].asyncSuccess = success;
+            const NodeId body = BuildTryAction(destructure.Value(), action);
+            _failedTransfers = previous;
+            return body;
         }
         const NodeId body = BuildExpression(destructure.Value(), memoryStore);
         _failedTransfers = previous;
@@ -306,6 +344,61 @@ class GraphBuilder final {
     }
 
     NodeId BuildStatement(const core::Statement& statement, NodeId next) {
+        const core::Expression* expression = nullptr;
+        switch (statement.Kind()) {
+            case core::AstNodeKind::VariableDeclarationStatement:
+                expression =
+                    static_cast<const core::VariableDeclarationStatement&>(
+                        statement)
+                        .Initializer();
+                break;
+            case core::AstNodeKind::DestructureStatement:
+                expression =
+                    &static_cast<const core::DestructureStatement&>(statement)
+                         .Value();
+                break;
+            case core::AstNodeKind::ReturnStatement:
+                expression =
+                    static_cast<const core::ReturnStatement&>(statement)
+                        .Value();
+                break;
+            case core::AstNodeKind::ExpressionStatement:
+                expression =
+                    &static_cast<const core::ExpressionStatement&>(statement)
+                         .Value();
+                break;
+            default:
+                break;
+        }
+        const auto* await = expression && Unwrap(*expression).Kind() ==
+                                              core::AstNodeKind::AwaitExpression
+                                ? &static_cast<const core::AwaitExpression&>(
+                                      Unwrap(*expression))
+                                : nullptr;
+        const auto* result = await ? _model.AwaitResultFor(*await) : nullptr;
+        if (!result) return BuildStatementBody(statement, next);
+        const NodeId success = BuildStatementBody(statement, next);
+        _graph.nodes[success].awaitOutcome = await;
+        NodeId failure;
+        const auto failureStart = _graph.nodes.size();
+        if (result->forwardsFailure) {
+            const NodeId exit = AddNode({});
+            _graph.nodes[exit].failureExit = await;
+            failure = BuildEvaluation(*expression, exit);
+        } else {
+            // Void completion constructs only its error binding on either
+            // outcome. There is no success-only value and no dummy void slot.
+            failure = BuildStatementBody(statement, next);
+        }
+        _graph.nodes[failure].awaitOutcome = await;
+        for (NodeId id = failureStart; id < _graph.nodes.size(); ++id)
+            _graph.nodes[id].asyncSuccess = false;
+        const NodeId dispatch = AddNode({success, failure});
+        _graph.nodes[dispatch].awaitDispatch = await;
+        return dispatch;
+    }
+
+    NodeId BuildStatementBody(const core::Statement& statement, NodeId next) {
         switch (statement.Kind()) {
             case core::AstNodeKind::RangeStatement:
                 return BuildBlock(
@@ -328,6 +421,12 @@ class GraphBuilder final {
                 NodeId entry = store;
                 if (declaration.Initializer() != nullptr) {
                     _graph.nodes[store].write = symbol;
+                    if (HasTry(*declaration.Initializer())) {
+                        const NodeId action = AddNode({store});
+                        _graph.nodes[action].declaration = &declaration;
+                        return BuildTryAction(*declaration.Initializer(),
+                                              action);
+                    }
                     entry = BuildExpression(*declaration.Initializer(), store);
                 }
                 const NodeId action = AddNode({entry});
@@ -359,6 +458,11 @@ class GraphBuilder final {
                 }
                 const NodeId registration = AddNode({next});
                 _graph.nodes[registration].memoryDefer = &deferred;
+                if (HasTry(deferred.Call())) {
+                    const NodeId action = AddNode({registration});
+                    _graph.nodes[action].deferRegistration = &deferred;
+                    return BuildTryAction(deferred.Call(), action, true);
+                }
                 const NodeId body =
                     BuildExpressionBody(deferred.Call(), registration);
                 const NodeId action = AddNode({body});
@@ -484,6 +588,12 @@ class GraphBuilder final {
     NodeId BuildEvaluation(
         const core::Expression& expression, NodeId next,
         const core::ReturnStatement* borrowReturn = nullptr) {
+        if (HasTry(expression)) {
+            const NodeId action = AddNode({next});
+            _graph.nodes[action].evaluation = &expression;
+            _graph.nodes[action].borrowReturn = borrowReturn;
+            return BuildTryAction(expression, action);
+        }
         const NodeId body = BuildExpression(expression, next);
         const NodeId action = AddNode({body});
         _graph.nodes[action].evaluation = &expression;
@@ -500,6 +610,18 @@ class GraphBuilder final {
     NodeId BuildExpressionBody(const core::Expression& expression,
                                NodeId next) {
         switch (expression.Kind()) {
+            case core::AstNodeKind::TryExpression: {
+                const auto& attempt =
+                    static_cast<const core::TryExpression&>(expression);
+                const NodeId failure = AddNode({});
+                _graph.nodes[failure].abandonedAllocations =
+                    _initializingAllocations;
+                _graph.nodes[failure].propagationReturn = &attempt;
+                _graph.nodes[failure].evaluation = _tryEvaluation;
+                const NodeId dispatch = AddNode({next, failure});
+                _graph.nodes[dispatch].propagationDispatch = &attempt;
+                return BuildExpression(attempt.Operand(), dispatch);
+            }
             case core::AstNodeKind::AwaitExpression:
                 return BuildExpression(static_cast<const core::AwaitExpression&>(expression).Operand(), next);
             case core::AstNodeKind::SpawnExpression: {
@@ -699,9 +821,13 @@ class GraphBuilder final {
                     _graph.nodes[next].allocation = &call;
                 }
                 const auto arguments = _model.ArgumentsFor(call);
+                if (allocation && call.TypeArgument() && !dynamic)
+                    _initializingAllocations.push_back(&call);
                 for (auto argument = arguments.rbegin();
                      argument != arguments.rend(); ++argument)
                     next = BuildExpression(**argument, next);
+                if (allocation && call.TypeArgument() && !dynamic)
+                    _initializingAllocations.pop_back();
                 if (allocation && call.TypeArgument() && !dynamic) {
                     next = call.IsCrashable() ? AddNode({next})
                                               : AddNode({next, failure});
@@ -734,6 +860,8 @@ class GraphBuilder final {
     std::set<const core::Expression*> _failedTransfers;
     const SemanticModel& _model;
     ControlFlowGraph _graph;
+    std::vector<const core::CallExpression*> _initializingAllocations;
+    const core::Expression* _tryEvaluation = nullptr;
     std::vector<const core::BlockStatement*> _scopes;
     std::unordered_map<std::string, NodeId> _positions;
     std::vector<std::pair<NodeId, std::string>> _jumps;
