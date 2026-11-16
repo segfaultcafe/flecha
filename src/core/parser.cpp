@@ -84,6 +84,7 @@ bool Parser::StartsTopLevelOnlyDeclaration() const {
         case TokenType::Export:
         case TokenType::Quiver:
         case TokenType::Extern:
+        case TokenType::Async:
         case TokenType::Func:
         case TokenType::Once:
         case TokenType::ForeignBlock:
@@ -850,10 +851,12 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration(
     const source::SourceLocation start = Current().range.start;
     std::vector<FunctionModifier> modifiers;
     while (Check(TokenType::Unsafe) || Check(TokenType::Private) ||
-           Check(TokenType::Protected) || Check(TokenType::Extern)) {
+           Check(TokenType::Protected) || Check(TokenType::Extern) ||
+           Check(TokenType::Async)) {
         const TokenType modifierToken = Advance().type;
         const auto modifier =
-            modifierToken == TokenType::Unsafe    ? FunctionModifier::Unsafe
+            modifierToken == TokenType::Async     ? FunctionModifier::Async
+            : modifierToken == TokenType::Unsafe  ? FunctionModifier::Unsafe
             : modifierToken == TokenType::Private ? FunctionModifier::Private
             : modifierToken == TokenType::Protected
                 ? FunctionModifier::Protected
@@ -868,7 +871,9 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration(
         return nullptr;
     }
 
-    const Token* name = Consume(TokenType::Identifier, "function name");
+    const Token* name = !implicitOwner.empty() && Check(TokenType::Shoot)
+                            ? &Advance()
+                            : Consume(TokenType::Identifier, "function name");
     if (name == nullptr) {
         return nullptr;
     }
@@ -887,7 +892,9 @@ std::unique_ptr<FunctionDeclaration> Parser::ParseFunctionDeclaration(
                 "owning type");
         genericConstraints.clear();
         owner = name->value;
-        name = Consume(TokenType::Identifier, "method name after '::'");
+        name = Check(TokenType::Shoot)
+                   ? &Advance()
+                   : Consume(TokenType::Identifier, "method name after '::'");
         if (name == nullptr) return nullptr;
         genericParameters = parametersAtName(*this, genericConstraints);
     }
@@ -1645,7 +1652,8 @@ std::unique_ptr<Declaration> Parser::ParseDeclaration() {
            Peek(2).type == TokenType::Func)));
     if (callableType) return ParseCallableTypeDeclaration();
     if (StartsType() || Check(TokenType::Unsafe) || Check(TokenType::Private) ||
-        Check(TokenType::Protected) || Check(TokenType::Extern)) {
+        Check(TokenType::Protected) || Check(TokenType::Extern) ||
+        Check(TokenType::Async)) {
         return ParseFunctionDeclaration();
     }
 
@@ -2440,6 +2448,19 @@ std::unique_ptr<Expression> Parser::ParseBinaryExpression(
 }
 
 std::unique_ptr<Expression> Parser::ParseUnaryExpression() {
+    // Compose >>- only in prefix position. Infix x>>-y keeps its existing
+    // ShiftRight/Sub tokenization, including when there is no whitespace.
+    const bool symbolicSpawn = Check(TokenType::ShiftRight) &&
+        Peek(1).type == TokenType::Sub &&
+        Current().range.end.offset == Peek(1).range.start.offset;
+    if (Check(TokenType::Shoot) || symbolicSpawn) {
+        source::SourceRange operation = Advance().range;
+        if (symbolicSpawn) operation.end = Advance().range.end;
+        std::unique_ptr<Expression> operand = ParseUnaryExpression();
+        if (!operand) return nullptr;
+        const source::SourceRange range{operation.start, operand->Range().end};
+        return std::make_unique<SpawnExpression>(range, std::move(operand), operation);
+    }
     if (UnaryPrecedence(Current().type) == 0) {
         return ParsePostfixExpression();
     }
@@ -2530,13 +2551,23 @@ std::unique_ptr<Expression> Parser::ParsePostfixExpression() {
             Check(TokenType::Scope)) {
             const TokenType access = Advance().type;
             const Token* member = nullptr;
-            if (Check(TokenType::Identifier) || Check(TokenType::String)) {
+            // Shoot is an operator only at an operand start. Qualified member
+            // names remain identifiers in this position.
+            if (Check(TokenType::Identifier) || Check(TokenType::String) ||
+                Check(TokenType::Shoot)) {
                 member = &Advance();
             } else {
                 member =
                     Consume(TokenType::Identifier, "member name after '.'");
             }
             if (member == nullptr) return expression;
+            if (access == TokenType::Dot && member->value == "await") {
+                const source::SourceRange range{expression->Range().start,
+                                                member->range.end};
+                expression = std::make_unique<AwaitExpression>(
+                    range, std::move(expression), member->range);
+                continue;
+            }
             if (member->value == "isof" && Match(TokenType::Less)) {
                 std::unique_ptr<TypeNode> target = ParseType();
                 if (target == nullptr) return expression;

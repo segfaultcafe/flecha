@@ -62,6 +62,8 @@ enum class AstNodeKind {
     UnaryExpression,
     BinaryExpression,
     AssignmentExpression,
+    AwaitExpression,
+    SpawnExpression,
     CallExpression,
     MemberCallExpression,
     MemberAccessExpression,
@@ -584,6 +586,7 @@ enum class FunctionModifier : std::uint8_t {
     Extern,
     Inline,
     Comptime,
+    Async,
 };
 
 class BlockStatement final : public Statement {
@@ -664,6 +667,9 @@ class FunctionDeclaration final : public Declaration {
         return false;
     }
     [[nodiscard]] bool IsCrashable() const { return _isCrashable; }
+    [[nodiscard]] bool IsAsync() const {
+        return HasModifier(FunctionModifier::Async);
+    }
     [[nodiscard]] bool IsExtern() const {
         return HasModifier(FunctionModifier::Extern);
     }
@@ -1641,6 +1647,42 @@ class AssignmentExpression final : public Expression {
     std::unique_ptr<Expression> _target;
     std::unique_ptr<Expression> _value;
     TokenType _operatorType;
+};
+
+class AwaitExpression final : public Expression {
+   public:
+    AwaitExpression(source::SourceRange range,
+                    std::unique_ptr<Expression> operand,
+                    source::SourceRange operatorRange)
+        : Expression(range), _operand(std::move(operand)),
+          _operatorRange(operatorRange) {}
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::AwaitExpression;
+    }
+    [[nodiscard]] const Expression& Operand() const { return *_operand; }
+    [[nodiscard]] source::SourceRange OperatorRange() const { return _operatorRange; }
+
+   private:
+    std::unique_ptr<Expression> _operand;
+    source::SourceRange _operatorRange;
+};
+
+class SpawnExpression final : public Expression {
+   public:
+    SpawnExpression(source::SourceRange range,
+                    std::unique_ptr<Expression> operand,
+                    source::SourceRange operatorRange)
+        : Expression(range), _operand(std::move(operand)),
+          _operatorRange(operatorRange) {}
+    [[nodiscard]] AstNodeKind Kind() const override {
+        return AstNodeKind::SpawnExpression;
+    }
+    [[nodiscard]] const Expression& Operand() const { return *_operand; }
+    [[nodiscard]] source::SourceRange OperatorRange() const { return _operatorRange; }
+
+   private:
+    std::unique_ptr<Expression> _operand;
+    source::SourceRange _operatorRange;
 };
 
 class CallExpression final : public Expression {

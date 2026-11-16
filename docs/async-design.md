@@ -1,125 +1,190 @@
 # Async design foundation
 
-**Design only; not implemented.** This guide summarizes the selected foundation
-of [IFG 2026-0007](IFG/IFG_2026_0007.txt). The IFG remains Draft because runtime,
-lifetime, and API decisions are still open. Preparing these documents before
-v0.4 does not make async implementation a v0.4 release requirement.
+**Implementation in progress; async programs are not executable yet.** This
+summarizes the selected foundation of [IFG 2026-0007](IFG/IFG_2026_0007.txt).
+The IFG remains Draft while low-level future APIs and remaining failure details
+are under review. Checked result destructuring is selected but not implemented.
+Async is not a v0.4 release requirement.
 
-## Three language operations
+## Selected language operations
 
 | Syntax | Meaning |
 | --- | --- |
-| `async` | Marks a function that can suspend. Its declared return type describes the completed result. |
-| `.await` | Waits for completion. If pending, suspends this task so other runnable tasks can progress. |
-| `spawn` or `>>-` | Creates and schedules a scoped child task, returning a handle. The two spellings have identical semantics. |
+| `async` | Modifies a named function that can suspend. Its written return type is its completed value type. |
+| `.await` | Awaits an async call or joins a scoped child. Pending work suspends the current task. |
+| `shoot` or `>>-` | Creates and queues a child owned by the current lexical block. Both spellings have identical semantics. |
 
-**A task is not an OS thread.** All tasks in the initial model share one
-executor thread. An already-ready await need not suspend. Async does not make
-blocking code nonblocking or CPU work parallel.
+A task is not an OS thread. All tasks in the initial model share one executor
+thread. An already-ready await need not suspend. Blocking calls remain blocking.
 
-The following examples show selected syntax, not programs the current compiler
-can run. Exact task-scope boundaries and creation-failure behavior remain open.
+An ordinary async call must be immediately awaited, except when directly
+spawned. Direct awaiting executes within the caller's task; it does not queue
+an independent child. Recursive async calls are required: rejecting recursion
+because an embedded frame would have unbounded size is not the selected policy.
 
-```flecha
-async i32 calculate() {
-    return 42;
-}
+`shoot` and contiguous `>>-` are prefixes at operand positions. Existing
+`x >> -y` and `x>>-y` remain shift followed by unary minus. Existing member names
+such as the synchronous `Command::spawn` remain valid. `.await` is postfix.
+Initially spawning requires a direct async call. Fallible child creation must
+be destructured and checked before joining its handle; the earlier
+`(shoot f()).await` shorthand is superseded by this requirement.
 
-async i32 sequential() {
-    first := calculate().await;
-    second := calculate().await;
-    return first + second;
-}
+The approved synchronous entry is a generated wrapper for `async main` only.
+Async blocks, indirect async calls, async interface dispatch, and async extern
+functions are outside the initial support boundary and must be diagnosed.
+Ordinary synchronous `defer` and teardown remain valid inside async functions;
+suspending during deferred calls or teardown is unsupported.
 
-async i32 concurrent() {
-    first := spawn calculate();
-    second := >>- calculate();
+## Recoverable allocation
 
-    a := first.await;
-    b := second.await;
-    return a + b;
-}
-```
+Frame allocation is recoverable. Allocation alone must not force every async
+function to declare the crashable effect. A completed value and execution
+failure are distinct outcomes: failure before the body runs constructs no
+value of the function's written return type. This distinction also applies to
+recursive calls that fail to create a deeper frame after earlier frames have
+already started.
 
-`sequential` awaits each computation in turn within the current task.
-`concurrent` schedules both children before joining either. The computation in
-this example is trivial and gains no speed; the distinction matters when work
-can suspend. Scheduling a child does not guarantee immediate execution.
-
-For the initial high-level surface, async calls require an async function and
-must be awaited or explicitly spawned:
+The selected surface uses immediate, checked destructuring:
 
 ```flecha
-async void usage() {
-    calculate().await;           // Complete the operation; discard its result.
-    child := spawn calculate(); // Transfer child lifetime responsibility to its scope.
-    child.await;                // Join the child; discard its result.
-    calculate();                // Error: unawaited async call.
+async i32 calculate() { return 42; }
+
+async i32 main() {
+    child, createError := shoot calculate();
+    if createError != none { return 1; }
+
+    value, awaitError := child.await;
+    if awaitError != none { return 1; }
+    return value;
 }
 ```
 
-No detached execution is implied by discarding a result or a task handle.
-Handle consumption, unobserved errors, and precise scope cleanup remain design
-questions. `async { ... }` and entry from synchronous code are not settled.
+Direct awaiting uses `value, err := calculate().await`; the symbolic creation
+form is `child, err := >>- calculate()`. These examples show the approved
+contract, not executable compiler support yet.
 
-## One model, two levels
+On failure the value binding is uninitialized. The compiler must reject access
+until the corresponding error is proven to be `none`. Initially, fallible
+creation and await results require immediate destructuring. This is not an
+ordinary always-initialized `(T, error)` tuple: no dummy reference or owned value
+is constructed. An ordinary error returned by the function remains part of T,
+and is not silently flattened into the execution-failure slot. No public
+`AsyncResult<T>` wrapper or `.value`/`.error` API is selected.
 
-Application code uses `async`, `.await`, and scoped task creation. Low-level
-code should also be able to manage futures and polling explicitly. Both levels
-must interoperate through one contract and preserve the same lifetime rules.
+Child creation is recoverable too, superseding the earlier crash-on-allocation
+policy. Neither frame creation nor scheduler admission should require a
+crashable declaration solely for allocation. The selected keyword is `shoot`,
+replacing `spawn`; `>>-` remains its exact synonym. `spawn` is an ordinary
+identifier again, including in existing synchronous process APIs.
 
-The compiler handles suspension and ownership checks; the executor schedules
-tasks; libraries define operations. A library-provided awaitable should work
-with `.await` without adding operation-specific compiler support.
+The current frontend prototype still uses unwrapped completed types and the
+older crashable creation checks behind the non-executable gate. Replacing them
+with checked destructuring, conditional initialization, and recoverable effects
+is required before enabling async execution. Rules for void completion, failure
+forwarding, and failure during implicit scope joins still need specification.
 
-A possible low-level contract is `poll(context) -> Ready(result) | Pending`.
-These are explanatory names, not selected public APIs. Polling advances work
-without blocking. If it returns pending, a notification can arrange another
-attempt. The executor does not repeatedly poll waiting operations in a busy loop.
+Root allocation failure has a separate approved policy: the generated entry
+wrapper reports a diagnostic and returns a nonzero process status before user
+code executes or argument ownership transfers.
 
-```text
-Running task -> operation pending -> task waiting, state retained
-                                          |
-                              completion/readiness notification
-                                          |
-                                    task runnable
-                                          |
-                               executor resumes the task
-```
+The private runtime reserves scheduler and stable frame storage before
+transferring arguments or publishing a task. Failure leaves ownership with the
+caller. Initialization transfers already prepared arguments without executing
+the async body. Public argument-evaluation rules still need specification alongside the
+selected checked-destructuring contract. Failure reporting and retirement
+must work without a further successful allocation.
 
-Notifications can come from another task, an application event, a timer, an
-external callback, or an I/O backend. The model is general; sockets are one
-validation workload. A long computation can cooperate by yielding between
-steps. An arbitrary blocking function still needs adaptation or execution
-elsewhere; a worker-thread bridge is outside the first design.
+## Lexical scope ownership and cleanup
 
-Channels should be standard-library types implementing queues, capacity,
-endpoint closure, and waiting through the same general machinery. A channel
-carries values; a task handle represents completion of a particular child.
-Receiving a value does not prove its producer has finished. Channel API names,
-error behavior, and allocation policy are not selected yet.
+Every lexical block inside an async function owns the children spawned directly
+within it. Discarding a handle never detaches its child.
 
-## Ownership and decisions still needed
+- Normal fallthrough joins the block's children.
+- `return`, or `break`/`proceed` leaving the block, requests cancellation of its
+  unfinished children and drains them.
+- Exiting multiple blocks applies cleanup from innermost to outermost.
+- Child cleanup finishes before captured locals are destroyed. Existing
+  synchronous deferred calls and local cleanup retain their valid ordering.
+- A transfer staying within a block does not clean up that block. Cross-scope
+  `jumpto` is initially rejected inside async functions.
+- A child result is consumed once. Already-joined children need no additional
+  waiting; unconsumed completed results are destroyed at scope cleanup.
 
-Suspension keeps a task's live values and borrows alive. Other tasks cannot use
-suspension as permission for conflicting access. A scope must keep captured
-storage valid until its children and outstanding operations have safely retired.
-Low-level futures must obey these constraints too.
+Cancellation is cooperative. It is observed before first execution and at
+await/scope-drain boundaries. A pending operation must acknowledge safe
+retirement before its frame or captured storage can be destroyed. An early
+exit can wait indefinitely for a child that does not reach a cancellation point.
 
-The proposed exit policy is to join children on normal fallthrough and request
-cancellation and drain them on early exit. **This policy is still under review.**
-An error value alone is not proposed to trigger cancellation. Cooperative
-cancellation cannot guarantee progress from a task that never yields.
+An ordinary error value alone neither cancels siblings nor propagates
+implicitly. Returning an error follows the same early-exit cleanup rules as
+any other return. Public handling of an unobserved execution failure during
+implicit scope joining remains to be specified with the result API.
 
-Before implementation, the IFG must settle:
+## Scheduling and low-level interoperability
 
-- Task-scope boundaries, synchronous executor entry, and any async block form.
-- Cancellation observation points, result consumption, and child-error handling.
-- Future/wakeup APIs and deliberate low-level access to unawaited work.
-- Frame storage, allocation failure, stable addresses, and borrow lifetimes.
-- Scheduling, reentrancy, and the full grammar for `spawn`, `>>-`, and `.await`.
+Shoot queues work without executing it inline. Runnable tasks use FIFO order,
+duplicate notifications coalesce, and callbacks only enqueue work. Polling
+cannot reenter the executor. Pending operations are polled again after a
+notification; they are not busy-polled.
 
-The existing [concurrency safety gate](memory_safety_invariants.md#concurrency-safety-gate)
-remains in force. This foundation does not enable threads, atomics, or a shared
-memory concurrency model. Implementation should begin with a deterministic
-executor and synthetic completion events, then validate real timers and I/O.
+The approved intermediate protocol is private to the C++ compiler/runtime.
+It distinguishes pending, ready, cancelled, and allocation-failed computations.
+Every terminal outcome requires retirement of callbacks and operations that
+could access frame storage. A cancellation request alone is not retirement.
+Stale wake handles cannot address a released task or a new task reusing storage.
+
+Handwritten C++ awaitables currently exercise this protocol with synthetic
+events and recursive frame creation. Compiler-generated state machines must
+use the same protocol. A public Flecha future, poll, and wakeup API, including
+high-/low-level interoperability, remains required work; the private prototype
+is not completion of that requirement.
+
+Notifications may represent application events, timers, I/O, or another task.
+Foreign-thread notifications must be marshalled to the owning executor thread.
+Channels belong in the standard library over this general machinery; channels,
+network stacks, worker pools, atomics, and multithreading are not prerequisites.
+
+## Ownership across suspension
+
+- Suspended tasks retain their live borrows. Shared read-only borrows may
+  coexist; overlapping mutable access remains prohibited.
+- Owners cannot move, be destroyed, or be invalidated while a task or pending
+  operation uses them.
+- Joining releases capture loans only when no returned value or outstanding
+  operation retains them. Borrowed results keep their origins after completion.
+- Requesting cancellation never releases loans. Retirement and cleanup must
+  finish first.
+- Compiler-managed stable storage permits borrowing locals across suspension
+  without a public Pin-like mechanism.
+- `unsafe` preserves checked-borrow rules and cannot make synchronous functions
+  suspend. Raw-pointer backends must preserve lifetimes, aliasing, stable
+  addresses, and callback retirement through completion and cancellation.
+
+The [concurrency safety gate](memory_safety_invariants.md#concurrency-safety-gate)
+remains in force. This foundation enables no shared-memory concurrency model.
+
+## Implementation status
+
+| Area | Current status |
+| --- | --- |
+| Parser and AST | Named async functions, postfix await, `shoot`/`>>-`, AST traversal. |
+| Semantic records | Async callable effect and provisional scoped task type; unsupported-call checks. Approved checked destructuring and conditional initialization are not implemented. |
+| Scope analysis | Inner-to-outer join/cancel-and-drain exit plans and cross-scope jump diagnostics. |
+| Borrow analysis | Preliminary capture retention, explicit join release, borrowed-result origins, and consumed-handle checks; further aggregate/control-flow coverage is required. |
+| Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional creation, and separate allocation failure outcome. |
+| Resumable code generation | Not implemented. Async declarations issue `FLECHA-S0089` and cannot reach synchronous lowering. |
+| Public Flecha futures/results | Checked destructuring selected; implementation and public low-level future API remain. |
+| Tooling | VS Code and Neovim syntax highlighting with shared fixtures; dedicated async semantic navigation, hover, and token validation remains. |
+
+Tests cover ready and delayed synthetic events, registration-time notifications,
+stale callbacks, reentrancy, cancellation, allocation failure injection, result
+consumption, and initial borrowing/scope rules. These checks do not establish
+that generated Flecha async programs execute correctly. The execution gate must
+remain until lowering, cleanup, failure handling, and interoperability are
+validated together.
+
+With a testing build configured, run the focused checks with
+`ctest --test-dir <build-directory> -R 'AsyncFrontendTests|AsyncRuntimeTests' --output-on-failure`.
+The runtime tests use injected allocation failures and handwritten recursive
+frames. Generated state-machine coverage is still required before enabling
+async execution.

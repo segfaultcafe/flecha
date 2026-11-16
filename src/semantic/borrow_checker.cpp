@@ -14,7 +14,8 @@ using Code = diagnostics::DiagnosticCode;
 using Kind = core::AstNodeKind;
 
 bool CanCarryBorrow(SemanticType type) {
-    if (type.HasBorrowedLifetime() || type.Kind() == SemanticTypeKind::Function)
+    if (type.HasBorrowedLifetime() || type.Kind() == SemanticTypeKind::Function ||
+        type.Kind() == SemanticTypeKind::Task)
         return true;
     if (type.Kind() == SemanticTypeKind::Tuple)
         return std::any_of(type.Elements().begin(), type.Elements().end(),
@@ -118,6 +119,10 @@ using Origins = std::set<Origin>;
 struct Handle final {
     Origins origins;
     bool moved = false;
+    Symbols tasks;
+    Origins completionOrigins;
+    bool pendingTask = false;
+    bool joinedTask = false;
     bool operator==(const Handle&) const = default;
 };
 using State = std::map<const Symbol*, Handle>;
@@ -126,6 +131,7 @@ struct Value final {
     const Symbol* handle = nullptr;
     std::size_t temporary = 0;
     std::vector<Value> elements;
+    Symbols tasks;
 };
 struct Loan final {
     Value value;
@@ -151,6 +157,10 @@ void Merge(State& destination, const State& source) {
         Handle& target = destination[symbol];
         target.origins.insert(handle.origins.begin(), handle.origins.end());
         target.moved = target.moved || handle.moved;
+        target.tasks.insert(handle.tasks.begin(), handle.tasks.end());
+        target.completionOrigins.insert(handle.completionOrigins.begin(), handle.completionOrigins.end());
+        target.pendingTask = target.pendingTask || handle.pendingTask;
+        target.joinedTask = target.joinedTask || handle.joinedTask;
     }
 }
 
@@ -341,6 +351,12 @@ class BorrowChecker final {
                 CollectUses(assignment.Value(), uses);
                 break;
             }
+            case Kind::AwaitExpression:
+                CollectUses(static_cast<const core::AwaitExpression&>(expression).Operand(), uses);
+                break;
+            case Kind::SpawnExpression:
+                CollectUses(static_cast<const core::SpawnExpression&>(expression).Operand(), uses);
+                break;
             case Kind::CallExpression: {
                 const auto& call =
                     static_cast<const core::CallExpression&>(expression);
@@ -444,7 +460,7 @@ class BorrowChecker final {
         // Registered captures remain live until the lexical scope is exited,
         // even if the original handle has no later source-level uses.
         for (const auto& [symbol, handle] : state)
-            if (_graph.deferredCaptures.contains(symbol))
+            if (_graph.deferredCaptures.contains(symbol) || handle.pendingTask)
                 _active.insert(symbol);
         _temporaries.clear();
         _pinned.clear();
@@ -742,8 +758,12 @@ class BorrowChecker final {
                            "reference would outlive or overwrite its parent "
                            "reborrow");
         }
+        for (const Symbol* task : value.tasks)
+            if (!Outlives(task, destination))
+                Report(Code::ReferenceEscape, range,
+                       "task handle cannot escape the lexical block that owns its child");
         if (value.handle != nullptr &&
-            IsExclusiveBorrow(value.handle->Type())) {
+            (IsExclusiveBorrow(value.handle->Type()) || value.handle->Type().Kind() == SemanticTypeKind::Task)) {
             CheckHandleChange(value.handle, range);
             CheckAccess(value, true, range);
             if (value.handle->Type().IsConst())
@@ -753,7 +773,7 @@ class BorrowChecker final {
             (*_state)[value.handle] = {{}, true};
         }
         RemoveTemporary(value.temporary);
-        (*_state)[destination] = {std::move(value.origins), false};
+        (*_state)[destination] = {std::move(value.origins), false, std::move(value.tasks)};
         _active.insert(destination);
     }
 
@@ -982,6 +1002,50 @@ class BorrowChecker final {
             return Borrow(Evaluate(expression, false),
                           !implicit.Target()->IsConst(), expression.Range());
         switch (expression.Kind()) {
+            case Kind::SpawnExpression: {
+                const auto& spawn = static_cast<const core::SpawnExpression&>(expression);
+                const Symbol* task = _model.TaskFor(spawn);
+                if (!task) return {};
+                if (_state->contains(task))
+                    Report(Code::InvalidAsync, expression.Range(),
+                           "repeating a child-creation site within one lexical scope activation is not supported yet");
+                Origins captures;
+                Origins* previous = _spawnCaptures;
+                const core::Expression* previousCall = _spawnCall;
+                _spawnCaptures = &captures;
+                _spawnCall = &Unwrap(spawn.Operand());
+                Value completion = Evaluate(spawn.Operand());
+                _spawnCaptures = previous;
+                _spawnCall = previousCall;
+                Handle child;
+                child.origins = std::move(captures);
+                child.completionOrigins = std::move(completion.origins);
+                child.pendingTask = true;
+                (*_state)[task] = std::move(child);
+                _active.insert(task);
+                RemoveTemporary(completion.temporary);
+                Value result;
+                result.tasks.insert(task);
+                return result;
+            }
+            case Kind::AwaitExpression: {
+                const auto& await = static_cast<const core::AwaitExpression&>(expression);
+                Value operand = Evaluate(await.Operand());
+                if (_model.TypeOf(await.Operand()).Kind() != SemanticTypeKind::Task)
+                    return operand;
+                Value result;
+                for (const Symbol* task : operand.tasks) {
+                    Handle& child = (*_state)[task];
+                    if (child.joinedTask)
+                        Report(Code::MovedReference, expression.Range(),
+                               "task result may already have been consumed by a previous join");
+                    result.origins.insert(child.completionOrigins.begin(), child.completionOrigins.end());
+                    child.origins.clear();
+                    child.pendingTask = false;
+                    child.joinedTask = true;
+                }
+                return result;
+            }
             case Kind::BuildExpression:
                 return EvaluateBuild(
                     static_cast<const core::BuildExpression&>(expression));
@@ -1116,7 +1180,7 @@ class BorrowChecker final {
                 const Symbol* symbol = Named(expression);
                 if (TracksBorrow(symbol)) {
                     const Handle& handle = (*_state)[symbol];
-                    if (handle.moved && symbol->Type().HasBorrowedLifetime())
+                    if (handle.moved && (symbol->Type().HasBorrowedLifetime() || symbol->Type().Kind() == SemanticTypeKind::Task))
                         Report(Code::MovedReference, expression.Range(),
                                "use of possibly moved reference '" +
                                    symbol->Name() + "'");
@@ -1125,7 +1189,7 @@ class BorrowChecker final {
                             {{{symbol, {}}}, symbol, 0},
                             _model.TransferOf(expression) == TransferKind::Move,
                             expression.Range());
-                    return {handle.origins, symbol, 0};
+                    return {handle.origins, symbol, 0, {}, handle.tasks};
                 }
                 if (symbol != nullptr && symbol->Kind() != SymbolKind::Function)
                     CheckAccess(
@@ -1233,6 +1297,14 @@ class BorrowChecker final {
                 const auto arguments = _model.ArgumentsFor(call);
                 for (std::size_t index = 0; index < arguments.size(); ++index) {
                     Value value = Evaluate(*arguments[index]);
+                    if (_spawnCaptures && _spawnCall == &expression &&
+                        signature && index < signature->parameters.size() &&
+                        CanCarryBorrow(signature->parameters[index])) {
+                        for (Origin origin : value.origins) {
+                            origin.exclusive = origin.exclusive || IsExclusiveBorrow(signature->parameters[index]);
+                            _spawnCaptures->insert(std::move(origin));
+                        }
+                    }
                     const bool destroys =
                         signature != nullptr &&
                         ((index == 0 && effective != nullptr &&
@@ -1490,6 +1562,8 @@ class BorrowChecker final {
     const SemanticModel& _model;
     diagnostics::DiagnosticBag& _diagnostics;
     const ControlFlowGraph& _graph;
+    Origins* _spawnCaptures = nullptr;
+    const core::Expression* _spawnCall = nullptr;
     std::vector<Symbols> _live, _uses, _defs;
     State* _state = nullptr;
     Symbols _active, _pinned;

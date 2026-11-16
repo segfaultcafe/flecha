@@ -39,6 +39,7 @@ enum class SemanticTypeKind {
     Null,
     None,
     Function,
+    Task,
     Error,
     ErrorValue,
     NamedError,
@@ -152,7 +153,8 @@ class SemanticType final {
                _kind == SemanticTypeKind::Reference ||
                _kind == SemanticTypeKind::Array ||
                _kind == SemanticTypeKind::Slice ||
-               _kind == SemanticTypeKind::Tuple;
+               _kind == SemanticTypeKind::Tuple ||
+               _kind == SemanticTypeKind::Task;
     }
     [[nodiscard]] std::uint64_t Length() const { return _length; }
     [[nodiscard]] const SemanticType* Target() const { return _target.get(); }
@@ -189,6 +191,7 @@ struct CallableSignature final {
     bool isUnsafe = false;
     bool isOnce = false;
     bool isCrashable = false;
+    bool isAsync = false;
 
     bool operator==(const CallableSignature& other) const;
 };

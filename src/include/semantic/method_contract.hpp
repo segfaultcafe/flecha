@@ -41,6 +41,7 @@ struct MethodContract final {
     bool isUnsafe = false;
     bool isOnce = false;
     bool isCrashable = false;
+    bool isAsync = false;
     MethodVisibility visibility = MethodVisibility::Public;
     core::MethodCategory category = core::MethodCategory::Missing;
     const InterfaceType* declaredBy = nullptr;

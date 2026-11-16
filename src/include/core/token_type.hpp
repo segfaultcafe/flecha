@@ -97,6 +97,8 @@ enum class TokenType {
     Func,
     Once,
     Unsafe,
+    Async,
+    Shoot,
     Export,
     Quiver,
     Extern,

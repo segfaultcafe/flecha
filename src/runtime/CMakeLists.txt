@@ -1,4 +1,4 @@
-add_library(runtime STATIC runtime.cpp crash.cpp allocation.cpp environment.cpp
+add_library(runtime STATIC async_executor.cpp runtime.cpp crash.cpp allocation.cpp environment.cpp
                            filesystem.cpp file_stream.cpp process.cpp time.cpp
                            random.cpp security.cpp network.cpp
                            standard_stream.cpp)

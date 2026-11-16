@@ -9,6 +9,14 @@
 
 namespace flecha::semantic {
 using NodeId = std::size_t;
+enum class TaskScopeExitKind { Join, CancelAndDrain };
+struct TaskScopeExit final {
+    NodeId source;
+    // A return has no CFG successor. Scopes are ordered inner to outer.
+    std::optional<NodeId> successor;
+    TaskScopeExitKind kind;
+    std::vector<const core::BlockStatement*> scopes;
+};
 struct FlowNode final {
     std::vector<NodeId> successors;
     std::vector<NodeId> predecessors;
@@ -41,10 +49,12 @@ struct FlowNode final {
     const core::DestructureStatement* memoryDestructure = nullptr;
     const core::DeferStatement* memoryDefer = nullptr;
     const core::ReturnStatement* memoryReturn = nullptr;
+    const core::Statement* transfer = nullptr;
     bool reachable = false;
 };
 struct ControlFlowGraph final {
     std::vector<FlowNode> nodes;
+    std::vector<TaskScopeExit> taskScopeExits;
     std::unordered_map<const Symbol*, const core::BlockStatement*> symbolScopes;
     std::unordered_map<const core::BlockStatement*, const core::BlockStatement*>
         scopeParents;

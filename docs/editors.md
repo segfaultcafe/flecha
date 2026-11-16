@@ -10,6 +10,12 @@ Both editors render the `!` in a crashable declaration or call, such as
 operator style. The terminal `crash(...)` builtin is blue to distinguish it
 from ordinary function calls.
 
+Both editors highlight the `async` modifier, `shoot` keyword, postfix
+`.await`, and `>>-` operator. Bare `await` remains an ordinary identifier.
+Shared async fixtures cover these forms, shift/minus expressions, existing
+`spawn()` names, comments, and strings. Highlighting does not imply executable
+async support; see the [async implementation status](async-design.md).
+
 ## Visual Studio Code
 
 Download `flecha-language-VERSION.vsix` and `SHA256SUMS` from the matching

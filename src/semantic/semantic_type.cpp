@@ -161,6 +161,7 @@ bool SemanticType::IsTriviallyZeroable() const {
 }
 
 bool SemanticType::IsCopyable() const {
+    if (_kind == SemanticTypeKind::Task) return false;
     if (_kind == SemanticTypeKind::Function ||
         _kind == SemanticTypeKind::Interface)
         return false;
@@ -228,7 +229,7 @@ bool CallableSignature::operator==(const CallableSignature& other) const {
            resultContracts == other.resultContracts &&
            borrowSourceIndices == other.borrowSourceIndices &&
            isUnsafe == other.isUnsafe && isOnce == other.isOnce &&
-           isCrashable == other.isCrashable;
+           isCrashable == other.isCrashable && isAsync == other.isAsync;
 }
 
 SemanticType SemanticType::FromSyntax(const core::TypeNode& type) {
@@ -342,10 +343,13 @@ std::string SemanticType::Name() const {
             return "null";
         case SemanticTypeKind::None:
             return "none";
+        case SemanticTypeKind::Task:
+            return "task<" + Target()->Name() + ">";
         case SemanticTypeKind::Function:
             if (!_signature) return "function";
             {
-                std::string name = _signature->isUnsafe ? "unsafe " : "";
+                std::string name = _signature->isAsync ? "async " : "";
+                if (_signature->isUnsafe) name += "unsafe ";
                 if (_signature->isOnce) name += "once ";
                 name += "func(";
                 for (std::size_t i = 0; i < _signature->parameters.size();

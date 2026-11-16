@@ -129,7 +129,8 @@ class FunctionSymbol final : public Symbol {
                                                std::move(borrowSourceIndices),
                                                isUnsafe,
                                                false,
-                                               isCrashable}),
+                                               isCrashable,
+                                               declaration && declaration->IsAsync()}),
                          declarationRange, builtIn, owner, isPrivate,
                          hasReceiver, isExtern, std::move(linkName), enumOwner,
                          declaration, borrowsVariadicPack, nullptr, false) {}
@@ -170,6 +171,7 @@ class FunctionSymbol final : public Symbol {
     }
     [[nodiscard]] bool IsUnsafe() const { return _signature->isUnsafe; }
     [[nodiscard]] bool IsOnce() const { return _signature->isOnce; }
+    [[nodiscard]] bool IsAsync() const { return _signature->isAsync; }
     [[nodiscard]] bool IsCrashable() const { return _signature->isCrashable; }
     const StructureType* Owner() const { return _owner; }
     const EnumType* EnumOwner() const { return _enumOwner; }

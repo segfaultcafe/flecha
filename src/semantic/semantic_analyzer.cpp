@@ -2154,6 +2154,13 @@ void SemanticAnalyzer::RegisterFunctions(const core::CompilationUnit& unit) {
 void SemanticAnalyzer::RegisterFunction(
     const core::FunctionDeclaration& function, bool generated) {
     SetSource(function.sourceId);
+    // Fail closed while resumable lowering and its runtime contract are under
+    // construction. Never compile an async declaration as a synchronous call.
+    if (function.IsAsync())
+        Report(diagnostics::DiagnosticCode::AsyncNotImplemented,
+               function.NameRange(),
+               "async execution is not implemented yet; this declaration "
+               "requires resumable lowering and an executor");
     if (function.HasVariadicPack()) {
         if (!function.genericParameters.empty() ||
             !function.ownerParameters.empty())
@@ -2396,7 +2403,8 @@ void SemanticAnalyzer::RegisterFunction(
         borrowSourceIndices,
         function.IsUnsafe(),
         function.HasModifier(core::FunctionModifier::Once),
-        function.IsCrashable()};
+        function.IsCrashable(),
+        function.IsAsync()};
     const MethodVisibility methodVisibility =
         function.HasModifier(core::FunctionModifier::Protected)
             ? MethodVisibility::Protected
@@ -2994,6 +3002,14 @@ void SemanticAnalyzer::AnalyzeFunction(
     }
     AnalyzeBlock(function.Body(), false);
     const ControlFlowGraph graph = BuildControlFlowGraph(function, _model);
+    if (function.IsAsync())
+        for (const FlowNode& node : graph.nodes)
+            if (node.transfer && node.transfer->Kind() == core::AstNodeKind::JumpToStatement)
+                for (NodeId target : node.successors)
+                    if (node.scopes != graph.nodes[target].scopes)
+                        Report(diagnostics::DiagnosticCode::InvalidAsync,
+                               node.transfer->Range(),
+                               "jumpto cannot cross lexical task-scope boundaries in an async function");
     if (_currentFunction &&
         _currentFunction->ReturnType().Kind() != SemanticTypeKind::Void &&
         !_currentFunction->ReturnType().IsError() &&
@@ -3944,6 +3960,14 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
             type = AnalyzeAssignment(
                 static_cast<const core::AssignmentExpression&>(expression));
             break;
+        case core::AstNodeKind::AwaitExpression:
+            type = AnalyzeAsyncOperation(expression,
+                static_cast<const core::AwaitExpression&>(expression).Operand(), false);
+            break;
+        case core::AstNodeKind::SpawnExpression:
+            type = AnalyzeAsyncOperation(expression,
+                static_cast<const core::SpawnExpression&>(expression).Operand(), true);
+            break;
         case core::AstNodeKind::CallExpression:
             type = AnalyzeCall(
                 static_cast<const core::CallExpression&>(expression));
@@ -3991,6 +4015,78 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
          expression.Kind() == core::AstNodeKind::BuildExpression))
         RecordCleanupEffects(type);
     return type;
+}
+
+void SemanticAnalyzer::ValidateAsyncCall(
+    const core::Expression& expression, const CallableSignature& signature,
+    const FunctionSymbol* function) {
+    if (!signature.isAsync) return;
+    if (!_currentFunction || !_currentFunction->IsAsync())
+        Report(diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),
+               "async calls require an async function; only async main may enter from synchronous code");
+    if (_asyncOperand != &expression)
+        Report(diagnostics::DiagnosticCode::UnawaitedAsyncCall, expression.Range(),
+               "async call must be immediately awaited with .await or explicitly spawned");
+    if (!function || function->InterfaceOwner())
+        Report(diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),
+               "indirect async calls and async interface dispatch are not supported yet");
+}
+
+SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
+    const core::Expression& expression, const core::Expression& operand,
+    bool spawn) {
+    if (!_currentFunction || !_currentFunction->IsAsync())
+        Report(diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),
+               "await and shoot require an async function; unsafe does not permit suspension");
+    const core::Expression* inner = &operand;
+    while (inner->Kind() == core::AstNodeKind::ParenthesizedExpression)
+        inner = &static_cast<const core::ParenthesizedExpression*>(inner)->Inner();
+    const core::Expression* previous = _asyncOperand;
+    const core::Expression* previousSpawn = _spawnOperand;
+    _asyncOperand = inner;
+    _spawnOperand = spawn ? inner : nullptr;
+    if (spawn) {
+        if (!_currentFunction || !_currentFunction->IsCrashable())
+            Report(diagnostics::DiagnosticCode::InvalidCrashable, expression.Range(),
+                   "shoot and >>- can fail allocation and require a crashable async function");
+        if (_currentFunction) _directCrashFunctions.insert(_currentFunction);
+    }
+    const SemanticType value = AnalyzeExpression(operand);
+    _asyncOperand = previous;
+    _spawnOperand = previousSpawn;
+    bool asyncCall = false;
+    if (inner->Kind() == core::AstNodeKind::CallExpression) {
+        const auto& call = static_cast<const core::CallExpression&>(*inner);
+        const SemanticType callee = _model.TypeOf(call.Callee());
+        asyncCall = callee.Kind() == SemanticTypeKind::Function && callee.Signature().isAsync;
+    } else if (inner->Kind() == core::AstNodeKind::MemberCallExpression) {
+        const auto& call = static_cast<const core::MemberCallExpression&>(*inner);
+        const FunctionSymbol* target = _model.MethodFor(call);
+        asyncCall = target && target->IsAsync();
+    }
+    if (spawn) {
+        if (!asyncCall) {
+            Report(diagnostics::DiagnosticCode::InvalidSpawn, operand.Range(),
+                   "shoot and >>- require a direct async call; use (shoot f()).await to join immediately");
+            return SemanticType::Error();
+        }
+        const SemanticType taskType(SemanticTypeKind::Task, value);
+        const auto& syntax = static_cast<const core::SpawnExpression&>(expression);
+        if (!_model._asyncTasks.contains(&syntax)) {
+            auto task = std::make_unique<VariableSymbol>(SymbolKind::LocalVariable,
+                "$async.task." + std::to_string(_model._asyncTasks.size()),
+                taskType, expression.Range(), false);
+            _model._asyncTasks.emplace(&syntax, task.get());
+            _model._symbols.push_back(std::move(task));
+        }
+        return taskType;
+    }
+    if (value.Kind() == SemanticTypeKind::Task) return *value.Target();
+    if (asyncCall) return value;
+    if (!value.IsError())
+        Report(diagnostics::DiagnosticCode::InvalidAwait, operand.Range(),
+               ".await requires an async call or a scoped task handle");
+    return SemanticType::Error();
 }
 
 SemanticType SemanticAnalyzer::AnalyzeIsOf(
@@ -4144,6 +4240,11 @@ std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
         case SemanticTypeKind::Null:
         case SemanticTypeKind::None:
         case SemanticTypeKind::Error:
+            result = primitive(PrimitiveType::Void);
+            break;
+        case SemanticTypeKind::Task:
+            Report(diagnostics::DiagnosticCode::InvalidAsync, range,
+                   "scoped task types cannot be named in generated declarations yet");
             result = primitive(PrimitiveType::Void);
             break;
     }
@@ -6375,7 +6476,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         const auto& callee =
             static_cast<const core::NameExpression&>(expression.Callee());
         const std::string lookupName =
-            EffectName(callee.Name(), expression.IsCrashable());
+            EffectName(callee.Name(), expression.IsCrashable() || _spawnOperand == &expression);
         const auto overloads = LookupFunctions(lookupName);
         if (overloads.size() > 1) {
             function =
@@ -6391,7 +6492,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         const bool previousCallee = _analyzingCallCallee;
         const bool previousCrashableCallee = _callCalleeCrashable;
         _analyzingCallCallee = true;
-        _callCalleeCrashable = expression.IsCrashable();
+        _callCalleeCrashable = expression.IsCrashable() || _spawnOperand == &expression;
         calleeType = AnalyzeExpression(expression.Callee());
         _analyzingCallCallee = previousCallee;
         _callCalleeCrashable = previousCrashableCallee;
@@ -6561,7 +6662,11 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
                expression.Callee().Range(), "expression is not callable");
         return SemanticType::Error();
     }
-    ValidateCrashableCall(expression.IsCrashable(), *signature, function,
+    ValidateAsyncCall(expression, *signature, function);
+    if (_spawnOperand == &expression && expression.IsCrashable())
+        Report(diagnostics::DiagnosticCode::InvalidSpawn, expression.Range(),
+               "write shoot f() or >>- f(); the crashable callee is declared with !, without ! at the shoot call");
+    ValidateCrashableCall(expression.IsCrashable() || _spawnOperand == &expression, *signature, function,
                           expression.Range());
     if (signature->isUnsafe || (signature->result.IsImmovable() && !_inZero))
         RequireUnsafe(expression.Callee().Range());
@@ -7350,7 +7455,8 @@ void SemanticAnalyzer::ResolveInterfaceMethods() {
             std::move(borrowSources),
             function.IsUnsafe(),
             function.HasModifier(core::FunctionModifier::Once),
-            function.IsCrashable()};
+            function.IsCrashable(),
+        function.IsAsync()};
         auto callableSignature =
             std::make_shared<const CallableSignature>(signature);
         MethodContract contract = NormalizeMethodContract(
@@ -8353,6 +8459,7 @@ SemanticType SemanticAnalyzer::AnalyzeMethodCall(
                        "checked-reference receiver");
         }
     }
+    ValidateAsyncCall(expression, function->Signature(), function);
     ValidateCrashableCall(expression.IsCrashable(), function->Signature(),
                           function, expression.Range());
     if (_currentFunction) _functionCalls[_currentFunction].insert(function);

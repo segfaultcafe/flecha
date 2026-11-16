@@ -110,6 +110,12 @@ enum class DiagnosticCode {
     DuplicateBehaviorFieldKey,
     BehaviorRequirementFailed,
 
+    AsyncNotImplemented,
+    InvalidAsync,
+    UnawaitedAsyncCall,
+    InvalidAwait,
+    InvalidSpawn,
+
     NativeTargetUnavailable,
     ObjectEmissionFailed,
     RuntimeUnavailable,

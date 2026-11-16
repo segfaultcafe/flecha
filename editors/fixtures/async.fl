@@ -1,0 +1,29 @@
+// Shared lexical fixture; async execution remains gated in the compiler.
+async i32 calculate() { return 42; }
+async i32 main() {
+    child, createError := shoot calculate();
+    if createError != none { return 1; }
+    value, awaitError := child.await;
+    if awaitError != none { return 1; }
+    other, otherError := >>- calculate();
+    if otherError != none { return 1; }
+    second, secondError := other. await;
+    if secondError != none { return 1; }
+    direct, directError := calculate().await;
+    if directError != none { return 1; }
+    return value + second + direct;
+}
+
+// Ordinary names and operators must keep their existing highlighting.
+i32 await = 0;
+i32 awaiting = 1;
+i32 shooter = 2;
+i32 asynchronous = 3;
+spawn();
+Command::spawn();
+object.awaiting;
+x >> -y;
+x>>-y;
+// async shoot child.await >>-
+/* async shoot child.await >>- */
+stringv text = "async shoot child.await >>-";

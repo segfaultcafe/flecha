@@ -33,6 +33,7 @@
     {"include": "#labels"},
     {"include": "#numbers"},
     {"include": "#crashBuiltin"},
+    {"include": "#asyncOperations"},
     {"include": "#functions"},
     {"include": "#crashableBangs"},
     {"include": "#operators"},
@@ -192,7 +193,7 @@
       ]
     },
     "methodDeclarations": {
-      "begin": "^(\\s*)((?:(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected|override)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)(::)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
+      "begin": "^(\\s*)((?:(?:async|unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected|override)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)(::)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
       "beginCaptures": {
         "2": {"name": "storage.modifier.flecha"},
         "3": {"name": "storage.type.flecha"},
@@ -216,7 +217,7 @@
       ]
     },
     "functionDeclarations": {
-      "begin": "^(\\s*)((?:(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
+      "begin": "^(\\s*)((?:(?:async|unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected)\\s+)*)((?:(?:&\\s*(?:const\\s+)?|\\*\\s*(?:const\\s+)?|\\[[^\\]\\n]*\\]\\s*))*(?:\\([^()\\n]*\\)|(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|void|string|stringv|error|[A-Z][A-Za-z0-9_]*)(?:<[^>\\n]*>)?))(\\s+)([A-Za-z_][A-Za-z0-9_]*(?:<[^>\\n]*>)?)(\\s*)(!?)(\\s*)(\\()",
       "beginCaptures": {
         "2": {"name": "storage.modifier.flecha"},
         "3": {"name": "storage.type.flecha"},
@@ -343,7 +344,7 @@
     },
     "modifiers": {
       "name": "storage.modifier.flecha",
-      "match": "\\b(?:unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected|override|virtual|default|final)\\b"
+      "match": "\\b(?:async|unsafe|once|export|quiver|extern|foreign|inline|comptime|copy|own|lend|const|constptr|constref|volatile|private|protected|override|virtual|default|final)\\b"
     },
     "control": {
       "name": "keyword.control.flecha",
@@ -420,13 +421,32 @@
         }
       ]
     },
+    "asyncOperations": {
+      "patterns": [
+        {
+          "name": "keyword.control.async.flecha",
+          "match": "\\bshoot\\b"
+        },
+        {
+          "match": "(\\.)(\\s*)(await)\\b",
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.flecha"
+            },
+            "3": {
+              "name": "keyword.control.async.flecha"
+            }
+          }
+        }
+      ]
+    },
     "crashableBangs": {
       "name": "keyword.operator.crashable.flecha",
       "match": "(?<=[A-Za-z0-9_>])!(?=\\s*\\()"
     },
     "operators": {
       "name": "keyword.operator.flecha",
-      "match": "::|<-|->|=>|:=|===|!==|==|!=|<<|>>|<=|>=|&&|\\|\\||\\b(?:and|or|raw)\\b|[&|~=+*/%^!<>-]"
+      "match": "::|<-|->|=>|:=|===|!==|==|!=|<<|>>-|>>|<=|>=|&&|\\|\\||\\b(?:and|or|raw)\\b|[&|~=+*/%^!<>-]"
     },
     "variables": {
       "name": "variable.other.readwrite.flecha",
