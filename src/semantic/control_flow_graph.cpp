@@ -34,10 +34,40 @@ class GraphBuilder final {
             }
         }
 
+        if (function.IsAsync()) PlanTaskScopeExits();
         return std::move(_graph);
     }
 
    private:
+    void PlanTaskScopeExits() {
+        for (NodeId id = 0; id < _graph.nodes.size(); ++id) {
+            const FlowNode& node = _graph.nodes[id];
+            if (!node.reachable) continue;
+            if (node.memoryReturn) {
+                _graph.taskScopeExits.push_back({id, std::nullopt,
+                    TaskScopeExitKind::CancelAndDrain,
+                    {node.scopes.rbegin(), node.scopes.rend()}});
+                continue;
+            }
+            // Cross-scope jumps are diagnosed separately, never treated as
+            // implicit permission to enter or abandon a task scope.
+            if (node.transfer && node.transfer->Kind() == core::AstNodeKind::JumpToStatement)
+                continue;
+            for (NodeId successor : node.successors) {
+                const auto& target = _graph.nodes[successor].scopes;
+                std::size_t common = 0;
+                while (common < node.scopes.size() && common < target.size() &&
+                       node.scopes[common] == target[common]) ++common;
+                if (common == node.scopes.size()) continue;
+                TaskScopeExit exit{id, successor,
+                    node.transfer ? TaskScopeExitKind::CancelAndDrain : TaskScopeExitKind::Join, {}};
+                for (std::size_t index = node.scopes.size(); index > common; --index)
+                    exit.scopes.push_back(node.scopes[index - 1]);
+                _graph.taskScopeExits.push_back(std::move(exit));
+            }
+        }
+    }
+
     NodeId AddNode(std::vector<NodeId> successors) {
         const NodeId node = _graph.nodes.size();
         _graph.nodes.push_back(FlowNode{});
@@ -156,6 +186,7 @@ class GraphBuilder final {
                     static_cast<const core::ReturnStatement&>(statement);
                 const NodeId exit = AddNode({});
                 _graph.nodes[exit].memoryReturn = &result;
+                _graph.nodes[exit].transfer = &statement;
                 return result.Value() == nullptr
                            ? exit
                            : BuildEvaluation(*result.Value(), exit, &result);
@@ -192,15 +223,16 @@ class GraphBuilder final {
                 return header;
             }
             case core::AstNodeKind::ProceedStatement:
-                return AddNode(_loops.empty()
-                                   ? std::vector<NodeId>{}
-                                   : std::vector<NodeId>{_loops.back().first});
-            case core::AstNodeKind::BreakStatement:
-                return AddNode(_loops.empty()
-                                   ? std::vector<NodeId>{}
-                                   : std::vector<NodeId>{_loops.back().second});
+            case core::AstNodeKind::BreakStatement: {
+                const bool proceed = statement.Kind() == core::AstNodeKind::ProceedStatement;
+                const NodeId transfer = AddNode(_loops.empty() ? std::vector<NodeId>{}
+                    : std::vector<NodeId>{proceed ? _loops.back().first : _loops.back().second});
+                _graph.nodes[transfer].transfer = &statement;
+                return transfer;
+            }
             case core::AstNodeKind::JumpToStatement: {
                 const NodeId jump = AddNode({});
+                _graph.nodes[jump].transfer = &statement;
                 _jumps.emplace_back(
                     jump, static_cast<const core::JumpToStatement&>(statement)
                               .Position());
@@ -276,6 +308,14 @@ class GraphBuilder final {
     NodeId BuildExpressionBody(const core::Expression& expression,
                                NodeId next) {
         switch (expression.Kind()) {
+            case core::AstNodeKind::AwaitExpression:
+                return BuildExpression(static_cast<const core::AwaitExpression&>(expression).Operand(), next);
+            case core::AstNodeKind::SpawnExpression: {
+                const auto& spawn = static_cast<const core::SpawnExpression&>(expression);
+                if (const Symbol* task = _model.TaskFor(spawn))
+                    _graph.symbolScopes.emplace(task, _scopes.back());
+                return BuildExpression(spawn.Operand(), next);
+            }
             case core::AstNodeKind::AnonymousFunctionExpression: {
                 const auto& function =
                     static_cast<const core::AnonymousFunctionExpression&>(

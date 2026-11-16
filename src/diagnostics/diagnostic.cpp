@@ -198,6 +198,16 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-S0037";
         case DiagnosticCode::ArrayIndexOutOfBounds:
             return "FLECHA-S0036";
+        case DiagnosticCode::InvalidAsync:
+            return "FLECHA-S0090";
+        case DiagnosticCode::UnawaitedAsyncCall:
+            return "FLECHA-S0091";
+        case DiagnosticCode::InvalidAwait:
+            return "FLECHA-S0092";
+        case DiagnosticCode::InvalidSpawn:
+            return "FLECHA-S0093";
+        case DiagnosticCode::AsyncNotImplemented:
+            return "FLECHA-S0089";
         case DiagnosticCode::NativeTargetUnavailable:
             return "FLECHA-C0001";
         case DiagnosticCode::ObjectEmissionFailed:

@@ -87,3 +87,56 @@ test("bounded field iteration scopes only contextual binders", () => {
   assert.equal(iteration.captures["2"].name, "entity.name.type.parameter.flecha");
   assert.equal(iteration.captures["6"].name, "variable.other.field-descriptor.flecha");
 });
+
+const fs = require("node:fs");
+const path = require("node:path");
+const asyncFixture = fs.readFileSync(
+  path.join(__dirname, "../../fixtures/async.fl"), "utf8",
+);
+
+test("async declarations preserve modifier, result, and function scopes", () => {
+  const declaration = grammar.repository.functionDeclarations;
+  const match = asyncFixture.split("\n")
+    .map((line) => new RegExp(declaration.begin).exec(line))
+    .find((match) => match && match[5] === "calculate");
+  assert.ok(match);
+  assert.equal(match[2], "async ");
+  assert.equal(match[3], "i32");
+  assert.equal(declaration.beginCaptures["2"].name, "storage.modifier.flecha");
+  assert.equal(declaration.beginCaptures["5"].name, "entity.name.function.flecha");
+  assert.match("async i32 Worker::calculate()", new RegExp(grammar.repository.methodDeclarations.begin));
+  assert.match("async", new RegExp(grammar.repository.modifiers.match));
+  assert.doesNotMatch("asynchronous", new RegExp(grammar.repository.modifiers.match));
+});
+
+test("shoot and postfix await have contextual async scopes", () => {
+  const patterns = grammar.repository.asyncOperations.patterns;
+  const shoot = new RegExp(patterns[0].match);
+  const awaitPattern = new RegExp(patterns[1].match);
+  assert.equal(patterns[0].name, "keyword.control.async.flecha");
+  assert.equal(patterns[1].captures["3"].name, "keyword.control.async.flecha");
+  for (const source of ["shoot calculate()", "child.await", "other. await", "calculate().await"]) {
+    assert.ok(asyncFixture.includes(source));
+    assert.match(source, source.startsWith("shoot") ? shoot : awaitPattern);
+  }
+  for (const source of ["shooter", "spawn()", "Command::spawn()"]) {
+    assert.doesNotMatch(source, shoot);
+  }
+  for (const source of ["i32 await = 0", "awaiting", "object.awaiting"]) {
+    assert.doesNotMatch(source, awaitPattern);
+  }
+  const includes = grammar.patterns.map((pattern) => pattern.include);
+  for (const earlier of ["#comments", "#strings", "#characters"]) {
+    assert.ok(includes.indexOf(earlier) < includes.indexOf("#asyncOperations"));
+  }
+  assert.ok(includes.indexOf("#asyncOperations") < includes.indexOf("#functions"));
+});
+
+test("arrow creation and shift/minus retain operator scopes", () => {
+  const operators = new RegExp(grammar.repository.operators.match, "g");
+  for (const source of [">>- calculate()", "x >> -y", "x>>-y"]) {
+    assert.ok(asyncFixture.includes(source));
+    assert.equal(source.match(operators).join(""), ">>-");
+  }
+  assert.equal(grammar.repository.operators.name, "keyword.operator.flecha");
+});

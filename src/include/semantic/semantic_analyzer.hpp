@@ -176,6 +176,14 @@ class SemanticAnalyzer final {
     void Report(diagnostics::DiagnosticCode code, source::SourceRange range,
                 std::string message);
 
+    SemanticType AnalyzeAsyncOperation(const core::Expression& expression,
+                                       const core::Expression& operand,
+                                       bool spawn);
+    void ValidateAsyncCall(const core::Expression& expression,
+                           const CallableSignature& signature,
+                           const FunctionSymbol* function);
+    const core::Expression* _asyncOperand = nullptr;
+    const core::Expression* _spawnOperand = nullptr;
     diagnostics::DiagnosticBag& _diagnostics;
     SemanticModel _model;
     Scope* _currentScope = nullptr;

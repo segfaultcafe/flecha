@@ -189,6 +189,10 @@ class SemanticModel final {
         const auto found = _fields.find(&expression);
         return found == _fields.end() ? nullptr : found->second;
     }
+    const VariableSymbol* TaskFor(const core::SpawnExpression& expression) const {
+        const auto found = _asyncTasks.find(&expression);
+        return found == _asyncTasks.end() ? nullptr : found->second;
+    }
     const FunctionSymbol* MethodFor(
         const core::MemberCallExpression& expression) const {
         const auto found = _methods.find(&expression);
@@ -284,6 +288,7 @@ class SemanticModel final {
     std::unordered_map<const core::MemberAccessExpression*,
                        const StructureField*>
         _fields;
+    std::unordered_map<const core::SpawnExpression*, const VariableSymbol*> _asyncTasks;
     std::unordered_map<const core::MemberCallExpression*, const FunctionSymbol*>
         _methods;
     std::unordered_map<const core::MemberCallExpression*, const MethodContract*>

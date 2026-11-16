@@ -45,6 +45,8 @@ const KeywordMap KEYWORDS = {
     {"func", TokenType::Func},
     {"once", TokenType::Once},
     {"unsafe", TokenType::Unsafe},
+    {"async", TokenType::Async},
+    {"shoot", TokenType::Shoot},
     {"export", TokenType::Export},
     {"quiver", TokenType::Quiver},
     {"extern", TokenType::Extern},

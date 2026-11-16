@@ -1,4 +1,6 @@
 add_executable(test_flecha
+    test_async_runtime.cpp
+    test_async.cpp
     test_analysis_session.cpp
     test_analyzer_protocol.cpp
     test_analyzer_server_loop.cpp

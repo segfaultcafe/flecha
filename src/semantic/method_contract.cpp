@@ -75,6 +75,7 @@ std::string CanonicalTypeIdentity(SemanticType type) {
     }
     if (type.Kind() == SemanticTypeKind::Function) {
         const CallableSignature& signature = type.Signature();
+        if (signature.isAsync) result += "async";
         result += "r";
         AppendIdentity(result, CanonicalTypeIdentity(signature.result));
         result += "a" + std::to_string(signature.parameters.size());
@@ -115,7 +116,8 @@ bool MethodContract::SameContract(const MethodContract& other) const {
            borrowSourceIndices == other.borrowSourceIndices &&
            borrowsVariadicPack == other.borrowsVariadicPack &&
            isUnsafe == other.isUnsafe && isOnce == other.isOnce &&
-           isCrashable == other.isCrashable && visibility == other.visibility;
+           isCrashable == other.isCrashable && isAsync == other.isAsync &&
+           visibility == other.visibility;
 }
 
 MethodContract NormalizeMethodContract(std::string name,
@@ -146,6 +148,7 @@ MethodContract NormalizeMethodContract(std::string name,
     result.isUnsafe = signature.isUnsafe;
     result.isOnce = signature.isOnce;
     result.isCrashable = signature.isCrashable;
+    result.isAsync = signature.isAsync;
     result.visibility = visibility;
     result.category = category;
     return result;

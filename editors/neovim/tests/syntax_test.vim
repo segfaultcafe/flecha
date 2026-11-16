@@ -314,6 +314,34 @@ call s:HighlightLink('flechaParameter', '@variable.parameter', 'Identifier')
 call s:HighlightLink('flechaVariable', '@variable', 'Identifier')
 call s:HighlightLink('flechaNamedConstant', '@constant', 'Constant')
 
+" Both editors consume the same async lexical fixture.
+execute 'edit ' . fnameescape(s:test_directory . '/../../fixtures/async.fl')
+call assert_equal('flechaModifier', s:HighlightAt('async i32 calculate', 0))
+call assert_equal('flechaFunction', s:HighlightAt('async i32 calculate', 10))
+call assert_equal('flechaShoot', s:HighlightAt('shoot calculate', 0))
+call assert_equal('flechaAwait', s:HighlightAt('child.await;', 6))
+call assert_equal('flechaAwait', s:HighlightAt('other. await;', 7))
+call assert_equal('flechaAwait', s:HighlightAt('calculate().await;', 12))
+call assert_equal('flechaOperator', s:HighlightAt('>>- calculate', 2))
+call assert_equal('flechaOperator', s:HighlightAt('x >> -y', 5))
+call assert_equal('flechaOperator', s:HighlightAt('x>>-y', 3))
+call assert_equal('flechaVariable', s:HighlightAt('i32 await =', 4))
+call assert_equal('flechaVariable', s:HighlightAt('i32 awaiting =', 4))
+call assert_equal('flechaVariable', s:HighlightAt('i32 shooter =', 4))
+call assert_equal('flechaVariable', s:HighlightAt('i32 asynchronous =', 4))
+call assert_equal('flechaVariable', s:HighlightAt('object.awaiting', 7))
+call assert_equal('flechaFunction', s:HighlightAt('spawn();', 0))
+call assert_equal('flechaMethod', s:HighlightAt('Command::spawn', 9))
+for s:offset in [3, 9, 21, 27]
+    call assert_equal('flechaLineComment', s:HighlightAt('// async shoot child.await >>-', s:offset))
+    call assert_equal('flechaBlockComment', s:HighlightAt('/* async shoot child.await >>- */', s:offset))
+endfor
+for s:offset in [1, 7, 19, 25]
+    call assert_equal('flechaString', s:HighlightAt('"async shoot child.await >>-"', s:offset))
+endfor
+call s:HighlightLink('flechaShoot', '@keyword', 'Keyword')
+call s:HighlightLink('flechaAwait', '@keyword', 'Keyword')
+
 " Exercise actual Enter/closing-brace typing, not just the '=' operator.
 enew
 setfiletype flecha

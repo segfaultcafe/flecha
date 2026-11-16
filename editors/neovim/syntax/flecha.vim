@@ -17,7 +17,7 @@ syntax match flechaEnumConstant /\.\zs[A-Z][A-Za-z0-9_]*\>/
 syntax match flechaParameter /\%(\<\%(i8\|i16\|i32\|i64\|isize\|u8\|u16\|u32\|u64\|usize\|f32\|f64\|bool\|char\|void\|string\|stringv\|error\|[A-Z][A-Za-z0-9_]*\)\>\s\+\)\@<=\<[a-z_][A-Za-z0-9_]*\>\ze\s*[,)]/
 syntax match flechaBuiltinTypeSet /\<\%(signed_integer\|unsigned_integer\|integer\|floating_point\|numeric\)\>/
 
-syntax keyword flechaModifier unsafe once export quiver extern foreign inline comptime copy own lend const constptr constref volatile private protected override virtual default final
+syntax keyword flechaModifier async unsafe once export quiver extern foreign inline comptime copy own lend const constptr constref volatile private protected override virtual default final
 syntax keyword flechaFuncKeyword func
 syntax keyword flechaTypeSetKeyword typeset nextgroup=flechaTypeSetName skipwhite
 syntax match flechaTypeSetName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained
@@ -37,13 +37,15 @@ syntax keyword flechaSelf self
 syntax match flechaSelf /\%(<-\s*\.\.\.\s*\)\@<=args\>/
 syntax keyword flechaWordOperator and or
 
-syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>\|<=\|>=\|&&\|||\|[&|~=+*\/%^!<>-]/
+syntax match flechaOperator /::\|<-\|->\|=>\|:=\|===\|!==\|==\|!=\|<<\|>>-\|>>\|<=\|>=\|&&\|||\|[&|~=+*\/%^!<>-]/
 syntax match flechaInheritanceOperator /<<\ze\_s*\%([A-Za-z_][A-Za-z0-9_]*\_s*::\_s*\)*[A-Z][A-Za-z0-9_]*\_s*\%([,{]\)/
 syntax match flechaCrashableBang /\%([A-Za-z0-9_>]\)\@<=!\ze\s*(/
 syntax match flechaRawAddress /\%(&\s*\)\@<=raw\>/
 syntax match flechaFunction /\<[A-Za-z_][A-Za-z0-9_]*\>\ze\s*\%(<.\{-}>\s*\)\?!\?\s*(/
 syntax match flechaMethod /\%(::\s*\)\@<=[A-Za-z_][A-Za-z0-9_]*\ze\s*\%(<.\{-}>\s*\)\?!\?\s*(/
 syntax match flechaMethod /\.\zs[A-Za-z_][A-Za-z0-9_]*\ze\s*\%(<.\{-}>\s*\)\?!\?\s*(/
+syntax keyword flechaShoot shoot
+syntax match flechaAwait /\.\_s*\zsawait\>/
 syntax match flechaCrashBuiltin /\<crash\>\ze\s*(/
 syntax match flechaAllocation /\<new\>\ze\s*</
 syntax match flechaAllocation /\<take\>\ze\s*(/
@@ -100,6 +102,8 @@ endfunction
 call s:FollowTheme('flechaImports', '@keyword.import', 'Include')
 call s:FollowTheme('flechaSelf', '@variable.builtin', 'Special')
 call s:FollowTheme('@lsp.type.self.flecha', '@variable.builtin', 'Special')
+call s:FollowTheme('flechaShoot', '@keyword', 'Keyword')
+call s:FollowTheme('flechaAwait', '@keyword', 'Keyword')
 call s:FollowTheme('flechaTest', '@keyword', 'Keyword')
 call s:FollowTheme('flechaFuncKeyword', '@keyword.function', 'Keyword')
 call s:FollowTheme('flechaFloatConstant', '@constant', 'Constant')
