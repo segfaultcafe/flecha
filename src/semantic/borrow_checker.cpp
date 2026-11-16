@@ -987,6 +987,20 @@ class BorrowChecker final {
         return result;
     }
 
+    void CaptureSpawnArgument(const core::Expression& call, const Value& value,
+                              SemanticType parameterType) {
+        // Only the spawned call retains loans; calls nested in its arguments
+        // still release their temporary loans when they return.
+        if (!_spawnCaptures || _spawnCall != &call ||
+            !CanCarryBorrow(parameterType))
+            return;
+        for (Origin origin : value.origins) {
+            origin.exclusive =
+                origin.exclusive || IsExclusiveBorrow(parameterType);
+            _spawnCaptures->insert(std::move(origin));
+        }
+    }
+
     Value Evaluate(const core::Expression& expression,
                    bool applyImplicitConversion = true) {
         // Semantic analysis deliberately keeps walking a function after a
@@ -1297,14 +1311,9 @@ class BorrowChecker final {
                 const auto arguments = _model.ArgumentsFor(call);
                 for (std::size_t index = 0; index < arguments.size(); ++index) {
                     Value value = Evaluate(*arguments[index]);
-                    if (_spawnCaptures && _spawnCall == &expression &&
-                        signature && index < signature->parameters.size() &&
-                        CanCarryBorrow(signature->parameters[index])) {
-                        for (Origin origin : value.origins) {
-                            origin.exclusive = origin.exclusive || IsExclusiveBorrow(signature->parameters[index]);
-                            _spawnCaptures->insert(std::move(origin));
-                        }
-                    }
+                    if (signature && index < signature->parameters.size())
+                        CaptureSpawnArgument(expression, value,
+                                             signature->parameters[index]);
                     const bool destroys =
                         signature != nullptr &&
                         ((index == 0 && effective != nullptr &&
@@ -1441,6 +1450,7 @@ class BorrowChecker final {
                              projectedReferenceReceiver);
                         Value value = placeReceiver ? Place(call.Receiver())
                                                     : Evaluate(call.Receiver());
+                        CaptureSpawnArgument(expression, value, receiverType);
                         if (std::find(method->BorrowSourceIndices().begin(),
                                       method->BorrowSourceIndices().end(),
                                       0) != method->BorrowSourceIndices().end())
@@ -1485,6 +1495,7 @@ class BorrowChecker final {
                             parameter < method->ParameterTypes().size()
                                 ? method->ParameterTypes()[parameter]
                                 : _model.TypeOf(*arguments[i]);
+                        CaptureSpawnArgument(expression, value, type);
                         if (type.HasBorrowedLifetime())
                             (void)Borrow(std::move(value),
                                          IsExclusiveBorrow(type),

@@ -290,6 +290,133 @@ TEST(AsyncFrontendTests, BorrowedResultKeepsItsOriginAfterJoin) {
     EXPECT_FALSE(Has(result, DiagnosticCode::InvalidAwait));
 }
 
+// Async execution is gated, but borrow analysis must still diagnose unsafe
+// captures without introducing unrelated errors into otherwise valid calls.
+void ExpectCaptureDiagnostics(const Analysis& result, bool conflict) {
+    EXPECT_TRUE(Has(result, DiagnosticCode::AsyncNotImplemented));
+    EXPECT_EQ(Has(result, DiagnosticCode::BorrowConflict), conflict);
+    for (const Diagnostic& diagnostic : result.diagnostics.Diagnostics()) {
+        if (diagnostic.severity != DiagnosticSeverity::Error) continue;
+        EXPECT_TRUE(
+            diagnostic.code == DiagnosticCode::AsyncNotImplemented ||
+            (conflict && diagnostic.code == DiagnosticCode::BorrowConflict))
+            << diagnostic.message;
+    }
+}
+
+TEST(AsyncFrontendTests, SpawnedMethodRetainsMutableReceiverUntilJoin) {
+    const std::string prefix =
+        "structure Box { i32 value; }; "
+        "async void Box::fill(&self) { self->value = 1; } ";
+    for (const std::string call : {"box.fill()", "reference->fill()"}) {
+        for (const bool join : {false, true}) {
+            SCOPED_TRACE(call + (join ? " joined" : " pending"));
+            const Analysis result = Analyze(
+                prefix + "async void main!() { Box box = none; " +
+                (call == "reference->fill()" ? "reference := &box; " : "") +
+                "child := shoot " + call + "; " +
+                (join ? "child.await; " : "") + "box.value = 2; }");
+            ExpectCaptureDiagnostics(result, !join);
+        }
+    }
+    const Analysis discarded = Analyze(prefix +
+                                       "async void main!() { Box box = none; "
+                                       "shoot box.fill(); box.value = 2; }");
+    ExpectCaptureDiagnostics(discarded, true);
+}
+
+TEST(AsyncFrontendTests, SpawnedMethodRetainsArgumentsUntilJoin) {
+    const std::string prefix =
+        "structure Worker {}; "
+        "async void Worker::fill(&const self, i32 count, []u8 bytes) { "
+        "bytes[0] = count.cast<u8>; } ";
+    for (const bool join : {false, true}) {
+        SCOPED_TRACE(join ? "joined" : "pending");
+        const Analysis result =
+            Analyze(prefix +
+                    "async void main!() { Worker worker = none; "
+                    "[2]u8 bytes = none; "
+                    "child := shoot worker.fill(1, bytes[:]); " +
+                    (join ? "child.await; " : "") + "bytes[0] = 2; }");
+        ExpectCaptureDiagnostics(result, !join);
+    }
+}
+
+TEST(AsyncFrontendTests, SpawnedMethodsShareConstReceiversButPreventMutation) {
+    const std::string prefix =
+        "structure Box { i32 value; }; "
+        "async i32 Box::read(&const self) { return self->value; } "
+        "async void Box::fill(&self) { self->value = 1; } ";
+    for (const std::string operation :
+         {"value := box.value;", "box.value = 2;", "c := shoot box.fill();"}) {
+        SCOPED_TRACE(operation);
+        const Analysis result =
+            Analyze(prefix +
+                    "async void main!() { Box box = none; "
+                    "a := shoot box.read(); b := shoot box.read(); " +
+                    operation + " a.await; b.await; }");
+        ExpectCaptureDiagnostics(result, operation != "value := box.value;");
+    }
+}
+
+TEST(AsyncFrontendTests,
+     SpawnedMethodRetainsSharedArgumentsWithoutExclusivity) {
+    const std::string prefix =
+        "structure Worker {}; "
+        "async void Worker::read(&const self, []const u8 bytes) {} ";
+    for (const std::string operation :
+         {"value := bytes[0];", "bytes[0] = 2;"}) {
+        SCOPED_TRACE(operation);
+        const Analysis result =
+            Analyze(prefix +
+                    "async void main!() { Worker worker = none; "
+                    "[2]u8 bytes = none; "
+                    "a := shoot worker.read(bytes[:]); "
+                    "b := shoot worker.read(bytes[:]); " +
+                    operation + " a.await; b.await; }");
+        ExpectCaptureDiagnostics(result, operation == "bytes[0] = 2;");
+    }
+}
+
+TEST(AsyncFrontendTests, SpawnedStaticMethodRetainsArgumentsUntilJoin) {
+    const std::string prefix =
+        "structure Worker {}; "
+        "async void Worker::fill([]u8 bytes) { bytes[0] = 1; } ";
+    for (const bool join : {false, true}) {
+        SCOPED_TRACE(join ? "joined" : "pending");
+        const Analysis result =
+            Analyze(prefix +
+                    "async void main!() { [2]u8 bytes = none; "
+                    "child := shoot Worker::fill(bytes[:]); " +
+                    (join ? "child.await; " : "") + "bytes[0] = 2; }");
+        ExpectCaptureDiagnostics(result, !join);
+    }
+}
+
+TEST(AsyncFrontendTests, SpawnDoesNotCaptureNestedSynchronousMethodLoans) {
+    const Analysis result = Analyze(
+        "structure Box { i32 value; }; "
+        "i32 Box::read(&const self) { return self->value; } "
+        "async void Box::consume(&const self, i32 value) {} "
+        "async void consume!(i32 value) {} "
+        "async void main!() { Box worker = none; Box source = none; "
+        "a := shoot worker.consume(source.read()); "
+        "b := shoot consume(source.read()); source.value = 2; "
+        "a.await; b.await; }");
+    ExpectCaptureDiagnostics(result, false);
+}
+
+TEST(AsyncFrontendTests, JoinedMethodResultRetainsReceiverBorrow) {
+    const Analysis result = Analyze(
+        "structure Box { i32 value; }; "
+        "async &const i32 Box::view(&const self) <- self { "
+        "return &self->value; } "
+        "async i32 main!() { Box box = none; "
+        "child := shoot box.view(); reference := child.await; "
+        "box.value = 2; return *reference; }");
+    ExpectCaptureDiagnostics(result, true);
+}
+
 TEST(AsyncFrontendTests, ChildResultCannotBeJoinedTwiceOrThroughMovedHandle) {
     const std::string prefix = "async i32 answer!() { return 42; } ";
     Analysis joined = Analyze(prefix +
