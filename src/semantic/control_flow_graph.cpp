@@ -342,7 +342,9 @@ class GraphBuilder final {
                         BuildDestructure(destructure, next, true);
                     const NodeId failure =
                         BuildDestructure(destructure, next, false);
-                    return AddNode({success, failure});
+                    const NodeId dispatch = AddNode({success, failure});
+                    _graph.nodes[dispatch].checkedDispatch = &destructure;
+                    return dispatch;
                 }
                 return BuildDestructure(destructure, next, true);
             }

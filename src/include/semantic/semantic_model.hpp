@@ -17,6 +17,7 @@ class SemanticQueries;
 
 namespace flecha::semantic {
 
+struct AsyncFramePlan;
 class SemanticAnalyzer;
 class BehaviorPlanner;
 // Internal success-only binding contract, never a source-level tuple/ABI.
@@ -196,6 +197,11 @@ class SemanticModel final {
         const auto found = _fields.find(&expression);
         return found == _fields.end() ? nullptr : found->second;
     }
+    [[nodiscard]] const AsyncFramePlan* AsyncPlanFor(
+        const core::FunctionDeclaration& function) const {
+        const auto found = _asyncPlans.find(&function);
+        return found == _asyncPlans.end() ? nullptr : found->second.get();
+    }
     const Symbol* CheckedErrorFor(const Symbol& value) const {
         for (const auto& [statement, checked] : _checkedAsyncResults)
             if (checked.value == &value) return checked.error;
@@ -309,6 +315,8 @@ class SemanticModel final {
     std::unordered_map<const core::MemberAccessExpression*,
                        const StructureField*>
         _fields;
+    std::unordered_map<const core::FunctionDeclaration*,
+                       std::shared_ptr<const AsyncFramePlan>> _asyncPlans;
     std::unordered_map<const core::DestructureStatement*, CheckedAsyncResult>
         _checkedAsyncResults;
     std::unordered_map<const core::SpawnExpression*, const VariableSymbol*> _asyncTasks;
