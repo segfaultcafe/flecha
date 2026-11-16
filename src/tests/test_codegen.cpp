@@ -864,6 +864,59 @@ TEST(NativeCompilerTests, RunsFixedCapacityOwningSliceAppend) {
     std::filesystem::remove(executablePath);
 }
 
+TEST(NativeCompilerTests, RunsOwningSliceOperationsThroughCheckedReferences) {
+    GeneratedSource result = Generate(R"(
+        error refill(&own []i32 values) {
+            values->clear();
+            if values->capacity() != 2 { return SliceError.Full; }
+            if values->append(20) != none { return SliceError.Full; }
+            return values->append(22);
+        }
+        usize capacity(&const own []i32 values) {
+            return values->capacity();
+        }
+        error add_child(&own []own []i32 values, own []i32 child) {
+            return values->append(child);
+        }
+        i32 main!() {
+            values := new<own []i32>!(2);
+            if refill(&values) != none { return 1; }
+            if capacity(&values) != 2 or values.len() != 2 {
+                return 2;
+            }
+
+            children := new<own []own []i32>!(1);
+            children.clear();
+            child := new<own []i32>!(1);
+            child[0] = 42;
+            if add_child(&children, child) != none or
+                children.len() != 1 or children[0][0] != 42 {
+                return 3;
+            }
+            return values[0] + values[1];
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_borrowed_owning_slice_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "borrowed_owning_slice_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsOwningStringSlicesAcrossMovesAndFailures) {
     GeneratedSource result = Generate(R"(
         own []string make() {

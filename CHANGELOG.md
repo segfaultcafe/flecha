@@ -17,6 +17,10 @@
 
 ### Added
 
+- Managed owning slices can be borrowed without transfer as `&own []T` and
+  mutated through `->append` / `->clear`; `&const own []T` provides shared,
+  read-only access to `->capacity`. Checked-reference alias and lifetime rules
+  continue to protect the owner, while ordinary `[]T` remains non-resizable.
 - Owning-slice type patterns such as `T.isof<own []Element>` bind an element
   type in selected behavior and generic branches, including nested owners.
   Nonselected type branches are discarded before semantic checking.

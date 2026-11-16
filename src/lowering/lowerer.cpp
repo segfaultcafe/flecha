@@ -707,8 +707,15 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                         expression.Range(), type, std::move(cursor));
                 return cursor;
             }
-            if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
-                    semantic::SemanticTypeKind::OwnedSlice &&
+            const semantic::SemanticType receiverType =
+                _semanticModel->TypeOf(member.Receiver());
+            const bool owningSliceReference =
+                receiverType.Kind() == semantic::SemanticTypeKind::Reference &&
+                receiverType.Target()->Kind() ==
+                    semantic::SemanticTypeKind::OwnedSlice;
+            if ((receiverType.Kind() ==
+                     semantic::SemanticTypeKind::OwnedSlice ||
+                 owningSliceReference) &&
                 (member.Member() == "append" || member.Member() == "clear" ||
                  member.Member() == "capacity")) {
                 OwnedSliceOperation operation = OwnedSliceOperation::Capacity;
@@ -717,10 +724,18 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                 else if (member.Member() == "append")
                     operation = OwnedSliceOperation::Append;
                 const bool mutates = operation != OwnedSliceOperation::Capacity;
-                std::unique_ptr<BoundExpression> receiver =
-                    mutates ? std::unique_ptr<BoundExpression>(
-                                  LowerPlace(member.Receiver()))
-                            : LowerExpression(member.Receiver());
+                const semantic::SemanticType owningSliceType =
+                    owningSliceReference ? *receiverType.Target()
+                                         : receiverType;
+                std::unique_ptr<BoundExpression> receiver;
+                if (owningSliceReference)
+                    receiver = std::make_unique<BoundDereferenceExpression>(
+                        member.Receiver().Range(),
+                        LowerExpression(member.Receiver()));
+                else if (mutates)
+                    receiver = LowerPlace(member.Receiver());
+                else
+                    receiver = LowerExpression(member.Receiver());
                 std::unique_ptr<BoundExpression> value;
                 const bool conditional =
                     _semanticModel->ConditionallyTransfersAppend(member);
@@ -728,10 +743,8 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                     value = conditional
                                 ? std::unique_ptr<BoundExpression>(
                                       LowerPlace(*member.Arguments().front()))
-                                : LowerExpression(
-                                      *member.Arguments().front(),
-                                      *_semanticModel->TypeOf(member.Receiver())
-                                           .Target());
+                                : LowerExpression(*member.Arguments().front(),
+                                                  *owningSliceType.Target());
                 return std::make_unique<BoundOwnedSliceOperationExpression>(
                     expression.Range(), type, operation, std::move(receiver),
                     std::move(value), conditional);

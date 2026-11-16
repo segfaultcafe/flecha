@@ -790,6 +790,38 @@ TEST(ParserTests, ParsesOwningSliceTypesInDeclarationsAndAllocations) {
     EXPECT_EQ(call.TypeArgument()->Contract(), OwnershipContract::Own);
 }
 
+TEST(ParserTests, ParsesMutableAndReadOnlyOwningSliceReferences) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "void mutate(&own []i32 values) {} "
+        "usize inspect(&const own []i32 values) { return 0; }",
+        diagnostics);
+
+    for (const auto& diagnostic : diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->Declarations().size(), 2);
+
+    const auto& mutate =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[0]);
+    const TypeNode& mutableReference = mutate.Parameters()[0]->Type();
+    EXPECT_EQ(mutableReference.TypeForm(), TypeKind::Reference);
+    ASSERT_NE(mutableReference.Target(), nullptr);
+    EXPECT_EQ(mutableReference.Target()->TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(mutableReference.Target()->Contract(), OwnershipContract::Own);
+    EXPECT_FALSE(mutableReference.Target()->IsConst());
+
+    const auto& inspect =
+        static_cast<const FunctionDeclaration&>(*unit->Declarations()[1]);
+    const TypeNode& readOnlyReference = inspect.Parameters()[0]->Type();
+    EXPECT_EQ(readOnlyReference.TypeForm(), TypeKind::Reference);
+    ASSERT_NE(readOnlyReference.Target(), nullptr);
+    EXPECT_EQ(readOnlyReference.Target()->TypeForm(), TypeKind::Slice);
+    EXPECT_EQ(readOnlyReference.Target()->Contract(), OwnershipContract::Own);
+    EXPECT_TRUE(readOnlyReference.Target()->IsConst());
+    EXPECT_EQ(readOnlyReference.Target()->QualifierRange().Length(), 5);
+}
+
 TEST(ParserTests, ParsesCrashableTypedAllocationAfterGenericArguments) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

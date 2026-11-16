@@ -92,9 +92,11 @@ by this value-copy normalization.
 
 ## Current boundary
 
-Scalar and raw-pointer storage can be borrowed with `&value`; see
-[checked references](checked_references.md) for qualifier, move, and lifetime
-rules. Unsupported reference storage shapes emit `FLECHA-S0024`.
+Scalar, fixed-array, structure, owning-slice, and raw-pointer storage can be
+borrowed with `&value`; see [checked references](checked_references.md) for
+qualifier, move, and lifetime rules. An owning slice uses `&own []T` for an
+exclusive owner borrow and `&const own []T` for a shared, read-only owner
+borrow. Unsupported reference storage shapes emit `FLECHA-S0024`.
 Raw pointers use the explicit `&raw value` operation inside unsafe contexts;
 see [unsafe pointers](unsafe_pointers.md) for executable operations and limits.
 
