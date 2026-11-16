@@ -222,11 +222,16 @@ llvm::Type* LlvmCodeGenerator::MapType(semantic::SemanticType type) {
         }
         case semantic::SemanticTypeKind::Slice:
         case semantic::SemanticTypeKind::OwnedBuffer:
-        case semantic::SemanticTypeKind::OwnedSlice:
             return llvm::StructType::get(
                 _context, {llvm::PointerType::getUnqual(_context),
                            MapType(semantic::SemanticType(
                                semantic::SemanticTypeKind::USize))});
+        case semantic::SemanticTypeKind::OwnedSlice: {
+            llvm::Type* size = MapType(
+                semantic::SemanticType(semantic::SemanticTypeKind::USize));
+            return llvm::StructType::get(
+                _context, {llvm::PointerType::getUnqual(_context), size, size});
+        }
         case semantic::SemanticTypeKind::Array:
             return llvm::ArrayType::get(MapType(*type.Target()), type.Length());
         case semantic::SemanticTypeKind::I8:
@@ -4546,6 +4551,11 @@ llvm::Value* LlvmCodeGenerator::EmitExpression(
                                          : _builder.CreateExtractValue(
                                                descriptor, 0, "slice.data");
         }
+        case lowering::BoundNodeKind::OwnedSliceOperationExpression:
+            return EmitOwnedSliceOperation(
+                static_cast<
+                    const lowering::BoundOwnedSliceOperationExpression&>(
+                    expression));
         case lowering::BoundNodeKind::AddressExpression:
             return EmitAddress(
                 static_cast<const lowering::BoundAddressExpression&>(expression)
@@ -5424,6 +5434,9 @@ llvm::Value* LlvmCodeGenerator::EmitAllocation(
         owner = llvm::Constant::getNullValue(MapType(ownerType));
         owner = _builder.CreateInsertValue(owner, pointer, 0);
         owner = _builder.CreateInsertValue(owner, count, 1, "allocation.owner");
+        if (ownerType.Kind() == semantic::SemanticTypeKind::OwnedSlice)
+            owner = _builder.CreateInsertValue(owner, count, 2,
+                                               "allocation.capacity");
     } else {
         owner = pointer;
     }
@@ -5458,6 +5471,124 @@ llvm::Value* LlvmCodeGenerator::EmitAllocation(
         _builder.CreatePHI(MapType(expression.Type()), 2, "allocation.result");
     result->addIncoming(successful, successEnd);
     result->addIncoming(failed, failure);
+    return result;
+}
+
+llvm::Value* LlvmCodeGenerator::EmitOwnedSliceOperation(
+    const lowering::BoundOwnedSliceOperationExpression& expression) {
+    using lowering::OwnedSliceOperation;
+
+    llvm::StructType* descriptorType =
+        llvm::cast<llvm::StructType>(MapType(expression.Receiver().Type()));
+    llvm::Type* sizeType =
+        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
+    if (expression.Operation() == OwnedSliceOperation::Capacity) {
+        llvm::Value* descriptor = EmitExpression(expression.Receiver());
+        return descriptor == nullptr ? nullptr
+                                     : _builder.CreateExtractValue(
+                                           descriptor, 2, "slice.capacity");
+    }
+
+    llvm::Value* descriptor =
+        EmitAddress(static_cast<const lowering::BoundPlaceExpression&>(
+            expression.Receiver()));
+    if (descriptor == nullptr) return nullptr;
+    llvm::Value* dataSlot = _builder.CreateStructGEP(descriptorType, descriptor,
+                                                     0, "slice.data.slot");
+    llvm::Value* lengthSlot = _builder.CreateStructGEP(
+        descriptorType, descriptor, 1, "slice.length.slot");
+    llvm::Value* capacitySlot = _builder.CreateStructGEP(
+        descriptorType, descriptor, 2, "slice.capacity.slot");
+    llvm::Value* length =
+        _builder.CreateLoad(sizeType, lengthSlot, "slice.length");
+    const semantic::SemanticType element =
+        *expression.Receiver().Type().Target();
+
+    if (expression.Operation() == OwnedSliceOperation::Clear) {
+        if (RequiresTypedDestruction(element)) {
+            llvm::Value* data = _builder.CreateLoad(
+                llvm::PointerType::getUnqual(_context), dataSlot, "slice.data");
+            EmitRuntimeArrayElements(
+                data, length, element, true,
+                [&](llvm::Value* slot) { EmitDestroyAt(slot, element); });
+        }
+        _builder.CreateStore(llvm::ConstantInt::get(sizeType, 0), lengthSlot);
+        return llvm::UndefValue::get(llvm::Type::getInt1Ty(_context));
+    }
+
+    const lowering::BoundExpression* valueExpression = expression.Value();
+    if (valueExpression == nullptr) {
+        Fail("missing owning slice append value");
+        return nullptr;
+    }
+    llvm::Value* source = nullptr;
+    llvm::Value* value = nullptr;
+    if (expression.ConditionalTransfer()) {
+        source = EmitAddress(static_cast<const lowering::BoundPlaceExpression&>(
+            *valueExpression));
+        if (source == nullptr) return nullptr;
+    } else {
+        value = EmitExpression(*valueExpression);
+        if (value == nullptr) return nullptr;
+        value = CoerceValue(value, valueExpression->Type(), element);
+        if (value == nullptr) return nullptr;
+    }
+
+    llvm::Value* capacity =
+        _builder.CreateLoad(sizeType, capacitySlot, "slice.capacity");
+    auto* success =
+        llvm::BasicBlock::Create(_context, "append.success", _currentFunction);
+    auto* failure =
+        llvm::BasicBlock::Create(_context, "append.full", _currentFunction);
+    auto* done =
+        llvm::BasicBlock::Create(_context, "append.done", _currentFunction);
+    _builder.CreateCondBr(_builder.CreateICmpULT(length, capacity), success,
+                          failure);
+
+    _builder.SetInsertPoint(success);
+    llvm::Value* data = _builder.CreateLoad(
+        llvm::PointerType::getUnqual(_context), dataSlot, "slice.data");
+    llvm::Value* destination = _builder.CreateInBoundsGEP(
+        MapType(element), data, length, "append.destination");
+    if (expression.ConditionalTransfer())
+        value = _builder.CreateLoad(MapType(element), source, "append.moved");
+    _builder.CreateStore(value, destination);
+    if (expression.ConditionalTransfer() &&
+        !EmitDefaultInto(source, element, true))
+        return nullptr;
+    _builder.CreateStore(
+        _builder.CreateAdd(length, llvm::ConstantInt::get(sizeType, 1),
+                           "append.length"),
+        lengthSlot);
+    llvm::Value* noError = llvm::Constant::getNullValue(MapType(
+        semantic::SemanticType(semantic::SemanticTypeKind::ErrorValue)));
+    llvm::BasicBlock* successEnd = _builder.GetInsertBlock();
+    _builder.CreateBr(done);
+
+    _builder.SetInsertPoint(failure);
+    llvm::GlobalVariable* identity =
+        _module->getNamedGlobal(".flecha.error.SliceError");
+    if (identity == nullptr) {
+        identity = new llvm::GlobalVariable(
+            *_module, llvm::Type::getInt8Ty(_context), true,
+            llvm::GlobalValue::PrivateLinkage,
+            llvm::ConstantInt::get(llvm::Type::getInt8Ty(_context), 0),
+            ".flecha.error.SliceError");
+    }
+    const semantic::SemanticType errorType(
+        semantic::SemanticTypeKind::ErrorValue);
+    llvm::Value* full = llvm::PoisonValue::get(MapType(errorType));
+    full = _builder.CreateInsertValue(full, identity, 0);
+    full = _builder.CreateInsertValue(
+        full, llvm::ConstantInt::get(llvm::Type::getInt32Ty(_context), 1), 1,
+        "append.error");
+    llvm::BasicBlock* failureEnd = _builder.GetInsertBlock();
+    _builder.CreateBr(done);
+
+    _builder.SetInsertPoint(done);
+    auto* result = _builder.CreatePHI(MapType(errorType), 2, "append.result");
+    result->addIncoming(noError, successEnd);
+    result->addIncoming(full, failureEnd);
     return result;
 }
 

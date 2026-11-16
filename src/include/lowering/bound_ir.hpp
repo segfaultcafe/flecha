@@ -39,6 +39,7 @@ enum class BoundNodeKind {
     ArrayElementExpression,
     ArrayLengthExpression,
     SliceDataExpression,
+    OwnedSliceOperationExpression,
     LiteralExpression,
     DirectExpression,
     MoveExpression,
@@ -70,6 +71,8 @@ enum class StringViewOperation {
     Copy,
     Data,
 };
+
+enum class OwnedSliceOperation { Capacity, Clear, Append };
 
 class BoundNode {
    public:
@@ -326,6 +329,36 @@ class BoundSliceDataExpression final : public BoundExpression {
 
    private:
     std::unique_ptr<BoundExpression> _receiver;
+};
+
+class BoundOwnedSliceOperationExpression final : public BoundExpression {
+   public:
+    BoundOwnedSliceOperationExpression(
+        source::SourceRange range, semantic::SemanticType type,
+        OwnedSliceOperation operation,
+        std::unique_ptr<BoundExpression> receiver,
+        std::unique_ptr<BoundExpression> value = nullptr,
+        bool conditionalTransfer = false)
+        : BoundExpression(range, type),
+          _operation(operation),
+          _receiver(std::move(receiver)),
+          _value(std::move(value)),
+          _conditionalTransfer(conditionalTransfer) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::OwnedSliceOperationExpression;
+    }
+    [[nodiscard]] OwnedSliceOperation Operation() const { return _operation; }
+    [[nodiscard]] const BoundExpression& Receiver() const { return *_receiver; }
+    [[nodiscard]] const BoundExpression* Value() const { return _value.get(); }
+    [[nodiscard]] bool ConditionalTransfer() const {
+        return _conditionalTransfer;
+    }
+
+   private:
+    OwnedSliceOperation _operation;
+    std::unique_ptr<BoundExpression> _receiver;
+    std::unique_ptr<BoundExpression> _value;
+    bool _conditionalTransfer;
 };
 
 class BoundDereferenceExpression final : public BoundPlaceExpression {

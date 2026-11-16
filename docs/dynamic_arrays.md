@@ -2,9 +2,10 @@
 
 The safe owning form is `own []T`. Allocate it with
 `new<own []T>(count)`, which returns `(own []T, error)`. The owner carries its
-data pointer and `usize` length, is move-only, and releases the allocation
-automatically when its live value leaves scope. It can be stored directly in a
-structure and does not require `unsafe`, `defer`, or `free`:
+data pointer, logical `usize` length, and fixed `usize` capacity. It is
+move-only and releases the allocation automatically when its live value leaves
+scope. It can be stored directly in a structure and does not require `unsafe`,
+`defer`, or `free`:
 
 ```flecha
 structure Buffer {
@@ -22,6 +23,37 @@ void example() {
     view := bytes[:];
 }
 ```
+
+Allocation preserves the existing initialized-array behavior: immediately
+after `new<own []T>(count)`, both `len()` and `capacity()` are `count`, and all
+slots contain their semantic zero. `clear()` destroys that initialized prefix,
+sets the logical length to zero, and retains the allocation and capacity. This
+makes the same owner usable as fixed-capacity output storage:
+
+```flecha
+output := new<own []i32>!(3);
+output.clear();
+if output.append(0) != none or output.append(21) != none {
+    return;
+}
+// output is [0, 21], with capacity 3
+```
+
+`append(value)` writes only the next unused slot, increments `len()` once, and
+never allocates, grows, or relocates the buffer. At capacity it returns
+`SliceError.Full` without changing the length or any element. Zero and default
+values are ordinary appended elements; occupancy is tracked by the logical
+length, not by inspecting element values. This is useful for merging into
+caller-sized storage: allocate the exact combined count, `clear()` it, append
+both inputs in order, and treat any `SliceError.Full` as a size-calculation
+error.
+
+For owning or otherwise move-only elements, `append` accepts a mutable whole
+variable. A successful append transfers its value into the slice and resets the
+variable to its semantic zero. A failed append leaves the variable unchanged,
+so the caller still owns it and may retry or let it clean up normally. Borrowed
+`[]T` slices do not provide `append`, `clear`, or `capacity`, and an active view
+of an owning slice prevents mutation through these operations.
 
 Indexing, slicing, `front`, `back`, and `len` are checked safe operations on an
 owning slice. `data()` remains unsafe because it exposes a raw pointer. Adding

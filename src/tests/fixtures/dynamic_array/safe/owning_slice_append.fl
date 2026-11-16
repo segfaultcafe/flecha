@@ -1,0 +1,52 @@
+module owning_slice_append;
+
+i32 append_all(own []i32 destination, []const i32 left, []const i32 right) {
+    destination.clear();
+    usize i = 0;
+    while i < left.len() {
+        if destination.append(left[i]) != none { return 1; }
+        i++;
+    }
+    i = 0;
+    while i < right.len() {
+        if destination.append(right[i]) != none { return 2; }
+        i++;
+    }
+    if destination.len() != left.len() + right.len() or
+        destination[0] != 0 or destination[1] != 1 or
+        destination[2] != 2 or destination[3] != 0 {
+        return 3;
+    }
+    return 42;
+}
+
+i32 main!() {
+    left := [0, 1];
+    right := [2, 0];
+    destination := new<own []i32>!(4);
+    if append_all(destination, left[:], right[:]) != 42 { return 4; }
+
+    zero := new<own []i32>!(0);
+    zero.clear();
+    if zero.append(1) != SliceError.Full or zero.len() != 0 or
+        zero.capacity() != 0 {
+        return 5;
+    }
+
+    children := new<own []own []i32>!(1);
+    children.clear();
+    child := new<own []i32>!(1);
+    child[0] = 42;
+    if children.append(child) != none or child.len() != 0 or
+        children.len() != 1 or children[0][0] != 42 {
+        return 6;
+    }
+
+    rejected := new<own []i32>!(1);
+    rejected[0] = 17;
+    if children.append(rejected) != SliceError.Full or rejected.len() != 1 or
+        rejected[0] != 17 or children[0][0] != 42 {
+        return 7;
+    }
+    return 42;
+}

@@ -198,6 +198,10 @@ class SemanticModel final {
         const auto found = _methods.find(&expression);
         return found == _methods.end() ? nullptr : found->second;
     }
+    [[nodiscard]] bool ConditionallyTransfersAppend(
+        const core::MemberCallExpression& expression) const {
+        return _conditionalAppendTransfers.contains(&expression);
+    }
     const MethodContract* InterfaceMethodFor(
         const core::MemberCallExpression& expression) const {
         const auto found = _interfaceMethods.find(&expression);
@@ -291,6 +295,8 @@ class SemanticModel final {
     std::unordered_map<const core::SpawnExpression*, const VariableSymbol*> _asyncTasks;
     std::unordered_map<const core::MemberCallExpression*, const FunctionSymbol*>
         _methods;
+    std::unordered_set<const core::MemberCallExpression*>
+        _conditionalAppendTransfers;
     std::unordered_map<const core::MemberCallExpression*, const MethodContract*>
         _interfaceMethods;
     std::unordered_map<const core::MemberCallExpression*, VariadicShape>

@@ -700,6 +700,35 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                         expression.Range(), type, std::move(cursor));
                 return cursor;
             }
+            if (_semanticModel->TypeOf(member.Receiver()).Kind() ==
+                    semantic::SemanticTypeKind::OwnedSlice &&
+                (member.Member() == "append" || member.Member() == "clear" ||
+                 member.Member() == "capacity")) {
+                OwnedSliceOperation operation = OwnedSliceOperation::Capacity;
+                if (member.Member() == "clear")
+                    operation = OwnedSliceOperation::Clear;
+                else if (member.Member() == "append")
+                    operation = OwnedSliceOperation::Append;
+                const bool mutates = operation != OwnedSliceOperation::Capacity;
+                std::unique_ptr<BoundExpression> receiver =
+                    mutates ? std::unique_ptr<BoundExpression>(
+                                  LowerPlace(member.Receiver()))
+                            : LowerExpression(member.Receiver());
+                std::unique_ptr<BoundExpression> value;
+                const bool conditional =
+                    _semanticModel->ConditionallyTransfersAppend(member);
+                if (!member.Arguments().empty())
+                    value = conditional
+                                ? std::unique_ptr<BoundExpression>(
+                                      LowerPlace(*member.Arguments().front()))
+                                : LowerExpression(
+                                      *member.Arguments().front(),
+                                      *_semanticModel->TypeOf(member.Receiver())
+                                           .Target());
+                return std::make_unique<BoundOwnedSliceOperationExpression>(
+                    expression.Range(), type, operation, std::move(receiver),
+                    std::move(value), conditional);
+            }
             if (const auto* method = _semanticModel->MethodFor(member)) {
                 if (_semanticModel->IsQualifiedInterfaceProviderCall(member)) {
                     std::vector<std::unique_ptr<BoundExpression>> arguments;

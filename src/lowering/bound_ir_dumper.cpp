@@ -607,6 +607,24 @@ class Dumper final {
                 _stream << ")";
                 break;
             }
+            case BoundNodeKind::OwnedSliceOperationExpression: {
+                const auto& operation =
+                    static_cast<const BoundOwnedSliceOperationExpression&>(
+                        expression);
+                const char* name = "capacity";
+                if (operation.Operation() == OwnedSliceOperation::Clear)
+                    name = "clear";
+                else if (operation.Operation() == OwnedSliceOperation::Append)
+                    name = "append";
+                _stream << "(own_slice." << name << " ";
+                WriteExpression(operation.Receiver());
+                if (operation.Value() != nullptr) {
+                    _stream << " ";
+                    WriteExpression(*operation.Value());
+                }
+                _stream << ")";
+                break;
+            }
             default:
                 break;
         }

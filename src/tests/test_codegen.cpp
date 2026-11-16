@@ -763,6 +763,107 @@ TEST(LlvmCodeGeneratorTests, InitializesAndDestroysOwningStringSlices) {
               std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, EmitsFixedCapacityOwningSliceAppend) {
+    GeneratedSource result = Generate(R"(
+        error append(own []i32 values) {
+            values.clear();
+            return values.append(42);
+        }
+        i32 main!() {
+            values := new<own []i32>!(1);
+            if values.capacity() == 1 { return 42; }
+            return 1;
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("allocation.capacity"), std::string::npos);
+    EXPECT_NE(ir.find("append.success"), std::string::npos);
+    EXPECT_NE(ir.find("append.full"), std::string::npos);
+    EXPECT_NE(ir.find(".flecha.error.SliceError"), std::string::npos);
+
+    llvm::Function* append = result.module->getFunction("append");
+    ASSERT_NE(append, nullptr);
+    for (llvm::Instruction& instruction : llvm::instructions(append)) {
+        const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+        if (call == nullptr || call->getCalledFunction() == nullptr) continue;
+        EXPECT_NE(call->getCalledFunction()->getName(),
+                  "flecha_runtime_v1_alloc_array");
+    }
+}
+
+TEST(NativeCompilerTests, RunsFixedCapacityOwningSliceAppend) {
+    GeneratedSource result = Generate(R"(
+        i32 main!() {
+            values := new<own []i32>!(3);
+            if values.len() != 3 or values.capacity() != 3 { return 1; }
+            values[1] = 99;
+            values.clear();
+            if values.len() != 0 or values.capacity() != 3 { return 2; }
+            if values.append(0) != none or values.append(7) != none or
+                values.append(0) != none {
+                return 3;
+            }
+            if values.len() != 3 or values[0] != 0 or values[1] != 7 or
+                values[2] != 0 {
+                return 4;
+            }
+            if values.append(9) != SliceError.Full or values.len() != 3 or
+                values[0] != 0 or values[1] != 7 or values[2] != 0 {
+                return 5;
+            }
+
+            empty := new<own []i32>!(0);
+            empty.clear();
+            if empty.append(1) != SliceError.Full or empty.len() != 0 or
+                empty.capacity() != 0 {
+                return 6;
+            }
+
+            children := new<own []own []i32>!(1);
+            children.clear();
+            child := new<own []i32>!(1);
+            child[0] = 42;
+            if children.append(child) != none or child.len() != 0 or
+                children.len() != 1 or children[0][0] != 42 {
+                return 7;
+            }
+            rejected := new<own []i32>!(1);
+            rejected[0] = 17;
+            if children.append(rejected) != SliceError.Full or
+                rejected.len() != 1 or rejected[0] != 17 or
+                children[0][0] != 42 {
+                return 8;
+            }
+            return 42;
+        }
+    )");
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.boundProgram, nullptr);
+
+    const std::filesystem::path executablePath =
+        std::filesystem::temp_directory_path() /
+        "flecha_owning_slice_append_test";
+    std::filesystem::remove(executablePath);
+    NativeCompiler compiler;
+    ASSERT_TRUE(compiler.Ready()) << compiler.Error();
+    ASSERT_TRUE(compiler.BuildExecutable(*result.boundProgram,
+                                         "owning_slice_append_test",
+                                         executablePath.string()))
+        << compiler.Error();
+    const std::string executablePathText = executablePath.string();
+    const llvm::StringRef arguments[] = {executablePathText};
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(executablePathText, arguments), 42);
+    std::filesystem::remove(executablePath);
+}
+
 TEST(NativeCompilerTests, RunsOwningStringSlicesAcrossMovesAndFailures) {
     GeneratedSource result = Generate(R"(
         own []string make() {
