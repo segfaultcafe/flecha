@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/ast_walk.hpp"
 #include "core/integer_literal.hpp"
 #include "core/output_format.hpp"
 #include "core/token_type.hpp"
@@ -1746,21 +1747,49 @@ void SemanticAnalyzer::AnalyzeDestructure(
                statement.Range(),
                "short destructuring declaration requires at least one new "
                "variable");
+    const core::Expression* operation = &statement.Value();
+    while (operation->Kind() == core::AstNodeKind::ParenthesizedExpression)
+        operation =
+            &static_cast<const core::ParenthesizedExpression*>(operation)
+                 ->Inner();
+    const auto previousChecked = _checkedAsyncExpression;
+    _checkedAsyncExpression = operation;
     const SemanticType value =
         AnalyzeExpression(statement.Value(), SemanticType(expected));
-    if (value.Kind() != SemanticTypeKind::Tuple) {
+    _checkedAsyncExpression = previousChecked;
+    const bool checked = value.Kind() == SemanticTypeKind::CheckedAsyncResult;
+    if (!checked && value.Kind() != SemanticTypeKind::Tuple) {
         if (!value.IsError())
             Report(diagnostics::DiagnosticCode::InvalidDestructure,
                    statement.Value().Range(),
                    "destructuring requires a tuple value");
         return;
     }
+    if (checked &&
+        (!statement.IsInferred() || statement.Bindings().size() != 2 ||
+         targets[0] || targets[1] || statement.Bindings()[0]->Name() == "_" ||
+         statement.Bindings()[1]->Name() == "_")) {
+        Report(
+            diagnostics::DiagnosticCode::InvalidAsync, statement.Range(),
+            "checked async results require two fresh named bindings: value, "
+            "error := operation; check error against none before using value");
+        return;
+    }
+    const std::vector<SemanticType> elements =
+        checked ? std::vector<SemanticType>{*value.Target(),
+                                            SemanticType(
+                                                SemanticTypeKind::ErrorValue)}
+                : value.Elements();
     if (value.IsImmovable())
         Report(diagnostics::DiagnosticCode::NonCopyableValue,
                statement.Value().Range(),
-               "an immovable tuple cannot be destructured");
-    else
+               checked ? "an immovable async completion cannot be destructured"
+                       : "an immovable tuple cannot be destructured");
+    else if (!checked)
         CheckTransfer(statement.Value(), value);
+    else
+        _model._transfers.insert_or_assign(&statement.Value(),
+                                           TransferKind::Direct);
     const core::Expression* transferred = &statement.Value();
     while (transferred->Kind() == core::AstNodeKind::ParenthesizedExpression)
         transferred =
@@ -1789,7 +1818,7 @@ void SemanticAnalyzer::AnalyzeDestructure(
                     "cannot move '" + targets[index]->Name() + "' into itself");
         }
     }
-    if (statement.Bindings().size() != value.Elements().size() ||
+    if (statement.Bindings().size() != elements.size() ||
         statement.Bindings().size() < 2) {
         Report(diagnostics::DiagnosticCode::InvalidDestructure,
                statement.Range(), "destructuring arity must match the tuple");
@@ -1797,7 +1826,7 @@ void SemanticAnalyzer::AnalyzeDestructure(
     }
     for (std::size_t i = 0; i < statement.Bindings().size(); ++i) {
         const auto& binding = *statement.Bindings()[i];
-        const SemanticType actual = value.Elements()[i];
+        const SemanticType actual = elements[i];
         const SemanticType type =
             expected[i].IsError() ? actual.WithoutConst() : expected[i];
         if (!IsAssignable(type, actual))
@@ -1814,6 +1843,13 @@ void SemanticAnalyzer::AnalyzeDestructure(
         if (target != nullptr)
             _model._destructureTargets.emplace(&binding, target);
     }
+    if (checked)
+        _model._checkedAsyncResults.emplace(
+            &statement,
+            CheckedAsyncResult{
+                _model.DestructureTarget(*statement.Bindings()[0]),
+                _model.DestructureTarget(*statement.Bindings()[1]),
+                operation->Kind() == core::AstNodeKind::SpawnExpression});
 }
 
 void SemanticAnalyzer::RegisterBuiltIns() {
@@ -4053,18 +4089,13 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
     while (inner->Kind() == core::AstNodeKind::ParenthesizedExpression)
         inner = &static_cast<const core::ParenthesizedExpression*>(inner)->Inner();
     const core::Expression* previous = _asyncOperand;
-    const core::Expression* previousSpawn = _spawnOperand;
     _asyncOperand = inner;
-    _spawnOperand = spawn ? inner : nullptr;
-    if (spawn) {
-        if (!_currentFunction || !_currentFunction->IsCrashable())
-            Report(diagnostics::DiagnosticCode::InvalidCrashable, expression.Range(),
-                   "shoot and >>- can fail allocation and require a crashable async function");
-        if (_currentFunction) _directCrashFunctions.insert(_currentFunction);
-    }
+    if (_checkedAsyncExpression != &expression)
+        Report(diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),
+               "async creation and await require immediate checked "
+               "destructuring: value, error := operation");
     const SemanticType value = AnalyzeExpression(operand);
     _asyncOperand = previous;
-    _spawnOperand = previousSpawn;
     bool asyncCall = false;
     if (inner->Kind() == core::AstNodeKind::CallExpression) {
         const auto& call = static_cast<const core::CallExpression&>(*inner);
@@ -4075,10 +4106,68 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
         const FunctionSymbol* target = _model.MethodFor(call);
         asyncCall = target && target->IsAsync();
     }
+    if (asyncCall) {
+        std::vector<const core::Expression*> prepared;
+        if (inner->Kind() == core::AstNodeKind::CallExpression)
+            prepared = _model.ArgumentsFor(
+                static_cast<const core::CallExpression&>(*inner));
+        else {
+            const auto& method =
+                static_cast<const core::MemberCallExpression&>(*inner);
+            prepared = _model.ArgumentsFor(method);
+            prepared.push_back(&method.Receiver());
+        }
+        for (const auto* argument : prepared) {
+            const core::Expression* root = argument;
+            while (root->Kind() == core::AstNodeKind::ParenthesizedExpression)
+                root = &static_cast<const core::ParenthesizedExpression*>(root)
+                            ->Inner();
+            bool unsupported = false;
+            core::WalkAst(*argument, [&](core::AstNode& node, bool entering) {
+                if (!entering) return;
+                switch (node.Kind()) {
+                    case core::AstNodeKind::CallExpression:
+                    case core::AstNodeKind::MemberCallExpression:
+                    case core::AstNodeKind::AssignmentExpression:
+                    case core::AstNodeKind::BuildExpression:
+                    case core::AstNodeKind::AnonymousFunctionExpression:
+                        unsupported = true;
+                        break;
+                    case core::AstNodeKind::UnaryExpression: {
+                        const auto op =
+                            static_cast<const core::UnaryExpression&>(node)
+                                .OperatorType();
+                        unsupported |= op == TokenType::Increment ||
+                                       op == TokenType::Decrement;
+                        break;
+                    }
+                    case core::AstNodeKind::NameExpression:
+                        // A direct prepared binding transfers only on creation
+                        // success. Moves used to construct an argument first
+                        // need the still-unselected evaluation-failure policy.
+                        unsupported |=
+                            &node != root &&
+                            _model.TransferOf(
+                                static_cast<const core::Expression&>(node)) ==
+                                TransferKind::Move;
+                        break;
+                    default:
+                        break;
+                }
+            });
+            if (unsupported)
+                Report(diagnostics::DiagnosticCode::InvalidAsync,
+                       argument->Range(),
+                       "argument-preparation effects on async creation failure "
+                       "are not specified yet; prepare this argument in a "
+                       "separate statement before shoot or await");
+        }
+    }
     if (spawn) {
         if (!asyncCall) {
             Report(diagnostics::DiagnosticCode::InvalidSpawn, operand.Range(),
-                   "shoot and >>- require a direct async call; use (shoot f()).await to join immediately");
+                   "shoot and >>- require a direct async call; destructure and "
+                   "check creation before awaiting");
             return SemanticType::Error();
         }
         const SemanticType taskType(SemanticTypeKind::Task, value);
@@ -4090,10 +4179,18 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
             _model._asyncTasks.emplace(&syntax, task.get());
             _model._symbols.push_back(std::move(task));
         }
-        return taskType;
+        return SemanticType(SemanticTypeKind::CheckedAsyncResult, taskType);
     }
-    if (value.Kind() == SemanticTypeKind::Task) return *value.Target();
-    if (asyncCall) return value;
+    if (value.Kind() == SemanticTypeKind::Task || asyncCall) {
+        const SemanticType completed = asyncCall ? value : *value.Target();
+        if (completed.Kind() == SemanticTypeKind::Void) {
+            Report(diagnostics::DiagnosticCode::InvalidAsync,
+                   expression.Range(),
+                   "checked await of void completion is not specified yet");
+            return SemanticType::Error();
+        }
+        return SemanticType(SemanticTypeKind::CheckedAsyncResult, completed);
+    }
     if (!value.IsError())
         Report(diagnostics::DiagnosticCode::InvalidAwait, operand.Range(),
                ".await requires an async call or a scoped task handle");
@@ -4254,8 +4351,10 @@ std::unique_ptr<core::TypeNode> SemanticAnalyzer::TypeSyntax(
             result = primitive(PrimitiveType::Void);
             break;
         case SemanticTypeKind::Task:
+        case SemanticTypeKind::CheckedAsyncResult:
             Report(diagnostics::DiagnosticCode::InvalidAsync, range,
-                   "scoped task types cannot be named in generated declarations yet");
+                   "scoped tasks and checked async results cannot be named in "
+                   "generated declarations yet");
             result = primitive(PrimitiveType::Void);
             break;
     }
@@ -6488,7 +6587,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         const auto& callee =
             static_cast<const core::NameExpression&>(expression.Callee());
         const std::string lookupName =
-            EffectName(callee.Name(), expression.IsCrashable() || _spawnOperand == &expression);
+            EffectName(callee.Name(), expression.IsCrashable());
         const auto overloads = LookupFunctions(lookupName);
         if (overloads.size() > 1) {
             function =
@@ -6504,7 +6603,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         const bool previousCallee = _analyzingCallCallee;
         const bool previousCrashableCallee = _callCalleeCrashable;
         _analyzingCallCallee = true;
-        _callCalleeCrashable = expression.IsCrashable() || _spawnOperand == &expression;
+        _callCalleeCrashable = expression.IsCrashable();
         calleeType = AnalyzeExpression(expression.Callee());
         _analyzingCallCallee = previousCallee;
         _callCalleeCrashable = previousCrashableCallee;
@@ -6675,10 +6774,7 @@ SemanticType SemanticAnalyzer::AnalyzeCall(
         return SemanticType::Error();
     }
     ValidateAsyncCall(expression, *signature, function);
-    if (_spawnOperand == &expression && expression.IsCrashable())
-        Report(diagnostics::DiagnosticCode::InvalidSpawn, expression.Range(),
-               "write shoot f() or >>- f(); the crashable callee is declared with !, without ! at the shoot call");
-    ValidateCrashableCall(expression.IsCrashable() || _spawnOperand == &expression, *signature, function,
+    ValidateCrashableCall(expression.IsCrashable(), *signature, function,
                           expression.Range());
     if (signature->isUnsafe || (signature->result.IsImmovable() && !_inZero))
         RequireUnsafe(expression.Callee().Range());

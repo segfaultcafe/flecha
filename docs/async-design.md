@@ -3,7 +3,7 @@
 **Implementation in progress; async programs are not executable yet.** This
 summarizes the selected foundation of [IFG 2026-0007](IFG/IFG_2026_0007.txt).
 The IFG remains Draft while low-level future APIs and remaining failure details
-are under review. Checked result destructuring is selected but not implemented.
+are under review. Checked result destructuring is implemented in the gated frontend.
 Async is not a v0.4 release requirement.
 
 ## Selected language operations
@@ -77,11 +77,43 @@ crashable declaration solely for allocation. The selected keyword is `shoot`,
 replacing `spawn`; `>>-` remains its exact synonym. `spawn` is an ordinary
 identifier again, including in existing synchronous process APIs.
 
-The current frontend prototype still uses unwrapped completed types and the
-older crashable creation checks behind the non-executable gate. Replacing them
-with checked destructuring, conditional initialization, and recoverable effects
-is required before enabling async execution. Rules for void completion, failure
-forwarding, and failure during implicit scope joins still need specification.
+The frontend uses an internal `CheckedAsyncResult` semantic kind, displayed as
+`checked-async<T>` in expression type records. It is not a tuple or a public
+wrapper. Immediate destructuring currently requires two fresh, named bindings
+with `:=`; discards, reused destinations, storing, forwarding, returning, and
+nested creation/await shorthand are diagnosed. The AST retains its existing
+destructure, spawn, and await nodes; the semantic model links each success-only
+binding to its execution-error binding. Editor hover shows that relationship.
+
+CFG success/failure paths preserve the relationship through `== none`,
+`!= none`, inverted conditions, short-circuit conditions, early exits, nested
+scopes, and loop backedges. Definite assignment rejects a value read on any
+remaining failure path. Ordinary assignment to the error, taking its address,
+or capturing it invalidates the proof relationship; copying an error does not
+forward the proof. These conservative rules prevent an unrelated `none` from
+making an absent value accessible.
+
+Creation failure does not move direct arguments or publish a child/capture
+loan. Successful creation transfers ownership and retains captures until join
+or drain. Await consumes a child on both execution outcomes and only initializes
+its value on success. Execution failure cannot restore arguments already passed
+to a running computation. Borrowed aggregate results preserve their origins
+through both checked and subsequent ordinary destructuring. Runtime tests use
+non-default-constructible, move-only completions containing ordinary errors to
+check that failure leaves result storage untouched and cleans up exactly once.
+
+Allocation no longer adds a crashable effect or changes callee lookup. Explicit
+crashable callees retain the ordinary `!` call/effect rules. Void await completion
+and normal scope exits with potentially unobserved child execution failures
+receive explicit unsupported diagnostics. Early-exit cancellation/drain planning
+is preserved. Failure forwarding and argument-evaluation timing remain unresolved;
+this frontend analysis does not select an executable evaluation schedule.
+Calls, assignments, increments, construction, closures, or ownership moves nested
+inside argument preparation must first be bound in a separate statement. Simple
+prepared bindings, literals, and borrow/projection expressions remain accepted.
+This restriction also applies to the receiver of a directly awaited/spawned
+method; it avoids selecting the order of argument effects and fallible frame
+allocation while that policy remains open.
 
 Root allocation failure has a separate approved policy: the generated entry
 wrapper reports a diagnostic and returns a nonzero process status before user
@@ -168,17 +200,18 @@ remains in force. This foundation enables no shared-memory concurrency model.
 | Area | Current status |
 | --- | --- |
 | Parser and AST | Named async functions, postfix await, `shoot`/`>>-`, AST traversal. |
-| Semantic records | Async callable effect and provisional scoped task type; unsupported-call checks. Approved checked destructuring and conditional initialization are not implemented. |
-| Scope analysis | Inner-to-outer join/cancel-and-drain exit plans and cross-scope jump diagnostics. |
-| Borrow analysis | Preliminary capture retention, explicit join release, borrowed-result origins, and consumed-handle checks; further aggregate/control-flow coverage is required. |
+| Semantic records | Async callable effect, scoped task type, explicit checked-result kind and value/error binding records; immediate destructuring and unsupported-use diagnostics. |
+| Scope analysis | Success/failure CFG paths and conditional definite assignment; inner-to-outer join/cancel-and-drain plans, unsupported implicit-join failure and cross-scope jump diagnostics. |
+| Borrow analysis | Outcome-sensitive captures and argument moves, explicit join release, aggregate borrowed-result origins, and consumed-handle checks. Generated-frame/suspension validation remains. |
 | Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional creation, and separate allocation failure outcome. |
 | Resumable code generation | Not implemented. Async declarations issue `FLECHA-S0089` and cannot reach synchronous lowering. |
-| Public Flecha futures/results | Checked destructuring selected; implementation and public low-level future API remain. |
-| Tooling | VS Code and Neovim syntax highlighting with shared fixtures; dedicated async semantic navigation, hover, and token validation remains. |
+| Public Flecha futures/results | Checked destructuring implemented in the frontend; public low-level future API and executable integration remain. |
+| Tooling | VS Code and Neovim syntax highlighting; checked expression types, success-condition hover, and binding navigation/occurrence tests. |
 
 Tests cover ready and delayed synthetic events, registration-time notifications,
 stale callbacks, reentrancy, cancellation, allocation failure injection, result
-consumption, and initial borrowing/scope rules. These checks do not establish
+consumption, checked-result control flow, move-only ownership, borrowed aggregates,
+and borrowing/scope rules. These checks do not establish
 that generated Flecha async programs execute correctly. The execution gate must
 remain until lowering, cleanup, failure handling, and interoperability are
 validated together.

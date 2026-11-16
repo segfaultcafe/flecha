@@ -313,7 +313,16 @@ std::optional<SemanticHover> SemanticQueries::Hover(
     const std::filesystem::path& file, std::size_t offset) const {
     const std::optional<Match> match = Find(file, offset, true);
     if (!match) return std::nullopt;
-    return SemanticHover{match->range, match->name, match->type, match->kind};
+    std::string type = match->type;
+    if (match->targetKind == TargetKind::Symbol)
+        for (const auto& [statement, checked] : _model._checkedAsyncResults)
+            if (checked.value == match->target && checked.error) {
+                type +=
+                    " (initialized when " + checked.error->Name() + " == none)";
+                break;
+            }
+    return SemanticHover{match->range, match->name, std::move(type),
+                         match->kind};
 }
 
 std::optional<SemanticOccurrence> SemanticQueries::OccurrenceAt(

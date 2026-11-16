@@ -182,8 +182,8 @@ class SemanticAnalyzer final {
     void ValidateAsyncCall(const core::Expression& expression,
                            const CallableSignature& signature,
                            const FunctionSymbol* function);
+    const core::Expression* _checkedAsyncExpression = nullptr;
     const core::Expression* _asyncOperand = nullptr;
-    const core::Expression* _spawnOperand = nullptr;
     diagnostics::DiagnosticBag& _diagnostics;
     SemanticModel _model;
     Scope* _currentScope = nullptr;

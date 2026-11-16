@@ -116,6 +116,14 @@ bool Overlaps(const Origin& left, const Origin& right) {
 }
 
 using Origins = std::set<Origin>;
+struct Value final {
+    Origins origins;
+    const Symbol* handle = nullptr;
+    std::size_t temporary = 0;
+    std::vector<Value> elements;
+    Symbols tasks;
+    bool operator==(const Value&) const = default;
+};
 struct Handle final {
     Origins origins;
     bool moved = false;
@@ -123,16 +131,11 @@ struct Handle final {
     Origins completionOrigins;
     bool pendingTask = false;
     bool joinedTask = false;
+    std::vector<Value> elements;
+    std::vector<Value> completionElements;
     bool operator==(const Handle&) const = default;
 };
 using State = std::map<const Symbol*, Handle>;
-struct Value final {
-    Origins origins;
-    const Symbol* handle = nullptr;
-    std::size_t temporary = 0;
-    std::vector<Value> elements;
-    Symbols tasks;
-};
 struct Loan final {
     Value value;
     bool exclusive;
@@ -152,6 +155,21 @@ void AddBorrowSource(Value& destination, const Value& source) {
     destination.elements.clear();
 }
 
+void MergeElements(std::vector<Value>& destination,
+                   const std::vector<Value>& source) {
+    destination.resize(std::max(destination.size(), source.size()));
+    for (std::size_t i = 0; i < source.size(); ++i) {
+        destination[i].origins.insert(source[i].origins.begin(),
+                                      source[i].origins.end());
+        destination[i].tasks.insert(source[i].tasks.begin(),
+                                    source[i].tasks.end());
+        // Element handles are temporary expression identities, not bindings.
+        destination[i].handle = nullptr;
+        destination[i].temporary = 0;
+        MergeElements(destination[i].elements, source[i].elements);
+    }
+}
+
 void Merge(State& destination, const State& source) {
     for (const auto& [symbol, handle] : source) {
         Handle& target = destination[symbol];
@@ -161,6 +179,8 @@ void Merge(State& destination, const State& source) {
         target.completionOrigins.insert(handle.completionOrigins.begin(), handle.completionOrigins.end());
         target.pendingTask = target.pendingTask || handle.pendingTask;
         target.joinedTask = target.joinedTask || handle.joinedTask;
+        MergeElements(target.elements, handle.elements);
+        MergeElements(target.completionElements, handle.completionElements);
     }
 }
 
@@ -466,6 +486,7 @@ class BorrowChecker final {
         _pinned.clear();
         _nextTemporary = 1;
         const FlowNode& node = _graph.nodes[id];
+        _asyncSuccess = node.asyncSuccess;
         if (node.declaration != nullptr) {
             const Symbol* symbol = _model.DeclaredSymbol(*node.declaration);
             // A backward jump can execute a declaration again while another
@@ -489,16 +510,23 @@ class BorrowChecker final {
         }
         if (node.destructure != nullptr) {
             Value value = Evaluate(node.destructure->Value());
-            for (std::size_t index = 0;
-                 index < node.destructure->Bindings().size(); ++index) {
-                const auto& binding = node.destructure->Bindings()[index];
-                const Symbol* target = _model.DestructureTarget(*binding);
-                if (TracksBorrow(target) && index < value.elements.size())
-                    Store(target, std::move(value.elements[index]),
-                          binding->Range());
-                else if (target != nullptr)
-                    CheckAccess({{{target, {}}}, nullptr, 0}, true,
-                                binding->Range());
+            if (const auto* checked =
+                    _model.CheckedResultFor(*node.destructure)) {
+                if (node.asyncSuccess && TracksBorrow(checked->value))
+                    Store(checked->value, std::move(value),
+                          node.destructure->Range());
+            } else {
+                for (std::size_t index = 0;
+                     index < node.destructure->Bindings().size(); ++index) {
+                    const auto& binding = node.destructure->Bindings()[index];
+                    const Symbol* target = _model.DestructureTarget(*binding);
+                    if (TracksBorrow(target) && index < value.elements.size())
+                        Store(target, std::move(value.elements[index]),
+                              binding->Range());
+                    else if (target != nullptr)
+                        CheckAccess({{{target, {}}}, nullptr, 0}, true,
+                                    binding->Range());
+                }
             }
         }
         if (node.deferRegistration != nullptr) {
@@ -559,6 +587,20 @@ class BorrowChecker final {
             Value value = Evaluate(*node.evaluation);
             if (node.borrowReturn != nullptr)
                 ValidateReturn(value, node.evaluation->Range());
+        }
+        for (const auto& exit : _graph.taskScopeExits) {
+            if (exit.source != id || exit.kind != TaskScopeExitKind::Join)
+                continue;
+            for (const auto& [symbol, handle] : state) {
+                const auto scope = _graph.symbolScopes.find(symbol);
+                if (handle.pendingTask && scope != _graph.symbolScopes.end() &&
+                    std::ranges::find(exit.scopes, scope->second) !=
+                        exit.scopes.end())
+                    Report(Code::InvalidAsync, symbol->DeclarationRange(),
+                           "implicit child-join failure handling is not "
+                           "specified yet; explicitly await and check the "
+                           "child before normal scope exit");
+            }
         }
     }
 
@@ -774,6 +816,7 @@ class BorrowChecker final {
         }
         RemoveTemporary(value.temporary);
         (*_state)[destination] = {std::move(value.origins), false, std::move(value.tasks)};
+        MergeElements((*_state)[destination].elements, value.elements);
         _active.insert(destination);
     }
 
@@ -1031,9 +1074,14 @@ class BorrowChecker final {
                 Value completion = Evaluate(spawn.Operand());
                 _spawnCaptures = previous;
                 _spawnCall = previousCall;
+                if (!_asyncSuccess) {
+                    RemoveTemporary(completion.temporary);
+                    return {};
+                }
                 Handle child;
                 child.origins = std::move(captures);
                 child.completionOrigins = std::move(completion.origins);
+                MergeElements(child.completionElements, completion.elements);
                 child.pendingTask = true;
                 (*_state)[task] = std::move(child);
                 _active.insert(task);
@@ -1054,6 +1102,7 @@ class BorrowChecker final {
                         Report(Code::MovedReference, expression.Range(),
                                "task result may already have been consumed by a previous join");
                     result.origins.insert(child.completionOrigins.begin(), child.completionOrigins.end());
+                    MergeElements(result.elements, child.completionElements);
                     child.origins.clear();
                     child.pendingTask = false;
                     child.joinedTask = true;
@@ -1203,7 +1252,8 @@ class BorrowChecker final {
                             {{{symbol, {}}}, symbol, 0},
                             _model.TransferOf(expression) == TransferKind::Move,
                             expression.Range());
-                    return {handle.origins, symbol, 0, {}, handle.tasks};
+                    return {handle.origins, symbol, 0, handle.elements,
+                            handle.tasks};
                 }
                 if (symbol != nullptr && symbol->Kind() != SymbolKind::Function)
                     CheckAccess(
@@ -1604,6 +1654,7 @@ class BorrowChecker final {
         }
     }
 
+    bool _asyncSuccess = true;
     const SemanticModel& _model;
     diagnostics::DiagnosticBag& _diagnostics;
     const ControlFlowGraph& _graph;

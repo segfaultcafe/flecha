@@ -14,6 +14,13 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
         return nullptr;
     }
 
+    // Fail closed even if a caller supplies a fresh diagnostic bag. Checked
+    // async results and suspension cannot be represented by synchronous IR.
+    for (const auto& symbol : semanticModel.Symbols())
+        if (symbol->Kind() == semantic::SymbolKind::Function &&
+            static_cast<const semantic::FunctionSymbol&>(*symbol).IsAsync())
+            return nullptr;
+
     _semanticModel = &semanticModel;
     std::vector<std::unique_ptr<BoundFunction>> functions;
     functions.reserve(unit.Declarations().size());

@@ -40,6 +40,7 @@ enum class SemanticTypeKind {
     None,
     Function,
     Task,
+    CheckedAsyncResult,
     Error,
     ErrorValue,
     NamedError,
@@ -154,7 +155,8 @@ class SemanticType final {
                _kind == SemanticTypeKind::Array ||
                _kind == SemanticTypeKind::Slice ||
                _kind == SemanticTypeKind::Tuple ||
-               _kind == SemanticTypeKind::Task;
+               _kind == SemanticTypeKind::Task ||
+               _kind == SemanticTypeKind::CheckedAsyncResult;
     }
     [[nodiscard]] std::uint64_t Length() const { return _length; }
     [[nodiscard]] const SemanticType* Target() const { return _target.get(); }
