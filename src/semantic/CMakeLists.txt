@@ -1,4 +1,5 @@
 add_library(semantic STATIC
+    async_plan.cpp
     allocation_checker.cpp
     borrow_checker.cpp
     behavior.cpp

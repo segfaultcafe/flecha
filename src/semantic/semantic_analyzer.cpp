@@ -17,6 +17,7 @@
 #include "core/output_format.hpp"
 #include "core/token_type.hpp"
 #include "semantic/allocation_checker.hpp"
+#include "semantic/async_plan.hpp"
 #include "semantic/borrow_checker.hpp"
 #include "semantic/definite_assignment.hpp"
 #include "semantic/generic_expander.hpp"
@@ -2946,6 +2947,36 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     WarnForCrashlessFunctions();
     if (!_diagnostics.HasErrors())
         AnalyzeAllocations(unit, _model, _diagnostics);
+    // Planning is available behind the execution gate, but never for a unit
+    // with semantic/borrow errors. This does not permit synchronous lowering.
+    const bool canPlanAsync = std::ranges::none_of(
+        _diagnostics.Diagnostics(), [](const auto& diagnostic) {
+            return diagnostic.severity ==
+                       diagnostics::DiagnosticSeverity::Error &&
+                   diagnostic.code !=
+                       diagnostics::DiagnosticCode::AsyncNotImplemented;
+        });
+    if (canPlanAsync) {
+        for (const auto& symbol : _model.Symbols()) {
+            if (symbol->Kind() != SymbolKind::Function) continue;
+            const auto& callable = static_cast<const FunctionSymbol&>(*symbol);
+            const auto* function = callable.Declaration();
+            if (!function || !callable.IsAsync() || function->IsExtern() ||
+                function->HasVariadicPack())
+                continue;
+            auto plan = std::make_shared<AsyncFramePlan>(
+                BuildAsyncFramePlan(*function, _model));
+            const auto errors = VerifyAsyncFramePlan(*plan, _model);
+            if (errors.empty())
+                _model._asyncPlans.emplace(function, std::move(plan));
+            else {
+                SetSource(function->sourceId);
+                Report(diagnostics::DiagnosticCode::InvalidAsync,
+                       function->NameRange(),
+                       "invalid internal async frame plan: " + errors.front());
+            }
+        }
+    }
     ReportGenericOrigins(unit, _diagnostics);
     ReportBehaviorOrigins();
     if (hasBehaviors && _diagnostics.HasErrors()) return rollbackBehaviors();

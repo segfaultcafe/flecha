@@ -16,6 +16,7 @@ struct TaskScopeExit final {
     std::optional<NodeId> successor;
     TaskScopeExitKind kind;
     std::vector<const core::BlockStatement*> scopes;
+    bool operator==(const TaskScopeExit&) const = default;
 };
 struct FlowNode final {
     std::vector<NodeId> successors;
@@ -35,6 +36,10 @@ struct FlowNode final {
     const core::ReturnStatement* borrowReturn = nullptr;
     const core::VariableDeclarationStatement* declaration = nullptr;
     const core::DestructureStatement* destructure = nullptr;
+    // The two ordered successors are success and failure. Kept through path
+    // specialization so suspension planning does not reconstruct operations
+    // from the duplicated outcome actions.
+    const core::DestructureStatement* checkedDispatch = nullptr;
     // Success/failure actions share syntax but differ in initialization,
     // argument transfer and task publication. Checked errors are correlated
     // with these paths before the dataflow passes run.
@@ -56,6 +61,7 @@ struct FlowNode final {
     const core::ReturnStatement* memoryReturn = nullptr;
     const core::Statement* transfer = nullptr;
     bool reachable = false;
+    bool operator==(const FlowNode&) const = default;
 };
 struct ControlFlowGraph final {
     std::vector<FlowNode> nodes;
@@ -66,6 +72,7 @@ struct ControlFlowGraph final {
     std::unordered_set<const Symbol*> deferredCaptures;
     NodeId entry = 0;
     NodeId exit = 0;
+    bool operator==(const ControlFlowGraph&) const = default;
 };
 [[nodiscard]] ControlFlowGraph BuildControlFlowGraph(
     const core::FunctionDeclaration& function, const SemanticModel& model);

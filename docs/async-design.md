@@ -195,6 +195,58 @@ network stacks, worker pools, atomics, and multithreading are not prerequisites.
 The [concurrency safety gate](memory_safety_invariants.md#concurrency-safety-gate)
 remains in force. This foundation enables no shared-memory concurrency model.
 
+## Frame and suspension plans
+
+After semantic and borrow checking succeeds (apart from the execution gate),
+`SemanticModel::AsyncPlanFor` exposes a verified `AsyncFramePlan` for each async
+function. Units with other errors do not publish plans. `DumpAsyncFramePlan`
+provides deterministic scope, slot, continuation, liveness, and initialization
+records for compiler tests and debugging. This is an internal analysis API;
+there is no new source syntax, public runtime ABI, or executable async output.
+
+The plan preserves the specialized CFG's separate checked success and failure
+continuations. Operation records distinguish child creation, direct await, and
+child join; retain resolved callees and prepared operands; and identify the
+value, execution error, and consumed child bindings. The completed type is
+unchanged, including ordinary errors inside aggregates. Pending resumes the
+same guarded operation. Direct computations use indirect stable storage, so
+recursive calls do not imply recursively embedded frame layouts.
+
+Frame slots are logical storage requirements, not target byte offsets. This
+first implementation deliberately gives all parameters and locals stable,
+guarded storage. Backward read liveness is recorded separately from lifetime
+retention: every active lexical slot is retained across suspension, including
+owners whose only remaining users are borrowed views, child captures, deferred
+calls, or destruction. No slot reuse or early frame-storage elimination is
+performed. This conservative policy retains transitive borrow origins without
+inventing a second borrow checker. Existing borrow validation still determines
+whether those lifetimes and accesses are legal.
+
+Initialization records distinguish absent, initialized, and moved alternatives.
+A cleanup guard must use the actual runtime state, not treat a static "possibly
+initialized" result as a value. Operation and task-scope records likewise need
+runtime activation guards. The CFG outcome events describe analysis facts,
+not an executable argument-evaluation schedule; future lowering must implement
+transactional allocation/transfer and guarded polling explicitly.
+
+Scope exits expand into inner-to-outer cancellation requests (for early exits),
+draining, synchronous deferred calls, and guarded owner destruction. A drain
+can reach cleanup only after retirement; cancellation alone never clears
+storage. Return values have separate storage through draining. Deferred-call
+site records include the whole saved call, including scalar and owned argument
+temporaries; each scope also has a dynamic registration stack so repeated visits
+to a site preserve every call and its order. Its physical storage/allocation
+strategy is deferred to executable lowering. As in synchronous code, deferred
+calls run before reverse-order owner destruction in each scope.
+
+The verifier checks continuation targets, checked outcomes, frame references,
+initialization/read consistency, suspension retention, and retirement-before-
+cleanup. It also checks correspondence to the validated CFG and storage plan.
+This establishes an inspectable input for subsequent lowering, not correctness
+of generated state machines. General expression temporaries that cannot span a
+supported suspension remain ordinary expression-lowering work; no hidden async
+argument effects or unresolved void/implicit-join policies are enabled.
+
 ## Implementation status
 
 | Area | Current status |
@@ -204,6 +256,7 @@ remains in force. This foundation enables no shared-memory concurrency model.
 | Scope analysis | Success/failure CFG paths and conditional definite assignment; inner-to-outer join/cancel-and-drain plans, unsupported implicit-join failure and cross-scope jump diagnostics. |
 | Borrow analysis | Outcome-sensitive captures and argument moves, explicit join release, aggregate borrowed-result origins, and consumed-handle checks. Generated-frame/suspension validation remains. |
 | Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional creation, and separate allocation failure outcome. |
+| Frame/suspension planning | Verified internal plans, conservative stable slots, initialization/move alternatives, read liveness, and suspendable scope-exit continuations; deterministic dumps and corruption tests. |
 | Resumable code generation | Not implemented. Async declarations issue `FLECHA-S0089` and cannot reach synchronous lowering. |
 | Public Flecha futures/results | Checked destructuring implemented in the frontend; public low-level future API and executable integration remain. |
 | Tooling | VS Code and Neovim syntax highlighting; checked expression types, success-condition hover, and binding navigation/occurrence tests. |
@@ -217,7 +270,7 @@ remain until lowering, cleanup, failure handling, and interoperability are
 validated together.
 
 With a testing build configured, run the focused checks with
-`ctest --test-dir <build-directory> -R 'AsyncFrontendTests|AsyncRuntimeTests' --output-on-failure`.
+`ctest --test-dir <build-directory> -R 'AsyncFrontendTests|AsyncRuntimeTests|AsyncPlanTests' --output-on-failure`.
 The runtime tests use injected allocation failures and handwritten recursive
 frames. Generated state-machine coverage is still required before enabling
 async execution.
