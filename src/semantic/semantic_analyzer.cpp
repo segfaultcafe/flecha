@@ -5492,14 +5492,15 @@ SemanticType SemanticAnalyzer::AnalyzeUnary(
               (_allowStringReference &&
                target.Kind() == SemanticTypeKind::String) ||
               target.Kind() == SemanticTypeKind::Pointer ||
+              target.Kind() == SemanticTypeKind::OwnedSlice ||
               target.Kind() == SemanticTypeKind::Array ||
               (target.Kind() == SemanticTypeKind::Tuple &&
                !target.OwnsStorage())) ||
             !IsSafePlace(expression.Operand())) {
             Report(diagnostics::DiagnosticCode::InvalidReference,
                    expression.Range(),
-                   "safe borrowing requires scalar, array, or raw-pointer "
-                   "storage owned by a variable or reference");
+                   "safe borrowing requires scalar, array, owning-slice, or "
+                   "raw-pointer storage owned by a variable or reference");
             return SemanticType::Error();
         }
         if (expected.Kind() == SemanticTypeKind::Reference &&
@@ -6904,7 +6905,10 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
           receiver.Target()->Kind() == SemanticTypeKind::Enum ||
           receiver.Target()->Kind() == SemanticTypeKind::Interface)))
         return AnalyzeMethodCall(expression, receiver);
-    if (expression.Access() != TokenType::Dot)
+    const bool owningSliceReference =
+        receiver.Kind() == SemanticTypeKind::Reference &&
+        receiver.Target()->Kind() == SemanticTypeKind::OwnedSlice;
+    if (expression.Access() != TokenType::Dot && !owningSliceReference)
         Report(diagnostics::DiagnosticCode::InvalidMember, expression.Range(),
                "this member requires '.'");
     if (receiver.IsInteger() &&
@@ -6932,24 +6936,40 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
         return SemanticType(std::vector<SemanticType>{
             valueType, SemanticType(SemanticTypeKind::Bool)});
     }
-    if (receiver.Kind() == SemanticTypeKind::OwnedSlice &&
+    if ((receiver.Kind() == SemanticTypeKind::OwnedSlice ||
+         owningSliceReference) &&
         (expression.Member() == "append" || expression.Member() == "clear" ||
          expression.Member() == "capacity")) {
-        if (expression.Access() != TokenType::Dot)
+        const TokenType requiredAccess =
+            owningSliceReference ? TokenType::Arrow : TokenType::Dot;
+        if (expression.Access() != requiredAccess)
             Report(diagnostics::DiagnosticCode::InvalidMember,
-                   expression.Range(), "owning slice members require '.'");
+                   expression.Range(),
+                   owningSliceReference
+                       ? "borrowed owning slice members require '->'"
+                       : "owning slice members require '.'");
+        const SemanticType owningSlice =
+            owningSliceReference ? *receiver.Target() : receiver;
         const bool mutates = expression.Member() != "capacity";
         if (mutates) {
-            const SemanticType place = PlaceType(expression.Receiver());
-            if (!IsSafePlace(expression.Receiver()) || place.IsError())
-                Report(diagnostics::DiagnosticCode::InvalidReference,
-                       expression.Receiver().Range(),
-                       "mutating an owning slice requires a writable owner "
-                       "place");
-            else if (place.IsConst())
-                Report(diagnostics::DiagnosticCode::InvalidReference,
-                       expression.Receiver().Range(),
-                       "cannot mutate a fixed owning slice");
+            if (owningSliceReference) {
+                if (owningSlice.IsConst())
+                    Report(diagnostics::DiagnosticCode::InvalidReference,
+                           expression.Receiver().Range(),
+                           "cannot mutate through a read-only owning slice "
+                           "reference");
+            } else {
+                const SemanticType place = PlaceType(expression.Receiver());
+                if (!IsSafePlace(expression.Receiver()) || place.IsError())
+                    Report(diagnostics::DiagnosticCode::InvalidReference,
+                           expression.Receiver().Range(),
+                           "mutating an owning slice requires a writable "
+                           "owner place");
+                else if (place.IsConst())
+                    Report(diagnostics::DiagnosticCode::InvalidReference,
+                           expression.Receiver().Range(),
+                           "cannot mutate a fixed owning slice");
+            }
         }
         if (expression.Member() == "capacity") {
             if (!expression.Arguments().empty())
@@ -6970,8 +6990,8 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
             return SemanticType(SemanticTypeKind::Void);
         }
 
-        const SemanticType element = receiver.Target()->WithoutConst();
-        if (receiver.Target()->IsConst())
+        const SemanticType element = owningSlice.Target()->WithoutConst();
+        if (owningSlice.Target()->IsConst())
             Report(diagnostics::DiagnosticCode::InvalidReference,
                    expression.Receiver().Range(),
                    "cannot append through an owning slice of const elements");

@@ -214,10 +214,16 @@ bool Parser::ScanGreater(std::size_t& offset, bool& pendingGreater) const {
 }
 
 bool Parser::ScanType(std::size_t& offset, bool& pendingGreater) const {
+    const bool constContract =
+        ScanToken(offset, pendingGreater) == TokenType::Const &&
+        (Peek(offset + 1).type == TokenType::Own ||
+         Peek(offset + 1).type == TokenType::Lend);
+    if (constContract) ++offset;
     if (ScanToken(offset, pendingGreater) == TokenType::Own ||
         ScanToken(offset, pendingGreater) == TokenType::Lend)
         ++offset;
-    if (ScanToken(offset, pendingGreater) == TokenType::Const) ++offset;
+    if (!constContract && ScanToken(offset, pendingGreater) == TokenType::Const)
+        ++offset;
     const TokenType token = ScanToken(offset, pendingGreater);
     if (token == TokenType::Mul || token == TokenType::Ampersand ||
         token == TokenType::ConstPtr || token == TokenType::ConstRef) {
@@ -445,6 +451,11 @@ void Parser::ReportUnexpectedToken(std::string_view context) {
 
 std::unique_ptr<TypeNode> Parser::ParseType(bool allowOwn, bool allowLend,
                                             bool allowTupleOwners) {
+    const bool constContract =
+        Check(TokenType::Const) &&
+        (Peek(1).type == TokenType::Own || Peek(1).type == TokenType::Lend);
+    source::SourceRange contractQualifierRange;
+    if (constContract) contractQualifierRange = Advance().range;
     if (Check(TokenType::Own) || Check(TokenType::Lend)) {
         const Token contract = Advance();
         auto type = ParseType();
@@ -464,6 +475,15 @@ std::unique_ptr<TypeNode> Parser::ParseType(bool allowOwn, bool allowLend,
         type->SetContract(contract.type == TokenType::Own
                               ? OwnershipContract::Own
                               : OwnershipContract::Lend);
+        if (constContract) {
+            if (type->IsConst()) {
+                _diagnostics.Report(
+                    diagnostics::DiagnosticCode::UnexpectedToken,
+                    type->QualifierRange(), "duplicate const qualifier");
+                return nullptr;
+            }
+            type->SetConst(contractQualifierRange);
+        }
         return type;
     }
     const source::SourceLocation start = Current().range.start;
