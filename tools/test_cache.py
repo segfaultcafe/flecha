@@ -20,7 +20,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
 
 
@@ -106,9 +106,21 @@ def eligible_test(test: dict) -> bool:
 class Snapshot:
     digest: str
     test_keys: Mapping[str, str]
+    inputs: Mapping[str, str] = field(default_factory=dict)
 
     def key(self, test: dict) -> str | None:
         return self.test_keys.get(_record_digest(test))
+
+
+def changed_inputs(before: Snapshot, after: Snapshot | None) -> list[str]:
+    """Explain invalidation without exposing environment values or file contents."""
+    if after is None:
+        return ["dependency inspection became unavailable"]
+    previous = getattr(before, "inputs", {})
+    current = getattr(after, "inputs", {})
+    names = sorted(set(previous) | set(current))
+    return [name for name in names if previous.get(name) != current.get(name)] or [
+        "validation input fingerprint"]
 
 
 class CacheUnavailable(Exception):
@@ -303,24 +315,30 @@ class CacheContext:
                 if Path(configuration).exists():
                     required.add(Path(configuration))
             source_files = self._source_files()
+            dependency_hashes = {str(path): self._hash_path(path) for path in sorted(required)}
             execution = {
                 "version": CACHE_VERSION,
                 "platform": list(platform.uname()),
                 "process": self._process_context(),
                 "environment": self.environment,
-                "dependencies": [self._hash_path(path) for path in sorted(required)],
+                "dependencies": list(dependency_hashes.values()),
             }
             execution_digest = hashlib.sha256(_json(execution)).hexdigest()
             # Reviewed pure tests consume only their executable/runtime inputs.
             # The runner ALWAYS builds first, so unchanged binaries can reuse
             # validation across documentation or unrelated source edits. Source
             # contents still guard against changes during the active run.
+            source_hashes = {str(path): self._hash_path(path, missing_ok=True) for path in source_files}
             guard = {"execution": execution_digest, "tests": tests,
-                     "source": [self._hash_path(path, missing_ok=True) for path in source_files]}
+                     "source": list(source_hashes.values())}
             digest = hashlib.sha256(_json(guard)).hexdigest()
             keys = {_record_digest(test): hashlib.sha256(
                 (execution_digest + _record_digest(test)).encode()).hexdigest() for test in selected}
-            return Snapshot(digest, keys)
+            inputs = {**source_hashes, **dependency_hashes}
+            for label in ("version", "platform", "process", "environment"):
+                inputs[f"<{label}>"] = hashlib.sha256(_json(execution[label])).hexdigest()
+            inputs["<CTest inventory>"] = hashlib.sha256(_json(tests)).hexdigest()
+            return Snapshot(digest, keys, inputs)
         except (CacheUnavailable, OSError, UnicodeError, ImportError) as error:
             self.disabled_reason = (str(error) if isinstance(error, CacheUnavailable)
                                     else "dependency inventory could not be read")

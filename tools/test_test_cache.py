@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_cache import CacheContext, eligible_test
+from test_cache import CacheContext, changed_inputs, eligible_test
 
 
 def sample_test(name="ParserTests.ParsesEmptyCompilationUnit"):
@@ -138,6 +138,16 @@ class SnapshotTests(unittest.TestCase):
         after = self.snapshot()
         self.assertEqual(self.context.record_successes([self.test], before, after), 0)
         self.assertFalse(self.context.lookup(self.test, before))
+
+    def test_changed_input_diagnostics_name_files_without_exposing_secrets(self):
+        before = self.snapshot()
+        self.source_file.write_text("edit during validation")
+        self.context.environment["TOKEN"] = "new secret value"
+        changes = changed_inputs(before, self.snapshot())
+        self.assertIn(str(self.source_file), changes)
+        self.assertIn("<environment>", changes)
+        self.assertNotIn("secret", str(changes))
+        self.assertEqual(changed_inputs(before, None), ["dependency inspection became unavailable"])
 
     def test_missing_binary_or_unresolved_libraries_fail_closed(self):
         self.binary.unlink()

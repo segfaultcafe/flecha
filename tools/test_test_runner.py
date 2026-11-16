@@ -185,11 +185,15 @@ class RunnerTests(unittest.TestCase):
         self.cache.record_successes.assert_not_called()
 
     def test_changed_inputs_prevent_recording(self):
-        self.cache.snapshot.side_effect = [self.snapshot, SimpleNamespace(digest="changed")]
-        with self.assertRaisesRegex(RuntimeError, "validation inputs changed"):
+        self.snapshot.inputs = {"docs/report.md": "old"}
+        self.cache.snapshot.side_effect = [self.snapshot, SimpleNamespace(
+            digest="changed", inputs={"docs/report.md": "new"})]
+        with self.assertRaisesRegex(RuntimeError, "docs/report.md.*2 tests passed, 0 failed"):
             runner.run(self.args())
         self.assertEqual(self.recorded, [])
         self.assertEqual(self.report()["status"], "error")
+        self.assertEqual(self.report()["passed"], 2)
+        self.assertEqual(self.report()["changed_inputs"], ["docs/report.md"])
 
     def test_old_ctest_runs_without_cache_and_exact_regex_subset(self):
         self.help_text = ""

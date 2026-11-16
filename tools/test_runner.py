@@ -14,7 +14,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-from test_cache import CacheContext
+from test_cache import CacheContext, changed_inputs
 from test_progress import run_logged
 from test_selection import SelectionError, changed_files, select_tests
 
@@ -225,6 +225,9 @@ def run_locked(args, build: Path, started: float) -> int:
                 elif result_code == 0:
                     report["result_detail"] = "CTest passed; individual results require CTest 3.21+"
             report["timings"]["test_seconds"] = time.monotonic() - before
+            # Preserve the actual test outcome even if the subsequent input
+            # guard rejects validation of a tree that changed during execution.
+            report.update(passed=len(passed), failed_tests=sorted(failed), skipped_tests=sorted(skipped))
             before = time.monotonic()
             if snapshot:
                 after_tests = discover(args.ctest, build)
@@ -232,7 +235,17 @@ def run_locked(args, build: Path, started: float) -> int:
                     raise RuntimeError("CTest definitions changed during validation; rerun required")
                 after = cache.snapshot(after_tests)
                 if after is None or after.digest != snapshot.digest:
-                    raise RuntimeError("validation inputs changed or became unreadable during the run; rerun required")
+                    changes = changed_inputs(snapshot, after)
+                    report["changed_inputs"] = changes
+                    if after is None:
+                        report["cache_disabled_reason"] = cache.disabled_reason
+                    details = ", ".join(changes[:5])
+                    if len(changes) > 5:
+                        details += f" (+{len(changes) - 5} more; see report)"
+                    raise RuntimeError(
+                        f"validation inputs changed during the run: {details}; "
+                        f"{len(passed)} tests passed, {len(failed)} failed, "
+                        f"{len(cached)} reused; no results cached; rerun after edits finish")
                 report["cache_written"] = cache.record_successes(
                     [test for test in pending if test["name"] in passed], snapshot, after)
             report["timings"]["cache_write_seconds"] = time.monotonic() - before

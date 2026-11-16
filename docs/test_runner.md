@@ -106,6 +106,9 @@ Input snapshots before and after execution must agree, including all-cache-hit
 runs; otherwise the runner reports that validation must be repeated. This
 mutation guard also hashes tracked and nonignored untracked sources, initialized
 submodules, and local changes. Fresh CTest discovery must agree after execution.
+If another task edits files during a run, the error lists those files and the
+JSON report preserves the actual pass/failure counts. A passing test run on a
+changing tree is not recorded as reusable validation of the final tree.
 
 The source mutation guard is separate from the reuse key: these reviewed tests
 never read source files and the runner always builds before lookup, so an
