@@ -886,8 +886,9 @@ Pointer values can be copied in safe code. Raw pointers carry no checked lifetim
 or non-null guarantee. A pointer may add const to its immediate target, but
 cannot remove const or change qualifiers deeper inside a nested target type.
 
-Checked `&T` and `&const T` references to initialized scalar and raw-pointer
-storage are implemented. `&value`, `*ref`, and `*ref = value` are safe operations.
+Checked `&T` and `&const T` references to initialized scalar, structure,
+fixed-array, owning-slice, and raw-pointer storage are implemented. `&value`,
+`*ref`, and `*ref = value` are safe operations.
 Reference assignment rebinds; mutable handle assignment moves, shared handle
 assignment copies, and reference arguments reborrow for the call. Mutable
 borrows exclude conflicting access; shared borrows exclude mutation. The
@@ -1013,6 +1014,10 @@ The preferred compiler-managed form is `new<own []T>(count)`, returning a
 move-only `own []T` value with safe checked access and automatic destruction.
 Owning slices may be stored in structures; `own []T` may be weakened by move to
 `own []const T`.
+An owner descriptor may be borrowed without transfer as `&own []T`; its
+`append`, `clear`, and `capacity` operations use `->`. The shared
+`&const own []T` form permits `capacity` but not mutation. Ordinary `[]T`
+slices remain non-resizable.
 On failure, new returns null and `AllocationError.OutOfMemory` without evaluating
 the initializer. Free runs typed teardown and accepts null. See
 [raw allocation](docs/raw_allocation.md) for the unsafe contract and current limits.
@@ -1024,8 +1029,10 @@ external pointer validity still requires a caller contract.
 Raw-pointer contracts use `lend *T` parameters, consuming `own *T` parameters,
 `own *T` returns (including tuple elements), and `own *T` structure fields.
 `own []T` is instead a first-class managed owner, not a raw-pointer contract.
-References and borrowed slices never take `own` or `lend`. Ownership remains
-separate from const and nullability. See
+An `&own []T` type is a checked reference to that managed owner; `own` does not
+become a reference contract and ownership is not transferred. Ordinary
+borrowed slices never take `own` or `lend`. Ownership remains separate from
+const and nullability. See
 [ownership contracts](docs/ownership_contracts.md) for raw-pointer transfer,
 teardown, and initial implementation restrictions.
 

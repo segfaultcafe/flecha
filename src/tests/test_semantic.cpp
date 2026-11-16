@@ -7432,6 +7432,61 @@ TEST(SemanticMemoryTests, OwningSliceMutationConflictsWithLiveViews) {
                     .diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests, BorrowsOwningSlicesWithoutTransferringOwnership) {
+    Analysis valid = Analyze(R"(
+        error refill(&own []i32 values) {
+            values->clear();
+            return values->append(42);
+        }
+        usize capacity(&const own []i32 values) {
+            return values->capacity();
+        }
+        i32 f!() {
+            values := new<own []i32>!(1);
+            if refill(&values) != none { return 1; }
+            &const own []i32 readOnly = &values;
+            return values[0] + capacity(&values) as i32 +
+                readOnly->capacity() as i32;
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_TRUE(Analyze(R"(
+        void mutate(&const own []i32 values) { values->clear(); }
+    )")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze(R"(
+        error append(&const own []i32 values) {
+            return values->append(1);
+        }
+    )")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze(R"(
+        void mutate(&own []i32 values) { values.clear(); }
+    )")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze(R"(
+        void mutate(own []i32 values) { values->clear(); }
+    )")
+                    .diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, BorrowedOwningSliceMutationConflictsWithLiveViews) {
+    Analysis conflict = Analyze(R"(
+        void clear(&own []i32 values) { values->clear(); }
+        void f!() {
+            values := new<own []i32>!(1);
+            view := values[:];
+            clear(&values);
+            view.len();
+        }
+    )");
+    EXPECT_NE(FindDiagnostic(conflict, DiagnosticCode::BorrowConflict),
+              nullptr);
+}
+
 TEST(SemanticMemoryTests, CrashableNewReturnsOwnerDirectly) {
     Analysis valid = Analyze(R"(
         own []string allocate!(usize count) {

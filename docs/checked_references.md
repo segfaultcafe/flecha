@@ -1,8 +1,9 @@
 # Checked stack references
 
-Checked references are implemented for initialized scalar, structure, fixed-array, and raw-pointer
-storage. They borrow storage without allocating, owning, or extending its
-lifetime. See [the runnable example](../examples/checked_references.fl).
+Checked references are implemented for initialized scalar, structure,
+fixed-array, owning-slice, and raw-pointer storage. They borrow storage without
+allocating, taking ownership, or extending its lifetime. See
+[the runnable example](../examples/checked_references.fl).
 
 ```flecha
 u8 double_local() {
@@ -175,6 +176,13 @@ Fixed arrays and their elements can now be borrowed: `&[N]T ref = &array` or
 array; disjoint-index analysis is deferred. Const array storage produces
 read-only references. See [fixed arrays](fixed_arrays.md) for indexing,
 initialization, and lifetime restrictions.
+
+Owning slice descriptors can be borrowed as `&own []T`. This is an exclusive
+borrow of the owner, not an ownership transfer, and permits
+`ref->append(value)`, `ref->clear()`, and `ref->capacity()`. The shared
+`&const own []T` form permits only `capacity()`. Ordinary borrowed `[]T` slices
+remain non-resizable. See [dynamic arrays](dynamic_arrays.md) for the complete
+operation and element-lifecycle rules.
 
 ## Closure captures
 

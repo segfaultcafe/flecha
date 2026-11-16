@@ -305,6 +305,10 @@ class TypeNode final : public AstNode {
     }
     OwnershipContract Contract() const { return _contract; }
     void SetContract(OwnershipContract contract) { _contract = contract; }
+    void SetConst(source::SourceRange qualifierRange) {
+        _isConst = true;
+        _qualifierRange = qualifierRange;
+    }
     [[nodiscard]] const TypeNode* Target() const { return _target.get(); }
     [[nodiscard]] TypeNode* Target() { return _target.get(); }
     [[nodiscard]] bool IsConst() const { return _isConst; }

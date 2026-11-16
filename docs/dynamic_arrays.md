@@ -55,6 +55,26 @@ so the caller still owns it and may retry or let it clean up normally. Borrowed
 `[]T` slices do not provide `append`, `clear`, or `capacity`, and an active view
 of an owning slice prevents mutation through these operations.
 
+An owning slice descriptor can itself be borrowed without transferring the
+allocation. Use `&own []T` for an exclusive owner borrow and call its
+owner-specific operations with `->`:
+
+```flecha
+error fill(&own []i32 output) {
+    output->clear();
+    return output->append(42);
+}
+
+output := new<own []i32>!(1);
+fill(&output);
+// output still owns [42]
+```
+
+`&const own []T` is the shared, read-only form. It permits
+`output->capacity()` but rejects `append` and `clear`. Both forms participate
+in the normal checked-reference lifetime rules: an exclusive owner borrow
+conflicts with live views and aliases, and it cannot outlive the owner.
+
 Indexing, slicing, `front`, `back`, and `len` are checked safe operations on an
 owning slice. `data()` remains unsafe because it exposes a raw pointer. Adding
 `const` to the element type is a one-way permission weakening:
