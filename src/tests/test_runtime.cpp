@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "runtime/runtime_abi.h"
+#include "test_temporary_path.hpp"
 
 #ifndef _WIN32
 #include <pthread.h>
@@ -1823,8 +1824,7 @@ class RuntimeFilesystemMutationTests : public ::testing::Test {
     void TearDown() override { std::filesystem::remove_all(Root()); }
 
     static std::filesystem::path Root() {
-        return std::filesystem::temp_directory_path() /
-               "flecha_runtime_filesystem_mutation_test";
+        return flecha::testing::TemporaryPath("filesystem-mutation");
     }
 };
 
@@ -2237,8 +2237,7 @@ class RuntimeFileStreamTests : public ::testing::Test {
     void TearDown() override { std::filesystem::remove(Path()); }
 
     static std::filesystem::path Path() {
-        return std::filesystem::temp_directory_path() /
-               "flecha_runtime_file_stream_test.bin";
+        return flecha::testing::TemporaryPath("file-stream.bin");
     }
 
     static std::string NativePath() { return Path().string(); }

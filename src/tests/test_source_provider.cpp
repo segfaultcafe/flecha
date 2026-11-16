@@ -11,6 +11,7 @@
 #include "core/module_loader.hpp"
 #include "core/module_source_index.hpp"
 #include "core/source_provider.hpp"
+#include "test_temporary_path.hpp"
 
 namespace {
 
@@ -54,9 +55,8 @@ class CountingSourceProvider final : public SourceProvider {
 class SourceProviderFilesystemTests : public ::testing::Test {
    protected:
     void SetUp() override {
-        static std::size_t sequence = 0;
-        _root = std::filesystem::temp_directory_path() /
-                ("flecha-source-provider-" + std::to_string(++sequence));
+        _root = flecha::testing::TemporaryPath("source-provider");
+        std::filesystem::remove_all(_root);
         std::filesystem::create_directories(_root);
     }
 

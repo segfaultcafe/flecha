@@ -7,6 +7,10 @@ PERFORMANCE_BUILD_DIR ?= build-performance
 PERFORMANCE_OUTPUT_DIR ?= build/performance
 GTEST_SOURCE_DIR ?=
 NPM ?= npm
+PYTHON ?= python3
+TEST_JOBS ?= 4
+TEST_BASE ?= master
+TEST_ARGS ?=
 VSCODE_DIR ?= editors/vscode
 VSCODE_VERIFY_DIR ?= .cache/vsix-contents
 DOCKER ?= docker
@@ -18,7 +22,7 @@ HOST_NVIM_CONFIG ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/nvim,$(HOME)/.con
 
 .DEFAULT_GOAL := build
 
-.PHONY: help configure build configure-tests build-tests test test-stress \
+.PHONY: help configure build configure-tests build-tests test test-changed test-full test-plan test-runner-self-test test-stress \
 	test-stress-campaign test-hardening test-hardening-campaign \
 	test-semantic llvm-poc native-poc native-if-also native-functions \
 	native-callables native-while native-loop-control native-casts native-string-view \
@@ -29,7 +33,11 @@ HOST_NVIM_CONFIG ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/nvim,$(HOME)/.con
 help:
 	@echo "Flecha build targets:"
 	@echo "  make build          Configure and build Flecha"
-	@echo "  make test           Configure, build, and run all tests"
+	@echo "  make test           Build and validate all tests, reusing eligible successes"
+	@echo "  make test-changed   Build and validate tests affected by changes from TEST_BASE"
+	@echo "  make test-full      Build and execute every test without result caching (CI gate)"
+	@echo "  make test-plan      Explain changed-test selection without executing tests"
+	@echo "  make test-runner-self-test Validate selection, cache invalidation, and runner"
 	@echo "  make test-stress    Run the fast deterministic compiler corpus"
 	@echo "  make test-stress-campaign Run release-qualification compiler stress"
 	@echo "  make test-hardening Run fast property and stateful hardening"
@@ -61,6 +69,7 @@ help:
 	@echo "           DOCKER, SANDBOX_IMAGE, SANDBOX_CONTAINER, SANDBOX_DOCKERFILE"
 	@echo "           SANDBOX_BUILD_VERSION, HOST_NVIM_CONFIG"
 	@echo "           PERFORMANCE_BUILD_DIR, PERFORMANCE_OUTPUT_DIR"
+	@echo "           TEST_JOBS (default 4), TEST_BASE (default master), TEST_ARGS, PYTHON"
 
 performance-self-test:
 	python3 tools/performance.py self-test
@@ -131,8 +140,27 @@ configure-tests:
 build-tests: configure-tests
 	$(CMAKE) --build $(TEST_BUILD_DIR) --parallel
 
-test: build-tests
-	$(CMAKE) --build $(TEST_BUILD_DIR) --target test
+test:
+	$(PYTHON) tools/test_runner.py --build-dir "$(TEST_BUILD_DIR)" \
+		--cmake "$(CMAKE)" --configure --generator "$(CMAKE_GENERATOR)" \
+		--jobs $(TEST_JOBS) --full $(TEST_ARGS)
+
+test-changed:
+	$(PYTHON) tools/test_runner.py --build-dir "$(TEST_BUILD_DIR)" \
+		--cmake "$(CMAKE)" --configure --generator "$(CMAKE_GENERATOR)" \
+		--jobs $(TEST_JOBS) --base "$(TEST_BASE)" $(TEST_ARGS)
+
+test-full:
+	$(PYTHON) tools/test_runner.py --build-dir "$(TEST_BUILD_DIR)" \
+		--cmake "$(CMAKE)" --configure --generator "$(CMAKE_GENERATOR)" \
+		--jobs $(TEST_JOBS) --full --no-cache $(TEST_ARGS)
+
+test-plan:
+	$(PYTHON) tools/test_runner.py --build-dir "$(TEST_BUILD_DIR)" \
+		--cmake "$(CMAKE)" --base "$(TEST_BASE)" --list $(TEST_ARGS)
+
+test-runner-self-test:
+	$(PYTHON) -m unittest discover -s tools -p 'test_test_*.py'
 
 test-stress: build-tests
 	ctest --test-dir $(TEST_BUILD_DIR) --output-on-failure \

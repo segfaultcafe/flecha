@@ -246,11 +246,23 @@ cache behavior, archives, and the registry protocol.
 
 ## Testing
 
-Configure and run the complete test suite with:
+During development, build and validate the affected tests with:
+
+```sh
+make test-changed
+```
+
+Validate the complete suite, reusing eligible local successful results, with:
 
 ```sh
 make test
 ```
+
+Use `make test-full` for a complete uncached integration run, as CI does before
+merge. Tests run with four workers by default (`TEST_JOBS=2` lowers the limit).
+`make test-plan` explains selection; `make test-runner-self-test` checks the
+runner itself. See [the test runner guide](docs/test_runner.md) for selection,
+cache invalidation, logs, and measurements.
 
 Useful focused targets include:
 
