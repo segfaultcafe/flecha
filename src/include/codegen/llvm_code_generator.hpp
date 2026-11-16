@@ -167,6 +167,8 @@ class LlvmCodeGenerator final {
     void EmitBoundsCheck(llvm::Value* valid);
     [[nodiscard]] llvm::Value* EmitSlice(
         const lowering::BoundSliceExpression& expression);
+    [[nodiscard]] llvm::Value* EmitOwnedSliceOperation(
+        const lowering::BoundOwnedSliceOperationExpression& expression);
     [[nodiscard]] llvm::Value* EmitArray(
         const lowering::BoundArrayExpression& expression);
     [[nodiscard]] llvm::Value* EmitMatch(

@@ -7367,6 +7367,71 @@ TEST(SemanticMemoryTests, OwningSlicesAreSafeManagedMoveOnlyBuffers) {
                     .diagnostics.HasErrors());
 }
 
+TEST(SemanticMemoryTests, OwningSliceAppendRequiresWritableOwners) {
+    Analysis valid = Analyze(R"(
+        void f!() {
+            values := new<own []i32>!(2);
+            values.clear();
+            if values.capacity() != 2 { return; }
+            first := values.append(0);
+            second := values.append(42);
+            child := new<own []i32>!(1);
+            children := new<own []own []i32>!(1);
+            children.clear();
+            moved := children.append(child);
+            child.len();
+        }
+    )");
+    for (const auto& diagnostic : valid.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(valid.diagnostics.HasErrors());
+
+    EXPECT_TRUE(Analyze("void f([]i32 values) { values.append(1); }")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze("void f!() { const own []i32 values = "
+                        "new<own []i32>!(1); values.clear(); }")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze("void f!() { values := new<own []const i32>!(1); "
+                        "values.append(1); }")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze("void f!() { values := new<own []i32>!(1); "
+                        "values.append(); }")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze("void f!() { values := new<own []i32>!(1); "
+                        "values.append(\"wrong\"); }")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze(R"(
+        void f!() {
+            values := new<own []own []i32>!(1);
+            values.clear();
+            values.append(new<own []i32>!(1));
+        }
+    )")
+                    .diagnostics.HasErrors());
+}
+
+TEST(SemanticMemoryTests, OwningSliceMutationConflictsWithLiveViews) {
+    EXPECT_TRUE(Analyze(R"(
+        void f!() {
+            values := new<own []i32>!(2);
+            view := values[:];
+            values.clear();
+            view.len();
+        }
+    )")
+                    .diagnostics.HasErrors());
+    EXPECT_TRUE(Analyze(R"(
+        void f!() {
+            values := new<own []i32>!(2);
+            values.clear();
+            view := values[:];
+            values.append(1);
+            view.len();
+        }
+    )")
+                    .diagnostics.HasErrors());
+}
+
 TEST(SemanticMemoryTests, CrashableNewReturnsOwnerDirectly) {
     Analysis valid = Analyze(R"(
         own []string allocate!(usize count) {

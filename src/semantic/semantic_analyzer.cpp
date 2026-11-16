@@ -340,8 +340,9 @@ std::optional<std::uint64_t> StorageSize(SemanticType type,
         case SemanticTypeKind::Pointer:
             return sizeof(void*);
         case SemanticTypeKind::OwnedBuffer:
-        case SemanticTypeKind::OwnedSlice:
             return 2 * sizeof(void*);
+        case SemanticTypeKind::OwnedSlice:
+            return 3 * sizeof(void*);
         case SemanticTypeKind::Function:
             return 3 * sizeof(void*);
         case SemanticTypeKind::Slice:
@@ -1912,6 +1913,16 @@ void SemanticAnalyzer::RegisterBuiltIns() {
     auto error = std::make_unique<Symbol>(SymbolKind::ErrorType, family->name,
                                           SemanticType(family),
                                           source::SourceRange{}, false);
+    (void)_currentScope->Declare(*error);
+    _model._symbols.push_back(std::move(error));
+
+    family = std::make_shared<ErrorFamily>();
+    family->name = "SliceError";
+    family->displayName = family->name;
+    family->variants = {"Full"};
+    error = std::make_unique<Symbol>(SymbolKind::ErrorType, family->name,
+                                     SemanticType(family),
+                                     source::SourceRange{}, false);
     (void)_currentScope->Declare(*error);
     _model._symbols.push_back(std::move(error));
 
@@ -6920,6 +6931,81 @@ SemanticType SemanticAnalyzer::AnalyzeMemberCall(
         }
         return SemanticType(std::vector<SemanticType>{
             valueType, SemanticType(SemanticTypeKind::Bool)});
+    }
+    if (receiver.Kind() == SemanticTypeKind::OwnedSlice &&
+        (expression.Member() == "append" || expression.Member() == "clear" ||
+         expression.Member() == "capacity")) {
+        if (expression.Access() != TokenType::Dot)
+            Report(diagnostics::DiagnosticCode::InvalidMember,
+                   expression.Range(), "owning slice members require '.'");
+        const bool mutates = expression.Member() != "capacity";
+        if (mutates) {
+            const SemanticType place = PlaceType(expression.Receiver());
+            if (!IsSafePlace(expression.Receiver()) || place.IsError())
+                Report(diagnostics::DiagnosticCode::InvalidReference,
+                       expression.Receiver().Range(),
+                       "mutating an owning slice requires a writable owner "
+                       "place");
+            else if (place.IsConst())
+                Report(diagnostics::DiagnosticCode::InvalidReference,
+                       expression.Receiver().Range(),
+                       "cannot mutate a fixed owning slice");
+        }
+        if (expression.Member() == "capacity") {
+            if (!expression.Arguments().empty())
+                Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                       expression.Range(),
+                       "owning slice capacity expects no arguments");
+            for (const auto& argument : expression.Arguments())
+                AnalyzeExpression(*argument);
+            return SemanticType(SemanticTypeKind::USize);
+        }
+        if (expression.Member() == "clear") {
+            if (!expression.Arguments().empty())
+                Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                       expression.Range(),
+                       "owning slice clear expects no arguments");
+            for (const auto& argument : expression.Arguments())
+                AnalyzeExpression(*argument);
+            return SemanticType(SemanticTypeKind::Void);
+        }
+
+        const SemanticType element = receiver.Target()->WithoutConst();
+        if (receiver.Target()->IsConst())
+            Report(diagnostics::DiagnosticCode::InvalidReference,
+                   expression.Receiver().Range(),
+                   "cannot append through an owning slice of const elements");
+        if (expression.Arguments().size() != 1) {
+            Report(diagnostics::DiagnosticCode::WrongArgumentCount,
+                   expression.Range(),
+                   "owning slice append expects one argument");
+            for (const auto& argument : expression.Arguments())
+                AnalyzeExpression(*argument);
+            return SemanticType(SemanticTypeKind::ErrorValue);
+        }
+        const core::Expression& argument = *expression.Arguments().front();
+        const SemanticType actual = AnalyzeExpression(argument, element);
+        if (!actual.IsError() && !IsAssignable(element, actual))
+            Report(diagnostics::DiagnosticCode::IncompatibleArgument,
+                   argument.Range(), TypeMismatch(element, actual));
+        if (element.OwnsStorage() || element.ContainsOwnedBuffer()) {
+            const core::Expression* source = &argument;
+            while (source->Kind() == core::AstNodeKind::ParenthesizedExpression)
+                source =
+                    &static_cast<const core::ParenthesizedExpression&>(*source)
+                         .Inner();
+            const SemanticType place = PlaceType(argument);
+            if (source->Kind() != core::AstNodeKind::NameExpression ||
+                !IsSafePlace(argument) || place.IsError() || place.IsConst()) {
+                Report(diagnostics::DiagnosticCode::NonCopyableValue,
+                       argument.Range(),
+                       "append requires an owning element to be a mutable "
+                       "whole-variable place so failure can preserve it");
+            } else {
+                _model._conditionalAppendTransfers.insert(&expression);
+            }
+        }
+        return SemanticType(SemanticTypeKind::ErrorValue);
     }
     std::vector<SemanticType> arguments;
     arguments.reserve(expression.Arguments().size());

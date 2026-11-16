@@ -1425,6 +1425,7 @@ foreach(case IN ITEMS
         move_only_lifecycle
         owning_elements
         nested_ownership
+        owning_slice_append
         borrow_views
         own_capture)
     set(array_fail_call 0)

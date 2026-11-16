@@ -1521,6 +1521,30 @@ class BorrowChecker final {
                 }
                 const SemanticType receiverType =
                     _model.TypeOf(call.Receiver());
+                if (receiverType.Kind() == SemanticTypeKind::OwnedSlice &&
+                    (call.Member() == "append" || call.Member() == "clear" ||
+                     call.Member() == "capacity")) {
+                    if (call.Member() == "capacity") {
+                        (void)Evaluate(call.Receiver());
+                        for (const auto& argument : call.Arguments())
+                            (void)Evaluate(*argument);
+                        return {};
+                    }
+                    Value receiver = Place(call.Receiver());
+                    CheckAccess(receiver, true, call.Receiver().Range());
+                    _reservations.push_back(receiver);
+                    for (const auto& argument : call.Arguments()) {
+                        if (call.Member() == "append" &&
+                            _model.ConditionallyTransfersAppend(call)) {
+                            Value source = Place(*argument);
+                            CheckAccess(source, true, argument->Range());
+                        } else {
+                            (void)Evaluate(*argument);
+                        }
+                    }
+                    _reservations.pop_back();
+                    return {};
+                }
                 if (_model.TypeOf(expression).Kind() ==
                         SemanticTypeKind::StringView &&
                     (call.Member() == "view" || call.Member() == "substr")) {
