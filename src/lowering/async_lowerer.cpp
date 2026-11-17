@@ -267,7 +267,8 @@ std::optional<AsyncMachine> LowerAsyncMachine(
         const auto kind = machine._instructions[id].kind;
         if (kind != Kind::Await && kind != Kind::DrainChildren) continue;
         auto next = cancellationFor(plan.states[id].scopes);
-        if (kind == Kind::Await) {
+        if (kind == Kind::Await &&
+            plan.states[id].kind == AsyncStateKind::DirectAwait) {
             AsyncInstruction retire;
             retire.kind = Kind::CancelOperation;
             retire.sourceState = id;

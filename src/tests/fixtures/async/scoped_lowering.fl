@@ -1,0 +1,16 @@
+extern i32 record_async_event(i32 value);
+
+async i32 calculate(i32 value) {
+    return record_async_event(value);
+}
+
+async i32 main() {
+    first, firstCreateError := shoot calculate(4);
+    if firstCreateError != none { return -1; }
+    second, secondCreateError := >>- calculate(2);
+    if secondCreateError != none { return -2; }
+    firstValue := first.await?;
+    secondValue, secondAwaitError := second.await;
+    if secondAwaitError != none { return -3; }
+    return firstValue * 10 + secondValue;
+}

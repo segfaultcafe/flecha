@@ -35,6 +35,9 @@ struct AsyncConcreteFrameLayout final {
     std::size_t resourceOffset = 0;
     std::vector<std::optional<std::size_t>> slotOffsets;
     std::vector<std::size_t> operationOffsets;
+    // One transient opaque reservation pointer per child-creation state.
+    // It is cleared when initialization publishes the lexical handle.
+    std::vector<std::optional<std::size_t>> childCreationOffsets;
     std::vector<AsyncTemporaryLayout> temporaries;
 };
 

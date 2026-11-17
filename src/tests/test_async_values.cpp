@@ -12,6 +12,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <memory_resource>
 #include <ranges>
 #include <stdexcept>
@@ -90,6 +92,36 @@ void PublishRuntimeSymbols() {
         DynamicLibrary::AddSymbol(
             "flecha_async_context_ready",
             reinterpret_cast<void*>(flecha_async_context_ready));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_scope_construct",
+            reinterpret_cast<void*>(flecha_async_child_scope_construct));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_scope_destruct",
+            reinterpret_cast<void*>(flecha_async_child_scope_destruct));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_reserve",
+            reinterpret_cast<void*>(flecha_async_child_reserve));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_initialize",
+            reinterpret_cast<void*>(flecha_async_child_initialize));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_join_initialize",
+            reinterpret_cast<void*>(flecha_async_child_join_initialize));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_join_poll",
+            reinterpret_cast<void*>(flecha_async_child_join_poll));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_join_take",
+            reinterpret_cast<void*>(flecha_async_child_join_take));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_join_release",
+            reinterpret_cast<void*>(flecha_async_child_join_release));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_scope_cancel",
+            reinterpret_cast<void*>(flecha_async_child_scope_cancel));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_child_scope_drain",
+            reinterpret_cast<void*>(flecha_async_child_scope_drain));
         return true;
     }();
     (void)published;
@@ -166,6 +198,12 @@ struct Compiled final {
     }
 };
 
+std::string AsyncFixture(const std::string& name) {
+    std::ifstream input(std::string(FLECHA_ASYNC_FIXTURE_DIR) + "/" + name);
+    return {std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+}
+
 class FailingResource final : public std::pmr::memory_resource {
    public:
     int failAt = -1;
@@ -194,6 +232,19 @@ extern "C" std::int32_t Observe(std::int32_t value) {
     return value;
 }
 
+std::vector<std::int32_t> asyncEvents;
+extern "C" std::int32_t RecordAsyncEvent(std::int32_t value) {
+    asyncEvents.push_back(value);
+    return value;
+}
+
+void RunUntilTerminal(Executor& executor, const TaskHandle& task,
+                      unsigned limit = 100) {
+    while (executor.Status(task) == TaskStatus::Pending && limit-- != 0)
+        EXPECT_NE(executor.Step(), StepResult::Idle);
+    EXPECT_NE(executor.Status(task), TaskStatus::Pending);
+}
+
 struct ExternalEvent final {
     void* root = nullptr;
     void* pendingFrame = nullptr;
@@ -216,6 +267,27 @@ bool ExternalReady(void* storage, void* frame,
     }
     event.pendingFrame = frame;
     ++event.waits;
+    event.wake = wake;
+    return false;
+}
+
+struct SelectiveEvent final {
+    void* root = nullptr;
+    void* readyChild = nullptr;
+    void* pendingChild = nullptr;
+    WakeHandle wake;
+};
+bool FirstChildReady(void* storage, void* frame,
+                     const WakeHandle& wake) noexcept {
+    auto& event = *static_cast<SelectiveEvent*>(storage);
+    if (!event.root) {
+        event.root = frame;
+        return true;
+    }
+    if (frame == event.root) return true;
+    if (!event.readyChild) event.readyChild = frame;
+    if (frame == event.readyChild) return true;
+    event.pendingChild = frame;
     event.wake = wake;
     return false;
 }
@@ -532,7 +604,343 @@ TEST(AsyncValueLoweringTests,
 }
 
 TEST(AsyncValueLoweringTests,
-     RejectsDeferredAndChildSchedulingEffectsExplicitly) {
+     SourceFixtureQueuesBothSpellingsFifoAndJoinsCheckedAndForwardedValues) {
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_async_event", reinterpret_cast<void*>(RecordAsyncEvent));
+    Compiled code(AsyncFixture("scoped_lowering.fl"));
+    asyncEvents.clear();
+    Executor executor;
+    TaskHandle task;
+    ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+
+    EXPECT_EQ(executor.Step(), StepResult::Polled);
+    EXPECT_EQ(executor.Status(task), TaskStatus::Pending);
+    EXPECT_TRUE(asyncEvents.empty());
+    EXPECT_EQ(executor.Step(), StepResult::Polled);
+    EXPECT_EQ(asyncEvents, (std::vector<std::int32_t>{4}));
+    EXPECT_EQ(executor.Step(), StepResult::Polled);
+    EXPECT_EQ(asyncEvents, (std::vector<std::int32_t>{4, 2}));
+    EXPECT_EQ(executor.Step(), StepResult::Polled);
+    EXPECT_EQ(executor.Status(task), TaskStatus::Ready);
+    std::int32_t result = 0;
+    EXPECT_TRUE(executor.TakeResult(task, &result));
+    EXPECT_EQ(result, 42);
+    EXPECT_TRUE(executor.Release(task));
+}
+
+TEST(AsyncValueLoweringTests,
+     ChildCreationAllocationFailuresSkipArgumentsAndPreservePartialScopes) {
+    llvm::sys::DynamicLibrary::AddSymbol("observe",
+                                         reinterpret_cast<void*>(Observe));
+    Compiled one(
+        "extern i32 observe(i32 value); "
+        "async i32 work(i32 value) { return value; } "
+        "async i32 main() { child, e := shoot work(observe(42)); "
+        "if e != none { return 7; } return child.await?; }");
+    for (int boundary = 1; boundary <= 4; ++boundary) {
+        FailingResource resource;
+        observations = 0;
+        {
+            Executor executor(&resource);
+            TaskHandle task;
+            ASSERT_TRUE(executor.TryCreateTask(one.layout, nullptr, task));
+            resource.failAt = resource.attempts + boundary;
+            RunUntilTerminal(executor, task);
+            ASSERT_EQ(executor.Status(task), TaskStatus::Ready);
+            std::int32_t result = 0;
+            EXPECT_TRUE(executor.TakeResult(task, &result));
+            EXPECT_EQ(result, 7);
+            EXPECT_EQ(observations, 0);
+            EXPECT_TRUE(executor.Release(task));
+        }
+        EXPECT_EQ(resource.live, 0);
+    }
+
+    Compiled partial(
+        "extern i32 observe(i32 value); "
+        "async i32 work(i32 value) { return observe(value); } "
+        "async i32 main() { first, e1 := shoot work(1); "
+        "if e1 != none { return 8; } second, e2 := >>- work(observe(2)); "
+        "if e2 != none { return 9; } a := first.await?; "
+        "b := second.await?; return a + b; }");
+    for (int boundary = 5; boundary <= 8; ++boundary) {
+        FailingResource resource;
+        observations = 0;
+        {
+            Executor executor(&resource);
+            TaskHandle task;
+            ASSERT_TRUE(executor.TryCreateTask(partial.layout, nullptr, task));
+            resource.failAt = resource.attempts + boundary;
+            RunUntilTerminal(executor, task);
+            ASSERT_EQ(executor.Status(task), TaskStatus::Ready);
+            std::int32_t result = 0;
+            EXPECT_TRUE(executor.TakeResult(task, &result));
+            EXPECT_EQ(result, 9);
+            EXPECT_EQ(observations, 0);
+            EXPECT_TRUE(executor.Release(task));
+        }
+        EXPECT_EQ(resource.live, 0);
+    }
+}
+
+TEST(AsyncValueLoweringTests,
+     RepeatedSourceSiteAndExitingLoopTransfersOwnDistinctChildren) {
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_async_event", reinterpret_cast<void*>(RecordAsyncEvent));
+    {
+        Compiled code(
+            "extern i32 record_async_event(i32 value); "
+            "async i32 work(i32 value) { return record_async_event(value); } "
+            "async i32 main(i32 count) { total := 0; while count > 0 { "
+            "child, e := shoot work(count); if e != none { return -1; } "
+            "value := child.await?; total += value; count -= 1; } return "
+            "total; }");
+        auto arguments = code.Arguments<std::int32_t>(3);
+        asyncEvents.clear();
+        Executor executor;
+        TaskHandle task;
+        ASSERT_TRUE(
+            executor.TryCreateTask(code.layout, arguments.data(), task));
+        RunUntilTerminal(executor, task);
+        std::int32_t result = 0;
+        EXPECT_TRUE(executor.TakeResult(task, &result));
+        EXPECT_EQ(result, 6);
+        EXPECT_EQ(asyncEvents, (std::vector<std::int32_t>{3, 2, 1}));
+        EXPECT_TRUE(executor.Release(task));
+    }
+    {
+        Compiled code(
+            "extern i32 record_async_event(i32 value); "
+            "async i32 work(i32 value) { return record_async_event(value); } "
+            "async i32 main() { count := 2; while count > 0 { "
+            "child, e := shoot work(count); if e != none { return -1; } "
+            "if count == 2 { count -= 1; proceed; } break; } return 7; }");
+        asyncEvents.clear();
+        Executor executor;
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        RunUntilTerminal(executor, task);
+        std::int32_t result = 0;
+        EXPECT_TRUE(executor.TakeResult(task, &result));
+        EXPECT_EQ(result, 7);
+        EXPECT_TRUE(asyncEvents.empty());
+        EXPECT_TRUE(executor.Release(task));
+    }
+}
+
+TEST(AsyncValueLoweringTests,
+     PendingChildCancellationDrainsBeforeFrameDestructionAndStaleWakeIsSafe) {
+    Compiled code(
+        "async i32 work() { return 42; } async i32 main() { "
+        "child, e := shoot work(); if e != none { return 0; } "
+        "return child.await?; }");
+    ExternalEvent event;
+    Executor executor(std::pmr::get_default_resource(), ExternalReady, &event);
+    TaskHandle task;
+    ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+    EXPECT_EQ(executor.Step(), StepResult::Polled);
+    EXPECT_EQ(executor.Step(), StepResult::Polled);
+    ASSERT_NE(event.pendingFrame, nullptr);
+    const WakeHandle stale = event.wake;
+    executor.RequestCancellation(task);
+    EXPECT_EQ(executor.Step(), StepResult::Polled);
+    EXPECT_EQ(executor.Status(task), TaskStatus::Pending);
+    EXPECT_EQ(executor.Step(), StepResult::Polled);
+    EXPECT_EQ(executor.Step(), StepResult::Polled);
+    EXPECT_EQ(executor.Status(task), TaskStatus::Cancelled);
+    EXPECT_TRUE(executor.Release(task));
+    stale.Notify();
+    EXPECT_EQ(executor.Step(), StepResult::Idle);
+}
+
+TEST(AsyncValueLoweringTests,
+     ChildVoidAndOrdinaryErrorCompletionsRemainDistinctFromExecutionFailure) {
+    {
+        Compiled code(
+            "async void work() {} async i32 main() { child, e := shoot work(); "
+            "if e != none { return 0; } child.await?; return 42; }");
+        Executor executor;
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        RunUntilTerminal(executor, task);
+        std::int32_t result = 0;
+        EXPECT_TRUE(executor.TakeResult(task, &result));
+        EXPECT_EQ(result, 42);
+        EXPECT_TRUE(executor.Release(task));
+    }
+    {
+        struct ErrorValue {
+            void* name;
+            std::int32_t code;
+        };
+        struct Aggregate {
+            std::int32_t value;
+            ErrorValue ordinaryError;
+        };
+        Compiled code(
+            "async (i32, error) work() { return (73, none); } "
+            "async (i32, error) main() { child, e := shoot work(); "
+            "if e != none { return (0, none); } return child.await?; }");
+        Executor executor;
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        RunUntilTerminal(executor, task);
+        Aggregate result{};
+        EXPECT_TRUE(executor.TakeResult(task, &result));
+        EXPECT_EQ(result.value, 73);
+        EXPECT_EQ(result.ordinaryError.code, 0);
+        EXPECT_TRUE(executor.Release(task));
+    }
+}
+
+TEST(AsyncValueLoweringTests,
+     ChildExecutionFailureIsCheckedOrForwardedWithoutConstructingAValue) {
+    for (bool forward : {false, true}) {
+        Compiled code(
+            "async i32 leaf() { return 42; } async i32 work() { "
+            "return leaf().await?; } async i32 main() { child, e := shoot "
+            "work(); if e != none { return 1; } " +
+            std::string(forward ? "return child.await?; }"
+                                : "value, ae := child.await; if ae != none { "
+                                  "return 7; } return value; }"));
+        FailingResource resource;
+        Executor executor(&resource);
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        resource.failAt = resource.attempts + 5;
+        RunUntilTerminal(executor, task);
+        if (forward) {
+            EXPECT_EQ(executor.Status(task), TaskStatus::AllocationFailed);
+            std::int32_t untouched = 91;
+            EXPECT_FALSE(executor.TakeResult(task, &untouched));
+            EXPECT_EQ(untouched, 91);
+        } else {
+            EXPECT_EQ(executor.Status(task), TaskStatus::Ready);
+            std::int32_t result = 0;
+            EXPECT_TRUE(executor.TakeResult(task, &result));
+            EXPECT_EQ(result, 7);
+        }
+        EXPECT_TRUE(executor.Release(task));
+        task = TaskHandle();
+        EXPECT_EQ(resource.live, 0);
+    }
+}
+
+TEST(AsyncValueLoweringTests,
+     ChildMethodsBorrowedResultsAndMoveOnlyValuesPreserveOwnership) {
+    llvm::sys::DynamicLibrary::AddSymbol("observe",
+                                         reinterpret_cast<void*>(Observe));
+    {
+        Compiled code(
+            "extern i32 observe(i32 value); structure Box { i32 value; }; "
+            "async i32 Box::read(&const self, i32 add) { "
+            "return self->value + add; } async i32 main() { Box box = none; "
+            "box.value = 40; child, e := shoot box.read(observe(2)); "
+            "if e != none { return 0; } return child.await?; }");
+        observations = 0;
+        Executor executor;
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        RunUntilTerminal(executor, task);
+        std::int32_t result = 0;
+        EXPECT_TRUE(executor.TakeResult(task, &result));
+        EXPECT_EQ(result, 42);
+        EXPECT_EQ(observations, 1);
+        EXPECT_TRUE(executor.Release(task));
+    }
+    {
+        Compiled code(
+            "async &const i32 identity(&const i32 value) <- value { "
+            "return value; } async i32 main() { local := 42; child, e := "
+            "shoot identity(&local); if e != none { return 0; } "
+            "view := child.await?; return *view; }");
+        Executor executor;
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        RunUntilTerminal(executor, task);
+        std::int32_t result = 0;
+        EXPECT_TRUE(executor.TakeResult(task, &result));
+        EXPECT_EQ(result, 42);
+        EXPECT_TRUE(executor.Release(task));
+    }
+    {
+        Compiled code(
+            "async i32 read(&const i32 value) { return *value; } "
+            "async void write(&i32 value) { *value = 42; } "
+            "async i32 main() { local := 21; first, e1 := shoot read(&local); "
+            "if e1 != none { return 0; } second, e2 := >>- read(&local); "
+            "if e2 != none { return 0; } a := first.await?; "
+            "b := second.await?; writer, ew := shoot write(&local); "
+            "if ew != none { return 0; } writer.await?; "
+            "return a + b + local; }");
+        Executor executor;
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        RunUntilTerminal(executor, task);
+        std::int32_t result = 0;
+        EXPECT_TRUE(executor.TakeResult(task, &result));
+        EXPECT_EQ(result, 84);
+        EXPECT_TRUE(executor.Release(task));
+    }
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_destroy", reinterpret_cast<void*>(RecordDestroy));
+    {
+        Compiled code(
+            "extern void record_destroy(i32 value); structure Owner { i32 "
+            "value; }; void Owner::tear(&self) override { "
+            "record_destroy(self->value); } async Owner bounce(Owner value) { "
+            "return value; } async i32 main() { Owner owner = none; "
+            "owner.value = 42; child, e := shoot bounce(owner); "
+            "if e != none { return 0; } result := child.await?; "
+            "return result.value; }");
+        destructions = 0;
+        Executor executor;
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        RunUntilTerminal(executor, task);
+        std::int32_t result = 0;
+        EXPECT_TRUE(executor.TakeResult(task, &result));
+        EXPECT_EQ(result, 42);
+        EXPECT_TRUE(executor.Release(task));
+        EXPECT_EQ(destructions, 1u);
+    }
+}
+
+TEST(AsyncValueLoweringTests,
+     CancellationDestroysUnconsumedCompletedChildResultExactlyOnce) {
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_destroy", reinterpret_cast<void*>(RecordDestroy));
+    Compiled code(
+        "extern void record_destroy(i32 value); structure Owner { i32 value; "
+        "}; void Owner::tear(&self) override { record_destroy(self->value); } "
+        "async Owner make() { Owner owner = none; owner.value = 42; return "
+        "owner; } async i32 wait() { return 1; } async i32 main() { "
+        "first, e1 := shoot make(); if e1 != none { return 0; } "
+        "second, e2 := shoot wait(); if e2 != none { return 0; } "
+        "value := second.await?; owner := first.await?; "
+        "return owner.value + value; }");
+    destructions = 0;
+    SelectiveEvent event;
+    Executor executor(std::pmr::get_default_resource(), FirstChildReady,
+                      &event);
+    TaskHandle task;
+    ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // parent queues both
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // first completes
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // second waits
+    ASSERT_NE(event.pendingChild, nullptr);
+    EXPECT_EQ(destructions, 0u);
+    executor.RequestCancellation(task);
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // parent cancels/drains
+    EXPECT_EQ(destructions, 1u);
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // second retires
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // parent finishes drain
+    EXPECT_EQ(executor.Status(task), TaskStatus::Cancelled);
+    EXPECT_TRUE(executor.Release(task));
+    EXPECT_EQ(destructions, 1u);
+}
+
+TEST(AsyncValueLoweringTests, RejectsDynamicDeferredEffectsExplicitly) {
     const auto generateError = [](const std::string& source) {
         diagnostics::DiagnosticBag diagnostics;
         core::Tokenizer tokenizer(source, diagnostics);
@@ -550,11 +958,6 @@ TEST(AsyncValueLoweringTests,
     EXPECT_EQ(generateError(
                   "void cleanup() {} async void main() { defer cleanup(); }"),
               "dynamic async defer storage is not implemented");
-    EXPECT_EQ(
-        generateError(
-            "async void work() {} async void main() { child, failure := "
-            "shoot work(); if failure != none { return; } child.await?; }"),
-        "generated child scheduling is not implemented; use a direct await");
 }
 
 TEST(AsyncValueLoweringTests, KeepsPublicAndSynchronousExecutionGatesClosed) {

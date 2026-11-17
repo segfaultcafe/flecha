@@ -40,6 +40,7 @@ target_compile_definitions(test_flecha PRIVATE
     FLECHA_DECORATION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/decorations"
     FLECHA_INTERFACE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/interfaces"
     FLECHA_NAMESPACE_ATTACHMENT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/namespace_attachment"
+    FLECHA_ASYNC_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async"
 )
 add_executable(analyzer_fixture fixtures/analyzer_fixture.cpp)
 target_link_libraries(analyzer_fixture
