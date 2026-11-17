@@ -203,6 +203,9 @@ class Emitter final {
             case Kind::Await:
                 Operation(instruction, id, source);
                 return;
+            case Kind::RegisterDefer:
+                RegisterDefer(instruction, source);
+                return;
             case Kind::CancelOperation: {
                 auto* poll = Block("retire.poll");
                 auto* done = Block("retire.done");
@@ -325,6 +328,23 @@ class Emitter final {
         _builder.SetInsertPoint(ready);
         Action(AsyncAction::Finish, source, _builder.getInt8(1));
         if (instruction.operation) SetFlag(4, *instruction.operation, false);
+        Go(instruction.successors[0]);
+    }
+
+    void RegisterDefer(const lowering::AsyncInstruction& instruction,
+                       std::size_t source) {
+        auto* initialize = Block("defer.initialize");
+        auto* failed = Block("defer.allocation-failed");
+        auto* reserved = Action(AsyncAction::Reserve, source);
+        auto* select = _builder.CreateSwitch(reserved, _trap, 2);
+        select->addCase(_builder.getInt8(1), initialize);
+        select->addCase(_builder.getInt8(0), failed);
+        _builder.SetInsertPoint(failed);
+        Go(instruction.successors[1]);
+        _builder.SetInsertPoint(initialize);
+        Action(AsyncAction::Initialize, source);
+        for (auto slot : instruction.argumentMoves) SetFlag(3, slot, false);
+        Guards(instruction);
         Go(instruction.successors[0]);
     }
 

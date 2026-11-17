@@ -1,0 +1,19 @@
+extern i32 record_async_event(i32 value);
+
+async i32 main() {
+    defer record_async_event(20);
+    value := 0;
+    while value < 3 {
+        #again
+        defer record_async_event(value);
+        value++;
+        if value >= 3 {
+            break;
+        }
+        jumpto again;
+    }
+    {
+        defer record_async_event(10);
+        return 42;
+    }
+}

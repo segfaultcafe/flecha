@@ -188,6 +188,7 @@ namespace flecha::runtime::async {
 // Dynamic children are separately allocated so repeated visits to one source
 // site never overwrite an earlier live child.
 struct ScopedChild;
+struct DeferredCall;
 class ChildScope final {
    public:
     ChildScope() = default;
@@ -196,6 +197,19 @@ class ChildScope final {
     ChildScope& operator=(const ChildScope&) = delete;
     ScopedChild* _head = nullptr;
     ScopedChild* _tail = nullptr;
+};
+
+// Opaque LIFO ownership record embedded in compiler-generated frames. Each
+// registration owns a separately allocated payload so loop visits never
+// overwrite earlier captures. Records are popped before invocation and must be
+// released after their synchronous call and capture cleanup finish.
+class DeferScope final {
+   public:
+    DeferScope() = default;
+    ~DeferScope();
+    DeferScope(const DeferScope&) = delete;
+    DeferScope& operator=(const DeferScope&) = delete;
+    DeferredCall* _head = nullptr;
 };
 
 }  // namespace flecha::runtime::async
@@ -246,5 +260,15 @@ bool flecha_async_child_join_release(void* storage) noexcept;
 void flecha_async_child_scope_cancel(void* scope) noexcept;
 bool flecha_async_child_scope_drain(
     void* scope, const flecha::runtime::async::PollContext* context) noexcept;
+void flecha_async_defer_scope_construct(void* storage) noexcept;
+void flecha_async_defer_scope_destruct(void* storage) noexcept;
+bool flecha_async_defer_reserve(void* reservation,
+                                std::pmr::memory_resource* resource,
+                                std::uint64_t tag, std::size_t payloadSize,
+                                std::size_t payloadAlignment) noexcept;
+void flecha_async_defer_initialize(void* scope, void* reservation) noexcept;
+void* flecha_async_defer_pop(void* scope) noexcept;
+std::uint64_t flecha_async_defer_tag(void* payload) noexcept;
+void flecha_async_defer_release(void* payload) noexcept;
 }
 #endif

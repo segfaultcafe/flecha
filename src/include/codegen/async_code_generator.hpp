@@ -38,8 +38,10 @@ enum class AsyncAction : std::uint8_t {
 // failed reservation leaves caller storage untouched. Initialize cannot fail.
 // Flow handles only the indicated postorder value/branch event. Its inputs
 // have already been evaluated; it must not recursively execute the source AST.
-// Reserve must not publish a child handle. Initialize transfers arguments and
-// may publish/queue a child only after those transfers have completed.
+// Reserve must not publish a child handle or defer record. Initialize transfers
+// arguments/captures and may publish a child or link a defer only after those
+// transfers have completed. RunDefers invokes and releases every linked record
+// synchronously in LIFO order without another allocation.
 // CancelOperation requests cancellation and polls for retirement even if a
 // later supplied context no longer carries cancellationRequested. A direct
 // computation binding must supply a cancellation context to its nested poll.

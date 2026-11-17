@@ -319,6 +319,27 @@ TEST(AsyncLoweringTests, CancellationWaitsForOperationRetirementBeforeCleanup) {
 }
 
 TEST(AsyncLoweringTests,
+     DeferReservationFailureUsesGeneratedAllocationCleanupContinuation) {
+    Compiled code(
+        "void cleanup(i32 value) {} async i32 main() { defer cleanup(1); "
+        "defer cleanup(2); return 42; }");
+    EXPECT_NE(lowering::DumpAsyncMachine(*code.machine).find("register-defer"),
+              std::string::npos);
+    Frame frame(code);
+    frame.binding = [&](Action action, std::size_t,
+                        std::uint8_t) -> std::uint8_t {
+        if (action == Action::Reserve)
+            return frame.Count(Action::Reserve) == 1 ? 1 : 0;
+        return 1;
+    };
+    EXPECT_EQ(frame.Poll(), PollResult::AllocationFailed);
+    EXPECT_EQ(frame.Count(Action::Reserve), 2u);
+    EXPECT_EQ(frame.Count(Action::Initialize), 1u);
+    EXPECT_EQ(frame.Count(Action::RunDefers), 1u);
+    EXPECT_EQ(frame.slots[*code.plan->returnValue], 0);
+}
+
+TEST(AsyncLoweringTests,
      CancellationBeforeFirstExecutionDoesNotReserveOrEvaluate) {
     Compiled code(DIRECT);
     Frame frame(code);

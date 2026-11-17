@@ -149,6 +149,16 @@ struct FunctionEntry final {
     GeneratedAsyncFunction generated;
 };
 
+struct DeferredInfo final {
+    const semantic::FunctionSymbol* function = nullptr;
+    std::vector<const core::Expression*> operands;
+    std::vector<SemanticType> types;
+    std::vector<bool> transfers;
+    llvm::StructType* payloadType = nullptr;
+    std::size_t slot = 0;
+    std::size_t scope = 0;
+};
+
 class Emitter final {
    public:
     Emitter(llvm::LLVMContext& context, const llvm::DataLayout& dataLayout,
@@ -228,6 +238,86 @@ class Emitter final {
         for (std::size_t id = 0; id < _entry->plan->slots.size(); ++id)
             if (_entry->plan->slots[id].symbol == symbol) return id;
         return std::nullopt;
+    }
+
+    DeferredInfo* DeferInfo(const core::DeferStatement& statement) {
+        if (const auto found = _defers.find(&statement); found != _defers.end())
+            return &found->second;
+        DeferredInfo info;
+        bool foundSlot = false;
+        for (std::size_t slot = 0; slot < _entry->plan->slots.size(); ++slot)
+            if (_entry->plan->slots[slot].kind == AsyncSlotKind::DeferredCall &&
+                _entry->plan->slots[slot].syntax == &statement) {
+                info.slot = slot;
+                foundSlot = true;
+                if (!_entry->plan->slots[slot].scope)
+                    return Fail("async defer has no lexical scope"), nullptr;
+                info.scope = *_entry->plan->slots[slot].scope;
+                break;
+            }
+        if (!foundSlot || info.scope >= _entry->plan->scopes.size())
+            return Fail("async defer has no frame record"), nullptr;
+
+        const core::Expression& expression = Unwrap(statement.Call());
+        if (expression.Kind() == core::AstNodeKind::CallExpression) {
+            const auto& call =
+                static_cast<const core::CallExpression&>(expression);
+            const core::Expression& callee = Unwrap(call.Callee());
+            if (callee.Kind() != core::AstNodeKind::NameExpression)
+                return Fail(
+                           "indirect calls are unsupported in generated "
+                           "async defers"),
+                       nullptr;
+            const semantic::Symbol* symbol = _model.SymbolFor(
+                static_cast<const core::NameExpression&>(callee));
+            if (!symbol || symbol->Kind() != semantic::SymbolKind::Function)
+                return Fail("unresolved generated async defer call"), nullptr;
+            info.function =
+                static_cast<const semantic::FunctionSymbol*>(symbol);
+            info.operands = _model.ArgumentsFor(call);
+        } else if (expression.Kind() ==
+                   core::AstNodeKind::MemberCallExpression) {
+            const auto& call =
+                static_cast<const core::MemberCallExpression&>(expression);
+            if (_model.InterfaceMethodFor(call))
+                return Fail(
+                           "interface calls are unsupported in generated "
+                           "async defers"),
+                       nullptr;
+            info.function = _model.MethodFor(call);
+            if (info.function && info.function->HasReceiver() &&
+                !_model.IsQualifiedInterfaceProviderCall(call))
+                info.operands.push_back(&call.Receiver());
+            const auto arguments = _model.ArgumentsFor(call);
+            info.operands.insert(info.operands.end(), arguments.begin(),
+                                 arguments.end());
+        } else
+            return Fail("generated async defer requires a call"), nullptr;
+
+        if (!info.function || info.function->IsAsync() ||
+            info.function->BuiltIn() != semantic::BuiltInFunction::None)
+            return Fail(
+                       "generated async defer requires a direct synchronous "
+                       "function or structure method"),
+                   nullptr;
+        if (info.operands.size() != info.function->ParameterTypes().size())
+            return Fail("generated async defer has invalid operands"), nullptr;
+        std::vector<llvm::Type*> fields;
+        for (std::size_t index = 0; index < info.operands.size(); ++index) {
+            const SemanticType type = info.function->ParameterTypes()[index];
+            llvm::Type* mapped = _types.Map(type);
+            if (!mapped || !mapped->isSized())
+                return Fail("unsupported generated async defer capture type '" +
+                            std::string(type.Name()) + "'"),
+                       nullptr;
+            info.types.push_back(type);
+            info.transfers.push_back(_model.TransferOf(*info.operands[index]) ==
+                                     semantic::TransferKind::Move);
+            fields.push_back(mapped);
+        }
+        info.payloadType = llvm::StructType::get(_context, fields);
+        const auto [inserted, _] = _defers.emplace(&statement, std::move(info));
+        return &inserted->second;
     }
 
     llvm::Value* Address(const core::Expression& raw) {
@@ -369,6 +459,7 @@ class Emitter final {
             llvm::BasicBlock::Create(_context, "entry", function));
         const core::FunctionDeclaration& declaration = *symbol.Declaration();
         std::size_t argument = symbol.ReturnType().ContainsStructure() ? 1 : 0;
+        std::vector<std::pair<llvm::Value*, SemanticType>> ownedParameters;
         for (const auto& parameter : declaration.Parameters()) {
             const semantic::Symbol* parameterSymbol =
                 _model.DeclaredSymbol(*parameter);
@@ -377,7 +468,14 @@ class Emitter final {
                                       nullptr, parameterSymbol->Name());
             _builder.CreateStore(function->getArg(argument++), storage);
             _localAddresses.emplace(parameterSymbol, storage);
+            if (parameterSymbol->Type().OwnsStorage())
+                ownedParameters.emplace_back(storage, parameterSymbol->Type());
         }
+        const auto cleanupParameters = [&] {
+            for (auto parameter = ownedParameters.rbegin();
+                 parameter != ownedParameters.rend(); ++parameter)
+                DestroyAt(parameter->first, parameter->second);
+        };
         for (const auto& statement : declaration.Body().Statements()) {
             if (statement->Kind() == core::AstNodeKind::ExpressionStatement) {
                 const auto& expression =
@@ -398,8 +496,10 @@ class Emitter final {
                     } else {
                         _builder.CreateRet(value);
                     }
-                } else
+                } else {
+                    cleanupParameters();
                     _builder.CreateRetVoid();
+                }
                 break;
             } else if (statement->Kind() ==
                        core::AstNodeKind::VariableDeclarationStatement) {
@@ -425,9 +525,10 @@ class Emitter final {
             }
         }
         if (!_builder.GetInsertBlock()->getTerminator()) {
-            if (symbol.ReturnType().Kind() == SemanticTypeKind::Void)
+            if (symbol.ReturnType().Kind() == SemanticTypeKind::Void) {
+                cleanupParameters();
                 _builder.CreateRetVoid();
-            else
+            } else
                 return Fail("synchronous helper has no generated return");
         }
         _localAddresses = std::move(savedLocals);
@@ -486,6 +587,49 @@ class Emitter final {
                    ? _builder.CreateLoad(_types.Map(function.ReturnType()),
                                          aggregate, "call.aggregate")
                    : static_cast<llvm::Value*>(result);
+    }
+
+    bool InvokeDeferred(DeferredInfo& deferred, llvm::Value* payload) {
+        const semantic::FunctionSymbol& function = *deferred.function;
+        if (!function.IsExtern() && function.Declaration() &&
+            !_emittedSync.contains(&function) && !EmitSyncFunction(function))
+            return false;
+        llvm::FunctionType* type = FunctionType(function);
+        if (!type)
+            return Fail(
+                "unsupported synchronous deferred call type in async "
+                "function");
+        llvm::FunctionCallee callee =
+            _module.getOrInsertFunction(function.LinkName(), type);
+        std::vector<llvm::Value*> arguments;
+        llvm::AllocaInst* resultStorage = nullptr;
+        if (function.ReturnType().ContainsStructure()) {
+            resultStorage =
+                _builder.CreateAlloca(_types.Map(function.ReturnType()));
+            arguments.push_back(resultStorage);
+        }
+        for (std::size_t index = 0; index < deferred.types.size(); ++index) {
+            llvm::Value* address =
+                _builder.CreateStructGEP(deferred.payloadType, payload, index);
+            arguments.push_back(_builder.CreateLoad(
+                _types.Map(deferred.types[index]), address, "defer.capture"));
+        }
+        llvm::CallInst* result = _builder.CreateCall(callee, arguments);
+        if (resultStorage)
+            DestroyAt(resultStorage, function.ReturnType());
+        else if (function.ReturnType().OwnsStorage()) {
+            llvm::AllocaInst* storage =
+                _builder.CreateAlloca(_types.Map(function.ReturnType()));
+            _builder.CreateStore(result, storage);
+            DestroyAt(storage, function.ReturnType());
+        }
+        for (std::size_t index = deferred.types.size(); index-- > 0;)
+            if (deferred.types[index].OwnsStorage() &&
+                !deferred.transfers[index])
+                DestroyAt(_builder.CreateStructGEP(deferred.payloadType,
+                                                   payload, index),
+                          deferred.types[index]);
+        return true;
     }
 
     llvm::Value* Eval(const core::Expression& raw,
@@ -889,7 +1033,141 @@ class Emitter final {
             *_entry->generated.frame.childCreationOffsets[state]);
     }
 
+    const core::DeferStatement* DeferredStatement(std::size_t state) const {
+        if (state >= _entry->plan->states.size() ||
+            !_entry->plan->states[state].flowNode)
+            return nullptr;
+        return _entry->plan->flow.nodes[*_entry->plan->states[state].flowNode]
+            .memoryDefer;
+    }
+
+    bool EmitDeferReserve(std::size_t state) {
+        const core::DeferStatement* statement = DeferredStatement(state);
+        if (!statement) return false;
+        DeferredInfo* deferred = DeferInfo(*statement);
+        if (!deferred) return false;
+        const llvm::StructLayout* layout =
+            _dataLayout.getStructLayout(deferred->payloadType);
+        const std::size_t size =
+            std::max<std::size_t>(1, layout->getSizeInBytes());
+        const std::size_t alignment = layout->getAlignment().value();
+        llvm::Value* resource = _builder.CreateLoad(
+            _builder.getPtrTy(),
+            BytePointer(_entry->generated.frame.resourceOffset));
+        auto* type = llvm::FunctionType::get(
+            _builder.getInt1Ty(),
+            {_builder.getPtrTy(), _builder.getPtrTy(), _builder.getInt64Ty(),
+             _builder.getInt64Ty(), _builder.getInt64Ty()},
+            false);
+        llvm::Value* reserved = _builder.CreateCall(
+            Runtime("flecha_async_defer_reserve", type),
+            {Slot(deferred->slot), resource, _builder.getInt64(deferred->slot),
+             _builder.getInt64(size), _builder.getInt64(alignment)});
+        _actionResult = _builder.CreateZExt(reserved, _builder.getInt8Ty());
+        return true;
+    }
+
+    bool EmitDeferInitialize(std::size_t state) {
+        const core::DeferStatement* statement = DeferredStatement(state);
+        if (!statement) return false;
+        DeferredInfo* deferred = DeferInfo(*statement);
+        if (!deferred) return false;
+        llvm::Value* payload = _builder.CreateLoad(
+            _builder.getPtrTy(), Slot(deferred->slot), "defer.payload");
+        for (std::size_t index = 0; index < deferred->operands.size();
+             ++index) {
+            llvm::Value* value =
+                Eval(*deferred->operands[index], deferred->types[index]);
+            if (!value) return false;
+            _builder.CreateStore(
+                value, _builder.CreateStructGEP(deferred->payloadType, payload,
+                                                index));
+        }
+        const auto stack = _entry->plan->scopes[deferred->scope].deferredStack;
+        if (!stack)
+            return Fail("generated async defer scope has no stack storage");
+        auto* type = llvm::FunctionType::get(
+            _builder.getVoidTy(), {_builder.getPtrTy(), _builder.getPtrTy()},
+            false);
+        _builder.CreateCall(Runtime("flecha_async_defer_initialize", type),
+                            {Slot(*stack), Slot(deferred->slot)});
+        return true;
+    }
+
+    bool EmitRunDefers(llvm::Value* index) {
+        llvm::BasicBlock* invalid = llvm::BasicBlock::Create(
+            _context, "defer.scope.invalid", _function);
+        auto* select =
+            _builder.CreateSwitch(index, invalid, _entry->plan->scopes.size());
+        for (std::size_t scope = 0; scope < _entry->plan->scopes.size();
+             ++scope) {
+            const auto stack = _entry->plan->scopes[scope].deferredStack;
+            if (!stack) continue;
+            llvm::BasicBlock* entry = llvm::BasicBlock::Create(
+                _context, "defer.scope." + std::to_string(scope), _function);
+            llvm::BasicBlock* check =
+                llvm::BasicBlock::Create(_context, "defer.check", _function);
+            llvm::BasicBlock* dispatch =
+                llvm::BasicBlock::Create(_context, "defer.dispatch", _function);
+            llvm::BasicBlock* done =
+                llvm::BasicBlock::Create(_context, "defer.done", _function);
+            llvm::BasicBlock* badTag = llvm::BasicBlock::Create(
+                _context, "defer.tag.invalid", _function);
+            select->addCase(_builder.getInt64(scope), entry);
+            _builder.SetInsertPoint(entry);
+            _builder.CreateBr(check);
+            _builder.SetInsertPoint(check);
+            auto* popType = llvm::FunctionType::get(
+                _builder.getPtrTy(), {_builder.getPtrTy()}, false);
+            llvm::Value* payload =
+                _builder.CreateCall(Runtime("flecha_async_defer_pop", popType),
+                                    {Slot(*stack)}, "defer.pending");
+            _builder.CreateCondBr(
+                _builder.CreateICmpNE(
+                    payload, llvm::ConstantPointerNull::get(
+                                 llvm::PointerType::getUnqual(_context))),
+                dispatch, done);
+            _builder.SetInsertPoint(dispatch);
+            auto* tagType = llvm::FunctionType::get(
+                _builder.getInt64Ty(), {_builder.getPtrTy()}, false);
+            llvm::Value* tag = _builder.CreateCall(
+                Runtime("flecha_async_defer_tag", tagType), {payload});
+            std::vector<DeferredInfo*> sites;
+            for (const semantic::AsyncFrameSlot& slot : _entry->plan->slots) {
+                if (slot.kind != AsyncSlotKind::DeferredCall ||
+                    slot.scope != scope || !slot.syntax)
+                    continue;
+                DeferredInfo* deferred = DeferInfo(
+                    *static_cast<const core::DeferStatement*>(slot.syntax));
+                if (!deferred) return false;
+                sites.push_back(deferred);
+            }
+            auto* tags = _builder.CreateSwitch(tag, badTag, sites.size());
+            for (DeferredInfo* deferred : sites) {
+                llvm::BasicBlock* invoke = llvm::BasicBlock::Create(
+                    _context, "defer.invoke", _function);
+                tags->addCase(_builder.getInt64(deferred->slot), invoke);
+                _builder.SetInsertPoint(invoke);
+                if (!InvokeDeferred(*deferred, payload)) return false;
+                auto* releaseType = llvm::FunctionType::get(
+                    _builder.getVoidTy(), {_builder.getPtrTy()}, false);
+                _builder.CreateCall(
+                    Runtime("flecha_async_defer_release", releaseType),
+                    {payload});
+                _builder.CreateBr(check);
+            }
+            _builder.SetInsertPoint(badTag);
+            _builder.CreateRet(_builder.getInt8(0));
+            _builder.SetInsertPoint(done);
+            _builder.CreateRet(_builder.getInt8(1));
+        }
+        _builder.SetInsertPoint(invalid);
+        _builder.CreateRet(_builder.getInt8(0));
+        return true;
+    }
+
     bool EmitReserve(std::size_t state) {
+        if (DeferredStatement(state)) return EmitDeferReserve(state);
         const semantic::AsyncState& source = _entry->plan->states[state];
         if (!source.checked || !source.checked->callee) return false;
         const auto found = _functions.find(source.checked->callee);
@@ -945,6 +1223,7 @@ class Emitter final {
     }
 
     bool EmitInitialize(std::size_t state) {
+        if (DeferredStatement(state)) return EmitDeferInitialize(state);
         const semantic::AsyncState& source = _entry->plan->states[state];
         if (!source.checked) return false;
         if (source.kind == AsyncStateKind::ChildAwait) {
@@ -1130,6 +1409,9 @@ class Emitter final {
                 action == AsyncAction::Poll || action == AsyncAction::Finish ||
                 action == AsyncAction::CancelOperation ||
                 action == AsyncAction::RetireOperation;
+            const bool registration =
+                _entry->machine.Instructions()[state].kind ==
+                lowering::AsyncInstructionKind::RegisterDefer;
             const bool supports = kind == AsyncStateKind::DirectAwait ||
                                   ((action == AsyncAction::Reserve ||
                                     action == AsyncAction::Initialize ||
@@ -1138,7 +1420,10 @@ class Emitter final {
                                   ((action == AsyncAction::Initialize ||
                                     action == AsyncAction::Poll ||
                                     action == AsyncAction::Finish) &&
-                                   kind == AsyncStateKind::ChildAwait);
+                                   kind == AsyncStateKind::ChildAwait) ||
+                                  ((action == AsyncAction::Reserve ||
+                                    action == AsyncAction::Initialize) &&
+                                   registration);
             if (operationAction && supports)
                 states.push_back(state);
             else if (action == AsyncAction::Flow &&
@@ -1167,9 +1452,7 @@ class Emitter final {
             return true;
         }
         if (action == AsyncAction::RunDefers) {
-            // Dynamic async defer storage remains a separate milestone.
-            _builder.CreateRet(_builder.getInt8(0));
-            return true;
+            return EmitRunDefers(index);
         }
         if (action == AsyncAction::CancelChildren ||
             action == AsyncAction::DrainChildren) {
@@ -1309,6 +1592,14 @@ class Emitter final {
                     Runtime("flecha_async_child_scope_construct", scopeType),
                     {Slot(*scope.children)});
             }
+        for (const semantic::AsyncScopePlan& scope : _entry->plan->scopes)
+            if (scope.deferredStack) {
+                auto* scopeType = llvm::FunctionType::get(
+                    _builder.getVoidTy(), {_builder.getPtrTy()}, false);
+                _builder.CreateCall(
+                    Runtime("flecha_async_defer_scope_construct", scopeType),
+                    {Slot(*scope.deferredStack)});
+            }
         llvm::Function* control =
             _module.getFunction(_entry->generated.name + "_control_initialize");
         if (!control)
@@ -1442,12 +1733,18 @@ class Emitter final {
                 _builder.CreateCall(
                     Runtime("flecha_async_child_scope_destruct", destructType),
                     {Slot(*scope.children)});
+        for (const semantic::AsyncScopePlan& scope : _entry->plan->scopes)
+            if (scope.deferredStack)
+                _builder.CreateCall(
+                    Runtime("flecha_async_defer_scope_destruct", destructType),
+                    {Slot(*scope.deferredStack)});
         _builder.CreateRetVoid();
         return true;
     }
 
     bool EmitFunction(FunctionEntry& entry) {
         _entry = &entry;
+        _defers.clear();
         _rootExpressions.clear();
         _terminalExpressions.clear();
         for (const semantic::FlowNode& node : entry.plan->flow.nodes) {
@@ -1486,18 +1783,9 @@ class Emitter final {
     std::set<const core::Expression*> _rootExpressions;
     std::set<const core::Expression*> _terminalExpressions;
     std::unordered_map<const semantic::Symbol*, llvm::Value*> _localAddresses;
+    std::unordered_map<const core::DeferStatement*, DeferredInfo> _defers;
     std::set<const semantic::FunctionSymbol*> _emittedSync;
 };
-
-bool Supported(const FunctionEntry& entry, std::string& error) {
-    for (const semantic::AsyncState& state : entry.plan->states) {
-        if (state.kind == AsyncStateKind::RunDefers) {
-            error = "dynamic async defer storage is not implemented";
-            return false;
-        }
-    }
-    return true;
-}
 
 }  // namespace
 
@@ -1533,7 +1821,6 @@ std::optional<GeneratedAsyncProgram> GenerateAsyncValuesForTesting(
             return std::nullopt;
         }
         FunctionEntry entry{symbol, plan, std::move(*machine), {}};
-        if (!Supported(entry, error)) return std::nullopt;
         GeneratedAsyncFunction generated;
         generated.symbol = symbol;
         generated.name =
