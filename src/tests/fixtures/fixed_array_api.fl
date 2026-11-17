@@ -139,6 +139,17 @@ u8 array_store_before_rhs(usize index) {
     return values[0];
 }
 
+u8 owned_array_read(usize length, usize index) {
+    values, failure := new<own []u8>(length);
+    if failure != none { return 0; }
+    return values[index];
+}
+
+char string_view_read(i32 index) {
+    stringv text = "ab";
+    return text[index];
+}
+
 u8 announce_array_write() {
     stdoutln("unexpected RHS evaluation");
     return 42;

@@ -36,6 +36,15 @@ where supported, flushes standard error, and terminates with `SIGABRT` on POSIX
 hosts. Explicit crashes are not synthesized segmentation faults, and ordinary
 interrupts such as `SIGINT` are not reclassified as crashes.
 
+Compiler-generated index and slice checks use the additive
+`flecha_runtime_v1_bounds_error` and `flecha_runtime_v1_slice_bounds_error`
+entry points. They include the rejected index or half-open range, collection
+length, and source location, then reuse the same register, stack-trace, flush,
+and termination path as `flecha_runtime_v1_crash`. The compiler marks these
+calls `noreturn` and keeps `unreachable` after each call so the successful path
+remains optimizable. Signed indices, such as `i32` string-view indices, retain
+their source-language sign in the diagnostic.
+
 `stdin` and `stdinln` lower their prompt values to typed stdout operations,
 flush stdout, and call `flecha_runtime_v1_standard_input_read_line`. The line
 reader consumes the same descriptor-level primitive exposed by
@@ -194,9 +203,11 @@ Breaking an existing declaration requires a new ABI version and symbol prefix.
 New symbols may be added to version 1 without changing existing declarations.
 
 The runtime also owns dynamic safety checks. Version 1 provides checked
-`stringv` byte access and substring bounds validation. Invalid indices print a
-runtime diagnostic to standard error and terminate the process rather than
-allowing an out-of-bounds memory access.
+`stringv` byte access and substring bounds validation. Invalid operations print
+a runtime diagnostic to standard error and terminate the process rather than
+allowing an out-of-bounds memory access. Compiler-lowered byte indexing uses
+the structured bounds-error entry point above; the older callable byte-access
+symbol remains part of the versioned ABI.
 
 ## Owning string ABI
 

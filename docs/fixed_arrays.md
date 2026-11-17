@@ -91,10 +91,12 @@ indices known to exceed the length are rejected at compile time. No index
 is valid for a zero-length array. Other indices receive an unsigned runtime
 bounds check before address derivation or element access.
 
-Invalid runtime accesses execute `llvm.trap` and terminate the program. This
-also applies to writes and taking an element's address. Unsafe blocks do not
-disable bounds checks; unchecked array operations are not exposed. Bounds
-failure does not return an error value or unwind scope cleanups.
+Invalid runtime accesses call `flecha_runtime_v1_bounds_error` and terminate
+through the structured crash reporter with the index, length, source location,
+registers, and stack trace. This also applies to writes and taking an element's
+address. Unsafe blocks do not disable bounds checks; unchecked array operations
+are not exposed. Bounds failure does not return an error value or unwind scope
+cleanups.
 
 Indexing captures its receiver first, then evaluates its index once. For a
 store, bounds checking finishes before the right-hand side evaluates; the
@@ -155,7 +157,7 @@ Existing type, initialization, const, borrow, and unsafe diagnostics also apply.
 `make test` includes parser/range/recovery tests, semantic and flow regressions,
 bound IR and LLVM verification, and `NativeSemanticTests.FixedArrays`. Native
 coverage checks copies, returns, nested/empty arrays, side-effect order, and
-bounds traps for reads, writes, borrows, nested indices, and unsafe accesses.
+bounds diagnostics for reads, writes, borrows, nested indices, and unsafe accesses.
 The sanitizer target includes the compiler and native harness/runtime checks.
 
 Arrays lower to LLVM array values and native addresses, with entry-block

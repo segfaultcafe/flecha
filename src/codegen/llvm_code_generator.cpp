@@ -2051,11 +2051,15 @@ llvm::Value* LlvmCodeGenerator::EmitBuiltInStringFormat(
     return value;
 }
 
-llvm::Value* LlvmCodeGenerator::EmitCrash(llvm::Value* message,
-                                          source::SourceRange range) {
-    const std::string functionName = _currentFunctionSymbol == nullptr
-                                         ? "<unknown>"
-                                         : _currentFunctionSymbol->Name();
+std::vector<llvm::Value*> LlvmCodeGenerator::EmitSourceLocationArguments(
+    source::SourceRange range) {
+    if (_currentProgram != nullptr)
+        range = _currentProgram->SourceOrigin(range);
+    const std::string functionName =
+        _currentFunctionSymbol == nullptr ? "<unknown>"
+        : _currentFunctionSymbol->Declaration() != nullptr
+            ? _currentFunctionSymbol->Declaration()->Name()
+            : _currentFunctionSymbol->Name();
     const lowering::BoundLiteralExpression fileLiteral(
         range, semantic::SemanticType(semantic::SemanticTypeKind::StringView),
         range.start.file);
@@ -2064,7 +2068,25 @@ llvm::Value* LlvmCodeGenerator::EmitCrash(llvm::Value* message,
         functionName);
     llvm::Value* file = EmitLiteral(fileLiteral);
     llvm::Value* function = EmitLiteral(functionLiteral);
-    if (file == nullptr || function == nullptr) return nullptr;
+    if (file == nullptr || function == nullptr) return {};
+
+    auto* lineType = llvm::Type::getInt32Ty(_context);
+    return {_builder.CreateExtractValue(file, 0),
+            _builder.CreateExtractValue(file, 1),
+            _builder.CreateExtractValue(function, 0),
+            _builder.CreateExtractValue(function, 1),
+            llvm::ConstantInt::get(lineType, range.start.line),
+            llvm::ConstantInt::get(lineType, range.start.column)};
+}
+
+llvm::Value* LlvmCodeGenerator::EmitCrash(llvm::Value* message,
+                                          source::SourceRange range) {
+    std::vector<llvm::Value*> arguments{
+        _builder.CreateExtractValue(message, 0),
+        _builder.CreateExtractValue(message, 1)};
+    std::vector<llvm::Value*> location = EmitSourceLocationArguments(range);
+    if (location.empty()) return nullptr;
+    arguments.insert(arguments.end(), location.begin(), location.end());
 
     auto* sizeType =
         MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
@@ -2082,15 +2104,7 @@ llvm::Value* LlvmCodeGenerator::EmitCrash(llvm::Value* message,
         functionValue->addFnAttr(llvm::Attribute::NoReturn);
         functionValue->addFnAttr(llvm::Attribute::Cold);
     }
-    llvm::CallInst* call = _builder.CreateCall(
-        crash, {_builder.CreateExtractValue(message, 0),
-                _builder.CreateExtractValue(message, 1),
-                _builder.CreateExtractValue(file, 0),
-                _builder.CreateExtractValue(file, 1),
-                _builder.CreateExtractValue(function, 0),
-                _builder.CreateExtractValue(function, 1),
-                llvm::ConstantInt::get(lineType, range.start.line),
-                llvm::ConstantInt::get(lineType, range.start.column)});
+    llvm::CallInst* call = _builder.CreateCall(crash, arguments);
     call->setDoesNotReturn();
     _builder.CreateUnreachable();
     return call;
@@ -2327,32 +2341,17 @@ llvm::Value* LlvmCodeGenerator::EmitStringViewOperation(
 
     if (expression.Operation() == lowering::StringViewOperation::At) {
         llvm::Value* index = arguments.front();
-        llvm::Value* extendedIndex = _builder.CreateZExt(
-            index, length->getType(), "stringv.index.extended");
+        const bool signedIndex =
+            !IsUnsigned(expression.Arguments().front()->Type());
+        llvm::Value* extendedIndex =
+            signedIndex ? _builder.CreateSExt(index, length->getType(),
+                                              "stringv.index.extended")
+                        : _builder.CreateZExt(index, length->getType(),
+                                              "stringv.index.extended");
         llvm::Value* inBounds =
             _builder.CreateICmpULT(extendedIndex, length, "stringv.in.bounds");
-        auto* valid = llvm::BasicBlock::Create(_context, "stringv.at.valid",
-                                               _currentFunction);
-        auto* invalid = llvm::BasicBlock::Create(_context, "stringv.at.invalid",
-                                                 _currentFunction);
-        _builder.CreateCondBr(inBounds, valid, invalid);
-
-        // Keep the established runtime diagnostic on the cold failure path,
-        // but make the checked fast path visible to LLVM. Previously every
-        // byte access crossed the runtime ABI, preventing bounds-check
-        // elimination and dominating text-processing loops.
-        _builder.SetInsertPoint(invalid);
-        llvm::FunctionType* atType =
-            llvm::FunctionType::get(llvm::Type::getInt8Ty(_context),
-                                    {data->getType(), length->getType(),
-                                     llvm::Type::getInt32Ty(_context)},
-                                    false);
-        llvm::FunctionCallee at = _module->getOrInsertFunction(
-            "flecha_runtime_v1_string_view_at", atType);
-        _builder.CreateCall(at, {data, length, index});
-        _builder.CreateUnreachable();
-
-        _builder.SetInsertPoint(valid);
+        EmitBoundsCheck(inBounds, index, length, expression.Range(),
+                        signedIndex);
         llvm::Value* address =
             _builder.CreateInBoundsGEP(llvm::Type::getInt8Ty(_context), data,
                                        extendedIndex, "stringv.at.address");
@@ -4334,17 +4333,84 @@ llvm::Value* LlvmCodeGenerator::EmitArrayStorage(
     return storage;
 }
 
-void LlvmCodeGenerator::EmitBoundsCheck(llvm::Value* condition) {
+void LlvmCodeGenerator::EmitBoundsCheck(llvm::Value* condition,
+                                        llvm::Value* index, llvm::Value* length,
+                                        source::SourceRange range,
+                                        bool signedIndex) {
     llvm::BasicBlock* valid =
         llvm::BasicBlock::Create(_context, "array.in.bounds", _currentFunction);
     llvm::BasicBlock* invalid = llvm::BasicBlock::Create(
         _context, "array.out.of.bounds", _currentFunction);
     _builder.CreateCondBr(condition, valid, invalid);
     _builder.SetInsertPoint(invalid);
-    llvm::FunctionCallee trap = _module->getOrInsertFunction(
-        "llvm.trap",
-        llvm::FunctionType::get(llvm::Type::getVoidTy(_context), false));
-    _builder.CreateCall(trap);
+    auto* sizeType =
+        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
+    auto* indexType = llvm::Type::getInt64Ty(_context);
+    auto* signedType = llvm::Type::getInt8Ty(_context);
+    auto* pointerType = llvm::PointerType::getUnqual(_context);
+    auto* lineType = llvm::Type::getInt32Ty(_context);
+    llvm::FunctionType* boundsType = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(_context),
+        {indexType, signedType, sizeType, pointerType, sizeType, pointerType,
+         sizeType, lineType, lineType},
+        false);
+    llvm::FunctionCallee bounds = _module->getOrInsertFunction(
+        "flecha_runtime_v1_bounds_error", boundsType);
+    if (auto* functionValue =
+            llvm::dyn_cast<llvm::Function>(bounds.getCallee())) {
+        functionValue->addFnAttr(llvm::Attribute::NoReturn);
+        functionValue->addFnAttr(llvm::Attribute::Cold);
+    }
+    std::vector<llvm::Value*> arguments{
+        signedIndex ? _builder.CreateSExtOrTrunc(index, indexType)
+                    : _builder.CreateZExtOrTrunc(index, indexType),
+        llvm::ConstantInt::get(signedType, signedIndex),
+        _builder.CreateZExtOrTrunc(length, sizeType)};
+    std::vector<llvm::Value*> location = EmitSourceLocationArguments(range);
+    arguments.insert(arguments.end(), location.begin(), location.end());
+    llvm::CallInst* call = _builder.CreateCall(bounds, arguments);
+    call->setDoesNotReturn();
+    _builder.CreateUnreachable();
+    _builder.SetInsertPoint(valid);
+}
+
+void LlvmCodeGenerator::EmitSliceBoundsCheck(llvm::Value* start,
+                                             llvm::Value* end,
+                                             llvm::Value* length,
+                                             source::SourceRange range) {
+    auto* valid =
+        llvm::BasicBlock::Create(_context, "slice.in.bounds", _currentFunction);
+    auto* invalid = llvm::BasicBlock::Create(_context, "slice.out.of.bounds",
+                                             _currentFunction);
+    _builder.CreateCondBr(
+        _builder.CreateAnd(_builder.CreateICmpULE(start, end),
+                           _builder.CreateICmpULE(end, length)),
+        valid, invalid);
+    _builder.SetInsertPoint(invalid);
+    auto* sizeType =
+        MapType(semantic::SemanticType(semantic::SemanticTypeKind::USize));
+    auto* pointerType = llvm::PointerType::getUnqual(_context);
+    auto* lineType = llvm::Type::getInt32Ty(_context);
+    llvm::FunctionType* boundsType = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(_context),
+        {sizeType, sizeType, sizeType, pointerType, sizeType, pointerType,
+         sizeType, lineType, lineType},
+        false);
+    llvm::FunctionCallee bounds = _module->getOrInsertFunction(
+        "flecha_runtime_v1_slice_bounds_error", boundsType);
+    if (auto* functionValue =
+            llvm::dyn_cast<llvm::Function>(bounds.getCallee())) {
+        functionValue->addFnAttr(llvm::Attribute::NoReturn);
+        functionValue->addFnAttr(llvm::Attribute::Cold);
+    }
+    std::vector<llvm::Value*> arguments{
+        _builder.CreateZExtOrTrunc(start, sizeType),
+        _builder.CreateZExtOrTrunc(end, sizeType),
+        _builder.CreateZExtOrTrunc(length, sizeType)};
+    std::vector<llvm::Value*> location = EmitSourceLocationArguments(range);
+    arguments.insert(arguments.end(), location.begin(), location.end());
+    llvm::CallInst* call = _builder.CreateCall(bounds, arguments);
+    call->setDoesNotReturn();
     _builder.CreateUnreachable();
     _builder.SetInsertPoint(valid);
 }
@@ -4387,8 +4453,7 @@ llvm::Value* LlvmCodeGenerator::EmitSlice(
                            ? length
                            : EmitExpression(*expression.End());
     if (end == nullptr) return nullptr;
-    EmitBoundsCheck(_builder.CreateAnd(_builder.CreateICmpULE(start, end),
-                                       _builder.CreateICmpULE(end, length)));
+    EmitSliceBoundsCheck(start, end, length, expression.Range());
     data =
         receiverKind == semantic::SemanticTypeKind::Pointer
             ? _builder.CreateGEP(MapType(*expression.Type().Target()), data,
@@ -4465,7 +4530,8 @@ llvm::Value* LlvmCodeGenerator::EmitAddress(
                                             llvm::ConstantInt::get(sizeType, 1))
                        : llvm::ConstantInt::get(sizeType, 0));
         if (offset == nullptr) return nullptr;
-        EmitBoundsCheck(_builder.CreateICmpULT(offset, length));
+        EmitBoundsCheck(_builder.CreateICmpULT(offset, length), offset, length,
+                        index.Range());
         if (slice || heap)
             return _builder.CreateInBoundsGEP(
                 MapType(*index.Receiver().Type().Target()), storage, offset,
@@ -5805,7 +5871,8 @@ llvm::Value* LlvmCodeGenerator::EmitFree(llvm::Value* owner,
 }
 
 llvm::Value* LlvmCodeGenerator::EmitStorageAddress(
-    llvm::Value* owner, semantic::SemanticType ownerType, llvm::Value* index) {
+    llvm::Value* owner, semantic::SemanticType ownerType, llvm::Value* index,
+    source::SourceRange range) {
     const bool countedOwner =
         ownerType.Kind() == semantic::SemanticTypeKind::OwnedBuffer;
     llvm::Value* data =
@@ -5825,7 +5892,7 @@ llvm::Value* LlvmCodeGenerator::EmitStorageAddress(
             llvm::FunctionType::get(sizeType, {data->getType()}, false));
         count = _builder.CreateCall(getCount, {data}, "storage.capacity");
     }
-    EmitBoundsCheck(_builder.CreateICmpULT(index, count));
+    EmitBoundsCheck(_builder.CreateICmpULT(index, count), index, count, range);
     return _builder.CreateInBoundsGEP(MapType(*ownerType.Target()), data, index,
                                       "storage.slot");
 }
@@ -5850,8 +5917,8 @@ llvm::Value* LlvmCodeGenerator::EmitStorageCall(
     }
 
     const semantic::SemanticType element = *parameters[0].Target();
-    llvm::Value* destination =
-        EmitStorageAddress(arguments[0], parameters[0], arguments[1]);
+    llvm::Value* destination = EmitStorageAddress(
+        arguments[0], parameters[0], arguments[1], expression.Range());
     if (intrinsic == semantic::BuiltInFunction::StorageDestroy &&
         !RequiresTypedDestruction(element))
         return llvm::UndefValue::get(llvm::Type::getInt1Ty(_context));
@@ -5869,8 +5936,8 @@ llvm::Value* LlvmCodeGenerator::EmitStorageCall(
         if (value == nullptr) return nullptr;
         _builder.CreateStore(value, destination);
     } else if (intrinsic == semantic::BuiltInFunction::StorageRelocate) {
-        llvm::Value* source =
-            EmitStorageAddress(arguments[2], parameters[2], arguments[3]);
+        llvm::Value* source = EmitStorageAddress(
+            arguments[2], parameters[2], arguments[3], expression.Range());
         llvm::Value* value =
             _builder.CreateLoad(MapType(element), source, "storage.moved");
         _builder.CreateStore(value, destination);
@@ -5908,6 +5975,7 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
     _interfaceDispatchSlots.clear();
     _structureTypes.clear();
     _variables.clear();
+    _currentProgram = &program;
     _module = std::make_unique<llvm::Module>(moduleName, _context);
     if (!_targetTriple.empty()) {
 #if LLVM_VERSION_MAJOR >= 21
@@ -5917,12 +5985,21 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
 #endif
     }
     if (_dataLayout.has_value()) _module->setDataLayout(*_dataLayout);
-    if (!DeclareFunctions(program)) return nullptr;
-    if (!DeclareInterfaceInfrastructure(program)) return nullptr;
+    if (!DeclareFunctions(program)) {
+        _currentProgram = nullptr;
+        return nullptr;
+    }
+    if (!DeclareInterfaceInfrastructure(program)) {
+        _currentProgram = nullptr;
+        return nullptr;
+    }
     for (const std::unique_ptr<lowering::BoundFunction>& function :
          program.Functions()) {
         if (function->IsExtern()) continue;
-        if (!EmitFunction(*function)) return nullptr;
+        if (!EmitFunction(*function)) {
+            _currentProgram = nullptr;
+            return nullptr;
+        }
     }
     const std::string verificationError = VerifyModule(*_module);
     if (!verificationError.empty()) {
@@ -5932,8 +6009,10 @@ std::unique_ptr<llvm::Module> LlvmCodeGenerator::Generate(
         output.flush();
         Fail("LLVM module verification failed: " + verificationError +
              "generated module:\n" + generatedModule);
+        _currentProgram = nullptr;
         return nullptr;
     }
+    _currentProgram = nullptr;
     return std::move(_module);
 }
 
