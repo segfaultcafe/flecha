@@ -122,6 +122,27 @@ void PublishRuntimeSymbols() {
         DynamicLibrary::AddSymbol(
             "flecha_async_child_scope_drain",
             reinterpret_cast<void*>(flecha_async_child_scope_drain));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_defer_scope_construct",
+            reinterpret_cast<void*>(flecha_async_defer_scope_construct));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_defer_scope_destruct",
+            reinterpret_cast<void*>(flecha_async_defer_scope_destruct));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_defer_reserve",
+            reinterpret_cast<void*>(flecha_async_defer_reserve));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_defer_initialize",
+            reinterpret_cast<void*>(flecha_async_defer_initialize));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_defer_pop",
+            reinterpret_cast<void*>(flecha_async_defer_pop));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_defer_tag",
+            reinterpret_cast<void*>(flecha_async_defer_tag));
+        DynamicLibrary::AddSymbol(
+            "flecha_async_defer_release",
+            reinterpret_cast<void*>(flecha_async_defer_release));
         return true;
     }();
     (void)published;
@@ -288,6 +309,30 @@ bool FirstChildReady(void* storage, void* frame,
     if (!event.readyChild) event.readyChild = frame;
     if (frame == event.readyChild) return true;
     event.pendingChild = frame;
+    event.wake = wake;
+    return false;
+}
+
+struct NestedPendingEvent final {
+    void* root = nullptr;
+    void* child = nullptr;
+    void* pending = nullptr;
+    WakeHandle wake;
+};
+bool WaitInsideChild(void* storage, void* frame,
+                     const WakeHandle& wake) noexcept {
+    auto& event = *static_cast<NestedPendingEvent*>(storage);
+    if (!event.root) {
+        event.root = frame;
+        return true;
+    }
+    if (frame == event.root) return true;
+    if (!event.child) {
+        event.child = frame;
+        return true;
+    }
+    if (frame == event.child) return true;
+    event.pending = frame;
     event.wake = wake;
     return false;
 }
@@ -940,24 +985,179 @@ TEST(AsyncValueLoweringTests,
     EXPECT_EQ(destructions, 1u);
 }
 
-TEST(AsyncValueLoweringTests, RejectsDynamicDeferredEffectsExplicitly) {
-    const auto generateError = [](const std::string& source) {
-        diagnostics::DiagnosticBag diagnostics;
-        core::Tokenizer tokenizer(source, diagnostics);
-        core::Parser parser(tokenizer.Tokenize(), diagnostics);
-        auto unit = parser.Parse();
-        semantic::SemanticAnalyzer analyzer(diagnostics);
-        auto model = analyzer.Analyze(*unit);
-        llvm::LLVMContext context;
-        std::string error;
-        EXPECT_FALSE(GenerateAsyncValuesForTesting(context, HostLayout(), model,
-                                                   diagnostics,
-                                                   "unsupported_async", error));
-        return error;
-    };
-    EXPECT_EQ(generateError(
-                  "void cleanup() {} async void main() { defer cleanup(); }"),
-              "dynamic async defer storage is not implemented");
+TEST(AsyncValueLoweringTests,
+     DynamicDefersCaptureAtRegistrationAndRunLifoAcrossRepeatedSiteVisits) {
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_async_event", reinterpret_cast<void*>(RecordAsyncEvent));
+    Compiled code(AsyncFixture("defer_lowering.fl"));
+    asyncEvents.clear();
+    Executor executor;
+    TaskHandle task;
+    ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+    RunUntilTerminal(executor, task);
+    ASSERT_EQ(executor.Status(task), TaskStatus::Ready);
+    std::int32_t result = 0;
+    ASSERT_TRUE(executor.TakeResult(task, &result));
+    EXPECT_EQ(result, 42);
+    EXPECT_EQ(asyncEvents, (std::vector<std::int32_t>{2, 1, 0, 10, 20}));
+    EXPECT_TRUE(executor.Release(task));
+}
+
+TEST(AsyncValueLoweringTests,
+     DeferAllocationFailureSkipsCaptureEffectsAndRunsEarlierCleanup) {
+    llvm::sys::DynamicLibrary::AddSymbol("observe",
+                                         reinterpret_cast<void*>(Observe));
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_async_event", reinterpret_cast<void*>(RecordAsyncEvent));
+    Compiled code(
+        "extern i32 observe(i32 value); extern i32 record_async_event(i32 "
+        "value); async i32 main() { defer record_async_event(1); defer "
+        "record_async_event(observe(2)); return 42; }");
+    FailingResource resource;
+    observations = 0;
+    asyncEvents.clear();
+    {
+        Executor executor(&resource);
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        resource.failAt = resource.attempts + 2;
+        RunUntilTerminal(executor, task);
+        EXPECT_EQ(executor.Status(task), TaskStatus::AllocationFailed);
+        EXPECT_EQ(observations, 0);
+        EXPECT_EQ(asyncEvents, (std::vector<std::int32_t>{1}));
+        EXPECT_TRUE(executor.Release(task));
+    }
+    EXPECT_EQ(resource.live, 0);
+}
+
+TEST(AsyncValueLoweringTests,
+     LoopProceedAndFallthroughRunEachActiveDeferExactlyOnce) {
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_async_event", reinterpret_cast<void*>(RecordAsyncEvent));
+    Compiled code(
+        "extern i32 record_async_event(i32 value); async i32 main() { "
+        "value := 0; while value < 3 { defer record_async_event(value); "
+        "value++; if value < 3 { proceed; } } return value; }");
+    asyncEvents.clear();
+    Executor executor;
+    TaskHandle task;
+    ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+    RunUntilTerminal(executor, task);
+    ASSERT_EQ(executor.Status(task), TaskStatus::Ready);
+    std::int32_t result = 0;
+    ASSERT_TRUE(executor.TakeResult(task, &result));
+    EXPECT_EQ(result, 3);
+    EXPECT_EQ(asyncEvents, (std::vector<std::int32_t>{0, 1, 2}));
+    EXPECT_TRUE(executor.Release(task));
+}
+
+TEST(AsyncValueLoweringTests,
+     DeferredStructureMethodsRetainReceiversAndSnapshotArguments) {
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_async_event", reinterpret_cast<void*>(RecordAsyncEvent));
+    Compiled code(
+        "extern i32 record_async_event(i32 value); structure Recorder { i32 "
+        "base; }; i32 Recorder::save(&const self, i32 value) { return "
+        "record_async_event(self->base + value); } async i32 main() { "
+        "Recorder recorder = none; recorder.base = 40; value := 2; defer "
+        "recorder.save(value); value = 9; return value; }");
+    asyncEvents.clear();
+    Executor executor;
+    TaskHandle task;
+    ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+    RunUntilTerminal(executor, task);
+    ASSERT_EQ(executor.Status(task), TaskStatus::Ready);
+    std::int32_t result = 0;
+    ASSERT_TRUE(executor.TakeResult(task, &result));
+    EXPECT_EQ(result, 9);
+    EXPECT_EQ(asyncEvents, (std::vector<std::int32_t>{42}));
+    EXPECT_TRUE(executor.Release(task));
+}
+
+TEST(AsyncValueLoweringTests,
+     CancellationRetiresChildrenBeforeRunningNestedAndParentDefers) {
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_async_event", reinterpret_cast<void*>(RecordAsyncEvent));
+    Compiled code(
+        "extern i32 record_async_event(i32 value); async i32 leaf() { return "
+        "1; } async i32 child() { defer record_async_event(2); return "
+        "leaf().await?; } async i32 main() { defer record_async_event(1); "
+        "task, e := shoot child(); if e != none { return 0; } return "
+        "task.await?; }");
+    asyncEvents.clear();
+    NestedPendingEvent event;
+    Executor executor(std::pmr::get_default_resource(), WaitInsideChild,
+                      &event);
+    TaskHandle task;
+    ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // parent joins child
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // child waits in leaf
+    ASSERT_NE(event.pending, nullptr);
+    executor.RequestCancellation(task);
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // parent cancels/drains
+    EXPECT_TRUE(asyncEvents.empty());
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // child retires + defer
+    EXPECT_EQ(asyncEvents, (std::vector<std::int32_t>{2}));
+    EXPECT_EQ(executor.Step(), StepResult::Polled);  // parent drain + defer
+    EXPECT_EQ(executor.Status(task), TaskStatus::Cancelled);
+    EXPECT_EQ(asyncEvents, (std::vector<std::int32_t>{2, 1}));
+    EXPECT_TRUE(executor.Release(task));
+}
+
+TEST(AsyncValueLoweringTests,
+     MoveOnlyDeferredCapturesTransferOrRemainOwnedOnReservationFailure) {
+    llvm::sys::DynamicLibrary::AddSymbol(
+        "record_destroy", reinterpret_cast<void*>(RecordDestroy));
+    Compiled code(
+        "extern void record_destroy(i32 value); structure Owner { i32 value; "
+        "}; void Owner::tear(&self) override { record_destroy(self->value); } "
+        "void consume_deferred_owner(Owner value) {} async i32 main() { Owner "
+        "owner = none; owner.value = 42; defer "
+        "consume_deferred_owner(owner); return 7; }");
+    {
+        destructions = 0;
+        Executor executor;
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        RunUntilTerminal(executor, task);
+        ASSERT_EQ(executor.Status(task), TaskStatus::Ready);
+        std::int32_t result = 0;
+        ASSERT_TRUE(executor.TakeResult(task, &result));
+        EXPECT_EQ(result, 7);
+        EXPECT_TRUE(executor.Release(task));
+        EXPECT_EQ(destructions, 1u);
+    }
+    {
+        FailingResource resource;
+        destructions = 0;
+        Executor executor(&resource);
+        TaskHandle task;
+        ASSERT_TRUE(executor.TryCreateTask(code.layout, nullptr, task));
+        resource.failAt = resource.attempts + 1;
+        RunUntilTerminal(executor, task);
+        EXPECT_EQ(executor.Status(task), TaskStatus::AllocationFailed);
+        EXPECT_TRUE(executor.Release(task));
+        EXPECT_EQ(destructions, 1u);
+    }
+}
+
+TEST(AsyncValueLoweringTests,
+     RejectsUnsupportedIndirectDeferredDispatchWithoutDroppingTheCall) {
+    diagnostics::DiagnosticBag diagnostics;
+    core::Tokenizer tokenizer(
+        "void cleanup() {} async void main() { action := cleanup; defer "
+        "action(); }",
+        diagnostics);
+    core::Parser parser(tokenizer.Tokenize(), diagnostics);
+    auto unit = parser.Parse();
+    semantic::SemanticAnalyzer analyzer(diagnostics);
+    auto model = analyzer.Analyze(*unit);
+    llvm::LLVMContext context;
+    std::string error;
+    EXPECT_FALSE(GenerateAsyncValuesForTesting(
+        context, HostLayout(), model, diagnostics, "unsupported_async", error));
+    EXPECT_FALSE(error.empty());
+    EXPECT_NE(error.find("unsupported"), std::string::npos);
 }
 
 TEST(AsyncValueLoweringTests, KeepsPublicAndSynchronousExecutionGatesClosed) {

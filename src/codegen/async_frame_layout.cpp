@@ -163,9 +163,18 @@ std::optional<AsyncConcreteFrameLayout> PlanAsyncFrameLayout(
     for (std::size_t id = 0; id < plan.slots.size(); ++id) {
         const semantic::AsyncFrameSlot& slot = plan.slots[id];
         using Kind = semantic::AsyncSlotKind;
-        if (slot.kind == Kind::Computation || slot.kind == Kind::ChildJoin ||
-            slot.kind == Kind::DeferredCall || slot.kind == Kind::DeferredStack)
+        if (slot.kind == Kind::Computation || slot.kind == Kind::ChildJoin)
             continue;
+        if (slot.kind == Kind::DeferredCall) {
+            result.slotOffsets[id] = reserve(sizeof(void*), alignof(void*));
+            continue;
+        }
+        if (slot.kind == Kind::DeferredStack) {
+            result.slotOffsets[id] =
+                reserve(sizeof(runtime::async::DeferScope),
+                        alignof(runtime::async::DeferScope));
+            continue;
+        }
         if (slot.kind == Kind::TaskScope) {
             result.slotOffsets[id] =
                 reserve(sizeof(runtime::async::ChildScope),

@@ -42,7 +42,22 @@ std::optional<AsyncMachine> LowerAsyncMachine(
     std::set<const core::AstNode*> prepared;
     std::set<const core::NameExpression*> argumentMoves;
     for (const auto& state : plan.states) {
-        if (!state.checked) continue;
+        if (!state.checked) {
+            if (!state.flowNode) continue;
+            const auto* deferred = plan.flow.nodes[*state.flowNode].memoryDefer;
+            if (!deferred) continue;
+            core::WalkAst(deferred->Call(), [&](const core::AstNode& node,
+                                                bool entering) {
+                if (!entering) return;
+                prepared.insert(&node);
+                if (node.Kind() == core::AstNodeKind::NameExpression &&
+                    model.TransferOf(static_cast<const core::Expression&>(
+                        node)) == TransferKind::Move)
+                    argumentMoves.insert(
+                        static_cast<const core::NameExpression*>(&node));
+            });
+            continue;
+        }
         // Async operand evaluation belongs to Initialize, not to postorder
         // analysis events on an outcome path (including allocation failure).
         const core::Expression* operand = nullptr;
@@ -106,8 +121,17 @@ std::optional<AsyncMachine> LowerAsyncMachine(
                         break;
                     }
         }
-        if (source.checked)
-            for (const auto* argument : source.checked->arguments)
+        const core::Expression* deferredCall = nullptr;
+        if (source.flowNode && plan.flow.nodes[*source.flowNode].memoryDefer)
+            deferredCall =
+                &plan.flow.nodes[*source.flowNode].memoryDefer->Call();
+        if (source.checked || deferredCall) {
+            std::vector<const core::Expression*> arguments;
+            if (source.checked)
+                arguments = source.checked->arguments;
+            else
+                arguments.push_back(deferredCall);
+            for (const auto* argument : arguments)
                 core::WalkAst(*argument, [&](const core::AstNode& node,
                                              bool entering) {
                     if (!entering ||
@@ -121,6 +145,7 @@ std::optional<AsyncMachine> LowerAsyncMachine(
                         if (plan.slots[slot].symbol == symbol)
                             instruction.argumentMoves.push_back(slot);
                 });
+        }
         for (const auto& edge : source.edges)
             if (edge.kind != AsyncEdgeKind::Pending)
                 instruction.successors.push_back(edge.target);
@@ -161,9 +186,14 @@ std::optional<AsyncMachine> LowerAsyncMachine(
                 instruction.kind = Kind::Failed;
                 break;
             default:
-                instruction.kind = instruction.successors.size() == 2
-                                       ? Kind::Branch
-                                       : Kind::Flow;
+                if (source.flowNode &&
+                    plan.flow.nodes[*source.flowNode].memoryDefer) {
+                    instruction.kind = Kind::RegisterDefer;
+                    instruction.reservation = true;
+                } else
+                    instruction.kind = instruction.successors.size() == 2
+                                           ? Kind::Branch
+                                           : Kind::Flow;
                 break;
         }
         const bool checked = instruction.kind == Kind::CreateChild ||
@@ -210,15 +240,24 @@ std::optional<AsyncMachine> LowerAsyncMachine(
     if (plan.returnValue && plan.slots[*plan.returnValue].type.OwnsStorage())
         cancelled.destroys.push_back(*plan.returnValue);
     const auto cancelledId = append(std::move(cancelled));
+    AsyncInstruction failed;
+    failed.kind = Kind::Failed;
+    if (plan.returnValue) failed.resets.push_back(*plan.returnValue);
+    if (plan.returnValue && plan.slots[*plan.returnValue].type.OwnsStorage())
+        failed.destroys.push_back(*plan.returnValue);
+    const auto failedId = append(std::move(failed));
     // Intern cleanup suffixes by active lexical scope. Cancellation never
     // constructs a result and never treats requesting cancellation as
     // retirement.
-    std::map<std::vector<AsyncScopeId>, std::size_t> cleanupChains;
-    auto cancellationFor = [&](const std::vector<AsyncScopeId>& scopes) {
-        if (const auto found = cleanupChains.find(scopes);
+    std::map<std::pair<std::size_t, std::vector<AsyncScopeId>>, std::size_t>
+        cleanupChains;
+    auto cleanupFor = [&](const std::vector<AsyncScopeId>& scopes,
+                          std::size_t terminal) {
+        const auto key = std::pair{terminal, scopes};
+        if (const auto found = cleanupChains.find(key);
             found != cleanupChains.end())
             return found->second;
-        auto next = cancelledId;
+        auto next = terminal;
         for (auto scope : scopes) {
             AsyncInstruction cleanup;
             cleanup.kind = Kind::CleanupScope;
@@ -258,15 +297,20 @@ std::optional<AsyncMachine> LowerAsyncMachine(
                 next = append(std::move(cancel));
             }
         }
-        cleanupChains.emplace(scopes, next);
+        cleanupChains.emplace(key, next);
         return next;
     };
     machine._initialCancellation =
-        cancellationFor(plan.states[plan.entry].scopes);
+        cleanupFor(plan.states[plan.entry].scopes, cancelledId);
     for (std::size_t id = 0; id < plan.states.size(); ++id) {
         const auto kind = machine._instructions[id].kind;
+        if (kind == Kind::RegisterDefer) {
+            machine._instructions[id].successors.push_back(
+                cleanupFor(plan.states[id].scopes, failedId));
+            continue;
+        }
         if (kind != Kind::Await && kind != Kind::DrainChildren) continue;
-        auto next = cancellationFor(plan.states[id].scopes);
+        auto next = cleanupFor(plan.states[id].scopes, cancelledId);
         if (kind == Kind::Await &&
             plan.states[id].kind == AsyncStateKind::DirectAwait) {
             AsyncInstruction retire;
@@ -283,10 +327,10 @@ std::optional<AsyncMachine> LowerAsyncMachine(
 
 std::string DumpAsyncMachine(const AsyncMachine& machine) {
     static constexpr const char* NAMES[] = {
-        "flow",     "branch",           "create",
-        "await",    "cancel-operation", "cancel-children",
-        "drain",    "defers",           "cleanup",
-        "complete", "failed",           "cancelled"};
+        "flow",           "branch",           "create",          "await",
+        "register-defer", "cancel-operation", "cancel-children", "drain",
+        "defers",         "cleanup",          "complete",        "failed",
+        "cancelled"};
     std::ostringstream output;
     output << "async-machine entry=" << machine.Entry()
            << " slots=" << machine.SlotCount()

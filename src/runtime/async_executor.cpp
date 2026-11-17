@@ -1,6 +1,8 @@
 #include "runtime/async_executor.hpp"
 
+#include <algorithm>
 #include <exception>
+#include <limits>
 #include <new>
 
 namespace flecha::runtime::async {
@@ -349,6 +351,17 @@ struct ScopedChild final {
     TaskHandle task;
 };
 
+struct DeferredCall final {
+    DeferScope* owner = nullptr;
+    DeferredCall* previous = nullptr;
+    std::pmr::memory_resource* resource = nullptr;
+    void* allocation = nullptr;
+    std::size_t allocationSize = 0;
+    std::size_t allocationAlignment = 0;
+    std::uint64_t tag = 0;
+    void* payload = nullptr;
+};
+
 namespace {
 ScopedChild*& Head(ChildScope& scope) noexcept { return scope._head; }
 ScopedChild*& Tail(ChildScope& scope) noexcept { return scope._tail; }
@@ -357,6 +370,14 @@ ScopedChild*& Reservation(void* storage) noexcept {
 }
 ScopedChild*& Joined(void* storage) noexcept {
     return *static_cast<ScopedChild**>(storage);
+}
+void*& DeferredReservation(void* storage) noexcept {
+    return *static_cast<void**>(storage);
+}
+DeferredCall& DeferredFor(void* payload) noexcept {
+    if (!payload) std::terminate();
+    return **reinterpret_cast<DeferredCall**>(static_cast<std::byte*>(payload) -
+                                              sizeof(DeferredCall*));
 }
 
 void Link(ChildScope& scope, ScopedChild& child) noexcept {
@@ -494,6 +515,79 @@ bool ReleaseChildJoin(void* storage) noexcept {
     return true;
 }
 
+DeferScope::~DeferScope() {
+    if (_head) std::terminate();
+}
+
+bool ReserveDeferredCall(void* reservation, std::pmr::memory_resource* resource,
+                         std::uint64_t tag, std::size_t payloadSize,
+                         std::size_t payloadAlignment) noexcept {
+    if (!reservation || DeferredReservation(reservation) || !resource ||
+        !payloadSize || !payloadAlignment ||
+        (payloadAlignment & (payloadAlignment - 1)))
+        return false;
+    const std::size_t allocationAlignment =
+        std::max(payloadAlignment, alignof(DeferredCall));
+    constexpr std::size_t prefix = sizeof(DeferredCall) + sizeof(DeferredCall*);
+    if (payloadSize > std::numeric_limits<std::size_t>::max() - prefix ||
+        prefix + payloadSize >
+            std::numeric_limits<std::size_t>::max() - (payloadAlignment - 1))
+        return false;
+    const std::size_t allocationSize =
+        prefix + payloadSize + payloadAlignment - 1;
+    void* storage;
+    try {
+        storage = resource->allocate(allocationSize, allocationAlignment);
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
+    DeferredCall* record = new (storage) DeferredCall();
+    const auto payloadAddress =
+        (reinterpret_cast<std::uintptr_t>(record + 1) + sizeof(DeferredCall*) +
+         payloadAlignment - 1) &
+        ~(static_cast<std::uintptr_t>(payloadAlignment) - 1);
+    void* payload = reinterpret_cast<void*>(payloadAddress);
+    *(reinterpret_cast<DeferredCall**>(payload) - 1) = record;
+    record->resource = resource;
+    record->allocation = storage;
+    record->allocationSize = allocationSize;
+    record->allocationAlignment = allocationAlignment;
+    record->tag = tag;
+    record->payload = payload;
+    DeferredReservation(reservation) = payload;
+    return true;
+}
+
+void InitializeDeferredCall(DeferScope& scope, void* reservation) noexcept {
+    void* payload = DeferredReservation(reservation);
+    DeferredCall& record = DeferredFor(payload);
+    if (record.owner) std::terminate();
+    record.owner = &scope;
+    record.previous = scope._head;
+    scope._head = &record;
+    DeferredReservation(reservation) = nullptr;
+}
+
+void* PopDeferredCall(DeferScope& scope) noexcept {
+    DeferredCall* record = scope._head;
+    if (!record) return nullptr;
+    scope._head = record->previous;
+    record->owner = nullptr;
+    record->previous = nullptr;
+    return record->payload;
+}
+
+void ReleaseDeferredCall(void* payload) noexcept {
+    DeferredCall& record = DeferredFor(payload);
+    if (record.owner || record.payload != payload) std::terminate();
+    std::pmr::memory_resource* resource = record.resource;
+    void* allocation = record.allocation;
+    const std::size_t size = record.allocationSize;
+    const std::size_t alignment = record.allocationAlignment;
+    std::destroy_at(&record);
+    resource->deallocate(allocation, size, alignment);
+}
+
 }  // namespace flecha::runtime::async
 
 extern "C" {
@@ -625,5 +719,39 @@ bool flecha_async_child_scope_drain(
     void* scope, const flecha::runtime::async::PollContext* context) noexcept {
     return flecha::runtime::async::DrainScopedChildren(
         *static_cast<flecha::runtime::async::ChildScope*>(scope), *context);
+}
+
+void flecha_async_defer_scope_construct(void* storage) noexcept {
+    new (storage) flecha::runtime::async::DeferScope();
+}
+
+void flecha_async_defer_scope_destruct(void* storage) noexcept {
+    std::destroy_at(static_cast<flecha::runtime::async::DeferScope*>(storage));
+}
+
+bool flecha_async_defer_reserve(void* reservation,
+                                std::pmr::memory_resource* resource,
+                                std::uint64_t tag, std::size_t payloadSize,
+                                std::size_t payloadAlignment) noexcept {
+    return flecha::runtime::async::ReserveDeferredCall(
+        reservation, resource, tag, payloadSize, payloadAlignment);
+}
+
+void flecha_async_defer_initialize(void* scope, void* reservation) noexcept {
+    flecha::runtime::async::InitializeDeferredCall(
+        *static_cast<flecha::runtime::async::DeferScope*>(scope), reservation);
+}
+
+void* flecha_async_defer_pop(void* scope) noexcept {
+    return flecha::runtime::async::PopDeferredCall(
+        *static_cast<flecha::runtime::async::DeferScope*>(scope));
+}
+
+std::uint64_t flecha_async_defer_tag(void* payload) noexcept {
+    return flecha::runtime::async::DeferredFor(payload).tag;
+}
+
+void flecha_async_defer_release(void* payload) noexcept {
+    flecha::runtime::async::ReleaseDeferredCall(payload);
 }
 }
