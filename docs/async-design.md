@@ -1,8 +1,9 @@
 # Async design foundation
 
 **Implementation in progress; public async execution remains gated.** An
-internal test-only generator can execute the supported direct-await subset, but
-the CLI, synchronous lowering path, and `async main` entry remain disabled. This
+internal test-only generator can execute direct awaits, scheduled scoped
+children, joins, and lexical child cleanup, but the CLI, synchronous lowering
+path, and `async main` entry remain disabled. This
 summarizes the selected foundation of [IFG 2026-0007](IFG/IFG_2026_0007.txt).
 The IFG remains Draft while low-level future APIs and remaining interoperability details
 are under review. Checked result destructuring, void await, and explicit failure forwarding are
@@ -64,9 +65,8 @@ async i32 main() {
 ```
 
 Direct awaiting uses `value, err := calculate().await`; the symbolic creation
-form is `child, err := >>- calculate()`. Direct awaits are executable only
-through the internal test entry described below. Generated child scheduling is
-still outside the executable subset.
+form is `child, err := >>- calculate()`. Direct awaits and scoped child
+scheduling are executable only through the internal test entry described below.
 
 On failure the value binding is uninitialized. The compiler must reject access
 until the corresponding error is proven to be `none`. Fallible creation requires immediate checked destructuring. Non-void await
@@ -165,15 +165,12 @@ Frame storage and scheduler admission resources must be reserved before
 argument evaluation, including method receiver preparation. If reservation
 fails, argument expressions do not run, no argument ownership transfers, and
 no task handle is published. Once reservation succeeds, argument effects are
-not rolled back if execution later fails. The internal direct-await generator
-implements this ordering: it reserves an indirect child frame, then evaluates
-each source argument exactly once into an argument pack, and only then
-initializes and polls the child. Reservation failure therefore executes no
-argument effects and transfers no ownership.
-
-The argument-preparation restriction remains for `shoot`/`>>-`, because
-generated child scheduling is later work. Direct awaits no longer need that
-restriction in the supported internal subset.
+not rolled back if execution later fails. The internal generator implements
+this ordering for direct awaits and both child-creation spellings: it reserves
+indirect frame storage and, for children, the lexical record plus scheduler
+admission before evaluating each source argument exactly once into an argument
+pack. Only then does it initialize the frame and queue the child. Reservation
+failure therefore executes no argument effects and transfers no ownership.
 
 Root allocation failure has a separate approved policy: the generated entry
 wrapper reports a diagnostic and returns a nonzero process status before user
@@ -287,9 +284,10 @@ Initialization records distinguish absent, initialized, and moved alternatives.
 A cleanup guard must use the actual runtime state, not treat a static "possibly
 initialized" result as a value. Operation and task-scope records likewise need
 runtime activation guards. The CFG outcome events describe analysis facts,
-not an executable argument-evaluation schedule. Generated direct-await binding
-therefore implements allocation before argument evaluation, transactional
-transfer, and guarded polling explicitly instead of replaying those events.
+not an executable argument-evaluation schedule. Generated direct-await and
+child-creation bindings therefore implement allocation before argument
+evaluation, transactional transfer, and guarded polling explicitly instead of
+replaying those events.
 
 Scope exits expand into inner-to-outer cancellation requests (for early exits),
 draining, synchronous deferred calls, and guarded owner destruction. A drain
@@ -337,26 +335,30 @@ reporting failure or retiring storage; invalid outcome encodings trap as an
 internal protocol error.
 
 `GenerateAsyncValuesForTesting` adds a deliberately internal source-to-native
-binding for direct awaits. It uses LLVM `DataLayout` to assign target-correct
-byte offsets and ABI alignment for control state, initialization and operation
-guards, parameters, locals, temporaries, saved completed values, saved execution
-errors, and indirect `Computation` objects. Values that may survive suspension
-have stable frame addresses. Direct operations remain indirect, so recursive
-frames have finite layouts and stable addresses.
+binding for direct awaits and scoped children. It uses LLVM `DataLayout` to
+assign target-correct byte offsets and ABI alignment for control state,
+initialization and operation guards, parameters, locals, temporaries, saved
+completed values, saved execution errors, and indirect `Computation` objects.
+Values that may survive suspension have stable frame addresses. Direct
+operations remain indirect, so recursive frames have finite layouts and stable
+addresses.
 
 The generated callbacks evaluate ordinary values, assignments, branches, loops,
 returns, and the synchronous helper bodies reached by supported async code.
-They reserve, initialize, poll/resume, transfer, retire, and release direct child
-frames. Checked await, void await, and `.await?` keep execution failure separate
-from an ordinary returned error, including aggregate completed values. Flow
-bindings consume postorder analysis events without re-evaluating source
+They reserve, initialize, queue, poll/resume, join, transfer, retire, and release
+direct and scheduled child frames. Per-scope dynamic child records preserve
+multiple live children from repeated visits to one source site. Normal cleanup
+drains; early exits cancel then drain from inner to outer before guarded local
+destruction. Checked await, void await, and `.await?` keep execution failure
+separate from an ordinary returned error, including aggregate completed values.
+Flow bindings consume postorder analysis events without re-evaluating source
 expressions. Generated cleanup uses runtime initialization guards and reverse
 ownership order; saved returns and pending cancellation are destroyed exactly
 once, only after retirement.
 
 This entry is not wired to `NativeCompiler`, the CLI, or synchronous lowering.
-It currently rejects generated child scheduling and dynamic async defer storage
-with explicit errors. Public future APIs, timers/I/O, async interface/behavior
+It still rejects dynamic async defer storage with an explicit error. Public
+future APIs, timers/I/O, async interface/behavior
 dispatch, and production `async main` integration remain later work. Unsupported
 value or continuation shapes fail generation rather than silently omitting their
 effects or cleanup.
@@ -369,8 +371,10 @@ executor wakeups, recursive computation frames, and injected frame-allocation
 failure. `AsyncValueLoweringTests` start from Flecha source and execute generated
 frames. They cover immediate and pending completion, repeated wakes, recursion,
 branches, loops, early returns, checked and forwarded failure, void and aggregate
-results, ordinary `try`, stable borrows, move-only transfers, reservation failure
-before argument effects, cancellation, and exactly-once destruction. Test code
+results, ordinary `try`, stable borrows, move-only transfers, both creation
+spellings, FIFO child execution, checked/forwarded joins, repeated source-site
+children, lexical cancel/drain, reservation failure at every child boundary,
+partial success, cancellation, stale wakes, and exactly-once destruction. Test code
 only supplies synthetic readiness/allocation failure and observations; source
 evaluation, transfers, and cleanup are generated. Neither suite removes
 `FLECHA-S0089` or the synchronous lowering gate.
@@ -383,9 +387,9 @@ evaluation, transfers, and cleanup are generated. Neither suite removes
 | Semantic records | Async callable effect, scoped task type, explicit checked-result kind, value/error bindings, and void/forwarding await records; unsupported-use diagnostics. |
 | Scope analysis | Success/failure CFG paths and conditional definite assignment; inner-to-outer join/cancel-and-drain plans, forwarded-failure exits, unobserved child-failure and cross-scope jump diagnostics. |
 | Borrow analysis | Outcome-sensitive captures and argument moves, explicit join release, aggregate borrowed-result origins, and consumed-handle checks. Generated-frame/suspension validation remains. |
-| Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional creation, and separate allocation failure outcome. |
+| Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional direct/child creation, dynamic lexical child records, join watching, cancel/drain, and separate allocation failure outcome. |
 | Frame/suspension planning | Verified internal plans, conservative stable slots, initialization/move alternatives, read liveness, and suspendable scope-exit continuations, saved execution errors and distinct failed terminals; deterministic dumps and corruption tests. |
-| Resumable code generation | Internal machine lowering plus target-layout, value/operation, direct-await, and guarded-cleanup bindings with source-to-generated-frame execution tests. Child scheduling, dynamic defer storage, production entry integration, and the public ABI remain. Async declarations still issue `FLECHA-S0089` and cannot reach synchronous lowering. |
+| Resumable code generation | Internal machine lowering plus target-layout, value/operation, direct-await, child scheduling/joining, lexical child cleanup, and guarded owner-cleanup bindings with source-to-generated-frame execution tests. Dynamic defer storage, production entry integration, and the public ABI remain. Async declarations still issue `FLECHA-S0089` and cannot reach synchronous lowering. |
 | Ordinary returned-error propagation | Prefix `try` implemented through CFG, borrow/allocation analysis, synchronous lowering and native code generation; supports error-only and multiple success fields. |
 | Public Flecha futures/results | Checked destructuring, void await and `.await?` implemented in the frontend; public low-level future API and executable integration remain. |
 | Tooling | VS Code and Neovim syntax highlighting; checked expression types, success-condition and failure-forwarding hover, and binding navigation/occurrence tests. |
@@ -393,9 +397,9 @@ evaluation, transfers, and cleanup are generated. Neither suite removes
 Tests cover ready and delayed synthetic events, registration-time notifications,
 stale callbacks, reentrancy, cancellation, allocation failure injection, result
 consumption, checked-result control flow, move-only ownership, borrowed aggregates,
-borrowing/scope rules, and internal generated direct-await frames. The execution
-gate remains until the later child, defer, entry, public ABI, and interoperability
-work is validated together.
+borrowing/scope rules, and internal generated direct-await/scoped-child frames.
+The execution gate remains until the later defer, entry, public ABI, and
+interoperability work is validated together.
 
 With a testing build configured, run the focused checks with
 `ctest --test-dir <build-directory> -R 'AsyncFrontendTests|AsyncRuntimeTests|AsyncPlanTests|AsyncLoweringTests|AsyncValueLoweringTests' --output-on-failure`.

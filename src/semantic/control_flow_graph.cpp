@@ -78,24 +78,33 @@ class GraphBuilder final {
             if (!node.reachable) continue;
             if (node.memoryReturn || node.failureExit ||
                 node.propagationReturn) {
-                _graph.taskScopeExits.push_back({id, std::nullopt,
-                    TaskScopeExitKind::CancelAndDrain,
-                    {node.scopes.rbegin(), node.scopes.rend()}});
+                _graph.taskScopeExits.push_back(
+                    {id,
+                     std::nullopt,
+                     TaskScopeExitKind::CancelAndDrain,
+                     {node.scopes.rbegin(), node.scopes.rend()}});
                 continue;
             }
             // Cross-scope jumps are diagnosed separately, never treated as
             // implicit permission to enter or abandon a task scope.
-            if (node.transfer && node.transfer->Kind() == core::AstNodeKind::JumpToStatement)
+            if (node.transfer &&
+                node.transfer->Kind() == core::AstNodeKind::JumpToStatement)
                 continue;
             for (NodeId successor : node.successors) {
                 const auto& target = _graph.nodes[successor].scopes;
                 std::size_t common = 0;
                 while (common < node.scopes.size() && common < target.size() &&
-                       node.scopes[common] == target[common]) ++common;
+                       node.scopes[common] == target[common])
+                    ++common;
                 if (common == node.scopes.size()) continue;
-                TaskScopeExit exit{id, successor,
-                    node.transfer ? TaskScopeExitKind::CancelAndDrain : TaskScopeExitKind::Join, {}};
-                for (std::size_t index = node.scopes.size(); index > common; --index)
+                TaskScopeExit exit{id,
+                                   successor,
+                                   node.transfer
+                                       ? TaskScopeExitKind::CancelAndDrain
+                                       : TaskScopeExitKind::Join,
+                                   {}};
+                for (std::size_t index = node.scopes.size(); index > common;
+                     --index)
                     exit.scopes.push_back(node.scopes[index - 1]);
                 _graph.taskScopeExits.push_back(std::move(exit));
             }
@@ -159,36 +168,23 @@ class GraphBuilder final {
         }
         const NodeId memoryStore = AddNode({next});
         _graph.nodes[memoryStore].memoryDestructure = &destructure;
-        // Only the direct argument transfer is conditional. Side effects and
-        // transfers inside argument preparation remain ordinary evaluations.
-        const auto previous = _failedTransfers;
+        // Creation failure bypasses receiver/argument evaluation completely.
+        // Reservation is represented by the checked dispatch itself; only the
+        // success continuation evaluates and transfers prepared operands.
         if (checked && checked->creation && !success) {
-            const auto& spawn = static_cast<const core::SpawnExpression&>(
-                Unwrap(destructure.Value()));
-            const auto& call = Unwrap(spawn.Operand());
-            std::vector<const core::Expression*> arguments;
-            if (call.Kind() == core::AstNodeKind::CallExpression)
-                arguments = _model.ArgumentsFor(
-                    static_cast<const core::CallExpression&>(call));
-            else if (call.Kind() == core::AstNodeKind::MemberCallExpression) {
-                const auto& method =
-                    static_cast<const core::MemberCallExpression&>(call);
-                arguments = _model.ArgumentsFor(method);
-                arguments.push_back(&method.Receiver());
-            }
-            for (const auto* argument : arguments)
-                _failedTransfers.insert(&Unwrap(*argument));
+            const NodeId action = AddNode({memoryStore});
+            _graph.nodes[action].destructure = &destructure;
+            _graph.nodes[action].asyncSuccess = false;
+            return action;
         }
         if (HasTry(destructure.Value())) {
             const NodeId action = AddNode({memoryStore});
             _graph.nodes[action].destructure = &destructure;
             _graph.nodes[action].asyncSuccess = success;
             const NodeId body = BuildTryAction(destructure.Value(), action);
-            _failedTransfers = previous;
             return body;
         }
         const NodeId body = BuildExpression(destructure.Value(), memoryStore);
-        _failedTransfers = previous;
         const NodeId action = AddNode({body});
         _graph.nodes[action].destructure = &destructure;
         _graph.nodes[action].asyncSuccess = success;
@@ -520,9 +516,13 @@ class GraphBuilder final {
             }
             case core::AstNodeKind::ProceedStatement:
             case core::AstNodeKind::BreakStatement: {
-                const bool proceed = statement.Kind() == core::AstNodeKind::ProceedStatement;
-                const NodeId transfer = AddNode(_loops.empty() ? std::vector<NodeId>{}
-                    : std::vector<NodeId>{proceed ? _loops.back().first : _loops.back().second});
+                const bool proceed =
+                    statement.Kind() == core::AstNodeKind::ProceedStatement;
+                const NodeId transfer = AddNode(
+                    _loops.empty()
+                        ? std::vector<NodeId>{}
+                        : std::vector<NodeId>{proceed ? _loops.back().first
+                                                      : _loops.back().second});
                 _graph.nodes[transfer].transfer = &statement;
                 return transfer;
             }
@@ -623,9 +623,13 @@ class GraphBuilder final {
                 return BuildExpression(attempt.Operand(), dispatch);
             }
             case core::AstNodeKind::AwaitExpression:
-                return BuildExpression(static_cast<const core::AwaitExpression&>(expression).Operand(), next);
+                return BuildExpression(
+                    static_cast<const core::AwaitExpression&>(expression)
+                        .Operand(),
+                    next);
             case core::AstNodeKind::SpawnExpression: {
-                const auto& spawn = static_cast<const core::SpawnExpression&>(expression);
+                const auto& spawn =
+                    static_cast<const core::SpawnExpression&>(expression);
                 if (const Symbol* task = _model.TaskFor(spawn))
                     _graph.symbolScopes.emplace(task, _scopes.back());
                 return BuildExpression(spawn.Operand(), next);
@@ -721,8 +725,7 @@ class GraphBuilder final {
                 return BuildExpression(match.Value(), dispatch);
             }
             case core::AstNodeKind::NameExpression: {
-                if (_model.TransferOf(expression) == TransferKind::Move &&
-                    !_failedTransfers.contains(&expression)) {
+                if (_model.TransferOf(expression) == TransferKind::Move) {
                     const NodeId move = AddNode({next});
                     _graph.nodes[move].move = _model.SymbolFor(
                         static_cast<const core::NameExpression&>(expression));
@@ -804,8 +807,7 @@ class GraphBuilder final {
                     callee && callee->Kind() == SymbolKind::Function
                         ? static_cast<const FunctionSymbol*>(callee)
                         : nullptr;
-                if (function &&
-                    function->BuiltIn() == BuiltInFunction::Crash)
+                if (function && function->BuiltIn() == BuiltInFunction::Crash)
                     next = AddNode({});
                 const bool allocation =
                     function &&
@@ -857,7 +859,6 @@ class GraphBuilder final {
         }
     }
 
-    std::set<const core::Expression*> _failedTransfers;
     const SemanticModel& _model;
     ControlFlowGraph _graph;
     std::vector<const core::CallExpression*> _initializingAllocations;

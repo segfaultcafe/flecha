@@ -47,6 +47,10 @@ struct PollContext final {
     bool (*externalReady)(void* state, void* frame,
                           const WakeHandle& wake) noexcept = nullptr;
     void* externalState = nullptr;
+    // Present only while an executor polls a task. Compiler-generated child
+    // creation uses this owning executor after all scheduler/frame resources
+    // have been reserved and before publishing a lexical handle.
+    Executor* executor = nullptr;
 };
 
 // Every terminal outcome acknowledges that callbacks/operations can no longer
@@ -140,6 +144,13 @@ class Executor final {
     // or publishing a runnable task. On failure output/arguments are unchanged.
     bool TryCreateTask(const FrameLayout& layout, void* arguments,
                        TaskHandle& output) noexcept;
+    // Transactional split used by generated scoped children. Reservation
+    // performs every fallible scheduler/frame allocation. Initialization is
+    // then infallible, transfers arguments, and queues without running inline.
+    bool TryReserveTask(const FrameLayout& layout,
+                        TaskHandle& reservation) noexcept;
+    void InitializeReservedTask(const TaskHandle& reservation,
+                                void* arguments) noexcept;
     StepResult Step() noexcept;
     TaskStatus Status(const TaskHandle& task) const noexcept;
     void RequestCancellation(const TaskHandle& task) noexcept;
@@ -151,6 +162,7 @@ class Executor final {
     // itself release the scope's ownership of the task record.
     bool Release(const TaskHandle& task) noexcept;
     WakeHandle WakeFor(const TaskHandle& task) const noexcept;
+    std::pmr::memory_resource* Resource() const noexcept { return _resource; }
 
    private:
     void CheckThread() const noexcept;
@@ -166,6 +178,24 @@ class Executor final {
     bool (*_externalReady)(void*, void*, const WakeHandle&) noexcept = nullptr;
     void* _externalState = nullptr;
     friend class WakeHandle;
+};
+
+}  // namespace flecha::runtime::async
+
+namespace flecha::runtime::async {
+
+// Opaque lexical ownership record embedded in compiler-generated frames.
+// Dynamic children are separately allocated so repeated visits to one source
+// site never overwrite an earlier live child.
+struct ScopedChild;
+class ChildScope final {
+   public:
+    ChildScope() = default;
+    ~ChildScope();
+    ChildScope(const ChildScope&) = delete;
+    ChildScope& operator=(const ChildScope&) = delete;
+    ScopedChild* _head = nullptr;
+    ScopedChild* _tail = nullptr;
 };
 
 }  // namespace flecha::runtime::async
@@ -195,5 +225,26 @@ bool flecha_async_context_cancelled(
     const flecha::runtime::async::PollContext* context) noexcept;
 bool flecha_async_context_ready(
     const flecha::runtime::async::PollContext* context, void* frame) noexcept;
+void flecha_async_child_scope_construct(void* storage) noexcept;
+void flecha_async_child_scope_destruct(void* storage) noexcept;
+bool flecha_async_child_reserve(
+    void* scope, void* reservation,
+    const flecha::runtime::async::PollContext* context, std::size_t size,
+    std::size_t alignment,
+    flecha::runtime::async::PollResult (*poll)(
+        void*, const flecha::runtime::async::PollContext&) noexcept,
+    void (*destroy)(void*) noexcept, void (*take)(void*, void*) noexcept,
+    void (*initialize)(void*, void*,
+                       std::pmr::memory_resource*) noexcept) noexcept;
+void flecha_async_child_initialize(void* scope, void* reservation,
+                                   void* arguments, void* output) noexcept;
+void flecha_async_child_join_initialize(void* storage, void* child) noexcept;
+std::uint8_t flecha_async_child_join_poll(
+    void* storage, const flecha::runtime::async::PollContext* context) noexcept;
+bool flecha_async_child_join_take(void* storage, void* destination) noexcept;
+bool flecha_async_child_join_release(void* storage) noexcept;
+void flecha_async_child_scope_cancel(void* scope) noexcept;
+bool flecha_async_child_scope_drain(
+    void* scope, const flecha::runtime::async::PollContext* context) noexcept;
 }
 #endif

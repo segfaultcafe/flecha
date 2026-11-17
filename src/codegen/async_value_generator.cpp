@@ -126,6 +126,7 @@ class TypeMapper final {
             case SemanticTypeKind::Reference:
             case SemanticTypeKind::Pointer:
             case SemanticTypeKind::Null:
+            case SemanticTypeKind::Task:
                 return llvm::PointerType::getUnqual(_context);
             case SemanticTypeKind::Void:
                 return llvm::Type::getVoidTy(_context);
@@ -491,6 +492,10 @@ class Emitter final {
                       SemanticType expected = SemanticType::Error()) {
         const core::Expression& expression = Unwrap(raw);
         SemanticType type = _model.TypeOf(expression);
+        if (!expected.IsError() &&
+            expected.Kind() == SemanticTypeKind::Reference &&
+            type.Kind() != SemanticTypeKind::Reference)
+            return Address(expression);
         if (!expected.IsError() && (type.Kind() == SemanticTypeKind::None ||
                                     type.Kind() == SemanticTypeKind::Null))
             type = expected;
@@ -857,11 +862,31 @@ class Emitter final {
     llvm::Value* OperationStorage(std::size_t state) {
         const auto& instruction = _entry->machine.Instructions()[state];
         if (!instruction.operation) {
-            Fail("direct await has no operation storage");
+            Fail("async await has no operation storage");
             return nullptr;
         }
         return BytePointer(
             _entry->generated.frame.operationOffsets[*instruction.operation]);
+    }
+
+    llvm::Value* ChildScopeStorage(std::size_t state) {
+        const semantic::AsyncState& source = _entry->plan->states[state];
+        if (!source.storage || _entry->plan->slots[*source.storage].kind !=
+                                   AsyncSlotKind::TaskScope) {
+            Fail("child creation has no lexical scope storage");
+            return nullptr;
+        }
+        return Slot(*source.storage);
+    }
+
+    llvm::Value* ChildReservation(std::size_t state) {
+        if (state >= _entry->generated.frame.childCreationOffsets.size() ||
+            !_entry->generated.frame.childCreationOffsets[state]) {
+            Fail("child creation has no reservation storage");
+            return nullptr;
+        }
+        return BytePointer(
+            *_entry->generated.frame.childCreationOffsets[state]);
     }
 
     bool EmitReserve(std::size_t state) {
@@ -871,40 +896,72 @@ class Emitter final {
         if (found == _functions.end())
             return Fail("direct await callee has no generated frame");
         const FunctionEntry& child = *found->second;
-        llvm::Value* operation = OperationStorage(state);
-        if (!operation) return false;
         llvm::Type* pointer = _builder.getPtrTy();
-        auto* reserveType = llvm::FunctionType::get(
-            _builder.getInt1Ty(),
-            {pointer, _builder.getInt64Ty(), _builder.getInt64Ty(), pointer,
-             pointer, pointer, pointer, pointer},
-            false);
-        llvm::Value* resource = _builder.CreateLoad(
-            pointer, BytePointer(_entry->generated.frame.resourceOffset));
         llvm::Value* take = nullptr;
         if (child.symbol->ReturnType().Kind() == SemanticTypeKind::Void)
             take = llvm::ConstantPointerNull::get(
                 llvm::PointerType::getUnqual(_context));
         else
             take = _module.getFunction(child.generated.name + "_take");
-        _actionResult = _builder.CreateZExt(
-            _builder.CreateCall(
+        llvm::Value* reserved = nullptr;
+        if (source.kind == AsyncStateKind::CreateChild) {
+            llvm::Value* scope = ChildScopeStorage(state);
+            llvm::Value* reservation = ChildReservation(state);
+            if (!scope || !reservation) return false;
+            auto* reserveType = llvm::FunctionType::get(
+                _builder.getInt1Ty(),
+                {pointer, pointer, pointer, _builder.getInt64Ty(),
+                 _builder.getInt64Ty(), pointer, pointer, pointer, pointer},
+                false);
+            reserved = _builder.CreateCall(
+                Runtime("flecha_async_child_reserve", reserveType),
+                {scope, reservation, _contextValue,
+                 _builder.getInt64(child.generated.frame.size),
+                 _builder.getInt64(child.generated.frame.alignment),
+                 _module.getFunction(child.generated.name + "_frame_poll"),
+                 _module.getFunction(child.generated.name + "_destroy"), take,
+                 _module.getFunction(child.generated.name + "_initialize")});
+        } else {
+            llvm::Value* operation = OperationStorage(state);
+            if (!operation) return false;
+            auto* reserveType = llvm::FunctionType::get(
+                _builder.getInt1Ty(),
+                {pointer, _builder.getInt64Ty(), _builder.getInt64Ty(), pointer,
+                 pointer, pointer, pointer, pointer},
+                false);
+            llvm::Value* resource = _builder.CreateLoad(
+                pointer, BytePointer(_entry->generated.frame.resourceOffset));
+            reserved = _builder.CreateCall(
                 Runtime("flecha_async_computation_reserve", reserveType),
                 {operation, _builder.getInt64(child.generated.frame.size),
                  _builder.getInt64(child.generated.frame.alignment),
                  _module.getFunction(child.generated.name + "_frame_poll"),
                  _module.getFunction(child.generated.name + "_destroy"), take,
                  _module.getFunction(child.generated.name + "_initialize"),
-                 resource}),
-            _builder.getInt8Ty());
+                 resource});
+        }
+        _actionResult = _builder.CreateZExt(reserved, _builder.getInt8Ty());
         return true;
     }
 
     bool EmitInitialize(std::size_t state) {
         const semantic::AsyncState& source = _entry->plan->states[state];
-        if (!source.checked || !source.checked->callee) return false;
-        llvm::Value* operation = OperationStorage(state);
-        if (!operation) return false;
+        if (!source.checked) return false;
+        if (source.kind == AsyncStateKind::ChildAwait) {
+            if (!source.checked->consumedChild) return false;
+            llvm::Value* operation = OperationStorage(state);
+            if (!operation) return false;
+            auto* type = llvm::FunctionType::get(
+                _builder.getVoidTy(),
+                {_builder.getPtrTy(), _builder.getPtrTy()}, false);
+            llvm::Value* child = _builder.CreateLoad(
+                _builder.getPtrTy(), Slot(*source.checked->consumedChild));
+            _builder.CreateCall(
+                Runtime("flecha_async_child_join_initialize", type),
+                {operation, child});
+            return true;
+        }
+        if (!source.checked->callee) return false;
         llvm::Value* arguments = llvm::ConstantPointerNull::get(
             llvm::PointerType::getUnqual(_context));
         for (std::size_t index = 0; index < source.checked->arguments.size();
@@ -915,7 +972,7 @@ class Emitter final {
                     return value.state == state && value.argument == index;
                 });
             if (temporary == _entry->generated.frame.temporaries.end())
-                return Fail("direct await argument has no frame temporary");
+                return Fail("async operation argument has no frame temporary");
             llvm::Value* value =
                 Eval(*source.checked->arguments[index],
                      source.checked->callee->ParameterTypes()[index]);
@@ -924,34 +981,59 @@ class Emitter final {
             _builder.CreateStore(value, storage);
             if (index == 0) arguments = storage;
         }
-        auto* type = llvm::FunctionType::get(
-            _builder.getVoidTy(), {_builder.getPtrTy(), _builder.getPtrTy()},
-            false);
-        _builder.CreateCall(
-            Runtime("flecha_async_computation_initialize", type),
-            {operation, arguments});
+        if (source.kind == AsyncStateKind::CreateChild) {
+            llvm::Value* scope = ChildScopeStorage(state);
+            llvm::Value* reservation = ChildReservation(state);
+            if (!scope || !reservation || !source.checked->value) return false;
+            auto* type = llvm::FunctionType::get(
+                _builder.getVoidTy(),
+                {_builder.getPtrTy(), _builder.getPtrTy(), _builder.getPtrTy(),
+                 _builder.getPtrTy()},
+                false);
+            _builder.CreateCall(
+                Runtime("flecha_async_child_initialize", type),
+                {scope, reservation, arguments, Slot(*source.checked->value)});
+        } else {
+            llvm::Value* operation = OperationStorage(state);
+            if (!operation) return false;
+            auto* type = llvm::FunctionType::get(
+                _builder.getVoidTy(),
+                {_builder.getPtrTy(), _builder.getPtrTy()}, false);
+            _builder.CreateCall(
+                Runtime("flecha_async_computation_initialize", type),
+                {operation, arguments});
+        }
         return true;
     }
 
     bool EmitPoll(std::size_t state, bool cancel) {
+        const semantic::AsyncState& source = _entry->plan->states[state];
         llvm::Value* operation = OperationStorage(state);
         if (!operation) return false;
         auto* type = llvm::FunctionType::get(
             _builder.getInt8Ty(), {_builder.getPtrTy(), _builder.getPtrTy()},
             false);
-        _actionResult = _builder.CreateCall(
-            Runtime(cancel ? "flecha_async_computation_cancel"
-                           : "flecha_async_computation_poll",
-                    type),
-            {operation, _contextValue});
+        const char* name = nullptr;
+        if (source.kind == AsyncStateKind::ChildAwait)
+            name = "flecha_async_child_join_poll";
+        else
+            name = cancel ? "flecha_async_computation_cancel"
+                          : "flecha_async_computation_poll";
+        _actionResult = _builder.CreateCall(Runtime(name, type),
+                                            {operation, _contextValue});
         return true;
     }
 
     bool EmitFinish(std::size_t state, llvm::Value* outcome) {
         const semantic::AsyncState& source = _entry->plan->states[state];
         if (!source.checked) return false;
-        llvm::Value* operation = OperationStorage(state);
-        if (!operation) return false;
+        const bool creation = source.kind == AsyncStateKind::CreateChild;
+        const bool join = source.kind == AsyncStateKind::ChildAwait;
+        llvm::Value* operation = nullptr;
+        if (!creation) {
+            operation = OperationStorage(state);
+            if (!operation) return false;
+        }
         llvm::BasicBlock* ready =
             llvm::BasicBlock::Create(_context, "finish.ready", _function);
         llvm::BasicBlock* failure =
@@ -962,13 +1044,14 @@ class Emitter final {
             _builder.CreateICmpEQ(outcome, _builder.getInt8(1)), ready,
             failure);
         _builder.SetInsertPoint(ready);
-        if (source.checked->value) {
+        if (!creation && source.checked->value) {
             auto* takeType = llvm::FunctionType::get(
                 _builder.getInt1Ty(),
                 {_builder.getPtrTy(), _builder.getPtrTy()}, false);
-            _builder.CreateCall(
-                Runtime("flecha_async_computation_take", takeType),
-                {operation, Slot(*source.checked->value)});
+            _builder.CreateCall(Runtime(join ? "flecha_async_child_join_take"
+                                             : "flecha_async_computation_take",
+                                        takeType),
+                                {operation, Slot(*source.checked->value)});
         }
         _builder.CreateStore(
             llvm::Constant::getNullValue(
@@ -988,11 +1071,15 @@ class Emitter final {
         _builder.CreateStore(error, Slot(source.checked->error));
         _builder.CreateBr(done);
         _builder.SetInsertPoint(done);
-        auto* releaseType = llvm::FunctionType::get(
-            _builder.getInt1Ty(), {_builder.getPtrTy()}, false);
-        _builder.CreateCall(
-            Runtime("flecha_async_computation_release", releaseType),
-            {operation});
+        if (!creation) {
+            auto* releaseType = llvm::FunctionType::get(
+                _builder.getInt1Ty(), {_builder.getPtrTy()}, false);
+            _builder.CreateCall(
+                Runtime(join ? "flecha_async_child_join_release"
+                             : "flecha_async_computation_release",
+                        releaseType),
+                {operation});
+        }
         return true;
     }
 
@@ -1037,12 +1124,22 @@ class Emitter final {
         for (std::size_t state = 0; state < _entry->plan->states.size();
              ++state) {
             const AsyncStateKind kind = _entry->plan->states[state].kind;
-            if ((action == AsyncAction::Reserve ||
-                 action == AsyncAction::Initialize ||
-                 action == AsyncAction::Poll || action == AsyncAction::Finish ||
-                 action == AsyncAction::CancelOperation ||
-                 action == AsyncAction::RetireOperation) &&
-                kind == AsyncStateKind::DirectAwait)
+            const bool operationAction =
+                action == AsyncAction::Reserve ||
+                action == AsyncAction::Initialize ||
+                action == AsyncAction::Poll || action == AsyncAction::Finish ||
+                action == AsyncAction::CancelOperation ||
+                action == AsyncAction::RetireOperation;
+            const bool supports = kind == AsyncStateKind::DirectAwait ||
+                                  ((action == AsyncAction::Reserve ||
+                                    action == AsyncAction::Initialize ||
+                                    action == AsyncAction::Finish) &&
+                                   kind == AsyncStateKind::CreateChild) ||
+                                  ((action == AsyncAction::Initialize ||
+                                    action == AsyncAction::Poll ||
+                                    action == AsyncAction::Finish) &&
+                                   kind == AsyncStateKind::ChildAwait);
+            if (operationAction && supports)
                 states.push_back(state);
             else if (action == AsyncAction::Flow &&
                      _entry->machine.Instructions()[state].flowAction)
@@ -1069,11 +1166,45 @@ class Emitter final {
             _builder.CreateRet(_builder.getInt8(0));
             return true;
         }
+        if (action == AsyncAction::RunDefers) {
+            // Dynamic async defer storage remains a separate milestone.
+            _builder.CreateRet(_builder.getInt8(0));
+            return true;
+        }
         if (action == AsyncAction::CancelChildren ||
-            action == AsyncAction::DrainChildren ||
-            action == AsyncAction::RunDefers) {
-            // These constructs are rejected by this source generator. Keep a
-            // fail-closed return in case a corrupt machine reaches them.
+            action == AsyncAction::DrainChildren) {
+            llvm::BasicBlock* invalid =
+                llvm::BasicBlock::Create(_context, "scope.invalid", _function);
+            auto* select = _builder.CreateSwitch(index, invalid,
+                                                 _entry->plan->scopes.size());
+            for (std::size_t scope = 0; scope < _entry->plan->scopes.size();
+                 ++scope) {
+                if (!_entry->plan->scopes[scope].children) continue;
+                llvm::BasicBlock* block = llvm::BasicBlock::Create(
+                    _context, "scope." + std::to_string(scope), _function);
+                select->addCase(_builder.getInt64(scope), block);
+                _builder.SetInsertPoint(block);
+                llvm::Value* storage =
+                    Slot(*_entry->plan->scopes[scope].children);
+                if (action == AsyncAction::CancelChildren) {
+                    auto* type = llvm::FunctionType::get(
+                        _builder.getVoidTy(), {_builder.getPtrTy()}, false);
+                    _builder.CreateCall(
+                        Runtime("flecha_async_child_scope_cancel", type),
+                        {storage});
+                    _builder.CreateRet(_builder.getInt8(1));
+                } else {
+                    auto* type = llvm::FunctionType::get(
+                        _builder.getInt1Ty(),
+                        {_builder.getPtrTy(), _builder.getPtrTy()}, false);
+                    llvm::Value* drained = _builder.CreateCall(
+                        Runtime("flecha_async_child_scope_drain", type),
+                        {storage, _contextValue});
+                    _builder.CreateRet(
+                        _builder.CreateZExt(drained, _builder.getInt8Ty()));
+                }
+            }
+            _builder.SetInsertPoint(invalid);
             _builder.CreateRet(_builder.getInt8(0));
             return true;
         }
@@ -1160,10 +1291,24 @@ class Emitter final {
             resource, BytePointer(_entry->generated.frame.resourceOffset));
         auto* constructType = llvm::FunctionType::get(
             _builder.getVoidTy(), {_builder.getPtrTy()}, false);
-        for (std::size_t offset : _entry->generated.frame.operationOffsets)
-            _builder.CreateCall(
-                Runtime("flecha_async_computation_construct", constructType),
-                {BytePointer(offset)});
+        for (std::size_t operation = 0;
+             operation < _entry->generated.frame.operationOffsets.size();
+             ++operation)
+            if (_entry->plan->slots[_entry->machine.OperationSlots()[operation]]
+                    .kind == AsyncSlotKind::Computation)
+                _builder.CreateCall(
+                    Runtime("flecha_async_computation_construct",
+                            constructType),
+                    {BytePointer(
+                        _entry->generated.frame.operationOffsets[operation])});
+        for (const semantic::AsyncScopePlan& scope : _entry->plan->scopes)
+            if (scope.children) {
+                auto* scopeType = llvm::FunctionType::get(
+                    _builder.getVoidTy(), {_builder.getPtrTy()}, false);
+                _builder.CreateCall(
+                    Runtime("flecha_async_child_scope_construct", scopeType),
+                    {Slot(*scope.children)});
+            }
         llvm::Function* control =
             _module.getFunction(_entry->generated.name + "_control_initialize");
         if (!control)
@@ -1283,10 +1428,20 @@ class Emitter final {
         }
         auto* destructType = llvm::FunctionType::get(
             _builder.getVoidTy(), {_builder.getPtrTy()}, false);
-        for (std::size_t offset : _entry->generated.frame.operationOffsets)
-            _builder.CreateCall(
-                Runtime("flecha_async_computation_destruct", destructType),
-                {BytePointer(offset)});
+        for (std::size_t operation = 0;
+             operation < _entry->generated.frame.operationOffsets.size();
+             ++operation)
+            if (_entry->plan->slots[_entry->machine.OperationSlots()[operation]]
+                    .kind == AsyncSlotKind::Computation)
+                _builder.CreateCall(
+                    Runtime("flecha_async_computation_destruct", destructType),
+                    {BytePointer(
+                        _entry->generated.frame.operationOffsets[operation])});
+        for (const semantic::AsyncScopePlan& scope : _entry->plan->scopes)
+            if (scope.children)
+                _builder.CreateCall(
+                    Runtime("flecha_async_child_scope_destruct", destructType),
+                    {Slot(*scope.children)});
         _builder.CreateRetVoid();
         return true;
     }
@@ -1336,13 +1491,6 @@ class Emitter final {
 
 bool Supported(const FunctionEntry& entry, std::string& error) {
     for (const semantic::AsyncState& state : entry.plan->states) {
-        if (state.kind == AsyncStateKind::CreateChild ||
-            state.kind == AsyncStateKind::ChildAwait) {
-            error =
-                "generated child scheduling is not implemented; use a direct "
-                "await";
-            return false;
-        }
         if (state.kind == AsyncStateKind::RunDefers) {
             error = "dynamic async defer storage is not implemented";
             return false;

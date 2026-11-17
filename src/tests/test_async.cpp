@@ -545,29 +545,25 @@ TEST(AsyncFrontendTests,
                     DiagnosticCode::MovedValue));
 }
 
-TEST(AsyncFrontendTests,
-     DirectAwaitArgumentPreparationUsesAllocationFirstLowering) {
+TEST(AsyncFrontendTests, AsyncArgumentPreparationUsesAllocationFirstLowering) {
     for (const std::string operation : {"shoot f(make())", ">>- f(make())"}) {
         const auto result = Analyze(
             "i32 make() { return 1; } async i32 f(i32 value) { return value; } "
-            "async void main() { v, e := " +
-            operation + "; return; }");
-        EXPECT_TRUE(Has(result, DiagnosticCode::InvalidAsync));
-        EXPECT_TRUE(std::ranges::any_of(
-            result.diagnostics.Diagnostics(), [](const auto& diagnostic) {
-                return diagnostic.message.find(
-                           "argument-preparation effects") != std::string::npos;
-            }));
+            "async void main() { child, e := " +
+            operation +
+            "; if e != none { return; } value, ae := child.await; "
+            "if ae != none { return; } return; }");
+        ExpectChecked(result);
     }
     ExpectChecked(Analyze(
         "i32 make() { return 1; } async i32 f(i32 value) { return value; } "
         "async void main() { v, e := f(make()).await; return; }"));
-    EXPECT_TRUE(Has(
-        Analyze(
-            "structure Owner {}; void Owner::tear(&self) override {} "
-            "async i32 f((Owner, i32) input) { return 1; } async void main() { "
-            "Owner owner = none; child, e := shoot f((owner, 1)); return; }"),
-        DiagnosticCode::InvalidAsync));
+    ExpectChecked(Analyze(
+        "structure Owner {}; void Owner::tear(&self) override {} "
+        "async i32 f((Owner, i32) input) { return 1; } async void main() { "
+        "Owner owner = none; child, e := shoot f((owner, 1)); "
+        "if e != none { retained := owner; return; } value, ae := child.await; "
+        "if ae != none { return; } return; }"));
     ExpectChecked(Analyze(
         "structure Owner {}; void Owner::tear(&self) override {} "
         "async i32 f((Owner, i32) input) { return 1; } async void main() { "

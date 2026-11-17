@@ -834,8 +834,7 @@ void SemanticAnalyzer::ValidateDecorations(const core::CompilationUnit& unit) {
     const auto requireApplicationContract =
         [&](const DecorationApplication& application,
             const DecorationDeclaration* decoration) {
-            if (!decoration || decoration->HasBody())
-                return;
+            if (!decoration || decoration->HasBody()) return;
             Report(diagnostics::DiagnosticCode::InvalidDecoration,
                    application.range,
                    "decoration '@" + decoration->Name() +
@@ -3081,12 +3080,14 @@ void SemanticAnalyzer::AnalyzeFunction(
     const ControlFlowGraph graph = BuildControlFlowGraph(function, _model);
     if (function.IsAsync())
         for (const FlowNode& node : graph.nodes)
-            if (node.transfer && node.transfer->Kind() == core::AstNodeKind::JumpToStatement)
+            if (node.transfer &&
+                node.transfer->Kind() == core::AstNodeKind::JumpToStatement)
                 for (NodeId target : node.successors)
                     if (node.scopes != graph.nodes[target].scopes)
                         Report(diagnostics::DiagnosticCode::InvalidAsync,
                                node.transfer->Range(),
-                               "jumpto cannot cross lexical task-scope boundaries in an async function");
+                               "jumpto cannot cross lexical task-scope "
+                               "boundaries in an async function");
     if (_currentFunction &&
         _currentFunction->ReturnType().Kind() != SemanticTypeKind::Void &&
         !_currentFunction->ReturnType().IsError() &&
@@ -4145,12 +4146,16 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
                 AnalyzeTry(static_cast<const core::TryExpression&>(expression));
             break;
         case core::AstNodeKind::AwaitExpression:
-            type = AnalyzeAsyncOperation(expression,
-                static_cast<const core::AwaitExpression&>(expression).Operand(), false);
+            type = AnalyzeAsyncOperation(
+                expression,
+                static_cast<const core::AwaitExpression&>(expression).Operand(),
+                false);
             break;
         case core::AstNodeKind::SpawnExpression:
-            type = AnalyzeAsyncOperation(expression,
-                static_cast<const core::SpawnExpression&>(expression).Operand(), true);
+            type = AnalyzeAsyncOperation(
+                expression,
+                static_cast<const core::SpawnExpression&>(expression).Operand(),
+                true);
             break;
         case core::AstNodeKind::CallExpression:
             type = AnalyzeCall(
@@ -4201,19 +4206,23 @@ SemanticType SemanticAnalyzer::AnalyzeExpression(
     return type;
 }
 
-void SemanticAnalyzer::ValidateAsyncCall(
-    const core::Expression& expression, const CallableSignature& signature,
-    const FunctionSymbol* function) {
+void SemanticAnalyzer::ValidateAsyncCall(const core::Expression& expression,
+                                         const CallableSignature& signature,
+                                         const FunctionSymbol* function) {
     if (!signature.isAsync) return;
     if (!_currentFunction || !_currentFunction->IsAsync())
         Report(diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),
-               "async calls require an async function; only async main may enter from synchronous code");
+               "async calls require an async function; only async main may "
+               "enter from synchronous code");
     if (_asyncOperand != &expression)
-        Report(diagnostics::DiagnosticCode::UnawaitedAsyncCall, expression.Range(),
-               "async call must be immediately awaited with .await or explicitly spawned");
+        Report(diagnostics::DiagnosticCode::UnawaitedAsyncCall,
+               expression.Range(),
+               "async call must be immediately awaited with .await or "
+               "explicitly spawned");
     if (!function || function->InterfaceOwner())
         Report(diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),
-               "indirect async calls and async interface dispatch are not supported yet");
+               "indirect async calls and async interface dispatch are not "
+               "supported yet");
 }
 
 SemanticType SemanticAnalyzer::AnalyzeImmediateAsync(
@@ -4238,10 +4247,12 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
     bool spawn) {
     if (!_currentFunction || !_currentFunction->IsAsync())
         Report(diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),
-               "await and shoot require an async function; unsafe does not permit suspension");
+               "await and shoot require an async function; unsafe does not "
+               "permit suspension");
     const core::Expression* inner = &operand;
     while (inner->Kind() == core::AstNodeKind::ParenthesizedExpression)
-        inner = &static_cast<const core::ParenthesizedExpression*>(inner)->Inner();
+        inner =
+            &static_cast<const core::ParenthesizedExpression*>(inner)->Inner();
     const core::Expression* previous = _asyncOperand;
     _asyncOperand = inner;
     const bool immediate = _checkedAsyncExpression == &expression;
@@ -4260,74 +4271,18 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
     if (inner->Kind() == core::AstNodeKind::CallExpression) {
         const auto& call = static_cast<const core::CallExpression&>(*inner);
         const SemanticType callee = _model.TypeOf(call.Callee());
-        asyncCall = callee.Kind() == SemanticTypeKind::Function && callee.Signature().isAsync;
+        asyncCall = callee.Kind() == SemanticTypeKind::Function &&
+                    callee.Signature().isAsync;
     } else if (inner->Kind() == core::AstNodeKind::MemberCallExpression) {
-        const auto& call = static_cast<const core::MemberCallExpression&>(*inner);
+        const auto& call =
+            static_cast<const core::MemberCallExpression&>(*inner);
         const FunctionSymbol* target = _model.MethodFor(call);
         asyncCall = target && target->IsAsync();
     }
-    // Compiler-generated direct-await frames reserve stable storage before
-    // this preparation executes. Child scheduling still uses the older
-    // frontend restriction until its scheduler reservation is generated too.
-    if (asyncCall && spawn) {
-        std::vector<const core::Expression*> prepared;
-        if (inner->Kind() == core::AstNodeKind::CallExpression)
-            prepared = _model.ArgumentsFor(
-                static_cast<const core::CallExpression&>(*inner));
-        else {
-            const auto& method =
-                static_cast<const core::MemberCallExpression&>(*inner);
-            prepared = _model.ArgumentsFor(method);
-            prepared.push_back(&method.Receiver());
-        }
-        for (const auto* argument : prepared) {
-            const core::Expression* root = argument;
-            while (root->Kind() == core::AstNodeKind::ParenthesizedExpression)
-                root = &static_cast<const core::ParenthesizedExpression*>(root)
-                            ->Inner();
-            bool unsupported = false;
-            core::WalkAst(*argument, [&](core::AstNode& node, bool entering) {
-                if (!entering) return;
-                switch (node.Kind()) {
-                    case core::AstNodeKind::CallExpression:
-                    case core::AstNodeKind::MemberCallExpression:
-                    case core::AstNodeKind::AssignmentExpression:
-                    case core::AstNodeKind::BuildExpression:
-                    case core::AstNodeKind::AnonymousFunctionExpression:
-                        unsupported = true;
-                        break;
-                    case core::AstNodeKind::UnaryExpression: {
-                        const auto op =
-                            static_cast<const core::UnaryExpression&>(node)
-                                .OperatorType();
-                        unsupported |= op == TokenType::Increment ||
-                                       op == TokenType::Decrement;
-                        break;
-                    }
-                    case core::AstNodeKind::NameExpression:
-                        // A direct prepared binding transfers only on creation
-                        // success. Moves used to construct an argument first
-                        // need allocation-first lowering before they can run
-                        // here.
-                        unsupported |=
-                            &node != root &&
-                            _model.TransferOf(
-                                static_cast<const core::Expression&>(node)) ==
-                                TransferKind::Move;
-                        break;
-                    default:
-                        break;
-                }
-            });
-            if (unsupported)
-                Report(
-                    diagnostics::DiagnosticCode::InvalidAsync,
-                    argument->Range(),
-                    "argument-preparation effects require allocation-first "
-                    "lowering, which is not implemented yet; prepare this "
-                    "argument in a separate statement before shoot or await");
-        }
-    }
+    // Generated direct awaits and child creation both reserve every fallible
+    // frame/scheduler resource before evaluating receivers or arguments.
+    // Preparation effects and nested ownership transfers therefore happen
+    // exactly once only on the successful reservation path.
     if (spawn) {
         if (!asyncCall) {
             Report(diagnostics::DiagnosticCode::InvalidSpawn, operand.Range(),
@@ -4336,9 +4291,11 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
             return SemanticType::Error();
         }
         const SemanticType taskType(SemanticTypeKind::Task, value);
-        const auto& syntax = static_cast<const core::SpawnExpression&>(expression);
+        const auto& syntax =
+            static_cast<const core::SpawnExpression&>(expression);
         if (!_model._asyncTasks.contains(&syntax)) {
-            auto task = std::make_unique<VariableSymbol>(SymbolKind::LocalVariable,
+            auto task = std::make_unique<VariableSymbol>(
+                SymbolKind::LocalVariable,
                 "$async.task." + std::to_string(_model._asyncTasks.size()),
                 taskType, expression.Range(), false);
             _model._asyncTasks.emplace(&syntax, task.get());
@@ -7840,7 +7797,7 @@ void SemanticAnalyzer::ResolveInterfaceMethods() {
             function.IsUnsafe(),
             function.HasModifier(core::FunctionModifier::Once),
             function.IsCrashable(),
-        function.IsAsync()};
+            function.IsAsync()};
         auto callableSignature =
             std::make_shared<const CallableSignature>(signature);
         MethodContract contract = NormalizeMethodContract(

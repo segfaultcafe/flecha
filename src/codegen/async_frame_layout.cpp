@@ -99,6 +99,7 @@ class TypeMapper final {
             case Kind::Reference:
             case Kind::Pointer:
             case Kind::Null:
+            case Kind::Task:
                 return llvm::PointerType::getUnqual(_context);
             case Kind::StringView: {
                 llvm::Type* size = llvm::IntegerType::get(
@@ -133,6 +134,7 @@ std::optional<AsyncConcreteFrameLayout> PlanAsyncFrameLayout(
     AsyncConcreteFrameLayout result;
     result.slotOffsets.resize(plan.slots.size());
     result.operationOffsets.resize(machine.OperationCount());
+    result.childCreationOffsets.resize(plan.states.size());
     TypeMapper mapper(context, dataLayout);
     std::size_t cursor = 0;
     auto reserve = [&](std::size_t size, std::size_t alignment) {
@@ -162,9 +164,14 @@ std::optional<AsyncConcreteFrameLayout> PlanAsyncFrameLayout(
         const semantic::AsyncFrameSlot& slot = plan.slots[id];
         using Kind = semantic::AsyncSlotKind;
         if (slot.kind == Kind::Computation || slot.kind == Kind::ChildJoin ||
-            slot.kind == Kind::TaskScope || slot.kind == Kind::DeferredCall ||
-            slot.kind == Kind::DeferredStack)
+            slot.kind == Kind::DeferredCall || slot.kind == Kind::DeferredStack)
             continue;
+        if (slot.kind == Kind::TaskScope) {
+            result.slotOffsets[id] =
+                reserve(sizeof(runtime::async::ChildScope),
+                        alignof(runtime::async::ChildScope));
+            continue;
+        }
         llvm::Type* type = mapper.Map(slot.type);
         if (!type || type->isVoidTy() || !type->isSized()) {
             error = "unsupported concrete async slot type '" +
@@ -177,23 +184,31 @@ std::optional<AsyncConcreteFrameLayout> PlanAsyncFrameLayout(
     }
     for (std::size_t operation = 0; operation < machine.OperationCount();
          ++operation) {
+        const bool join =
+            plan.slots[machine.OperationSlots()[operation]].kind ==
+            semantic::AsyncSlotKind::ChildJoin;
         const std::size_t offset =
-            reserve(sizeof(runtime::async::Computation),
-                    alignof(runtime::async::Computation));
+            join ? reserve(sizeof(void*), alignof(void*))
+                 : reserve(sizeof(runtime::async::Computation),
+                           alignof(runtime::async::Computation));
         result.operationOffsets[operation] = offset;
         result.slotOffsets[machine.OperationSlots()[operation]] = offset;
     }
     for (std::size_t state = 0; state < plan.states.size(); ++state) {
         const semantic::AsyncState& source = plan.states[state];
-        if (source.kind != semantic::AsyncStateKind::DirectAwait ||
+        if ((source.kind != semantic::AsyncStateKind::DirectAwait &&
+             source.kind != semantic::AsyncStateKind::CreateChild) ||
             !source.checked)
             continue;
         if (!source.checked->callee ||
             source.checked->arguments.size() !=
                 source.checked->callee->ParameterTypes().size()) {
-            error = "direct await has an invalid argument plan";
+            error = "async operation has an invalid argument plan";
             return std::nullopt;
         }
+        if (source.kind == semantic::AsyncStateKind::CreateChild)
+            result.childCreationOffsets[state] =
+                reserve(sizeof(void*), alignof(void*));
         for (std::size_t argument = 0;
              argument < source.checked->arguments.size(); ++argument) {
             const semantic::SemanticType type =

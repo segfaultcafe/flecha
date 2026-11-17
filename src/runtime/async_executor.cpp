@@ -127,6 +127,7 @@ struct TaskRecord final {
     bool started = false;
     bool cancellationRequested = false;
     bool resultTaken = false;
+    bool admitted = false;
     Computation computation;
 };
 
@@ -188,13 +189,19 @@ bool Executor::TrySchedule(void* frame, FrameOperations operations,
 
 bool Executor::TryCreateTask(const FrameLayout& layout, void* arguments,
                              TaskHandle& output) noexcept {
+    if (!TryReserveTask(layout, output)) return false;
+    InitializeReservedTask(output, arguments);
+    return true;
+}
+
+bool Executor::TryReserveTask(const FrameLayout& layout,
+                              TaskHandle& output) noexcept {
     CheckThread();
     try {
         std::shared_ptr<TaskRecord> task = std::allocate_shared<TaskRecord>(
             std::pmr::polymorphic_allocator<TaskRecord>(_resource));
         const auto reservation = _tasks.insert(_tasks.end(), task);
-        if (!Computation::TryCreate(layout, arguments, _resource,
-                                    task->computation)) {
+        if (!Computation::TryReserve(layout, _resource, task->computation)) {
             _tasks.erase(reservation);
             return false;
         }
@@ -204,11 +211,20 @@ bool Executor::TryCreateTask(const FrameLayout& layout, void* arguments,
             layout.operations.takeResult ? TakeComputation : nullptr};
         task->executor = this;
         output._task = task;
-        Enqueue(*task);
         return true;
     } catch (const std::bad_alloc&) {
         return false;
     }
+}
+
+void Executor::InitializeReservedTask(const TaskHandle& handle,
+                                      void* arguments) noexcept {
+    CheckThread();
+    const std::shared_ptr<TaskRecord> task = Find(handle);
+    if (!task || task->admitted) std::terminate();
+    task->computation.Initialize(arguments);
+    task->admitted = true;
+    Enqueue(*task);
 }
 
 void Executor::Enqueue(TaskRecord& task) noexcept {
@@ -257,7 +273,7 @@ StepResult Executor::Step() noexcept {
             if (owner.get() == &task) {
                 const PollContext context{WakeHandle(owner),
                                           task.cancellationRequested,
-                                          _externalReady, _externalState};
+                                          _externalReady, _externalState, this};
                 result = task.operations.poll(task.frame, context);
                 break;
             }
@@ -324,6 +340,160 @@ WakeHandle Executor::WakeFor(const TaskHandle& handle) const noexcept {
     return WakeHandle(Find(handle));
 }
 
+struct ScopedChild final {
+    ChildScope* owner = nullptr;
+    ScopedChild* previous = nullptr;
+    ScopedChild* next = nullptr;
+    Executor* executor = nullptr;
+    std::pmr::memory_resource* resource = nullptr;
+    TaskHandle task;
+};
+
+namespace {
+ScopedChild*& Head(ChildScope& scope) noexcept { return scope._head; }
+ScopedChild*& Tail(ChildScope& scope) noexcept { return scope._tail; }
+ScopedChild*& Reservation(void* storage) noexcept {
+    return *static_cast<ScopedChild**>(storage);
+}
+ScopedChild*& Joined(void* storage) noexcept {
+    return *static_cast<ScopedChild**>(storage);
+}
+
+void Link(ChildScope& scope, ScopedChild& child) noexcept {
+    child.owner = &scope;
+    child.previous = Tail(scope);
+    if (Tail(scope))
+        Tail(scope)->next = &child;
+    else
+        Head(scope) = &child;
+    Tail(scope) = &child;
+}
+
+void Unlink(ScopedChild& child) noexcept {
+    ChildScope& scope = *child.owner;
+    if (child.previous)
+        child.previous->next = child.next;
+    else
+        Head(scope) = child.next;
+    if (child.next)
+        child.next->previous = child.previous;
+    else
+        Tail(scope) = child.previous;
+    child.owner = nullptr;
+}
+
+void DestroyChild(ScopedChild& child) noexcept {
+    std::pmr::memory_resource* resource = child.resource;
+    std::destroy_at(&child);
+    resource->deallocate(&child, sizeof(ScopedChild), alignof(ScopedChild));
+}
+
+PollResult ResultFor(TaskStatus status) noexcept {
+    switch (status) {
+        case TaskStatus::Ready:
+            return PollResult::Ready;
+        case TaskStatus::Cancelled:
+            return PollResult::Cancelled;
+        case TaskStatus::AllocationFailed:
+            return PollResult::AllocationFailed;
+        case TaskStatus::Pending:
+            return PollResult::Pending;
+        case TaskStatus::Invalid:
+            break;
+    }
+    std::terminate();
+}
+}  // namespace
+
+ChildScope::~ChildScope() {
+    if (_head || _tail) std::terminate();
+}
+
+bool ReserveScopedChild(ChildScope&, void* reservation,
+                        const PollContext& context,
+                        const FrameLayout& layout) noexcept {
+    if (!reservation || Reservation(reservation) || !context.executor)
+        return false;
+    std::pmr::memory_resource* resource = context.executor->Resource();
+    void* storage;
+    try {
+        storage = resource->allocate(sizeof(ScopedChild), alignof(ScopedChild));
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
+    ScopedChild* child = new (storage) ScopedChild();
+    child->executor = context.executor;
+    child->resource = resource;
+    if (!context.executor->TryReserveTask(layout, child->task)) {
+        DestroyChild(*child);
+        return false;
+    }
+    Reservation(reservation) = child;
+    return true;
+}
+
+void InitializeScopedChild(ChildScope& scope, void* reservation,
+                           void* arguments, void** output) noexcept {
+    ScopedChild* child = Reservation(reservation);
+    if (!child || !output) std::terminate();
+    child->executor->InitializeReservedTask(child->task, arguments);
+    Link(scope, *child);
+    *output = child;
+    Reservation(reservation) = nullptr;
+}
+
+void CancelScopedChildren(ChildScope& scope) noexcept {
+    for (ScopedChild* child = Head(scope); child; child = child->next)
+        child->executor->RequestCancellation(child->task);
+}
+
+bool DrainScopedChildren(ChildScope& scope,
+                         const PollContext& context) noexcept {
+    while (ScopedChild* child = Head(scope)) {
+        if (child->executor->Status(child->task) == TaskStatus::Pending) {
+            if (!child->executor->Watch(child->task, context.wake))
+                return false;
+            continue;
+        }
+        Unlink(*child);
+        if (!child->executor->Release(child->task)) std::terminate();
+        DestroyChild(*child);
+    }
+    return true;
+}
+
+void InitializeChildJoin(void* storage, void* child) noexcept {
+    if (!storage || Joined(storage) || !child) std::terminate();
+    Joined(storage) = static_cast<ScopedChild*>(child);
+}
+
+PollResult PollChildJoin(void* storage, const PollContext& context) noexcept {
+    ScopedChild* child = Joined(storage);
+    if (!child) std::terminate();
+    TaskStatus status = child->executor->Status(child->task);
+    if (status == TaskStatus::Pending &&
+        !child->executor->Watch(child->task, context.wake))
+        return PollResult::Pending;
+    status = child->executor->Status(child->task);
+    return ResultFor(status);
+}
+
+bool TakeChildJoin(void* storage, void* destination) noexcept {
+    ScopedChild* child = Joined(storage);
+    return child && child->executor->TakeResult(child->task, destination);
+}
+
+bool ReleaseChildJoin(void* storage) noexcept {
+    ScopedChild* child = Joined(storage);
+    if (!child || child->executor->Status(child->task) == TaskStatus::Pending)
+        return false;
+    Unlink(*child);
+    if (!child->executor->Release(child->task)) std::terminate();
+    DestroyChild(*child);
+    Joined(storage) = nullptr;
+    return true;
+}
+
 }  // namespace flecha::runtime::async
 
 extern "C" {
@@ -366,7 +536,9 @@ std::uint8_t flecha_async_computation_poll(
 std::uint8_t flecha_async_computation_cancel(
     void* storage,
     const flecha::runtime::async::PollContext* context) noexcept {
-    const flecha::runtime::async::PollContext cancelled{context->wake, true};
+    const flecha::runtime::async::PollContext cancelled{
+        context->wake, true, context->externalReady, context->externalState,
+        context->executor};
     return static_cast<std::uint8_t>(
         static_cast<flecha::runtime::async::Computation*>(storage)->Poll(
             cancelled));
@@ -391,5 +563,67 @@ bool flecha_async_context_ready(
     const flecha::runtime::async::PollContext* context, void* frame) noexcept {
     return !context->externalReady ||
            context->externalReady(context->externalState, frame, context->wake);
+}
+
+void flecha_async_child_scope_construct(void* storage) noexcept {
+    new (storage) flecha::runtime::async::ChildScope();
+}
+
+void flecha_async_child_scope_destruct(void* storage) noexcept {
+    std::destroy_at(static_cast<flecha::runtime::async::ChildScope*>(storage));
+}
+
+bool flecha_async_child_reserve(
+    void* scope, void* reservation,
+    const flecha::runtime::async::PollContext* context, std::size_t size,
+    std::size_t alignment,
+    flecha::runtime::async::PollResult (*poll)(
+        void*, const flecha::runtime::async::PollContext&) noexcept,
+    void (*destroy)(void*) noexcept, void (*take)(void*, void*) noexcept,
+    void (*initialize)(void*, void*,
+                       std::pmr::memory_resource*) noexcept) noexcept {
+    if (!scope || !context) return false;
+    const flecha::runtime::async::FrameLayout layout{
+        size, alignment, {poll, destroy, take}, nullptr, initialize};
+    return flecha::runtime::async::ReserveScopedChild(
+        *static_cast<flecha::runtime::async::ChildScope*>(scope), reservation,
+        *context, layout);
+}
+
+void flecha_async_child_initialize(void* scope, void* reservation,
+                                   void* arguments, void* output) noexcept {
+    flecha::runtime::async::InitializeScopedChild(
+        *static_cast<flecha::runtime::async::ChildScope*>(scope), reservation,
+        arguments, static_cast<void**>(output));
+}
+
+void flecha_async_child_join_initialize(void* storage, void* child) noexcept {
+    flecha::runtime::async::InitializeChildJoin(storage, child);
+}
+
+std::uint8_t flecha_async_child_join_poll(
+    void* storage,
+    const flecha::runtime::async::PollContext* context) noexcept {
+    return static_cast<std::uint8_t>(
+        flecha::runtime::async::PollChildJoin(storage, *context));
+}
+
+bool flecha_async_child_join_take(void* storage, void* destination) noexcept {
+    return flecha::runtime::async::TakeChildJoin(storage, destination);
+}
+
+bool flecha_async_child_join_release(void* storage) noexcept {
+    return flecha::runtime::async::ReleaseChildJoin(storage);
+}
+
+void flecha_async_child_scope_cancel(void* scope) noexcept {
+    flecha::runtime::async::CancelScopedChildren(
+        *static_cast<flecha::runtime::async::ChildScope*>(scope));
+}
+
+bool flecha_async_child_scope_drain(
+    void* scope, const flecha::runtime::async::PollContext* context) noexcept {
+    return flecha::runtime::async::DrainScopedChildren(
+        *static_cast<flecha::runtime::async::ChildScope*>(scope), *context);
 }
 }
