@@ -306,6 +306,16 @@ call assert_equal('flechaModuleName', s:HighlightAt('module integer', 7))
 call assert_equal('flechaModifier', s:HighlightAt('export i32', 0))
 call assert_equal('flechaModifier', s:HighlightAt('quiver i32', 0))
 call assert_equal('flechaModifier', s:HighlightAt('foreign c', 0))
+call assert_equal('cInclude', s:HighlightAt('#include <stdint.h>', 0))
+call assert_equal('cIncluded', s:HighlightAt('<stdint.h>', 0))
+call assert_equal('cTypedef', s:HighlightAt('typedef struct', 0))
+call assert_equal('cStructure', s:HighlightAt('typedef struct', 8))
+call assert_equal('cType', s:HighlightAt('int nested_value', 0))
+call assert_equal('cType', s:HighlightAt('int native_value', 0))
+call assert_match('^c\%(Cpp\)\?String$', s:HighlightAt('"}"', 0))
+call assert_equal('cStatement', s:HighlightAt('return 4242', 0))
+call assert_equal('flechaType', s:HighlightAt('i32 after_foreign_c', 0))
+call assert_equal('flechaVariable', s:HighlightAt('i32 after_foreign_c', 4))
 
 " A colorscheme reload must preserve Flecha's links and remain authoritative.
 colorscheme default

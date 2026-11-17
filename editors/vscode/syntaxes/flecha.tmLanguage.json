@@ -3,6 +3,7 @@
   "name": "Flecha",
   "scopeName": "source.flecha",
   "patterns": [
+    { "include": "#foreignC" },
     { "include": "#decorationDeclarations" },
     { "include": "#behaviorDeclarations" },
     { "include": "#fieldIteration" },
@@ -40,6 +41,38 @@
     {"include": "#variables"}
   ],
   "repository": {
+    "foreignC": {
+      "begin": "\\b(foreign)(\\s+)(c)(\\s*)(\\{)",
+      "beginCaptures": {
+        "1": { "name": "storage.modifier.flecha" },
+        "3": { "name": "entity.name.language.flecha" },
+        "5": { "name": "punctuation.section.embedded.begin.flecha" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.embedded.end.flecha" }
+      },
+      "contentName": "meta.embedded.block.c",
+      "patterns": [
+        { "include": "#foreignCBrace" },
+        { "include": "source.c" }
+      ]
+    },
+    "foreignCBrace": {
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.block.begin.c" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.c" }
+      },
+      "contentName": "meta.embedded.block.c",
+      "patterns": [
+        { "include": "#foreignCBrace" },
+        { "include": "source.c" }
+      ]
+    },
     "fieldIteration": {
       "match": "\\b(for)\\s*<\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*>\\s*(Field)\\s*<\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*,\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*>\\s*([A-Za-z_][A-Za-z0-9_]*)",
       "captures": {
