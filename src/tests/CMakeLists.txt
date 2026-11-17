@@ -1,5 +1,6 @@
 add_executable(test_flecha
     test_async_lowering.cpp
+    test_async_values.cpp
     test_try.cpp
     test_async_runtime.cpp
     test_async.cpp

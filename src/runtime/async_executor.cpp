@@ -39,8 +39,17 @@ Computation::~Computation() {
 bool Computation::TryCreate(const FrameLayout& layout, void* arguments,
                             std::pmr::memory_resource* resource,
                             Computation& output) noexcept {
+    if (!TryReserve(layout, resource, output)) return false;
+    output.Initialize(arguments);
+    return true;
+}
+
+bool Computation::TryReserve(const FrameLayout& layout,
+                             std::pmr::memory_resource* resource,
+                             Computation& output) noexcept {
     if (output._frame || !resource || !layout.size || !layout.alignment ||
-        (layout.alignment & (layout.alignment - 1)) || !layout.initialize ||
+        (layout.alignment & (layout.alignment - 1)) ||
+        (!layout.initialize && !layout.initializeWithResource) ||
         !layout.operations.poll || !layout.operations.destroy)
         std::terminate();
     void* storage;
@@ -49,20 +58,29 @@ bool Computation::TryCreate(const FrameLayout& layout, void* arguments,
     } catch (const std::bad_alloc&) {
         return false;
     }
-    // This callback may only initialize/transfer already evaluated arguments;
-    // user code, including fallible constructors, belongs in the first poll.
-    layout.initialize(storage, arguments);
     output._frame = storage;
     output._resource = resource;
     output._layout = layout;
     output._result = PollResult::Pending;
+    output._initialized = false;
     output._started = false;
     output._resultTaken = false;
     return true;
 }
 
+void Computation::Initialize(void* arguments) noexcept {
+    if (!_frame || _initialized) std::terminate();
+    // This callback only transfers arguments whose evaluation has completed
+    // after reservation. It must not execute the async body.
+    if (_layout.initializeWithResource)
+        _layout.initializeWithResource(_frame, arguments, _resource);
+    else
+        _layout.initialize(_frame, arguments);
+    _initialized = true;
+}
+
 PollResult Computation::Poll(const PollContext& context) noexcept {
-    if (!_frame) std::terminate();
+    if (!_frame || !_initialized) std::terminate();
     if (_result != PollResult::Pending) return _result;
     if (!_started && context.cancellationRequested) {
         _result = PollResult::Cancelled;
@@ -78,7 +96,9 @@ TaskStatus Computation::Status() const noexcept {
 }
 
 bool Computation::TakeResult(void* destination) noexcept {
-    if (!_frame || _result != PollResult::Ready || _resultTaken) return false;
+    if (!_frame || !_initialized || _result != PollResult::Ready ||
+        _resultTaken)
+        return false;
     if (_layout.operations.takeResult && !destination) return false;
     _resultTaken = true;
     if (_layout.operations.takeResult)
@@ -89,9 +109,10 @@ bool Computation::TakeResult(void* destination) noexcept {
 bool Computation::Release() noexcept {
     if (!_frame) return true;
     if (_started && _result == PollResult::Pending) return false;
-    _layout.operations.destroy(_frame);
+    if (_initialized) _layout.operations.destroy(_frame);
     _resource->deallocate(_frame, _layout.size, _layout.alignment);
     _frame = nullptr;
+    _initialized = false;
     return true;
 }
 
@@ -114,10 +135,15 @@ void WakeHandle::Notify() const noexcept {
         if (task->executor) task->executor->Enqueue(*task);
 }
 
-Executor::Executor(std::pmr::memory_resource* resource)
+Executor::Executor(std::pmr::memory_resource* resource,
+                   bool (*externalReady)(void*, void*,
+                                         const WakeHandle&) noexcept,
+                   void* externalState)
     : _resource(resource),
       _tasks(resource),
-      _thread(std::this_thread::get_id()) {}
+      _thread(std::this_thread::get_id()),
+      _externalReady(externalReady),
+      _externalState(externalState) {}
 
 Executor::~Executor() {
     CheckThread();
@@ -230,7 +256,8 @@ StepResult Executor::Step() noexcept {
         for (const auto& owner : _tasks)
             if (owner.get() == &task) {
                 const PollContext context{WakeHandle(owner),
-                                          task.cancellationRequested};
+                                          task.cancellationRequested,
+                                          _externalReady, _externalState};
                 result = task.operations.poll(task.frame, context);
                 break;
             }
@@ -298,3 +325,71 @@ WakeHandle Executor::WakeFor(const TaskHandle& handle) const noexcept {
 }
 
 }  // namespace flecha::runtime::async
+
+extern "C" {
+void flecha_async_computation_construct(void* storage) noexcept {
+    new (storage) flecha::runtime::async::Computation();
+}
+
+void flecha_async_computation_destruct(void* storage) noexcept {
+    std::destroy_at(static_cast<flecha::runtime::async::Computation*>(storage));
+}
+
+bool flecha_async_computation_reserve(
+    void* storage, std::size_t size, std::size_t alignment,
+    flecha::runtime::async::PollResult (*poll)(
+        void*, const flecha::runtime::async::PollContext&) noexcept,
+    void (*destroy)(void*) noexcept, void (*take)(void*, void*) noexcept,
+    void (*initialize)(void*, void*, std::pmr::memory_resource*) noexcept,
+    std::pmr::memory_resource* resource) noexcept {
+    flecha::runtime::async::FrameLayout layout{
+        size, alignment, {poll, destroy, take}, nullptr, initialize};
+    return flecha::runtime::async::Computation::TryReserve(
+        layout, resource,
+        *static_cast<flecha::runtime::async::Computation*>(storage));
+}
+
+void flecha_async_computation_initialize(void* storage,
+                                         void* arguments) noexcept {
+    static_cast<flecha::runtime::async::Computation*>(storage)->Initialize(
+        arguments);
+}
+
+std::uint8_t flecha_async_computation_poll(
+    void* storage,
+    const flecha::runtime::async::PollContext* context) noexcept {
+    return static_cast<std::uint8_t>(
+        static_cast<flecha::runtime::async::Computation*>(storage)->Poll(
+            *context));
+}
+
+std::uint8_t flecha_async_computation_cancel(
+    void* storage,
+    const flecha::runtime::async::PollContext* context) noexcept {
+    const flecha::runtime::async::PollContext cancelled{context->wake, true};
+    return static_cast<std::uint8_t>(
+        static_cast<flecha::runtime::async::Computation*>(storage)->Poll(
+            cancelled));
+}
+
+bool flecha_async_computation_take(void* storage, void* destination) noexcept {
+    return static_cast<flecha::runtime::async::Computation*>(storage)
+        ->TakeResult(destination);
+}
+
+bool flecha_async_computation_release(void* storage) noexcept {
+    return static_cast<flecha::runtime::async::Computation*>(storage)
+        ->Release();
+}
+
+bool flecha_async_context_cancelled(
+    const flecha::runtime::async::PollContext* context) noexcept {
+    return context->cancellationRequested;
+}
+
+bool flecha_async_context_ready(
+    const flecha::runtime::async::PollContext* context, void* frame) noexcept {
+    return !context->externalReady ||
+           context->externalReady(context->externalState, frame, context->wake);
+}
+}

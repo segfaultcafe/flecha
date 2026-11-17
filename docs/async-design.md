@@ -1,6 +1,8 @@
 # Async design foundation
 
-**Implementation in progress; async programs are not executable yet.** This
+**Implementation in progress; public async execution remains gated.** An
+internal test-only generator can execute the supported direct-await subset, but
+the CLI, synchronous lowering path, and `async main` entry remain disabled. This
 summarizes the selected foundation of [IFG 2026-0007](IFG/IFG_2026_0007.txt).
 The IFG remains Draft while low-level future APIs and remaining interoperability details
 are under review. Checked result destructuring, void await, and explicit failure forwarding are
@@ -62,8 +64,9 @@ async i32 main() {
 ```
 
 Direct awaiting uses `value, err := calculate().await`; the symbolic creation
-form is `child, err := >>- calculate()`. These examples show the approved
-contract, not executable compiler support yet.
+form is `child, err := >>- calculate()`. Direct awaits are executable only
+through the internal test entry described below. Generated child scheduling is
+still outside the executable subset.
 
 On failure the value binding is uninitialized. The compiler must reject access
 until the corresponding error is proven to be `none`. Fallible creation requires immediate checked destructuring. Non-void await
@@ -162,25 +165,25 @@ Frame storage and scheduler admission resources must be reserved before
 argument evaluation, including method receiver preparation. If reservation
 fails, argument expressions do not run, no argument ownership transfers, and
 no task handle is published. Once reservation succeeds, argument effects are
-not rolled back if execution later fails. This is the approved ordering for
-future executable lowering, not an implemented evaluation schedule.
+not rolled back if execution later fails. The internal direct-await generator
+implements this ordering: it reserves an indirect child frame, then evaluates
+each source argument exactly once into an argument pack, and only then
+initializes and polls the child. Reservation failure therefore executes no
+argument effects and transfers no ownership.
 
-Until allocation-first lowering is implemented, calls, assignments, increments,
-construction, closures, or ownership moves nested inside argument preparation
-must first be bound in a separate statement. Simple prepared bindings,
-literals, and borrow/projection expressions remain accepted. This restriction
-also applies to directly awaited/spawned method receivers. Effects in a prior
-statement naturally happen before a later shoot/await allocation attempt.
+The argument-preparation restriction remains for `shoot`/`>>-`, because
+generated child scheduling is later work. Direct awaits no longer need that
+restriction in the supported internal subset.
 
 Root allocation failure has a separate approved policy: the generated entry
 wrapper reports a diagnostic and returns a nonzero process status before user
 code executes or argument ownership transfers.
 
-The private runtime reserves scheduler and stable frame storage before
-transferring arguments or publishing a task. Failure leaves ownership with the
-caller. Initialization transfers already prepared arguments without executing
-the async body. Generated argument preparation must follow the allocation-first rule above. Failure reporting and retirement
-must work without a further successful allocation.
+The private runtime separates reservation from initialization. It reserves
+scheduler and stable frame storage before transferring arguments or publishing
+a task. Failure leaves ownership with the caller. Initialization transfers the
+generated argument pack without executing the async body. Failure reporting and
+retirement work without a further successful allocation.
 
 ## Lexical scope ownership and cleanup
 
@@ -259,7 +262,8 @@ After semantic and borrow checking succeeds (apart from the execution gate),
 function. Units with other errors do not publish plans. `DumpAsyncFramePlan`
 provides deterministic scope, slot, continuation, liveness, and initialization
 records for compiler tests and debugging. This is an internal analysis API;
-there is no new source syntax, public runtime ABI, or executable async output.
+there is no new source syntax or public runtime ABI. The plans feed the
+test-only generated-frame path described below.
 
 The plan preserves the specialized CFG's separate checked success and failure
 continuations. Operation records distinguish child creation, direct await, and
@@ -283,9 +287,9 @@ Initialization records distinguish absent, initialized, and moved alternatives.
 A cleanup guard must use the actual runtime state, not treat a static "possibly
 initialized" result as a value. Operation and task-scope records likewise need
 runtime activation guards. The CFG outcome events describe analysis facts,
-not an executable argument-evaluation schedule; future lowering must implement
-allocation before argument evaluation, transactional transfer, and guarded
-polling explicitly.
+not an executable argument-evaluation schedule. Generated direct-await binding
+therefore implements allocation before argument evaluation, transactional
+transfer, and guarded polling explicitly instead of replaying those events.
 
 Scope exits expand into inner-to-outer cancellation requests (for early exits),
 draining, synchronous deferred calls, and guarded owner destruction. A drain
@@ -332,24 +336,44 @@ are skipped. Backend callbacks must be nonthrowing and must not allocate while
 reporting failure or retiring storage; invalid outcome encodings trap as an
 internal protocol error.
 
-This is **control lowering, not complete source-to-native async compilation**.
-The private backend binding still supplies synchronous value actions, concrete
-stable value storage, argument initialization, task admission, operation polling,
-result transfer, dynamic defer storage, and destruction. These callbacks are an
-internal code-generation boundary, not a public future API. Flow bindings consume
-postorder value events; they must not execute whole source expressions again.
-The first control form handles binary branches; unsupported continuation shapes
-fail internal lowering rather than silently selecting a branch.
+`GenerateAsyncValuesForTesting` adds a deliberately internal source-to-native
+binding for direct awaits. It uses LLVM `DataLayout` to assign target-correct
+byte offsets and ABI alignment for control state, initialization and operation
+guards, parameters, locals, temporaries, saved completed values, saved execution
+errors, and indirect `Computation` objects. Values that may survive suspension
+have stable frame addresses. Direct operations remain indirect, so recursive
+frames have finite layouts and stable addresses.
+
+The generated callbacks evaluate ordinary values, assignments, branches, loops,
+returns, and the synchronous helper bodies reached by supported async code.
+They reserve, initialize, poll/resume, transfer, retire, and release direct child
+frames. Checked await, void await, and `.await?` keep execution failure separate
+from an ordinary returned error, including aggregate completed values. Flow
+bindings consume postorder analysis events without re-evaluating source
+expressions. Generated cleanup uses runtime initialization guards and reverse
+ownership order; saved returns and pending cancellation are destroyed exactly
+once, only after retirement.
+
+This entry is not wired to `NativeCompiler`, the CLI, or synchronous lowering.
+It currently rejects generated child scheduling and dynamic async defer storage
+with explicit errors. Public future APIs, timers/I/O, async interface/behavior
+dispatch, and production `async main` integration remain later work. Unsupported
+value or continuation shapes fail generation rather than silently omitting their
+effects or cleanup.
 
 `AsyncLoweringTests` JIT-compile and execute the generated control functions with
 explicit test backend bindings. They cover pending/ready/failure paths, both shoot
 spellings, void completion, ordinary-error completion, ordinary `try` returns,
 loop reuse, ownership guards, nested cancellation, saved returns, real private
 executor wakeups, recursive computation frames, and injected frame-allocation
-failure. These are native control-flow tests, not end-to-end compiled Flecha
-programs. Production value bindings, target frame layout, generated `async main`,
-and full generated-program ownership/borrow validation remain required before
-removing `FLECHA-S0089` or the synchronous lowering gate.
+failure. `AsyncValueLoweringTests` start from Flecha source and execute generated
+frames. They cover immediate and pending completion, repeated wakes, recursion,
+branches, loops, early returns, checked and forwarded failure, void and aggregate
+results, ordinary `try`, stable borrows, move-only transfers, reservation failure
+before argument effects, cancellation, and exactly-once destruction. Test code
+only supplies synthetic readiness/allocation failure and observations; source
+evaluation, transfers, and cleanup are generated. Neither suite removes
+`FLECHA-S0089` or the synchronous lowering gate.
 
 ## Implementation status
 
@@ -361,7 +385,7 @@ removing `FLECHA-S0089` or the synchronous lowering gate.
 | Borrow analysis | Outcome-sensitive captures and argument moves, explicit join release, aggregate borrowed-result origins, and consumed-handle checks. Generated-frame/suspension validation remains. |
 | Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional creation, and separate allocation failure outcome. |
 | Frame/suspension planning | Verified internal plans, conservative stable slots, initialization/move alternatives, read liveness, and suspendable scope-exit continuations, saved execution errors and distinct failed terminals; deterministic dumps and corruption tests. |
-| Resumable code generation | Internal machine lowering and LLVM poll/resume control functions with native execution tests. Production value/operation bindings, concrete frame layout, and executable entry integration remain. Async declarations still issue `FLECHA-S0089` and cannot reach synchronous lowering. |
+| Resumable code generation | Internal machine lowering plus target-layout, value/operation, direct-await, and guarded-cleanup bindings with source-to-generated-frame execution tests. Child scheduling, dynamic defer storage, production entry integration, and the public ABI remain. Async declarations still issue `FLECHA-S0089` and cannot reach synchronous lowering. |
 | Ordinary returned-error propagation | Prefix `try` implemented through CFG, borrow/allocation analysis, synchronous lowering and native code generation; supports error-only and multiple success fields. |
 | Public Flecha futures/results | Checked destructuring, void await and `.await?` implemented in the frontend; public low-level future API and executable integration remain. |
 | Tooling | VS Code and Neovim syntax highlighting; checked expression types, success-condition and failure-forwarding hover, and binding navigation/occurrence tests. |
@@ -369,13 +393,12 @@ removing `FLECHA-S0089` or the synchronous lowering gate.
 Tests cover ready and delayed synthetic events, registration-time notifications,
 stale callbacks, reentrancy, cancellation, allocation failure injection, result
 consumption, checked-result control flow, move-only ownership, borrowed aggregates,
-and borrowing/scope rules. These checks do not establish
-that generated Flecha async programs execute correctly. The execution gate must
-remain until lowering, cleanup, failure handling, and interoperability are
-validated together.
+borrowing/scope rules, and internal generated direct-await frames. The execution
+gate remains until the later child, defer, entry, public ABI, and interoperability
+work is validated together.
 
 With a testing build configured, run the focused checks with
-`ctest --test-dir <build-directory> -R 'AsyncFrontendTests|AsyncRuntimeTests|AsyncPlanTests|AsyncLoweringTests' --output-on-failure`.
-Runtime and native control tests use injected allocation failures and recursive
-frames. Full source-to-native generated-program coverage is still required
+`ctest --test-dir <build-directory> -R 'AsyncFrontendTests|AsyncRuntimeTests|AsyncPlanTests|AsyncLoweringTests|AsyncValueLoweringTests' --output-on-failure`.
+Runtime and generated-frame tests use injected allocation failures and recursive
+frames. Public end-to-end entry and unsupported-feature coverage remain required
 before enabling async execution.
