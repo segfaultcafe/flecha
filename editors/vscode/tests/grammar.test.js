@@ -2,6 +2,36 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const grammar = require("../syntaxes/flecha.tmLanguage.json");
+const manifest = require("../package.json");
+
+test("foreign C blocks delegate to C and preserve nested braces", () => {
+  assert.equal(grammar.patterns[0].include, "#foreignC");
+
+  const foreignC = grammar.repository.foreignC;
+  assert.match("foreign c {", new RegExp(foreignC.begin));
+  assert.doesNotMatch("foreign asm {", new RegExp(foreignC.begin));
+  assert.equal(foreignC.contentName, "meta.embedded.block.c");
+  assert.deepEqual(
+    foreignC.patterns.map((pattern) => pattern.include),
+    ["#foreignCBrace", "source.c"],
+  );
+
+  const nestedBrace = grammar.repository.foreignCBrace;
+  assert.equal(nestedBrace.begin, "\\{");
+  assert.equal(nestedBrace.end, "\\}");
+  assert.deepEqual(
+    nestedBrace.patterns.map((pattern) => pattern.include),
+    ["#foreignCBrace", "source.c"],
+  );
+
+  const contribution = manifest.contributes.grammars.find(
+    (candidate) => candidate.scopeName === "source.flecha",
+  );
+  assert.equal(
+    contribution.embeddedLanguages["meta.embedded.block.c"],
+    "c",
+  );
+});
 
 test("nominal composition has stable scopes across line breaks", () => {
   const includes = grammar.patterns.map((pattern) => pattern.include);

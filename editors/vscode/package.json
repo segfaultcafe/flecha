@@ -54,7 +54,10 @@
       {
         "language": "flecha",
         "scopeName": "source.flecha",
-        "path": "./syntaxes/flecha.tmLanguage.json"
+        "path": "./syntaxes/flecha.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.c": "c"
+        }
       }
     ],
     "commands": [

@@ -5,6 +5,17 @@ endif
 syntax case match
 syntax sync minlines=50
 
+" Keep foreign C translation units out of Flecha's broad identifier and
+" operator matches.  :syntax include makes the C rules contained, so they are
+" active only inside flechaForeignC.  The C grammar's cBlock regions preserve
+" nested braces in functions and aggregate declarations.
+syntax include @flechaC syntax/c.vim
+unlet! b:current_syntax
+syntax region flechaForeignC transparent matchgroup=flechaForeignDelimiter
+            \ start=/\%(\<foreign\>\s\+c\s*\)\@<={/
+            \ end=/}/
+            \ contains=@flechaC
+
 syntax match flechaVariable /\<[a-z_][A-Za-z0-9_]*\>/
 syntax match flechaImports /@[A-Za-z_][A-Za-z0-9_]*\%(\s*::\s*[A-Za-z_][A-Za-z0-9_]*\)*\>/
 
