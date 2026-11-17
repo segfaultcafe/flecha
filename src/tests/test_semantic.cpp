@@ -1264,6 +1264,59 @@ TEST(SemanticCallableTests, ResolvesOnceCallableIdentityAndCompatibility) {
     EXPECT_NE(reusableType, onceType);
     EXPECT_TRUE(IsAssignable(onceType, reusableType));
     EXPECT_FALSE(IsAssignable(reusableType, onceType));
+    EXPECT_TRUE(IsAssignable(onceType, SemanticType(SemanticTypeKind::None)));
+    EXPECT_FALSE(
+        IsAssignable(reusableType, SemanticType(SemanticTypeKind::None)));
+    EXPECT_TRUE(onceType.IsZeroable());
+    EXPECT_TRUE(onceType.IsTriviallyZeroable());
+    EXPECT_FALSE(reusableType.IsZeroable());
+    EXPECT_FALSE(reusableType.IsTriviallyZeroable());
+}
+
+TEST(SemanticCallableTests, AllowsEmptyOnceCallablesAndReinitialization) {
+    Analysis result = Analyze(R"(
+        once func Action() => (i32);
+        structure Handler { Action action; };
+        i32 answer() { return 42; }
+        Action choose(bool enabled) {
+            if enabled { return answer; }
+            return none;
+        }
+        i32 main() {
+            Action omitted;
+            if omitted != none { return 4; }
+            Handler handler = none;
+            if handler.action != none { return 5; }
+            Action action = none;
+            if action != none { return 1; }
+            if action === none or none === action { return 2; }
+            action = choose(true);
+            if action == none { return 3; }
+            return action();
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    EXPECT_FALSE(result.diagnostics.HasErrors());
+}
+
+TEST(SemanticCallableTests, RejectsNoneForReusableCallables) {
+    Analysis initialization = Analyze(R"(
+        func Action() => ();
+        void main() { Action action = none; }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(initialization, DiagnosticCode::IncompatibleType),
+        nullptr);
+
+    Analysis comparison = Analyze(R"(
+        func Action() => ();
+        void run() {}
+        void main() { Action action = run; if action == none {} }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(comparison, DiagnosticCode::InvalidOperand),
+              nullptr);
 }
 
 TEST(SemanticCallableTests, ConsumesOnceCallablesAndOwnedCaptures) {

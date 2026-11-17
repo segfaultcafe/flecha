@@ -452,6 +452,15 @@ Owned structure captures add compiler-private liveness bits inside the closure
 environment so the destroy thunk skips values moved out by the once body while
 still destroying untouched or never-invoked captures.
 
+An explicitly empty `once func`, produced from `none`, uses the all-null
+representation already used for moved-from callable storage. Before evaluating
+arguments or making an indirect once call, generated code checks the `invoke`
+field. A null field enters `flecha_runtime_v1_crash` with the call-site source
+location and the message `called an empty once callable`; it is never invoked
+as a native null function pointer. Value comparison with `none` tests this same
+field. The empty value owns no environment and requires no cleanup. Reusable
+callable types do not expose this state at the language level.
+
 Release-package validation executes captureless and capturing callables across
 modules, methods, generic transfers, tuples, arrays, and owned-resource
 captures on every supported native target. Leak-sanitized native tests verify

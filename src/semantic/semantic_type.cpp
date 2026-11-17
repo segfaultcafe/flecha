@@ -122,6 +122,7 @@ bool SemanticType::ContainsInvalidDefaultConstruction() const {
 }
 
 bool SemanticType::IsZeroable() const {
+    if (_kind == SemanticTypeKind::Function) return Signature().isOnce;
     if (_kind == SemanticTypeKind::Enum) return _enum->defaultValue.has_value();
     if (_kind == SemanticTypeKind::Structure)
         return _structure->validLayout && _structure->zero;
@@ -140,6 +141,7 @@ bool SemanticType::IsZeroable() const {
 }
 
 bool SemanticType::IsTriviallyZeroable() const {
+    if (_kind == SemanticTypeKind::Function) return Signature().isOnce;
     if (_kind == SemanticTypeKind::Enum)
         return _enum->defaultValue.has_value() && *_enum->defaultValue == 0;
     if (_kind == SemanticTypeKind::Structure) {
@@ -483,6 +485,9 @@ bool MatchesTypeQuery(SemanticType value, SemanticType candidate,
 bool IsAssignable(SemanticType destination, SemanticType source) {
     if (destination.IsError() || source.IsError()) return true;
     if (destination.WithoutConst() == source.WithoutConst()) return true;
+    if (destination.Kind() == SemanticTypeKind::Function &&
+        source.Kind() == SemanticTypeKind::None)
+        return destination.Signature().isOnce;
     if (CanImplicitlyConvertInterfaceReference(source, destination))
         return true;
     if (destination.Kind() == SemanticTypeKind::Function &&

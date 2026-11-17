@@ -626,6 +626,8 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                      (other.IsNumeric() || other.IsErrorValue() ||
                       other.ContainsStructure() ||
                       kind == semantic::SemanticTypeKind::Enum ||
+                      (kind == semantic::SemanticTypeKind::Function &&
+                       other.Signature().isOnce) ||
                       kind == semantic::SemanticTypeKind::Bool ||
                       kind == semantic::SemanticTypeKind::Char)) ||
                     kind == semantic::SemanticTypeKind::Pointer ||

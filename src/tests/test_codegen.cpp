@@ -474,6 +474,36 @@ TEST(LlvmCodeGeneratorTests, EmitsUniformCallableValuesAndIndirectCalls) {
     EXPECT_NE(ir.find("twice.$callable"), std::string::npos);
 }
 
+TEST(LlvmCodeGeneratorTests, ChecksEmptyOnceCallablesBeforeInvocation) {
+    GeneratedSource result = Generate(R"(
+        once func Action(i32) => (i32);
+        i32 side_effect() { return 1; }
+        i32 invoke(Action action) { return action(side_effect()); }
+        i32 main() {
+            Action action = none;
+            if action == none { return 42; }
+            return invoke(action);
+        }
+    )");
+
+    for (const auto& diagnostic : result.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.module, nullptr) << result.generator->Error();
+    EXPECT_TRUE(VerifyModule(*result.module).empty());
+    const std::string ir = ModuleText(*result.module);
+    EXPECT_NE(ir.find("function.present"), std::string::npos);
+    EXPECT_NE(ir.find("function.empty"), std::string::npos);
+    EXPECT_NE(ir.find("called an empty once callable"), std::string::npos);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_crash"), std::string::npos);
+    EXPECT_NE(ir.find("function.empty.equal"), std::string::npos);
+    const std::size_t presenceCheck = ir.find("br i1 %function.present");
+    const std::size_t argumentCall = ir.find("call i32 @side_effect()");
+    ASSERT_NE(presenceCheck, std::string::npos);
+    ASSERT_NE(argumentCall, std::string::npos);
+    EXPECT_LT(presenceCheck, argumentCall);
+}
+
 TEST(LlvmCodeGeneratorTests, EmitsGenericCallableSpecializationsWithSameAbi) {
     GeneratedSource result = Generate(R"(
         func Mapper<T>(T) => (T);
@@ -2050,6 +2080,7 @@ TEST(NativeCompilerTests, RunsOnceCallablesAndConsumesOwnedCaptures) {
     GeneratedSource result = Generate(R"(
         once func Action() => (i32);
         unsafe once func UnsafeAction() => (i32);
+        structure Handler { Action action; };
 
         structure Token { *i32 tears; i32 value; };
         unsafe Token Token::init(*i32 tears, i32 value) override {
@@ -2090,7 +2121,12 @@ TEST(NativeCompilerTests, RunsOnceCallablesAndConsumesOwnedCaptures) {
                 return value;
             };
             Action direct = answer;
-            return release() + direct() + tears - 2;
+            Action empty = none;
+            if empty != none or direct == none { return 5; }
+            Handler handler = none;
+            if handler.action != none { return 6; }
+            empty = answer;
+            return release() + direct() + empty() + tears - 24;
         }
     )");
     for (const auto& diagnostic : result.diagnostics.Diagnostics())
