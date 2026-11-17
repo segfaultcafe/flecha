@@ -196,6 +196,9 @@ std::optional<AsyncMachine> LowerAsyncMachine(
         }
     }
     machine._operationCount = operations.size();
+    machine._operationSlots.resize(operations.size());
+    for (const auto& [slot, operation] : operations)
+        machine._operationSlots[operation] = slot;
     auto append = [&](AsyncInstruction instruction) {
         const auto id = machine._instructions.size();
         machine._instructions.push_back(std::move(instruction));

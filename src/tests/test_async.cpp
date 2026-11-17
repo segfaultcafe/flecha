@@ -545,9 +545,9 @@ TEST(AsyncFrontendTests,
                     DiagnosticCode::MovedValue));
 }
 
-TEST(AsyncFrontendTests, ArgumentPreparationWaitsForAllocationFirstLowering) {
-    for (const std::string operation :
-         {"shoot f(make())", ">>- f(make())", "f(make()).await"}) {
+TEST(AsyncFrontendTests,
+     DirectAwaitArgumentPreparationUsesAllocationFirstLowering) {
+    for (const std::string operation : {"shoot f(make())", ">>- f(make())"}) {
         const auto result = Analyze(
             "i32 make() { return 1; } async i32 f(i32 value) { return value; } "
             "async void main() { v, e := " +
@@ -559,6 +559,9 @@ TEST(AsyncFrontendTests, ArgumentPreparationWaitsForAllocationFirstLowering) {
                            "argument-preparation effects") != std::string::npos;
             }));
     }
+    ExpectChecked(Analyze(
+        "i32 make() { return 1; } async i32 f(i32 value) { return value; } "
+        "async void main() { v, e := f(make()).await; return; }"));
     EXPECT_TRUE(Has(
         Analyze(
             "structure Owner {}; void Owner::tear(&self) override {} "

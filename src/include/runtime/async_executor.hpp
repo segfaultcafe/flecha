@@ -40,6 +40,13 @@ class TaskHandle final {
 struct PollContext final {
     WakeHandle wake;
     bool cancellationRequested;
+    // Internal deterministic external-event hook used by compiler execution
+    // tests. A null hook is ready. Returning false records the supplied wake
+    // outside the frame and causes a genuine Pending result without executing
+    // source actions. This is not a public future API.
+    bool (*externalReady)(void* state, void* frame,
+                          const WakeHandle& wake) noexcept = nullptr;
+    void* externalState = nullptr;
 };
 
 // Every terminal outcome acknowledges that callbacks/operations can no longer
@@ -64,6 +71,12 @@ struct FrameLayout final {
     // Runs only after all creation allocations succeed. It initializes frame
     // storage and transfers arguments without executing the async body.
     void (*initialize)(void* frame, void* arguments) noexcept;
+    // Compiler-generated frames use this private form to retain their owning
+    // allocation resource for recursive direct awaits. Handwritten layouts
+    // may continue to provide only initialize.
+    void (*initializeWithResource)(void* frame, void* arguments,
+                                   std::pmr::memory_resource*) noexcept =
+        nullptr;
 };
 
 // A stable, owned computation frame. Direct awaits poll this with their
@@ -81,6 +94,14 @@ class Computation final {
     static bool TryCreate(const FrameLayout& layout, void* arguments,
                           std::pmr::memory_resource* resource,
                           Computation& output) noexcept;
+    // Split creation used by compiler-generated direct awaits. Reservation
+    // allocates stable storage but does not evaluate or transfer arguments.
+    // Initialize is infallible and may be called exactly once after a
+    // successful reservation.
+    static bool TryReserve(const FrameLayout& layout,
+                           std::pmr::memory_resource* resource,
+                           Computation& output) noexcept;
+    void Initialize(void* arguments) noexcept;
     PollResult Poll(const PollContext& context) noexcept;
     TaskStatus Status() const noexcept;
     bool TakeResult(void* destination) noexcept;
@@ -93,6 +114,7 @@ class Computation final {
     std::pmr::memory_resource* _resource = nullptr;
     FrameLayout _layout{};
     PollResult _result = PollResult::Pending;
+    bool _initialized = false;
     bool _started = false;
     bool _resultTaken = false;
 };
@@ -102,7 +124,10 @@ class Executor final {
     // An injected memory resource must outlive every handle, including expired
     // weak handles. Frame allocation is separate from scheduler admission.
     explicit Executor(
-        std::pmr::memory_resource* resource = std::pmr::get_default_resource());
+        std::pmr::memory_resource* resource = std::pmr::get_default_resource(),
+        bool (*externalReady)(void*, void*,
+                              const WakeHandle&) noexcept = nullptr,
+        void* externalState = nullptr);
     ~Executor();
     Executor(const Executor&) = delete;
     Executor& operator=(const Executor&) = delete;
@@ -138,8 +163,37 @@ class Executor final {
     TaskRecord* _head = nullptr;
     TaskRecord* _tail = nullptr;
     bool _polling = false;
+    bool (*_externalReady)(void*, void*, const WakeHandle&) noexcept = nullptr;
+    void* _externalState = nullptr;
     friend class WakeHandle;
 };
 
 }  // namespace flecha::runtime::async
+
+// Private compiler/runtime bridge used by generated frame bindings. These are
+// C symbols only to make their ABI easy to reference from LLVM IR; they are not
+// a Flecha language or library API.
+extern "C" {
+void flecha_async_computation_construct(void* storage) noexcept;
+void flecha_async_computation_destruct(void* storage) noexcept;
+bool flecha_async_computation_reserve(
+    void* storage, std::size_t size, std::size_t alignment,
+    flecha::runtime::async::PollResult (*poll)(
+        void*, const flecha::runtime::async::PollContext&) noexcept,
+    void (*destroy)(void*) noexcept, void (*take)(void*, void*) noexcept,
+    void (*initialize)(void*, void*, std::pmr::memory_resource*) noexcept,
+    std::pmr::memory_resource* resource) noexcept;
+void flecha_async_computation_initialize(void* storage,
+                                         void* arguments) noexcept;
+std::uint8_t flecha_async_computation_poll(
+    void* storage, const flecha::runtime::async::PollContext* context) noexcept;
+std::uint8_t flecha_async_computation_cancel(
+    void* storage, const flecha::runtime::async::PollContext* context) noexcept;
+bool flecha_async_computation_take(void* storage, void* destination) noexcept;
+bool flecha_async_computation_release(void* storage) noexcept;
+bool flecha_async_context_cancelled(
+    const flecha::runtime::async::PollContext* context) noexcept;
+bool flecha_async_context_ready(
+    const flecha::runtime::async::PollContext* context, void* frame) noexcept;
+}
 #endif
