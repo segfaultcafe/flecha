@@ -1,8 +1,9 @@
 # Flecha support for Neovim
 
 This runtime plugin provides `.fl` filetype detection, syntax highlighting,
-brace-aware indentation, basic buffer settings, and automatic startup of the
-Flecha language server.
+brace-aware indentation, basic buffer settings, automatic startup of the
+Flecha language server, and an optional Codex project chat in a polished right
+sidebar.
 
 Callable declarations and capture lists are highlighted in examples such as:
 
@@ -108,6 +109,69 @@ vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename)
 Insert-mode completion is available through `<C-x><C-o>`; completion plugins
 can use the same LSP client.
 
+## Codex project chat
+
+Press `<leader>mc` to open a Codex chat on the right side of Neovim. The upper
+pane contains the conversation and compact command/edit activity; the lower
+pane is a multiline prompt composer. Press `<C-s>` from either insert or normal
+mode to send, or press `<CR>` from normal mode. Press `q` from normal mode to
+close the panel. In the conversation pane, `i` focuses the composer and `r`
+starts a fresh chat. Press `<leader>ml` to list chats created from Neovim for
+the current project, then select one to restore its transcript and continue its
+Codex thread. The same list is available as `:FlechaCodexChats`.
+
+The chat runs `codex exec` from Git's resolved top-level directory, including
+when the active file was opened through a symlink. A Longbow project without a
+Git repository uses its nearest `longbow.toml` root and opts into Codex's
+non-Git mode. A named file outside any recognized project uses its containing
+directory as the workspace and also opts into non-Git mode; an unnamed buffer
+in an unmarked directory is refused. The chat reuses the account already
+authenticated by the Codex CLI, keeps the Codex thread across prompts, and
+grants the agent workspace-write access so it can edit project files. Install
+the Codex CLI and sign in once before using it:
+
+```sh
+codex login
+codex login status
+```
+
+The plugin never reads or stores authentication tokens itself. It also avoids
+unrestricted filesystem access: Codex runs in its workspace-write sandbox and
+routes exceptional approval requests through Codex's automatic reviewer.
+Modified source buffers are saved before a prompt is sent, and Neovim checks
+for agent-written file changes when each turn finishes.
+
+Chat metadata and transcripts are cached under Neovim's data directory rather
+than written into the project. The cache is partitioned by canonical project
+root and stores up to 50 chats per root; it contains Codex thread IDs but no
+authentication tokens. Set `cache_path` or `max_cached_chats` in
+`vim.g.flecha_codex` to customize it.
+
+Executable discovery checks Neovim's `PATH`, the standalone installer's
+default `~/.local/bin` location, and the Codex binary bundled with the ChatGPT
+desktop app. `:FlechaCodexInfo` shows the resolved executable.
+
+Commands are also available as `:FlechaCodex`, `:FlechaCodexNew`,
+`:FlechaCodexStop`, `:FlechaCodexChats`, and `:FlechaCodexInfo`. To customize
+the panel before plugins load:
+
+```lua
+vim.g.flecha_codex = {
+  -- Fraction of the editor width, clamped to a comfortable range.
+  width = 0.38,
+  input_height = 6,
+  max_cached_chats = 50,
+  -- Override this for a differently installed Codex executable.
+  command = { "codex" },
+}
+```
+
+To choose another mapping, map the plug target before the runtime loads:
+
+```vim
+nmap <leader>ai <Plug>(FlechaCodexToggle)
+```
+
 ## Run projects and navigate errors
 
 Press `<leader>rr` anywhere inside a Longbow project to run `longbow run` and
@@ -145,6 +209,6 @@ make test-neovim
 ```
 
 The test runs Neovim headlessly and checks LSP discovery/startup/client reuse,
-running Longbow from an empty editor, quickfix navigation, filetype detection,
-buffer settings, representative syntax groups, and indentation while typing
-closing braces.
+the Codex panel and JSON event handling, running Longbow from an empty editor,
+quickfix navigation, filetype detection, buffer settings, representative syntax
+groups, and indentation while typing closing braces.

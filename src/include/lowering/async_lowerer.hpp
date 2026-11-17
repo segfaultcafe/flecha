@@ -18,6 +18,7 @@ enum class AsyncInstructionKind {
     Branch,
     CreateChild,
     Await,
+    RegisterDefer,
     CancelOperation,
     CancelChildren,
     DrainChildren,
