@@ -4266,7 +4266,10 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
         const FunctionSymbol* target = _model.MethodFor(call);
         asyncCall = target && target->IsAsync();
     }
-    if (asyncCall) {
+    // Compiler-generated direct-await frames reserve stable storage before
+    // this preparation executes. Child scheduling still uses the older
+    // frontend restriction until its scheduler reservation is generated too.
+    if (asyncCall && spawn) {
         std::vector<const core::Expression*> prepared;
         if (inner->Kind() == core::AstNodeKind::CallExpression)
             prepared = _model.ArgumentsFor(

@@ -50,6 +50,9 @@ class AsyncMachine final {
         return _instructions;
     }
     const std::vector<std::size_t>& Parameters() const { return _parameters; }
+    const std::vector<std::size_t>& OperationSlots() const {
+        return _operationSlots;
+    }
     std::size_t SlotCount() const { return _slotCount; }
     std::size_t OperationCount() const { return _operationCount; }
     std::size_t Entry() const { return _entry; }
@@ -59,6 +62,7 @@ class AsyncMachine final {
     AsyncMachine() = default;
     std::vector<AsyncInstruction> _instructions;
     std::vector<std::size_t> _parameters;
+    std::vector<std::size_t> _operationSlots;
     std::size_t _slotCount = 0, _operationCount = 0, _entry = 0;
     std::size_t _initialCancellation = 0;
     friend std::optional<AsyncMachine> LowerAsyncMachine(
