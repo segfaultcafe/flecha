@@ -47,8 +47,13 @@ llvm::DataLayout HostLayout() {
 #endif
     if (!target) throw std::runtime_error(error);
     llvm::TargetOptions options;
+#if LLVM_VERSION_MAJOR >= 21
     std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
         triple, "generic", "", options, llvm::Reloc::PIC_));
+#else
+    std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
+        tripleName, "generic", "", options, llvm::Reloc::PIC_));
+#endif
     return machine->createDataLayout();
 }
 
