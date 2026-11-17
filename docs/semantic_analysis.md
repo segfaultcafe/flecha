@@ -161,6 +161,17 @@ so definite assignment reports a second invocation or later use with
 returned through an owning contract, passed to an owning parameter, or freed;
 the same operations remain invalid in reusable closures.
 
+The literal `none` is assignable to a `once func` destination and initializes
+an empty, live callable value. `== none` and `!= none` inspect that state without
+consuming it; comparing two callable values remains invalid. Calling an empty
+once callable is valid statically and enters the structured runtime crash path
+at the call site before evaluating arguments. Ordinary reusable callable types
+do not accept `none`. Assignment of a compatible callable after `none`, or
+after a previous consuming call, reinitializes the destination under the usual
+definite-assignment rules. An empty once callable is trivially zeroable, so a
+typed local may omit its initializer and recursively zeroable aggregates may
+default once-callable fields to empty.
+
 ### Deferred calls
 
 `defer` accepts direct functions, callable values, and resolved structure or

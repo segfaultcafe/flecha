@@ -5056,7 +5056,9 @@ void SemanticAnalyzer::ClassifyTrivialZeros(const core::CompilationUnit& unit) {
                type.Kind() == SemanticTypeKind::String ||
                type.Kind() == SemanticTypeKind::Pointer ||
                type.Kind() == SemanticTypeKind::OwnedBuffer ||
-               type.Kind() == SemanticTypeKind::OwnedSlice;
+               type.Kind() == SemanticTypeKind::OwnedSlice ||
+               (type.Kind() == SemanticTypeKind::Function &&
+                type.Signature().isOnce);
     };
 
     trivialValue = [&](const core::Expression& expression,
@@ -5826,12 +5828,28 @@ SemanticType SemanticAnalyzer::AnalyzeBinary(
     const bool rightEnum = right.Kind() == SemanticTypeKind::Enum;
     const bool leftOwner = left.Kind() == SemanticTypeKind::OwnedBuffer;
     const bool rightOwner = right.Kind() == SemanticTypeKind::OwnedBuffer;
+    const bool leftFunction = left.Kind() == SemanticTypeKind::Function;
+    const bool rightFunction = right.Kind() == SemanticTypeKind::Function;
     const bool equality =
         operation == TokenType::Equal || operation == TokenType::NotEqual;
     if (equality &&
         ((leftOwner && (right.Kind() == SemanticTypeKind::Null || rightNone)) ||
          (rightOwner && (left.Kind() == SemanticTypeKind::Null || leftNone))))
         return SemanticType(SemanticTypeKind::Bool);
+    if (valueEquality &&
+        ((leftFunction && rightNone && IsAssignable(left, right)) ||
+         (leftNone && rightFunction && IsAssignable(right, left))))
+        return SemanticType(SemanticTypeKind::Bool);
+    if (strictEquality &&
+        ((leftFunction && rightNone) || (leftNone && rightFunction)))
+        return SemanticType(SemanticTypeKind::Bool);
+    if (leftFunction || rightFunction) {
+        Report(diagnostics::DiagnosticCode::InvalidOperand, expression.Range(),
+               "callable values do not support equality with each other; "
+               "only 'once func' values support value comparison with "
+               "'none'");
+        return SemanticType::Error();
+    }
     if (strictEquality && ((leftEnum && rightNone) || (leftNone && rightEnum)))
         return SemanticType(SemanticTypeKind::Bool);
     if (((valueEquality || strictEquality) && leftEnum && rightEnum &&
@@ -8146,7 +8164,9 @@ void SemanticAnalyzer::GenerateInitializers() {
                    type.Kind() == SemanticTypeKind::String ||
                    type.Kind() == SemanticTypeKind::Pointer ||
                    type.Kind() == SemanticTypeKind::OwnedBuffer ||
-                   type.Kind() == SemanticTypeKind::OwnedSlice;
+                   type.Kind() == SemanticTypeKind::OwnedSlice ||
+                   (type.Kind() == SemanticTypeKind::Function &&
+                    type.Signature().isOnce);
         const StructureType* nested = type.Structure();
         if (nested->zero) return true;
         if (const auto found = zeroable.find(nested); found != zeroable.end())

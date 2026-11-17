@@ -17,6 +17,11 @@
 
 ### Added
 
+- `once func` values may be initialized, assigned, passed, or returned as
+  `none`, defaulted in typed locals and zeroable aggregates, compared with
+  `none` to test emptiness, and later reinitialized. Invoking an empty once
+  callable now produces a structured call-site crash instead of reaching a
+  null native function pointer. Reusable callable types remain nonempty.
 - Managed owning slices can be borrowed without transfer as `&own []T` and
   mutated through `->append` / `->clear`; `&const own []T` provides shared,
   read-only access to `->capacity`. Checked-reference alias and lifetime rules

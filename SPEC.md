@@ -268,7 +268,15 @@ pointers.
 `once func` is a distinct callable kind whose invocation consumes the callable
 value. A second invocation is diagnosed as a moved-value use. A compatible
 reusable callable may move into a once slot, but a once callable cannot become
-reusable. Both kinds use the same compiler ABI.
+reusable. Both kinds use the same compiler ABI. The literal `none` may be
+assigned to a `once func`, producing an empty single-use callable. Empty and
+nonempty once callables compare with `none` using `==` and `!=`; callable
+values are not otherwise equality-comparable. Invoking an empty once callable
+terminates through the structured crash reporter at the call site, before any
+arguments are evaluated. Assigning another compatible callable reinitializes
+the slot normally. Because the empty value is trivially zeroable, a typed
+`once func` declaration may also omit its initializer, and zeroable aggregates
+may contain once-callable fields. Reusable `func` values do not accept `none`.
 
 Captureless anonymous functions use the same signature shape. The empty square
 brackets may be written explicitly or omitted:
@@ -540,6 +548,7 @@ Tentative zero values are:
 | `bool` | `false` |
 | `char` | the null character, `'\0'` |
 | Pointer | `null` |
+| `once func` | an empty single-use callable |
 | Error type | its designated no-error value |
 | Enum with a default variant | its designated default variant |
 | Plain structure | recursively defaulted fields |
@@ -664,6 +673,10 @@ The initial equality rule is:
 1. If both operands have the same comparable type, compare their values.
 2. If exactly one operand has type `none`, convert it to the other operand's zero value and compare.
 3. Otherwise, report a type error.
+
+Callable values are an exception to the general same-type rule: two callable
+values are not equality-comparable. Only a `once func` value and the literal
+`none` support value equality, which tests whether the callable is empty.
 
 Structure value equality is field-by-field for comparable fields. Operands are
 evaluated once without copying or consuming their source values. A structure

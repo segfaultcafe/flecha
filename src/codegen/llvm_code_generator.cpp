@@ -2490,6 +2490,26 @@ llvm::Value* LlvmCodeGenerator::EmitIndirectCall(
         _builder.CreateExtractValue(callable, 0, "function.invoke");
     llvm::Value* environment =
         _builder.CreateExtractValue(callable, 1, "function.environment");
+    if (signature.isOnce) {
+        llvm::Value* present = _builder.CreateICmpNE(
+            invoke, llvm::Constant::getNullValue(invoke->getType()),
+            "function.present");
+        auto* valid = llvm::BasicBlock::Create(_context, "function.present",
+                                               _currentFunction);
+        auto* empty = llvm::BasicBlock::Create(_context, "function.empty",
+                                               _currentFunction);
+        _builder.CreateCondBr(present, valid, empty);
+        _builder.SetInsertPoint(empty);
+        const lowering::BoundLiteralExpression message(
+            expression.Range(),
+            semantic::SemanticType(semantic::SemanticTypeKind::StringView),
+            "called an empty once callable");
+        llvm::Value* messageValue = EmitLiteral(message);
+        if (messageValue == nullptr ||
+            EmitCrash(messageValue, expression.Range()) == nullptr)
+            return nullptr;
+        _builder.SetInsertPoint(valid);
+    }
     std::vector<llvm::Value*> arguments;
     arguments.reserve(expression.Arguments().size() + 2);
     if (signature.result.ContainsStructure()) {
@@ -3948,6 +3968,20 @@ llvm::Value* LlvmCodeGenerator::EmitBinary(
         llvm::Value* equal = _builder.CreateICmpEQ(left, right, "owner.equal");
         return expression.OperatorType() == TokenType::NotEqual
                    ? _builder.CreateNot(equal, "owner.not_equal")
+                   : equal;
+    }
+    if (leftType.Kind() == semantic::SemanticTypeKind::Function &&
+        rightType.Kind() == semantic::SemanticTypeKind::Function) {
+        // The type checker only admits ordinary callable equality when one
+        // operand is `none`, whose complete representation is null.
+        llvm::Value* leftInvoke =
+            _builder.CreateExtractValue(left, 0, "function.left.invoke");
+        llvm::Value* rightInvoke =
+            _builder.CreateExtractValue(right, 0, "function.right.invoke");
+        llvm::Value* equal = _builder.CreateICmpEQ(leftInvoke, rightInvoke,
+                                                   "function.empty.equal");
+        return expression.OperatorType() == TokenType::NotEqual
+                   ? _builder.CreateNot(equal, "function.empty.not_equal")
                    : equal;
     }
     if (leftType.Kind() == semantic::SemanticTypeKind::Structure &&

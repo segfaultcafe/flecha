@@ -483,6 +483,36 @@ TEST(LoweringTests, GivesNoneInitializersTheirDeclaredValueType) {
     EXPECT_EQ(word.Value(), "none");
 }
 
+TEST(LoweringTests, MaterializesNoneAsAnEmptyOnceCallable) {
+    LoweredSource result = Lower(R"(
+        once func Action() => (i32);
+        i32 main() {
+            Action action = none;
+            if action == none { return 42; }
+            return action();
+        }
+    )");
+    ASSERT_FALSE(result.diagnostics.HasErrors());
+    ASSERT_NE(result.program, nullptr);
+    const auto& statements =
+        result.program->Functions()[0]->Body().Statements();
+    const auto& declaration =
+        static_cast<const BoundVariableDeclarationStatement&>(*statements[0]);
+    const auto& empty =
+        static_cast<const BoundLiteralExpression&>(*declaration.Initializer());
+    EXPECT_EQ(empty.Type().Kind(), SemanticTypeKind::Function);
+    EXPECT_TRUE(empty.Type().Signature().isOnce);
+    EXPECT_TRUE(empty.IsZeroValue());
+
+    const auto& branch = static_cast<const BoundIfStatement&>(*statements[1]);
+    const auto& comparison =
+        static_cast<const BoundBinaryExpression&>(branch.Condition());
+    EXPECT_EQ(comparison.Left().Type().Kind(), SemanticTypeKind::Function);
+    EXPECT_EQ(comparison.Right().Type().Kind(), SemanticTypeKind::Function);
+    EXPECT_TRUE(static_cast<const BoundLiteralExpression&>(comparison.Right())
+                    .IsZeroValue());
+}
+
 TEST(LoweringTests, LowersEnumMatchesToDiscriminantArms) {
     LoweredSource result = Lower(R"(
         enum TokenKind: u8 { Identifier = 2, Number = 7, End = 9, }
