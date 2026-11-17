@@ -498,8 +498,13 @@ TEST(LoweringTests, MaterializesNoneAsAnEmptyOnceCallable) {
         result.program->Functions()[0]->Body().Statements();
     const auto& declaration =
         static_cast<const BoundVariableDeclarationStatement&>(*statements[0]);
+    ASSERT_EQ(declaration.Initializer()->Kind(),
+              BoundNodeKind::DirectExpression);
+    const auto& direct =
+        static_cast<const BoundDirectExpression&>(*declaration.Initializer());
+    ASSERT_EQ(direct.Value().Kind(), BoundNodeKind::LiteralExpression);
     const auto& empty =
-        static_cast<const BoundLiteralExpression&>(*declaration.Initializer());
+        static_cast<const BoundLiteralExpression&>(direct.Value());
     EXPECT_EQ(empty.Type().Kind(), SemanticTypeKind::Function);
     EXPECT_TRUE(empty.Type().Signature().isOnce);
     EXPECT_TRUE(empty.IsZeroValue());
@@ -509,6 +514,7 @@ TEST(LoweringTests, MaterializesNoneAsAnEmptyOnceCallable) {
         static_cast<const BoundBinaryExpression&>(branch.Condition());
     EXPECT_EQ(comparison.Left().Type().Kind(), SemanticTypeKind::Function);
     EXPECT_EQ(comparison.Right().Type().Kind(), SemanticTypeKind::Function);
+    ASSERT_EQ(comparison.Right().Kind(), BoundNodeKind::LiteralExpression);
     EXPECT_TRUE(static_cast<const BoundLiteralExpression&>(comparison.Right())
                     .IsZeroValue());
 }
