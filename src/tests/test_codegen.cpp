@@ -1466,7 +1466,7 @@ TEST(LlvmCodeGeneratorTests, EmitsCheckedStringViewOperations) {
     ASSERT_NE(result.module, nullptr) << result.generator->Error();
     EXPECT_TRUE(VerifyModule(*result.module).empty());
     const std::string ir = ModuleText(*result.module);
-    EXPECT_NE(ir.find("@flecha_runtime_v1_string_view_at"), std::string::npos);
+    EXPECT_NE(ir.find("@flecha_runtime_v1_bounds_error"), std::string::npos);
     EXPECT_NE(ir.find("@flecha_runtime_v1_string_view_check_substr"),
               std::string::npos);
     EXPECT_NE(ir.find("getelementptr inbounds i8"), std::string::npos);
@@ -4648,7 +4648,9 @@ TEST(CodeGeneratorTests, EmitsAggregateValuesAndBoundsCheckedElementAddresses) {
     EXPECT_NE(ir.find("define [2 x i8] @copy([2 x i8] %value)"),
               std::string::npos);
     EXPECT_NE(ir.find("icmp ult i64"), std::string::npos);
-    EXPECT_NE(ir.find("call void @llvm.trap()"), std::string::npos);
+    EXPECT_NE(ir.find("call void @flecha_runtime_v1_bounds_error"),
+              std::string::npos);
+    EXPECT_EQ(ir.find("call void @llvm.trap()"), std::string::npos);
     EXPECT_NE(ir.find("getelementptr inbounds [2 x i8]"), std::string::npos);
 }
 
@@ -4715,7 +4717,7 @@ TEST(CodeGeneratorTests, EmitsStringAndStringViewRanges) {
     ASSERT_NE(result.module, nullptr) << result.generator->Error();
     EXPECT_TRUE(VerifyModule(*result.module).empty());
     const std::string ir = ModuleText(*result.module);
-    EXPECT_NE(ir.find("flecha_runtime_v1_string_view_at"), std::string::npos);
+    EXPECT_NE(ir.find("flecha_runtime_v1_bounds_error"), std::string::npos);
     EXPECT_NE(ir.find("trunc i64"), std::string::npos);
 }
 
@@ -4837,7 +4839,11 @@ TEST(CodeGeneratorTests, EmitsSliceDescriptorsChecksAndReborrowedCalls) {
     EXPECT_NE(ir.find("{ ptr, i64 }"), std::string::npos);
     EXPECT_NE(ir.find("icmp ule i64"), std::string::npos);
     EXPECT_NE(ir.find("icmp ult i64"), std::string::npos);
-    EXPECT_NE(ir.find("call void @llvm.trap()"), std::string::npos);
+    EXPECT_NE(ir.find("call void @flecha_runtime_v1_slice_bounds_error"),
+              std::string::npos);
+    EXPECT_NE(ir.find("call void @flecha_runtime_v1_bounds_error"),
+              std::string::npos);
+    EXPECT_EQ(ir.find("call void @llvm.trap()"), std::string::npos);
 }
 
 TEST(CodeGeneratorTests, EmitsDynamicDeferredRecordsAndScopeStackRestoration) {

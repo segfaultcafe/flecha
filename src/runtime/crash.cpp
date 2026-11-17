@@ -4,6 +4,7 @@
 
 #include "runtime/runtime_abi.h"
 
+#include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
 
@@ -96,12 +97,10 @@ void PrintStackTrace() {
 #endif
 }
 
-}  // namespace
-
-extern "C" void flecha_runtime_v1_crash(
-    const char* message, size_t message_length, const char* file,
-    size_t file_length, const char* function, size_t function_length,
-    uint32_t line, uint32_t column) {
+[[noreturn]] void ReportCrash(const char* message, size_t message_length,
+                              const char* file, size_t file_length,
+                              const char* function, size_t function_length,
+                              uint32_t line, uint32_t column) {
     std::fputs("flecha: unrecoverable crash\nmessage: ", stderr);
     WriteText(message, message_length);
     std::fputs("\nlocation: ", stderr);
@@ -113,4 +112,48 @@ extern "C" void flecha_runtime_v1_crash(
     PrintStackTrace();
     std::fflush(stderr);
     std::abort();
+}
+
+}  // namespace
+
+extern "C" void flecha_runtime_v1_crash(const char* message,
+                                        size_t message_length, const char* file,
+                                        size_t file_length,
+                                        const char* function,
+                                        size_t function_length, uint32_t line,
+                                        uint32_t column) {
+    ReportCrash(message, message_length, file, file_length, function,
+                function_length, line, column);
+}
+
+extern "C" void flecha_runtime_v1_bounds_error(
+    int64_t index, uint8_t index_is_signed, size_t length, const char* file,
+    size_t file_length, const char* function, size_t function_length,
+    uint32_t line, uint32_t column) {
+    char message[128]{};
+    const int messageLength =
+        index_is_signed != 0
+            ? std::snprintf(message, sizeof(message),
+                            "index out of bounds (index: %" PRId64
+                            ", length: %zu)",
+                            index, length)
+            : std::snprintf(message, sizeof(message),
+                            "index out of bounds (index: %" PRIu64
+                            ", length: %zu)",
+                            static_cast<uint64_t>(index), length);
+    ReportCrash(message, static_cast<size_t>(messageLength), file, file_length,
+                function, function_length, line, column);
+}
+
+extern "C" void flecha_runtime_v1_slice_bounds_error(
+    size_t start, size_t end, size_t length, const char* file,
+    size_t file_length, const char* function, size_t function_length,
+    uint32_t line, uint32_t column) {
+    char message[160]{};
+    const int messageLength = std::snprintf(
+        message, sizeof(message),
+        "slice bounds out of bounds (start: %zu, end: %zu, length: %zu)", start,
+        end, length);
+    ReportCrash(message, static_cast<size_t>(messageLength), file, file_length,
+                function, function_length, line, column);
 }

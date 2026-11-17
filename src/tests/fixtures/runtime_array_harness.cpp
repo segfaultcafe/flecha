@@ -38,8 +38,7 @@ int main() {
         }
         int status = 0;
         if (waitpid(child, &status, 0) != child ||
-            (!WIFSIGNALED(status) ||
-             (WTERMSIG(status) != SIGILL && WTERMSIG(status) != SIGTRAP)))
+            (!WIFSIGNALED(status) || WTERMSIG(status) != SIGABRT))
             return 4;
     }
     return 42;

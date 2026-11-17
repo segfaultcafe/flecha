@@ -185,7 +185,13 @@ class LlvmCodeGenerator final {
     bool EmitPosition(const lowering::BoundPositionStatement& statement);
     [[nodiscard]] llvm::AllocaInst* CreateTemporaryAlloca(
         llvm::Type* type, std::string_view name);
-    void EmitBoundsCheck(llvm::Value* valid);
+    [[nodiscard]] std::vector<llvm::Value*> EmitSourceLocationArguments(
+        source::SourceRange range);
+    void EmitBoundsCheck(llvm::Value* valid, llvm::Value* index,
+                         llvm::Value* length, source::SourceRange range,
+                         bool signedIndex = false);
+    void EmitSliceBoundsCheck(llvm::Value* start, llvm::Value* end,
+                              llvm::Value* length, source::SourceRange range);
     [[nodiscard]] llvm::Value* EmitSlice(
         const lowering::BoundSliceExpression& expression);
     [[nodiscard]] llvm::Value* EmitOwnedSliceOperation(
@@ -207,7 +213,8 @@ class LlvmCodeGenerator final {
         const std::vector<llvm::Value*>& arguments);
     llvm::Value* EmitStorageAddress(llvm::Value* owner,
                                     semantic::SemanticType ownerType,
-                                    llvm::Value* index);
+                                    llvm::Value* index,
+                                    source::SourceRange range);
     llvm::Value* EmitIndirectCall(
         const lowering::BoundIndirectCallExpression& expression,
         llvm::Value* destination = nullptr);
@@ -350,6 +357,7 @@ class LlvmCodeGenerator final {
     std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedStrings;
     std::unordered_map<llvm::Value*, llvm::AllocaInst*> _freshOwnedValues;
     llvm::Value* _returnStorage = nullptr;
+    const lowering::BoundProgram* _currentProgram = nullptr;
     llvm::Function* _currentFunction = nullptr;
     const semantic::FunctionSymbol* _currentFunctionSymbol = nullptr;
     semantic::SemanticType _currentReturnType{semantic::SemanticTypeKind::Void};

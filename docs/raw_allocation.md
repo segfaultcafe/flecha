@@ -56,7 +56,7 @@ not general user-defined generics.
 
 The error reports failure to obtain the outer allocation. Failures inside an
 initializer retain their existing behavior: for example, owning-string runtime
-allocation failure terminates the process, and bounds traps do not unwind.
+allocation failure terminates the process, and bounds diagnostics do not unwind.
 There is no constructor-exception or partial-construction protocol.
 
 For `new<[]T>`, success packages `{data, count}` in the owning buffer; failure
