@@ -146,5 +146,5 @@ iterator handles are reserved for future container types.
 The native calling convention for slice descriptors is internal to Flecha;
 this does not define a C ABI. Tests cover parser recovery, type/borrow/flow
 errors, LLVM verification, calls, empty/nested views, element references,
-read-only range reborrowing, evaluation order, and bounds traps. Sanitizer runs
+read-only range reborrowing, evaluation order, and bounds diagnostics. Sanitizer runs
 exercise the compiler and instrumented native harness/runtime.

@@ -1073,7 +1073,9 @@ class BoundProgram final {
         std::unordered_map<
             const semantic::FunctionSymbol*,
             std::unordered_map<std::string, const semantic::FunctionSymbol*>>
-            interfaceVariadicShapeTargets = {})
+            interfaceVariadicShapeTargets = {},
+        std::vector<std::pair<source::SourceRange, source::SourceRange>>
+            sourceOrigins = {})
         : _functions(std::move(functions)),
           _foreignSources(std::move(foreignSources)),
           _interfaceTables(std::move(interfaceTables)),
@@ -1081,7 +1083,8 @@ class BoundProgram final {
           _interfaceVariadicShapes(std::move(interfaceVariadicShapes)),
           _variadicTargets(std::move(variadicTargets)),
           _interfaceVariadicShapeTargets(
-              std::move(interfaceVariadicShapeTargets)) {}
+              std::move(interfaceVariadicShapeTargets)),
+          _sourceOrigins(std::move(sourceOrigins)) {}
     BoundProgram(const BoundProgram&) = delete;
     BoundProgram& operator=(const BoundProgram&) = delete;
     BoundProgram(BoundProgram&&) = default;
@@ -1111,6 +1114,15 @@ class BoundProgram final {
     [[nodiscard]] const auto& InterfaceVariadicShapeTargets() const {
         return _interfaceVariadicShapeTargets;
     }
+    [[nodiscard]] source::SourceRange SourceOrigin(
+        source::SourceRange range) const {
+        for (const auto& [expansion, original] : _sourceOrigins)
+            if (expansion.start.file == range.start.file &&
+                expansion.start.offset <= range.start.offset &&
+                range.start.offset < expansion.end.offset)
+                return original;
+        return range;
+    }
 
    private:
     std::vector<std::unique_ptr<BoundFunction>> _functions;
@@ -1127,6 +1139,8 @@ class BoundProgram final {
         const semantic::FunctionSymbol*,
         std::unordered_map<std::string, const semantic::FunctionSymbol*>>
         _interfaceVariadicShapeTargets;
+    std::vector<std::pair<source::SourceRange, source::SourceRange>>
+        _sourceOrigins;
 };
 
 }  // namespace flecha::lowering

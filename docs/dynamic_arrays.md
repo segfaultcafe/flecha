@@ -137,7 +137,8 @@ zero construction creates no live owner and never duplicates one.
 
 Legacy raw `*T` indexing still requires unsafe permission and a base pointer from
 Flecha's allocator. The index has type `usize` and is checked against allocator
-metadata before forming an element address. Out-of-bounds access traps. Known stack and
+metadata before forming an element address. Out-of-bounds access enters the
+structured runtime crash reporter. Known stack and
 interior addresses, known null pointers, and tracked freed/transferred aliases are
 rejected. Arbitrary external pointer provenance remains an unsafe caller obligation:
 indexing a foreign allocation or interior address cannot read Flecha's metadata.

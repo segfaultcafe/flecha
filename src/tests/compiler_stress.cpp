@@ -580,12 +580,16 @@ void ExerciseReusedLoader(Runner& runner, const fs::path& largeRoot,
 }
 
 std::string FunctionBody(std::string_view ir, std::string_view name) {
-    std::size_t start = ir.find(name);
+    std::size_t start = 0;
+    while ((start = ir.find("define ", start)) != std::string_view::npos) {
+        const std::size_t lineEnd = ir.find('\n', start);
+        if (ir.substr(start, lineEnd - start).find(name) !=
+            std::string_view::npos)
+            break;
+        start += 7;
+    }
     Require(start != std::string_view::npos,
             "optimized IR does not define " + std::string(name));
-    start = ir.rfind("define ", start);
-    Require(start != std::string_view::npos,
-            "cannot locate definition for " + std::string(name));
     const std::size_t end = ir.find("\n}\n", start);
     Require(end != std::string_view::npos,
             "cannot locate end of definition for " + std::string(name));
@@ -834,23 +838,24 @@ void Exercise(Runner& runner) {
         {"cipher-optimize-o2", optimizeElapsed.count(), 0, 0, 0, 0});
     const std::string rawIr = Read(cipherRaw);
     const std::string optimizedIr = Read(cipherOptimized);
-    const std::size_t rawChecks = Count(rawIr, "call void @llvm.trap()");
-    const std::size_t optimizedChecks =
-        Count(optimizedIr, "call void @llvm.trap()");
+    constexpr std::string_view boundsError =
+        "call void @flecha_runtime_v1_bounds_error";
+    const std::size_t rawChecks = Count(rawIr, boundsError);
+    const std::size_t optimizedChecks = Count(optimizedIr, boundsError);
     Require(rawChecks > optimizedChecks,
             "O2 did not eliminate any redundant bounds checks");
     Require(optimizedChecks > 0,
             "O2 unexpectedly removed every dynamic bounds check");
-    Require(FunctionBody(optimizedIr, "constant_array").find("llvm.trap") ==
+    Require(FunctionBody(optimizedIr, "constant_array").find(boundsError) ==
                 std::string::npos,
             "constant fixed-array indices retain a redundant O2 check");
-    Require(FunctionBody(optimizedIr, "provably_safe_loop").find("llvm.trap") ==
+    Require(FunctionBody(optimizedIr, "provably_safe_loop").find(boundsError) ==
                 std::string::npos,
             "provably safe fixed-array loop retains a redundant O2 check");
-    Require(FunctionBody(optimizedIr, "fixed_variable").find("llvm.trap") !=
+    Require(FunctionBody(optimizedIr, "fixed_variable").find(boundsError) !=
                 std::string::npos,
             "variable fixed-array index lost its required check");
-    Require(FunctionBody(optimizedIr, "checked_slice").find("llvm.trap") !=
+    Require(FunctionBody(optimizedIr, "checked_slice").find(boundsError) !=
                 std::string::npos,
             "checked-slice index lost its required check");
     Require(rawIr.find("llvm.uadd.with.overflow.i32") != std::string::npos,

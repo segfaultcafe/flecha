@@ -85,8 +85,9 @@ cryptographic implementation nor a security test.
 
 Compiler and runtime code establish the following behavior:
 
-- Fixed-array indexing emits an unsigned `index < length` test followed by
-  `llvm.trap` before any `getelementptr`. Statically out-of-range constants are
+- Fixed-array indexing emits an unsigned `index < length` test followed by a
+  cold `flecha_runtime_v1_bounds_error` call before any `getelementptr`.
+  Statically out-of-range constants are
   rejected by semantic analysis. Valid constant indices still enter the
   straightforward raw IR with checks, which LLVM O2 removes.
 - Checked-slice indexing emits the same unsigned test against the runtime

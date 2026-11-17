@@ -60,13 +60,20 @@ std::unique_ptr<BoundProgram> Lowerer::Lower(
          semanticModel.Interfaces())
         interfaceLayouts.push_back(
             interfacePlanner.BuildLayout(*interfaceType));
+    std::vector<std::pair<source::SourceRange, source::SourceRange>>
+        sourceOrigins;
+    for (const auto& plan : semanticModel.BehaviorPlans())
+        for (const auto& body : plan.bodies)
+            for (const auto& origin : body.provenance)
+                sourceOrigins.emplace_back(origin.expansion, origin.original);
     _semanticModel = nullptr;
     return std::make_unique<BoundProgram>(
         std::move(functions), std::move(foreignSources),
         std::move(interfaceTables), std::move(interfaceLayouts),
         semanticModel.InterfaceVariadicShapes(),
         semanticModel.VariadicTargets(),
-        semanticModel.InterfaceVariadicShapeTargets());
+        semanticModel.InterfaceVariadicShapeTargets(),
+        std::move(sourceOrigins));
 }
 
 std::unique_ptr<BoundFunction> Lowerer::LowerFunction(

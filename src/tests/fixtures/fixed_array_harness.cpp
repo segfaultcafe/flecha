@@ -11,6 +11,8 @@ std::uint8_t array_borrow(std::size_t index);
 std::uint8_t array_unsafe_read(std::size_t index);
 std::uint8_t array_nested_read(std::size_t row, std::size_t column);
 std::uint8_t array_store_before_rhs(std::size_t index);
+std::uint8_t owned_array_read(std::size_t length, std::size_t index);
+std::uint8_t string_view_read(std::int32_t index);
 }
 
 int main(int argc, char** argv) {
@@ -37,8 +39,18 @@ int main(int argc, char** argv) {
             case 's':
                 (void)array_store_before_rhs(2);
                 break;
+            case 'z':
+                (void)owned_array_read(0, 0);
+                break;
+            case 'g':
+                (void)owned_array_read(2, 3);
+                break;
+            case 'q':
+                (void)string_view_read(-1);
+                break;
         }
-        return 99;  // Reaching here means the required bounds trap did not run.
+        return 99;  // Reaching here means the required bounds failure did not
+                    // run.
     }
     if (exercise_arrays() != 42) return 1;
     if (exercise_array_evaluation() != 42) return 2;

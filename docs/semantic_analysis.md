@@ -147,8 +147,9 @@ evaluation rules.
 `[]T` and `[]const T` borrow array storage or another slice. The checker tracks
 slice handles using the same origins, moves, reborrow parents, last uses, and
 scope constraints as references. Slice range sources receive shared reborrows.
-`FLECHA-S0037` reports statically invalid slice bounds; dynamic bounds trap in
-native code. See [checked_slices.md](checked_slices.md).
+`FLECHA-S0037` reports statically invalid slice bounds; dynamic bounds enter the
+structured runtime crash reporter in native code. See
+[checked_slices.md](checked_slices.md).
 
 ### Single-use callables
 

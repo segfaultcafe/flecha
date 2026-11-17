@@ -6,6 +6,16 @@
 
 #define FLECHA_RUNTIME_ABI_VERSION 1
 
+#if defined(__cplusplus)
+#define FLECHA_RUNTIME_NORETURN [[noreturn]]
+#elif defined(_MSC_VER)
+#define FLECHA_RUNTIME_NORETURN __declspec(noreturn)
+#elif defined(__GNUC__) || defined(__clang__)
+#define FLECHA_RUNTIME_NORETURN __attribute__((noreturn))
+#else
+#define FLECHA_RUNTIME_NORETURN
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -179,10 +189,23 @@ void flecha_runtime_v1_allocation_failure(void);
 // Reports an unrecoverable Flecha failure. The source strings are borrowed for
 // the duration of the call. This function prints the source location, a native
 // stack trace, and registers where the host exposes them, then raises SIGABRT.
-void flecha_runtime_v1_crash(const char* message, size_t message_length,
-                             const char* file, size_t file_length,
-                             const char* function, size_t function_length,
-                             uint32_t line, uint32_t column);
+FLECHA_RUNTIME_NORETURN void flecha_runtime_v1_crash(
+    const char* message, size_t message_length, const char* file,
+    size_t file_length, const char* function, size_t function_length,
+    uint32_t line, uint32_t column);
+// Reports a compiler-generated indexing failure through the same structured
+// crash path. index_is_signed controls whether the i64 bit pattern is rendered
+// as a signed or unsigned source-language value.
+FLECHA_RUNTIME_NORETURN void flecha_runtime_v1_bounds_error(
+    int64_t index, uint8_t index_is_signed, size_t length, const char* file,
+    size_t file_length, const char* function, size_t function_length,
+    uint32_t line, uint32_t column);
+// Reports invalid half-open slice bounds (start:end) through the structured
+// crash path.
+FLECHA_RUNTIME_NORETURN void flecha_runtime_v1_slice_bounds_error(
+    size_t start, size_t end, size_t length, const char* file,
+    size_t file_length, const char* function, size_t function_length,
+    uint32_t line, uint32_t column);
 // Allocates count zeroed elements, checking multiplication before allocation.
 // Zero count and zero-sized elements still return a releasable allocation on
 // success. Failure returns null and does not allocate storage.
