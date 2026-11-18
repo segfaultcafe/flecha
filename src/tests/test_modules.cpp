@@ -1014,7 +1014,8 @@ TEST_F(ModuleTests, ValidatesAndPrivilegesPairedTestModules) {
           "module math; i32 secret() { return 42; } export structure Box { "
           "private i32 value; }; Box Box::init() override { return build Box "
           "{ self.value = 42; }; } private i32 Box::hidden(&const self) { "
-          "return self->value; }");
+          "return self->value; } export enum Mode { Ready } private i32 "
+          "Mode::hidden(&const self) { return 42; }");
     Write("main.fl",
           "module main; @imports :: root::math :: "
           "lib::std::tests::testing; void main() {}");
@@ -1023,8 +1024,9 @@ TEST_F(ModuleTests, ValidatesAndPrivilegesPairedTestModules) {
     Write("math_test.fl",
           "module math_test; @imports :: root::math :: "
           "lib::std::tests::testing; test private_access("
-          "&testing::UnitTest t) { box := math::Box::init(); if "
-          "math::secret() != box.hidden() { t->fail(); } }");
+          "&testing::UnitTest t) { box := math::Box::init(); mode := "
+          "math::Mode.Ready; if math::secret() != box.hidden() or box.value "
+          "!= 42 or mode.hidden() != 42 { t->fail(); } }");
     fs::rename(root / "math_test.fl", root / "arbitrary_cases.fl");
 
     flecha::diagnostics::DiagnosticBag diagnostics;
@@ -1036,19 +1038,31 @@ TEST_F(ModuleTests, ValidatesAndPrivilegesPairedTestModules) {
         ADD_FAILURE() << diagnostic.message;
     ASSERT_FALSE(diagnostics.HasErrors());
     flecha::semantic::SemanticAnalyzer analyzer(diagnostics);
-    auto model = analyzer.Analyze(*unit);
-    ASSERT_TRUE(diagnostics.HasErrors());
-    std::string messages;
-    for (const auto& diagnostic : diagnostics.Diagnostics())
-        messages += diagnostic.message + "\n";
-    EXPECT_NE(messages.find("method '$m1$Box::hidden' is private"),
+    (void)analyzer.Analyze(*unit);
+    ASSERT_FALSE(diagnostics.HasErrors());
+
+    Write("other.fl", "module other;");
+    Write("other_test.fl",
+          "module other_test; @imports :: root::other :: root::math :: "
+          "lib::std::tests::testing; test cannot_proxy("
+          "&testing::UnitTest t) { box := math::Box::init(); mode := "
+          "math::Mode.Ready; if box.hidden() == box.value or mode.hidden() "
+          "== 42 { t->fail(); } }");
+    const std::string messages =
+        CheckAt("other_test.fl", flecha::core::ModuleLoadMode::Test);
+    EXPECT_NE(messages.find("method 'Box::hidden' is private"),
               std::string::npos);
+    EXPECT_NE(messages.find("method 'Mode::hidden' is private"),
+              std::string::npos);
+    EXPECT_NE(messages.find("field 'value' is private"), std::string::npos);
 }
 
 TEST_F(ModuleTests, RejectsInvalidTestModulesAndSignatures) {
     Write("std/tests/testing.fl",
           "module testing; export structure UnitTest { usize failures; };");
-    Write("math.fl", "module math; export i32 value() { return 42; }");
+    Write("math.fl",
+          "module math; export structure Box { private i32 value; }; private "
+          "i32 Box::hidden(&const self) { return self->value; }");
     Write("main.fl", "module main; test invalid(i32 value) {}");
     EXPECT_NE(Check().find("test must be declared"), std::string::npos);
 
@@ -1077,6 +1091,13 @@ TEST_F(ModuleTests, RejectsInvalidTestModulesAndSignatures) {
           "lib::std::tests::testing; test extra(&testing::UnitTest t, i32 "
           "value) {}");
     EXPECT_NE(analyzeTestModule().find("exactly one"), std::string::npos);
+
+    Write("math_test.fl",
+          "module math_test; @imports :: root::math; export i32 proxy() { "
+          "box := math::Box::init(); return box.hidden(); }");
+    EXPECT_NE(analyzeTestModule().find(
+                  "test modules cannot export or quiver declarations"),
+              std::string::npos);
 }
 TEST_F(ModuleTests, AggregatesTestsFromMultipleArbitrarilyNamedSources) {
     Write("std/tests/testing.fl",
@@ -1738,7 +1759,9 @@ TEST_F(ModuleTests, PrivateMembersRequireTheExactOwningType) {
     )");
     const std::string errors = Check();
     EXPECT_NE(errors.find("field 'value' is private"), std::string::npos);
-    EXPECT_NE(errors.find("hidden' is private"), std::string::npos);
+    EXPECT_NE(errors.find("method 'First::hidden' is private"),
+              std::string::npos);
+    EXPECT_EQ(errors.find("$m"), std::string::npos);
 }
 
 TEST_F(ModuleTests, TypedDecorationVisibilityAndSourceScopes) {

@@ -2648,6 +2648,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     _quiverNames.clear();
     _entryModules.clear();
     _testModules.clear();
+    _testPairs.clear();
     _testingModule = unit.testingModule;
     _currentModule.clear();
     _currentSource.clear();
@@ -2664,7 +2665,11 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
             _sourceScopes[module.sourceId] =
                 &AddScope(_moduleScopes.at(module.id));
         if (module.entry) _entryModules.insert(module.id);
-        if (module.test) _testModules.insert(module.id);
+        if (module.test) {
+            _testModules.insert(module.id);
+            if (!module.testPair.empty())
+                _testPairs.insert_or_assign(module.id, module.testPair);
+        }
         for (const auto& import : module.imports)
             for (const auto& declaration : unit.Declarations()) {
                 if (declaration->moduleId != module.id) continue;
@@ -5469,7 +5474,9 @@ SemanticType SemanticAnalyzer::AnalyzeMemberAccess(
         for (const auto& field : receiver.Structure()->fields)
             if (field.name == expression.Member()) {
                 if (field.syntax->IsPrivate() &&
-                    CurrentOwner() != receiver.Structure())
+                    CurrentOwner() != receiver.Structure() &&
+                    !HasPairedTestAccess(
+                        receiver.Structure()->syntax->moduleId))
                     Report(diagnostics::DiagnosticCode::PrivateAccess,
                            expression.MemberRange(),
                            "field '" + field.name + "' is private");
@@ -8249,9 +8256,20 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
                "tear is compiler-only and cannot be called directly");
     if (function.IsPrivate() &&
         ((function.Owner() && CurrentOwner() != function.Owner()) ||
-         (function.EnumOwner() && CurrentEnumOwner() != function.EnumOwner())))
+         (function.EnumOwner() &&
+          CurrentEnumOwner() != function.EnumOwner())) &&
+        !HasPairedTestAccess(function.Owner()
+                                 ? function.Owner()->syntax->moduleId
+                                 : function.EnumOwner()->syntax->moduleId)) {
+        const std::string owner = function.Owner()
+                                      ? function.Owner()->displayName
+                                      : function.EnumOwner()->displayName;
+        const std::string name = function.Declaration()
+                                     ? function.Declaration()->Name()
+                                     : function.Name();
         Report(diagnostics::DiagnosticCode::PrivateAccess, range,
-               "method '" + function.Name() + "' is private");
+               "method '" + owner + "::" + name + "' is private");
+    }
     if (function.IsProtected()) {
         const InterfaceType* declaringInterface = function.InterfaceOwner();
         const MethodKey key = MethodKeyOf(function);
@@ -8296,6 +8314,11 @@ void SemanticAnalyzer::CheckMethodAccess(const FunctionSymbol& function,
     if (function.IsUnsafe() ||
         (function.ReturnType().IsImmovable() && !_inZero))
         RequireUnsafe(range);
+}
+
+bool SemanticAnalyzer::HasPairedTestAccess(const std::string& module) const {
+    const auto pair = _testPairs.find(_currentModule);
+    return pair != _testPairs.end() && pair->second == module;
 }
 
 void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,

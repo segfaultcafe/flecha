@@ -1195,8 +1195,9 @@ This includes module constants declared as `const T name = expression;`.
 Wildcard imports do not bypass these boundaries. Exported and quiver
 structures and enums bundle non-private member functions; member functions do
 not take declaration-visibility modifiers, and private members remain limited
-to methods of the exact owning type. Exported APIs may expose only exported
-nominal types. Quiver APIs may also expose quiver types from the same quiver,
+to methods of the exact owning type and the type's paired logical test module.
+Exported APIs may expose only exported nominal types. Quiver APIs may also
+expose quiver types from the same quiver,
 but never module-private types.
 
 Directory imports use `root::path::*` for immediate declared logical modules or
