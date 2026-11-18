@@ -1179,28 +1179,63 @@ TEST(AsyncValueLoweringTests,
     auto unit = parser.Parse();
     semantic::SemanticAnalyzer analyzer(diagnostics);
     auto model = analyzer.Analyze(*unit);
-    llvm::LLVMContext context;
-    std::string error;
-    EXPECT_FALSE(GenerateAsyncValuesForTesting(
-        context, HostLayout(), model, diagnostics, "unsupported_async", error));
-    EXPECT_FALSE(error.empty());
-    EXPECT_NE(error.find("unsupported"), std::string::npos);
+    EXPECT_TRUE(std::ranges::any_of(
+        diagnostics.Diagnostics(), [](const diagnostics::Diagnostic& value) {
+            return value.code == diagnostics::DiagnosticCode::InvalidAsync;
+        }));
+    EXPECT_EQ(model.AsyncPlanFor(static_cast<const core::FunctionDeclaration&>(
+                  *unit->Declarations().back())),
+              nullptr);
 }
 
-TEST(AsyncValueLoweringTests, KeepsPublicAndSynchronousExecutionGatesClosed) {
+TEST(AsyncValueLoweringTests, EmitsProductionEntryAndSeparatesSynchronousIr) {
     diagnostics::DiagnosticBag diagnostics;
     core::Tokenizer tokenizer("async i32 main() { return 1; }", diagnostics);
     core::Parser parser(tokenizer.Tokenize(), diagnostics);
     auto unit = parser.Parse();
     semantic::SemanticAnalyzer analyzer(diagnostics);
     auto model = analyzer.Analyze(*unit);
-    EXPECT_TRUE(std::ranges::any_of(
-        diagnostics.Diagnostics(), [](const diagnostics::Diagnostic& value) {
-            return value.code ==
-                   diagnostics::DiagnosticCode::AsyncNotImplemented;
-        }));
+    EXPECT_FALSE(diagnostics.HasErrors());
+    llvm::LLVMContext context;
+    std::string error;
+    auto generated = GenerateAsyncProgram(
+        context, HostLayout(), model, diagnostics, "production_async", error);
+    ASSERT_TRUE(generated) << error;
+    EXPECT_NE(generated->module->getFunction("main"), nullptr);
     lowering::Lowerer lowerer;
-    EXPECT_FALSE(lowerer.Lower(*unit, model, diagnostics));
+    auto synchronous = lowerer.Lower(*unit, model, diagnostics);
+    ASSERT_TRUE(synchronous);
+    EXPECT_TRUE(synchronous->Functions().empty());
+}
+
+TEST(AsyncValueLoweringTests,
+     ValidatesStableRetainedStorageInConcreteSuspensionFrames) {
+    Compiled code(
+        "async i32 leaf(&i32 value) { return *value; } async i32 main() { "
+        "value := 42; return leaf(&value).await?; }");
+    const auto* plan =
+        code.model.AsyncPlanFor(*code.main.symbol->Declaration());
+    ASSERT_NE(plan, nullptr);
+    std::string error;
+    auto machine =
+        lowering::LowerAsyncMachine(*plan, code.model, code.diagnostics, error);
+    ASSERT_TRUE(machine) << error;
+    EXPECT_TRUE(
+        ValidateAsyncFrameLayout(*plan, *machine, code.main.frame, error))
+        << error;
+    auto invalid = code.main.frame;
+    const auto retained = std::ranges::find_if(
+        plan->states, [](const semantic::AsyncState& state) {
+            return !state.retained.empty() &&
+                   std::ranges::any_of(
+                       state.edges, [](const semantic::AsyncEdge& edge) {
+                           return edge.kind == semantic::AsyncEdgeKind::Pending;
+                       });
+        });
+    ASSERT_NE(retained, plan->states.end());
+    invalid.slotOffsets[retained->retained.front()].reset();
+    EXPECT_FALSE(ValidateAsyncFrameLayout(*plan, *machine, invalid, error));
+    EXPECT_NE(error.find("stable"), std::string::npos);
 }
 
 }  // namespace

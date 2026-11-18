@@ -1,0 +1,13 @@
+foreign c {
+    #include <stdint.h>
+
+    int32_t async_foreign_answer(void) {
+        return 42;
+    }
+}
+
+extern i32 async_foreign_answer();
+
+async i32 main() {
+    return async_foreign_answer();
+}

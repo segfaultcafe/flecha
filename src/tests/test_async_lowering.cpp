@@ -162,7 +162,7 @@ const std::string DIRECT =
     "}";
 
 TEST(AsyncLoweringTests,
-     LowersOnlyPublishedValidatedPlansAndPreservesPublicGate) {
+     LowersOnlyPublishedValidatedPlansAndSeparatesSynchronousIr) {
     Compiled code(DIRECT);
     EXPECT_NE(lowering::DumpAsyncMachine(*code.machine)
                   .find("reserve-before-initialize"),
@@ -178,9 +178,9 @@ TEST(AsyncLoweringTests,
     EXPECT_FALSE(
         lowering::LowerAsyncMachine(*code.plan, code.model, invalid, error));
     lowering::Lowerer lowerer;
-    EXPECT_FALSE(lowerer.Lower(*code.unit, code.model, code.diagnostics));
-    diagnostics::DiagnosticBag empty;
-    EXPECT_FALSE(lowerer.Lower(*code.unit, code.model, empty));
+    auto synchronous = lowerer.Lower(*code.unit, code.model, code.diagnostics);
+    ASSERT_TRUE(synchronous);
+    EXPECT_TRUE(synchronous->Functions().empty());
     auto again = lowering::LowerAsyncMachine(*code.plan, code.model,
                                              code.diagnostics, error);
     ASSERT_TRUE(again);

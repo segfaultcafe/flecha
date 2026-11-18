@@ -1,16 +1,32 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <memory_resource>
 #include <new>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "runtime/async_executor.hpp"
+#include "runtime/runtime_abi.h"
 
 using namespace flecha::runtime::async;
 
 namespace {
+struct AbiFrame final {
+    std::int32_t value;
+};
+std::uint32_t PollAbiFrame(void*, const void*) {
+    return static_cast<std::uint32_t>(PollResult::Ready);
+}
+void DestroyAbiFrame(void*) {}
+void TakeAbiFrame(void* frame, void* destination) {
+    *static_cast<std::int32_t*>(destination) =
+        static_cast<AbiFrame*>(frame)->value;
+}
+void InitializeAbiFrame(void* frame, void*, void*) { new (frame) AbiFrame{42}; }
+
 struct EventFrame final {
     int initialized = 0;
     int polls = 0;
@@ -677,4 +693,18 @@ TEST(AsyncRuntimeTests,
         EXPECT_EQ(counts.constructed, counts.destroyed);
         EXPECT_EQ(resource.live, 0);
     }
+}
+
+TEST(AsyncRuntimeTests, VersionedRootEntryAbiRunsAndRejectsInvalidLayouts) {
+    EXPECT_EQ(flecha_runtime_v1_async_main_run(
+                  sizeof(AbiFrame), alignof(AbiFrame), PollAbiFrame,
+                  DestroyAbiFrame, TakeAbiFrame, InitializeAbiFrame, 1),
+              42);
+    testing::internal::CaptureStderr();
+    EXPECT_EQ(
+        flecha_runtime_v1_async_main_run(0, 1, PollAbiFrame, DestroyAbiFrame,
+                                         TakeAbiFrame, InitializeAbiFrame, 1),
+        FLECHA_RUNTIME_ASYNC_ROOT_EXECUTION_FAILED);
+    EXPECT_NE(testing::internal::GetCapturedStderr().find("invalid"),
+              std::string::npos);
 }

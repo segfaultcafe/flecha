@@ -244,7 +244,60 @@ std::optional<AsyncConcreteFrameLayout> PlanAsyncFrameLayout(
         return std::nullopt;
     }
     result.size = Align(cursor, result.alignment);
+    if (!ValidateAsyncFrameLayout(plan, machine, result, error))
+        return std::nullopt;
     return result;
+}
+
+bool ValidateAsyncFrameLayout(const semantic::AsyncFramePlan& plan,
+                              const lowering::AsyncMachine& machine,
+                              const AsyncConcreteFrameLayout& layout,
+                              std::string& error) {
+    error.clear();
+    if (!layout.size || !layout.alignment ||
+        (layout.alignment & (layout.alignment - 1)) ||
+        layout.slotOffsets.size() != plan.slots.size() ||
+        layout.operationOffsets.size() != machine.OperationCount()) {
+        error = "async frame has an invalid target layout";
+        return false;
+    }
+    for (std::size_t slot = 0; slot < plan.slots.size(); ++slot) {
+        if (!plan.slots[slot].stableAddress || !plan.slots[slot].guarded ||
+            !layout.slotOffsets[slot] ||
+            *layout.slotOffsets[slot] >= layout.size) {
+            error = "async frame slot lacks stable guarded target storage";
+            return false;
+        }
+    }
+    for (std::size_t operation = 0; operation < layout.operationOffsets.size();
+         ++operation)
+        if (layout.operationOffsets[operation] >= layout.size) {
+            error = "async operation storage is outside its frame";
+            return false;
+        }
+    for (std::size_t state = 0; state < plan.states.size(); ++state) {
+        const semantic::AsyncState& continuation = plan.states[state];
+        const bool suspends = std::ranges::any_of(
+            continuation.edges, [state](const semantic::AsyncEdge& edge) {
+                return edge.kind == semantic::AsyncEdgeKind::Pending &&
+                       edge.target == state;
+            });
+        if (!suspends) continue;
+        if (!continuation.storage ||
+            *continuation.storage >= layout.slotOffsets.size() ||
+            !layout.slotOffsets[*continuation.storage]) {
+            error = "suspending continuation lacks stable operation storage";
+            return false;
+        }
+        for (const semantic::AsyncSlotId slot : continuation.retained)
+            if (slot >= layout.slotOffsets.size() ||
+                !layout.slotOffsets[slot] ||
+                *layout.slotOffsets[slot] >= layout.size) {
+                error = "suspension loses retained frame storage";
+                return false;
+            }
+    }
+    return true;
 }
 
 }  // namespace flecha::codegen

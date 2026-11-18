@@ -1,0 +1,5 @@
+async extern i32 operation();
+
+async i32 main() {
+    return 0;
+}

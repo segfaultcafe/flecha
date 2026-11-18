@@ -268,7 +268,7 @@ TEST(TryFrontendTests, KeepsAsyncReturnAndExecutionFailureDistinct) {
     )");
     for (const auto& d : analysis.diagnostics.Diagnostics())
         if (d.severity == DiagnosticSeverity::Error)
-            EXPECT_EQ(d.code, DiagnosticCode::AsyncNotImplemented) << d.message;
+            ADD_FAILURE() << DiagnosticCodeName(d.code) << ": " << d.message;
     const auto& function = static_cast<const FunctionDeclaration&>(
         *analysis.unit->Declarations().back());
     const auto* plan = analysis.model.AsyncPlanFor(function);
@@ -279,8 +279,10 @@ TEST(TryFrontendTests, KeepsAsyncReturnAndExecutionFailureDistinct) {
     EXPECT_TRUE(std::ranges::any_of(
         plan->flow.nodes, [](const auto& n) { return n.failureExit; }));
     lowering::Lowerer lowerer;
-    DiagnosticBag empty;
-    EXPECT_EQ(lowerer.Lower(*analysis.unit, analysis.model, empty), nullptr);
+    auto synchronous =
+        lowerer.Lower(*analysis.unit, analysis.model, analysis.diagnostics);
+    ASSERT_NE(synchronous, nullptr);
+    EXPECT_FALSE(synchronous->Functions().empty());
 }
 
 TEST(TryFrontendTests, OrdinaryFailureDrainsChildrenAsCompletedErrorReturn) {
@@ -298,7 +300,7 @@ TEST(TryFrontendTests, OrdinaryFailureDrainsChildrenAsCompletedErrorReturn) {
     )");
     for (const auto& d : analysis.diagnostics.Diagnostics())
         if (d.severity == DiagnosticSeverity::Error)
-            EXPECT_EQ(d.code, DiagnosticCode::AsyncNotImplemented) << d.message;
+            ADD_FAILURE() << DiagnosticCodeName(d.code) << ": " << d.message;
     const auto& function = static_cast<const FunctionDeclaration&>(
         *analysis.unit->Declarations().back());
     const auto* plan = analysis.model.AsyncPlanFor(function);

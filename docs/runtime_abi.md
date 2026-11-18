@@ -80,6 +80,16 @@ index `2`; the caller supplies an empty string output, and every failure leaves
 it empty. Argument bytes are preserved exactly as supplied by the host C entry
 environment and are not normalized or validated as Unicode.
 
+An `async void main()` or `async i32 main()` uses the additive
+`flecha_runtime_v1_async_main_run` boundary. The generated host wrapper passes
+only target-layout frame size/alignment, opaque generated callbacks, and the
+completed-value category. The runtime allocates the root frame, drives its
+single-threaded executor until completion, transfers an `i32` result when
+present, and destroys the frame. Root allocation or execution failure prints a
+diagnostic and returns stable nonzero status `70` or `71`, respectively. C++
+executor, poll-context,
+memory-resource, and frame layouts do not cross the public C ABI.
+
 The environment ABI reads and mutates the current process environment through
 explicit name and value byte ranges. `environment_get` clears its owning
 string and presence outputs before validation. Success with presence zero

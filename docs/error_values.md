@@ -174,7 +174,8 @@ unwinding. `!` still denotes an unrecoverable crash. Async `.await?` is separate
 it forwards the async execution failure and does not require an error field in
 the async function's completed result. Ordinary `try` inside an async function
 returns a completed error value; it does not turn that value into an execution
-failure. Async executable lowering remains gated.
+failure. Async executable lowering preserves that separate outcome through the
+single-threaded runtime ABI.
 
 ## Representation and validation
 

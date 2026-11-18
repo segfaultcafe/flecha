@@ -17,8 +17,8 @@
 
 namespace flecha::codegen {
 
-// Internal testing entry for end-to-end source frame execution. It is not
-// wired to NativeCompiler or the CLI and does not relax FLECHA-S0089.
+// Generated target-layout metadata shared by production object emission and
+// focused source-to-frame execution tests.
 struct GeneratedAsyncFunction final {
     const semantic::FunctionSymbol* symbol = nullptr;
     std::string name;
@@ -39,6 +39,14 @@ GenerateAsyncValuesForTesting(llvm::LLVMContext& context,
                               const semantic::SemanticModel& model,
                               const diagnostics::DiagnosticBag& diagnostics,
                               std::string moduleName, std::string& error);
+
+// Generates the same verified frames plus the host C main wrapper for a
+// parameterless async void/i32 main entry point.
+[[nodiscard]] std::optional<GeneratedAsyncProgram> GenerateAsyncProgram(
+    llvm::LLVMContext& context, const llvm::DataLayout& dataLayout,
+    const semantic::SemanticModel& model,
+    const diagnostics::DiagnosticBag& diagnostics, std::string moduleName,
+    std::string& error);
 
 }  // namespace flecha::codegen
 #endif
