@@ -796,8 +796,21 @@ Explicit `try call()` propagates an error-only result or the final error field o
 a tuple. Success yields the preceding field(s), or no value for an error-only
 call. Failure returns that error with `none` defaults for other result fields
 and normal scope cleanup. The enclosing result must end in a compatible error
-type and its other fields must support those defaults. `try` does not recover
-from crashable `!` calls. Async `.await?` separately forwards execution failure.
+type and its other fields must support those defaults. An optional `peek` block
+runs only on failure before that return:
+
+```flecha
+try operation() peek { log_failure(); };
+try operation() peek err { log(err); };
+try operation() peek err as error { err = translate(err); };
+```
+
+The binding is local to the block, inferred as the operand's error type unless
+`as` supplies a compatible error type, and its final value is propagated.
+`peek` can access enclosing lexical bindings but cannot return, propagate
+another `try` or `.await?`, or transfer control outside its block. `try` does
+not recover from crashable `!` calls. Async `.await?` separately forwards
+execution failure.
 See [error_values.md](docs/error_values.md) for implemented behavior and the
 compiler-private representation. The allocator example above still depends on
 future allocation APIs.

@@ -174,5 +174,6 @@ test("arrow creation and shift/minus retain operator scopes", () => {
 test("try is ordinary error propagation syntax", () => {
   const control = new RegExp(grammar.repository.control.match);
   assert.match("value := try parse();", control);
+  assert.match("try parse() peek err as error {};", control);
   assert.doesNotMatch("retry();", control);
 });

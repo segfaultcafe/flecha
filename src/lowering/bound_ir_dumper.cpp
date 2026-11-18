@@ -284,13 +284,22 @@ class Dumper final {
                 _stream << ")";
                 break;
             }
-            case BoundNodeKind::TryExpression:
+            case BoundNodeKind::TryExpression: {
+                const auto& attempt =
+                    static_cast<const BoundTryExpression&>(expression);
                 _stream << "(try ";
-                WriteExpression(
-                    static_cast<const BoundTryExpression&>(expression)
-                        .Operand());
+                WriteExpression(attempt.Operand());
+                if (attempt.PeekBody() != nullptr) {
+                    _stream << " peek";
+                    if (attempt.PeekVariable() != nullptr)
+                        _stream << " " << attempt.PeekVariable()->Name() << ": "
+                                << attempt.PeekVariable()->Type().Name();
+                    _stream << " ";
+                    WriteBlock(*attempt.PeekBody());
+                }
                 _stream << ")";
                 break;
+            }
             case BoundNodeKind::TupleExpression: {
                 const auto& tuple =
                     static_cast<const BoundTupleExpression&>(expression);

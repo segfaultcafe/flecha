@@ -2472,8 +2472,33 @@ std::unique_ptr<Expression> Parser::ParseUnaryExpression() {
         const auto start = Advance().range.start;
         auto operand = ParseUnaryExpression();
         if (!operand) return nullptr;
-        const source::SourceRange range{start, operand->Range().end};
-        return std::make_unique<TryExpression>(range, std::move(operand));
+        source::SourceLocation end = operand->Range().end;
+        std::unique_ptr<VariableDeclarationStatement> peekBinding;
+        std::unique_ptr<BlockStatement> peekBody;
+        if (Match(TokenType::Peek)) {
+            if (!Check(TokenType::LCurly)) {
+                const Token* name = Consume(TokenType::Identifier,
+                                            "error binding after 'peek'");
+                if (name == nullptr) return nullptr;
+                std::unique_ptr<TypeNode> type;
+                source::SourceLocation bindingEnd = name->range.end;
+                if (Match(TokenType::As)) {
+                    type = ParseType();
+                    if (type == nullptr) return nullptr;
+                    bindingEnd = type->Range().end;
+                }
+                peekBinding = std::make_unique<VariableDeclarationStatement>(
+                    source::SourceRange{name->range.start, bindingEnd},
+                    std::move(type), name->value, nullptr, name->range);
+            }
+            peekBody = ParseBlockStatement();
+            if (peekBody == nullptr) return nullptr;
+            end = peekBody->Range().end;
+        }
+        const source::SourceRange range{start, end};
+        return std::make_unique<TryExpression>(range, std::move(operand),
+                                               std::move(peekBinding),
+                                               std::move(peekBody));
     }
     // Compose >>- only in prefix position. Infix x>>-y keeps its existing
     // ShiftRight/Sub tokenization, including when there is no whitespace.

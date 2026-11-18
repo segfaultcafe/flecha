@@ -904,6 +904,31 @@ class Emitter final {
         return error;
     }
 
+    llvm::Value* CoerceError(llvm::Value* value, SemanticType source,
+                             SemanticType destination) {
+        if (source == destination) return value;
+        if (source.Kind() == SemanticTypeKind::NamedError &&
+            destination.Kind() == SemanticTypeKind::ErrorValue) {
+            const std::string name = ".flecha.error." + source.Family().name;
+            llvm::GlobalVariable* identity = _module.getNamedGlobal(name);
+            if (!identity)
+                identity = new llvm::GlobalVariable(
+                    _module, _builder.getInt8Ty(), true,
+                    llvm::GlobalValue::PrivateLinkage,
+                    llvm::ConstantInt::get(_builder.getInt8Ty(), 0), name);
+            llvm::Value* family = _builder.CreateSelect(
+                _builder.CreateICmpEQ(
+                    value, llvm::Constant::getNullValue(value->getType())),
+                llvm::ConstantPointerNull::get(_builder.getPtrTy()), identity,
+                "error.family");
+            llvm::Value* result =
+                llvm::PoisonValue::get(_types.Map(destination));
+            result = _builder.CreateInsertValue(result, family, 0);
+            return _builder.CreateInsertValue(result, value, 1, "error.value");
+        }
+        return value;
+    }
+
     bool IsAwait(const core::Expression* expression) const {
         return expression &&
                Unwrap(*expression).Kind() == core::AstNodeKind::AwaitExpression;
@@ -934,24 +959,69 @@ class Emitter final {
         }
         if (node.propagationDispatch) {
             llvm::Value* value = Eval(node.propagationDispatch->Operand());
-            if (!value || !_entry->plan->returnValue ||
-                !Store(*_entry->plan->returnValue, value))
-                return 0;
-            llvm::Value* error = value;
             SemanticType operand =
                 _model.TypeOf(node.propagationDispatch->Operand());
+            if (!value || !_entry->plan->returnValue) return 0;
+            llvm::Value* error = value;
             if (operand.Kind() == SemanticTypeKind::Tuple)
                 error = _builder.CreateExtractValue(
                     value, operand.Elements().size() - 1);
-            llvm::Value* code =
-                ErrorCode(error, operand.Kind() == SemanticTypeKind::Tuple
-                                     ? operand.Elements().back()
-                                     : operand);
+            const SemanticType sourceError =
+                operand.Kind() == SemanticTypeKind::Tuple
+                    ? operand.Elements().back()
+                    : operand;
+            const SemanticType destination =
+                _entry->plan->slots[*_entry->plan->returnValue].type;
+            const SemanticType destinationError =
+                destination.Kind() == SemanticTypeKind::Tuple
+                    ? destination.Elements().back()
+                    : destination;
+            llvm::Value* storedError =
+                CoerceError(error, sourceError, destinationError);
+            llvm::Value* returned = storedError;
+            if (destination.Kind() == SemanticTypeKind::Tuple) {
+                returned =
+                    llvm::Constant::getNullValue(_types.Map(destination));
+                returned = _builder.CreateInsertValue(
+                    returned, storedError, destination.Elements().size() - 1);
+            }
+            if (!Store(*_entry->plan->returnValue, returned)) return 0;
+            if (const auto* binding = node.propagationDispatch->PeekBinding()) {
+                const auto* symbol = _model.DeclaredSymbol(*binding);
+                const auto slot = SlotFor(symbol);
+                if (!slot || !Store(*slot, CoerceError(error, sourceError,
+                                                       symbol->Type())))
+                    return 0;
+            }
+            llvm::Value* code = ErrorCode(error, sourceError);
             _flowResult = _builder.CreateZExt(
                 _builder.CreateICmpEQ(
                     code, llvm::Constant::getNullValue(code->getType())),
                 _builder.getInt8Ty());
             return 2;
+        }
+        if (node.propagationReturn && node.propagationReturn->PeekBinding()) {
+            if (!_entry->plan->returnValue) return 0;
+            const auto* symbol =
+                _model.DeclaredSymbol(*node.propagationReturn->PeekBinding());
+            const auto slot = SlotFor(symbol);
+            if (!slot) return 0;
+            llvm::Value* error = _builder.CreateLoad(
+                _types.Map(symbol->Type()), Slot(*slot), "try.peek.error");
+            const SemanticType destination =
+                _entry->plan->slots[*_entry->plan->returnValue].type;
+            const SemanticType destinationError =
+                destination.Kind() == SemanticTypeKind::Tuple
+                    ? destination.Elements().back()
+                    : destination;
+            error = CoerceError(error, symbol->Type(), destinationError);
+            if (destination.Kind() != SemanticTypeKind::Tuple)
+                return Store(*_entry->plan->returnValue, error) ? 1 : 0;
+            llvm::Value* returned =
+                llvm::Constant::getNullValue(_types.Map(destination));
+            returned = _builder.CreateInsertValue(
+                returned, error, destination.Elements().size() - 1);
+            return Store(*_entry->plan->returnValue, returned) ? 1 : 0;
         }
         if (node.memoryDeclaration && node.write) {
             const auto slot = SlotFor(node.write);

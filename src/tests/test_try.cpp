@@ -158,6 +158,71 @@ TEST(TryFrontendTests, KeepsQuestionExclusiveToAwait) {
     }
 }
 
+TEST(TryFrontendTests, ParsesPeekFormsAndRejectsBareHookBlocks) {
+    Analysis valid(R"(
+        error E { Bad }
+        E fail() { return E.Bad; }
+        error unbound() { try fail() peek {}; return none; }
+        error inferred() {
+            try fail() peek err { if err != E.Bad { err = E.Bad; } };
+            return none;
+        }
+        error widened() {
+            try fail() peek err as error { err = E.Bad; };
+            return none;
+        }
+    )");
+    valid.ExpectValid();
+
+    Analysis bare(R"(
+        error E { Bad }
+        E fail() { return E.Bad; }
+        error invalid() { try fail() {}; return none; }
+    )");
+    EXPECT_TRUE(bare.Has(DiagnosticCode::ExpectedToken) ||
+                bare.Has(DiagnosticCode::UnexpectedToken));
+}
+
+TEST(TryFrontendTests, ValidatesPeekBindingAndControlFlow) {
+    Analysis invalidType(R"(
+        error E { Bad }
+        E fail() { return E.Bad; }
+        error f() { try fail() peek err as i32 {}; return none; }
+    )");
+    EXPECT_TRUE(invalidType.Has(DiagnosticCode::InvalidVariableType));
+
+    for (const std::string body : {
+             "return none;",
+             "try fail();",
+         }) {
+        Analysis escaping(
+            "error E { Bad } E fail() { return E.Bad; } "
+            "error f() { try fail() peek { " +
+            body + " }; return none; }");
+        EXPECT_TRUE(escaping.Has(DiagnosticCode::InvalidStructure));
+    }
+
+    Analysis outerBreak(R"(
+        error E { Bad }
+        E fail() { return E.Bad; }
+        error f() {
+            while true { try fail() peek { break; }; break; }
+            return none;
+        }
+    )");
+    EXPECT_TRUE(outerBreak.Has(DiagnosticCode::LoopControlOutsideLoop));
+
+    Analysis innerLoop(R"(
+        error E { Bad }
+        E fail() { return E.Bad; }
+        error f() {
+            try fail() peek { while true { break; } };
+            return none;
+        }
+    )");
+    innerLoop.ExpectValid();
+}
+
 TEST(TryFrontendTests, PreservesBorrowOrigin) {
     Analysis valid(R"(
         ([]const u8, error) view([]const u8 bytes) <- bytes { return (bytes, none); }
@@ -276,6 +341,49 @@ TEST(TryRuntimeTests, ErrorOnlyMultipleResultsAndNestedErrorPayload) {
         i32 main() { if exercise() != none { return 1; } return 42; }
     )",
            "shapes");
+}
+
+TEST(TryRuntimeTests, PeekObservesEnclosingScopeAndRewritesError) {
+    RunTry(R"(
+        error E { Original, Rewritten }
+        error Other { Mapped }
+        E fail() { return E.Original; }
+        E succeed() { return none; }
+
+        unsafe error observe(*i32 seen) {
+            i32 x = 3;
+            try fail() peek { *seen = x; };
+            *seen = 99;
+            return none;
+        }
+
+        E rewrite() {
+            try fail() peek err { err = E.Rewritten; };
+            return none;
+        }
+
+        error map() {
+            try fail() peek err as error { err = Other.Mapped; };
+            return none;
+        }
+
+        unsafe error skip_on_success(*i32 seen) {
+            try succeed() peek { *seen = 99; };
+            *seen += 1;
+            return none;
+        }
+
+        i32 main() { unsafe {
+            seen := 0;
+            if observe(&raw seen) != E.Original or seen != 3 { return 1; }
+            if rewrite() != E.Rewritten { return 2; }
+            if map() != Other.Mapped { return 3; }
+            seen = 0;
+            if skip_on_success(&raw seen) != none or seen != 1 { return 4; }
+            return 42;
+        } }
+    )",
+           "peek");
 }
 
 TEST(TryRuntimeTests, EvaluatesOnceSkipsLaterOperandsAndRunsDefers) {

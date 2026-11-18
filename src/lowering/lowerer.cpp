@@ -350,12 +350,20 @@ std::unique_ptr<BoundExpression> Lowerer::LowerExpression(
                                                        std::move(value));
     }
     switch (expression.Kind()) {
-        case core::AstNodeKind::TryExpression:
+        case core::AstNodeKind::TryExpression: {
+            const auto& attempt =
+                static_cast<const core::TryExpression&>(expression);
+            const semantic::VariableSymbol* peekVariable = nullptr;
+            if (attempt.PeekBinding() != nullptr)
+                peekVariable = static_cast<const semantic::VariableSymbol*>(
+                    _semanticModel->DeclaredSymbol(*attempt.PeekBinding()));
             return std::make_unique<BoundTryExpression>(
-                expression.Range(), type,
-                LowerExpression(
-                    static_cast<const core::TryExpression&>(expression)
-                        .Operand()));
+                expression.Range(), type, LowerExpression(attempt.Operand()),
+                peekVariable,
+                attempt.PeekBody() == nullptr
+                    ? nullptr
+                    : LowerBlock(*attempt.PeekBody()));
+        }
         case core::AstNodeKind::AnonymousFunctionExpression: {
             const auto& anonymous =
                 static_cast<const core::AnonymousFunctionExpression&>(

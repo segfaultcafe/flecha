@@ -381,7 +381,7 @@
     },
     "control": {
       "name": "keyword.control.flecha",
-      "match": "\\b(?:module|enum|structure|interface|decoration|build|return|defer|try|yield|if|match|else|also|while|for|loop|range|proceed|break|jumpto|as)\\b"
+      "match": "\\b(?:module|enum|structure|interface|decoration|build|return|defer|try|peek|yield|if|match|else|also|while|for|loop|range|proceed|break|jumpto|as)\\b"
     },
     "borrowAllArguments": {
       "match": "(<-)(\\s*)(\\.\\.\\.)(\\s*)(args)\\b",

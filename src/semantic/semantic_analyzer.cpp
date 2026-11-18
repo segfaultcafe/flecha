@@ -3042,6 +3042,7 @@ void SemanticAnalyzer::AnalyzeFunction(
     _positions.clear();
     _localStringBorrows.clear();
     _loopDepth = 0;
+    _peekDepth = 0;
     _inUnsafe = function.IsUnsafe();
     CollectPositions(function.Body(), 0);
 
@@ -3854,6 +3855,11 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                        returnStatement.Range(),
                        "return cannot leave a build block; validate before "
                        "constructing");
+            if (_peekDepth != 0)
+                Report(diagnostics::DiagnosticCode::InvalidStructure,
+                       returnStatement.Range(),
+                       "return cannot leave a try peek block; the inspected "
+                       "error is propagated when the block finishes");
             if (!IsAssignable(expected, actual) &&
                 !CanReborrow(expected, actual)) {
                 const source::SourceRange range =
@@ -3980,6 +3986,10 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                 Report(diagnostics::DiagnosticCode::InvalidStructure,
                        statement.Range(),
                        "jumpto cannot cross construction boundaries");
+            if (_peekDepth)
+                Report(diagnostics::DiagnosticCode::InvalidStructure,
+                       statement.Range(),
+                       "jumpto cannot leave a try peek block");
             const core::JumpToStatement& jump =
                 static_cast<const core::JumpToStatement&>(statement);
             if (_loopDepth == 0) {
@@ -3999,6 +4009,10 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                 Report(diagnostics::DiagnosticCode::InvalidStructure,
                        statement.Range(),
                        "positions inside build blocks are not supported");
+            if (_peekDepth)
+                Report(diagnostics::DiagnosticCode::InvalidStructure,
+                       statement.Range(),
+                       "positions inside try peek blocks are not supported");
             break;
         default:
             break;
@@ -4007,6 +4021,11 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
 
 SemanticType SemanticAnalyzer::AnalyzeTry(
     const core::TryExpression& expression) {
+    if (_peekDepth)
+        Report(diagnostics::DiagnosticCode::InvalidStructure,
+               expression.Range(),
+               "try cannot propagate from inside a try peek block; inspect "
+               "secondary errors explicitly");
     const SemanticType input = AnalyzeExpression(expression.Operand());
     const core::Expression* call = &expression.Operand();
     while (call->Kind() == core::AstNodeKind::ParenthesizedExpression)
@@ -4047,10 +4066,43 @@ SemanticType SemanticAnalyzer::AnalyzeTry(
                "with a final error field");
         return SemanticType::Error();
     }
-    if (!IsAssignable(destinationError, error))
+    SemanticType propagatedError = error;
+    if (expression.PeekBody() != nullptr) {
+        Scope* previousScope = _currentScope;
+        _currentScope = &AddScope(previousScope);
+        if (const auto* binding = expression.PeekBinding()) {
+            propagatedError = binding->HasExplicitType()
+                                  ? ResolveType(*binding->ExplicitType())
+                                  : error;
+            if (!propagatedError.IsErrorValue()) {
+                Report(diagnostics::DiagnosticCode::InvalidVariableType,
+                       binding->Range(),
+                       "try peek binding requires an error type");
+                propagatedError = SemanticType::Error();
+            } else if (!IsAssignable(propagatedError, error)) {
+                Report(diagnostics::DiagnosticCode::IncompatibleType,
+                       binding->Range(),
+                       "cannot inspect " + error.Name() + " as " +
+                           propagatedError.Name());
+            }
+            AddSymbol(std::make_unique<VariableSymbol>(
+                          SymbolKind::LocalVariable, binding->Name(),
+                          propagatedError, binding->NameRange(), true),
+                      *binding);
+        }
+        const std::size_t previousLoopDepth = _loopDepth;
+        _loopDepth = 0;
+        ++_peekDepth;
+        AnalyzeBlock(*expression.PeekBody(), false);
+        --_peekDepth;
+        _loopDepth = previousLoopDepth;
+        _currentScope = previousScope;
+    }
+    if (!propagatedError.IsError() &&
+        !IsAssignable(destinationError, propagatedError))
         Report(diagnostics::DiagnosticCode::IncompatibleType,
                expression.Range(),
-               "cannot propagate " + error.Name() + " into " +
+               "cannot propagate " + propagatedError.Name() + " into " +
                    destinationError.Name());
     // The implicit return has the same defaults and effects as (none, ...,
     // error).
@@ -4261,6 +4313,10 @@ SemanticType SemanticAnalyzer::AnalyzeAsyncOperation(
     const bool forwards =
         !spawn &&
         static_cast<const core::AwaitExpression&>(expression).ForwardsFailure();
+    if (forwards && _peekDepth)
+        Report(diagnostics::DiagnosticCode::InvalidStructure,
+               expression.Range(),
+               ".await? cannot propagate from inside a try peek block");
     if (!immediate || (spawn && _asyncResultUse != AsyncResultUse::Destructure))
         Report(
             diagnostics::DiagnosticCode::InvalidAsync, expression.Range(),

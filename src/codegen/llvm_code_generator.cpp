@@ -4606,7 +4606,7 @@ llvm::Value* LlvmCodeGenerator::EmitTry(
         _freshOwnedValues.emplace(input, storage);
     }
     const bool tuple = inputType.Kind() == Kind::Tuple;
-    const auto errorType = tuple ? inputType.Elements().back() : inputType;
+    auto errorType = tuple ? inputType.Elements().back() : inputType;
     llvm::Value* error =
         tuple ? _builder.CreateExtractValue(
                     input, inputType.Elements().size() - 1, "try.error")
@@ -4636,32 +4636,60 @@ llvm::Value* LlvmCodeGenerator::EmitTry(
         } else
             EmitValueDestroy(it->value, it->type);
     }
-    const bool returnTuple = _currentReturnType.Kind() == Kind::Tuple;
-    const auto destinationError =
-        returnTuple ? _currentReturnType.Elements().back() : _currentReturnType;
-    error = CoerceValue(error, errorType, destinationError);
-    if (!error) return nullptr;
-    llvm::Value* returned = error;
-    if (returnTuple) {
-        llvm::Value* storage =
-            _currentReturnType.ContainsStructure()
-                ? _returnStorage
-                : CreateTemporaryAlloca(MapType(_currentReturnType),
-                                        "try.return.value");
-        if (!EmitDefaultInto(storage, _currentReturnType, true)) return nullptr;
-        _builder.CreateStore(
-            error,
-            _builder.CreateStructGEP(MapType(_currentReturnType), storage,
-                                     _currentReturnType.Elements().size() - 1));
-        if (!_currentReturnType.ContainsStructure())
-            returned =
-                _builder.CreateLoad(MapType(_currentReturnType), storage);
+    const semantic::VariableSymbol* peekVariable = expression.PeekVariable();
+    if (expression.PeekBody() != nullptr) {
+        if (peekVariable != nullptr) {
+            error = CoerceValue(error, errorType, peekVariable->Type());
+            if (!error) return nullptr;
+            errorType = peekVariable->Type();
+            llvm::AllocaInst* storage = CreateEntryAlloca(*peekVariable);
+            if (storage == nullptr) return nullptr;
+            _builder.CreateStore(error, storage);
+            _variables.emplace(peekVariable, storage);
+        }
+        if (!_blockScopes.contains(expression.PeekBody())) {
+            std::vector<const lowering::BoundBlockStatement*> path;
+            CollectPositionScopePaths(*expression.PeekBody(), path);
+        }
+        if (!EmitBlock(*expression.PeekBody())) return nullptr;
+        if (peekVariable != nullptr) {
+            if (TerminatorOrNull(_builder.GetInsertBlock()) == nullptr)
+                error = _builder.CreateLoad(MapType(peekVariable->Type()),
+                                            _variables.at(peekVariable),
+                                            "try.peek.error");
+            _variables.erase(peekVariable);
+        }
     }
-    EmitCleanupsTo(0);
-    if (_currentReturnType.ContainsStructure())
-        _builder.CreateRetVoid();
-    else
-        _builder.CreateRet(returned);
+    if (TerminatorOrNull(_builder.GetInsertBlock()) == nullptr) {
+        const bool returnTuple = _currentReturnType.Kind() == Kind::Tuple;
+        const auto destinationError = returnTuple
+                                          ? _currentReturnType.Elements().back()
+                                          : _currentReturnType;
+        error = CoerceValue(error, errorType, destinationError);
+        if (!error) return nullptr;
+        llvm::Value* returned = error;
+        if (returnTuple) {
+            llvm::Value* storage =
+                _currentReturnType.ContainsStructure()
+                    ? _returnStorage
+                    : CreateTemporaryAlloca(MapType(_currentReturnType),
+                                            "try.return.value");
+            if (!EmitDefaultInto(storage, _currentReturnType, true))
+                return nullptr;
+            _builder.CreateStore(error,
+                                 _builder.CreateStructGEP(
+                                     MapType(_currentReturnType), storage,
+                                     _currentReturnType.Elements().size() - 1));
+            if (!_currentReturnType.ContainsStructure())
+                returned =
+                    _builder.CreateLoad(MapType(_currentReturnType), storage);
+        }
+        EmitCleanupsTo(0);
+        if (_currentReturnType.ContainsStructure())
+            _builder.CreateRetVoid();
+        else
+            _builder.CreateRet(returned);
+    }
     _builder.SetInsertPoint(success);
     if (!tuple)
         return llvm::ConstantInt::get(llvm::Type::getInt8Ty(_context), 0);

@@ -101,6 +101,7 @@ enum class TokenType {
     Async,
     Shoot,
     Try,
+    Peek,
     Export,
     Quiver,
     Extern,
