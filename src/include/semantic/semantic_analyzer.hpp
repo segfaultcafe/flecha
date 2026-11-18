@@ -50,6 +50,7 @@ class SemanticAnalyzer final {
     std::unordered_map<std::string, std::string> _quiverNames;
     std::unordered_set<std::string> _entryModules;
     std::unordered_set<std::string> _testModules;
+    std::unordered_map<std::string, std::string> _testPairs;
     std::string _currentModule;
     std::string _currentSource;
     std::string _testingModule;
@@ -123,6 +124,7 @@ class SemanticAnalyzer final {
     void ValidateZeroEffects();
     void CheckMethodAccess(const FunctionSymbol& function,
                            source::SourceRange range);
+    [[nodiscard]] bool HasPairedTestAccess(const std::string& module) const;
     const StructureType* CurrentOwner() const;
     const EnumType* CurrentEnumOwner() const;
     const InterfaceType* CurrentInterfaceOwner() const;

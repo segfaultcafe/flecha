@@ -182,9 +182,10 @@ Longbow discovers and runs every source file declaring a `_test` module so a
 project-wide run still executes the complete suite. Imports remain source-local
 in test modules too.
 
-The paired test module can access module-private top-level declarations in its
-production module. That privilege does not expose private structure or enum
-members and does not re-export production declarations.
+The paired test module can access module-private top-level declarations and
+private structure or enum members in its production module. The privilege is
+one-way and does not re-export production declarations: test modules cannot be
+imported by runtime modules or export proxy declarations.
 
 ## Compilation and identity
 

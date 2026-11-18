@@ -157,10 +157,12 @@ but executes only tests declared in the requested source file. Longbow invokes
 every source file contributing to a test module. Test filenames do not require
 an `_test.fl` suffix.
 
-The existing test privilege remains one-way: the paired test module may access
-module-private top-level declarations in the production module, but not private
-members of structures or enums. Pairing does not share imports between test
-source units and does not implicitly re-export production declarations.
+The test privilege remains one-way: the paired test module may access
+module-private top-level declarations and private structure or enum members in
+the production module. Pairing does not share imports between test source units
+and does not implicitly re-export production declarations. Runtime modules
+cannot import a test module, so a test helper cannot proxy private access back
+into production code.
 
 ## Overlapping same-named imports
 

@@ -4,6 +4,10 @@
 
 ### Changed
 
+- A logical `_test` module may access private fields and methods of structures
+  and enums declared by its paired production module. The privilege remains
+  one-way: test modules cannot be imported by runtime modules and cannot export
+  proxy declarations.
 - `longbow test` compiles each logical test module once, including attached
   source files. `flecha test --whole-module` selects the same scope explicitly;
   file-only selection remains the default for `flecha test`. Completed test
@@ -67,6 +71,8 @@
 
 ### Fixed
 
+- Private-method diagnostics now use source-level names such as
+  `Box::hidden` instead of leaking internal module prefixes such as `$m1$`.
 - Borrow-origin classification now uses one recursive, cycle-safe definition
   across semantic validation and borrow checking. Tuple-return chains and
   nested owned aggregates retain their origins through every call boundary.
