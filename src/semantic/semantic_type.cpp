@@ -68,6 +68,34 @@ bool SemanticType::ContainsOwnedSlice() const {
     return false;
 }
 
+bool CanCarryBorrow(SemanticType type) {
+    std::unordered_set<const StructureType*> structures;
+    const auto carries = [&](const auto& self, SemanticType candidate) -> bool {
+        if (candidate.HasBorrowedLifetime() ||
+            candidate.Kind() == SemanticTypeKind::Function ||
+            candidate.Kind() == SemanticTypeKind::Task)
+            return true;
+        if (candidate.Kind() == SemanticTypeKind::Tuple)
+            return std::any_of(
+                candidate.Elements().begin(), candidate.Elements().end(),
+                [&](SemanticType element) { return self(self, element); });
+        if (candidate.Kind() == SemanticTypeKind::Array ||
+            candidate.Kind() == SemanticTypeKind::OwnedBuffer ||
+            candidate.Kind() == SemanticTypeKind::OwnedSlice)
+            return self(self, *candidate.Target());
+        if (candidate.Kind() != SemanticTypeKind::Structure ||
+            !candidate.Structure()->validLayout ||
+            !structures.insert(candidate.Structure()).second)
+            return false;
+        return std::any_of(candidate.Structure()->fields.begin(),
+                           candidate.Structure()->fields.end(),
+                           [&](const StructureField& field) {
+                               return self(self, field.type);
+                           });
+    };
+    return carries(carries, type);
+}
+
 bool SemanticType::ContainsReference() const {
     // Slices and owners can lead back to an already visited structure even
     // when every concrete layout is valid. Search each structure once, while

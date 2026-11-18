@@ -13,26 +13,6 @@ using Symbols = std::set<const Symbol*>;
 using Code = diagnostics::DiagnosticCode;
 using Kind = core::AstNodeKind;
 
-bool CanCarryBorrow(SemanticType type) {
-    if (type.HasBorrowedLifetime() || type.Kind() == SemanticTypeKind::Function ||
-        type.Kind() == SemanticTypeKind::Task)
-        return true;
-    if (type.Kind() == SemanticTypeKind::Tuple)
-        return std::any_of(type.Elements().begin(), type.Elements().end(),
-                           CanCarryBorrow);
-    if (type.Kind() == SemanticTypeKind::Array ||
-        type.Kind() == SemanticTypeKind::OwnedBuffer)
-        return CanCarryBorrow(*type.Target());
-    if (type.Kind() == SemanticTypeKind::Structure &&
-        type.Structure()->validLayout)
-        return std::any_of(type.Structure()->fields.begin(),
-                           type.Structure()->fields.end(),
-                           [](const StructureField& field) {
-                               return CanCarryBorrow(field.type);
-                           });
-    return false;
-}
-
 bool TracksBorrow(const Symbol* symbol) {
     return symbol != nullptr &&
            (symbol->Kind() == SymbolKind::Parameter ||

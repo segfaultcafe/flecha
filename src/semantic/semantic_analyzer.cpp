@@ -170,31 +170,6 @@ bool RequiresBorrowSource(SemanticType type) {
     return contains(contains, type);
 }
 
-bool CanCarryBorrow(SemanticType type) {
-    std::unordered_set<const StructureType*> structures;
-    const auto carries = [&](const auto& self, SemanticType candidate) -> bool {
-        if (candidate.HasBorrowedLifetime() ||
-            candidate.Kind() == SemanticTypeKind::Function)
-            return true;
-        if (candidate.Kind() == SemanticTypeKind::Tuple)
-            return std::any_of(
-                candidate.Elements().begin(), candidate.Elements().end(),
-                [&](SemanticType element) { return self(self, element); });
-        if (candidate.Kind() == SemanticTypeKind::Array ||
-            candidate.Kind() == SemanticTypeKind::OwnedBuffer ||
-            candidate.Kind() == SemanticTypeKind::OwnedSlice)
-            return self(self, *candidate.Target());
-        if (candidate.Kind() == SemanticTypeKind::Structure) {
-            if (!candidate.Structure()->validLayout) return false;
-            if (!structures.insert(candidate.Structure()).second) return false;
-            for (const StructureField& field : candidate.Structure()->fields)
-                if (self(self, field.type)) return true;
-        }
-        return false;
-    };
-    return carries(carries, type);
-}
-
 bool ContainsRawPointer(SemanticType type) {
     std::unordered_set<const StructureType*> structures;
     std::unordered_set<const CallableSignature*> callables;

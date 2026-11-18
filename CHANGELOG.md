@@ -67,6 +67,9 @@
 
 ### Fixed
 
+- Borrow-origin classification now uses one recursive, cycle-safe definition
+  across semantic validation and borrow checking. Tuple-return chains and
+  nested owned aggregates retain their origins through every call boundary.
 - Recursive owning-slice structures no longer overflow the compiler stack
   during reference analysis or destruction generation. Recursive cleanup
   preserves custom teardown and reverse element destruction order.

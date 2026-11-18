@@ -199,6 +199,10 @@ struct CallableSignature final {
 };
 
 [[nodiscard]] bool IsAssignable(SemanticType destination, SemanticType source);
+// True when values of this type can retain checked-reference origins through
+// aggregate, callable, task, or owned-sequence storage. Recursive structure
+// graphs are inspected without revisiting a structure already in progress.
+[[nodiscard]] bool CanCarryBorrow(SemanticType type);
 [[nodiscard]] bool MatchesTypeQuery(SemanticType value, SemanticType candidate,
                                     bool typeSetQuery);
 [[nodiscard]] bool IsExternAssignable(SemanticType destination,

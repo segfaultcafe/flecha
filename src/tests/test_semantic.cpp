@@ -121,6 +121,31 @@ TEST(SemanticTypeTests, FindsReferencesThroughRecursiveSliceGraphs) {
     EXPECT_TRUE(SemanticType(&second).ContainsReference());
 }
 
+TEST(SemanticTypeTests, FindsBorrowCarriersThroughRecursiveOwnedAggregates) {
+    StructureType first;
+    StructureType second;
+    first.validLayout = second.validLayout = true;
+    first.fields.push_back(
+        {"children",
+         SemanticType(SemanticTypeKind::OwnedSlice, SemanticType(&first)),
+         nullptr});
+    first.fields.push_back(
+        {"others",
+         SemanticType(SemanticTypeKind::OwnedSlice, SemanticType(&second)),
+         nullptr});
+    second.fields.push_back(
+        {"parents",
+         SemanticType(SemanticTypeKind::OwnedSlice, SemanticType(&first)),
+         nullptr});
+    EXPECT_FALSE(CanCarryBorrow(SemanticType(&first)));
+    EXPECT_FALSE(CanCarryBorrow(SemanticType(&second)));
+    second.fields.push_back(
+        {"callback", SemanticType(std::make_shared<CallableSignature>()),
+         nullptr});
+    EXPECT_TRUE(CanCarryBorrow(SemanticType(&first)));
+    EXPECT_TRUE(CanCarryBorrow(SemanticType(&second)));
+}
+
 TEST(SemanticInterfaceTests, RegistersInterfacesAndResolvesNominalRelations) {
     Analysis analysis = Analyze(R"(
         interface Readable {};
@@ -2502,6 +2527,55 @@ TEST(SemanticCallableTests, PreservesBorrowOriginsThroughTupleResults) {
     EXPECT_NE(
         FindErrorDiagnostic(nested, DiagnosticCode::InvalidBorrowContract),
         nullptr);
+}
+
+TEST(SemanticCallableTests,
+     RejectsBorrowEscapesAcrossRepeatedTupleReturnBoundaries) {
+    const std::string declarations = R"(
+        func Reader() => (i32);
+        structure Wrapper { Reader input; };
+        (Wrapper, error) inner(Reader source) <- source {
+            return (build Wrapper { self.input = source; }, none);
+        }
+    )";
+
+    Analysis missingOuterContract = Analyze(declarations + R"(
+        (Wrapper, error) outer(Reader source) {
+            return inner(source);
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(missingOuterContract,
+                                  DiagnosticCode::InvalidBorrowContract),
+              nullptr);
+
+    Analysis localEscape = Analyze(declarations + R"(
+        (Wrapper, error) outer(Reader source) <- source {
+            return inner(source);
+        }
+        (Wrapper, error) make() {
+            i32 local = 42;
+            Reader reader = [&const local]() => { return local; };
+            return outer(reader);
+        }
+    )");
+    EXPECT_NE(
+        FindErrorDiagnostic(localEscape, DiagnosticCode::InvalidBorrowContract),
+        nullptr);
+
+    Analysis conflict = Analyze(declarations + R"(
+        (Wrapper, error) outer(Reader source) <- source {
+            return inner(source);
+        }
+        i32 use() {
+            i32 value = 42;
+            Reader reader = [&const value]() => { return value; };
+            wrapper, failure := outer(reader);
+            value = 7;
+            return (wrapper.input)();
+        }
+    )");
+    EXPECT_NE(FindErrorDiagnostic(conflict, DiagnosticCode::BorrowConflict),
+              nullptr);
 }
 
 TEST(SemanticCallableTests, EnforcesAnonymousFunctionPointerSafety) {
