@@ -400,6 +400,39 @@ TEST(SemanticInterfaceMethodTests,
     EXPECT_NE(provided.methods[0]->provider, nullptr);
 }
 
+TEST(SemanticInterfaceMethodTests,
+     ResolvesStructureLayoutsBeforeValidatingTupleResults) {
+    Analysis analysis = Analyze(R"(
+        export structure View {
+            string content;
+            i32 tests;
+        };
+        export structure Empty {};
+        export interface Application {
+            (View, error) view(&const self) virtual;
+            (Empty, error) empty(&const self) virtual;
+        };
+    )");
+
+    for (const Diagnostic& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    ASSERT_EQ(analysis.model.Structures().size(), 2);
+    EXPECT_TRUE(analysis.model.Structures()[0]->validLayout);
+    EXPECT_TRUE(analysis.model.Structures()[1]->validLayout);
+    ASSERT_EQ(analysis.model.Interfaces().size(), 1);
+    ASSERT_EQ(analysis.model.Interfaces()[0]->methods.size(), 2);
+    for (std::size_t index = 0; index < 2; ++index) {
+        const SemanticType& result =
+            analysis.model.Interfaces()[0]->methods[index]->result;
+        ASSERT_EQ(result.Kind(), SemanticTypeKind::Tuple);
+        ASSERT_EQ(result.Elements().size(), 2);
+        EXPECT_EQ(result.Elements()[0].Kind(), SemanticTypeKind::Structure);
+        EXPECT_EQ(result.Elements()[0].Structure(),
+                  analysis.model.Structures()[index].get());
+    }
+}
+
 TEST(SemanticInterfaceMethodTests, RequiresConcreteVirtualImplementations) {
     const std::string source = R"(
         interface Foo {

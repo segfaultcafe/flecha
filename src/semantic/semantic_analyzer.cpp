@@ -2765,8 +2765,10 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     bindGenericAliases();
     BindImports(unit);
     ResolveNominalRelations();
-    ResolveInterfaceMethods();
+    // Interface tuple contracts may need the storage size of a structure.
+    // Complete every structure layout before validating those contracts.
     ResolveStructureFields();
+    ResolveInterfaceMethods();
     ValidateDecorations(unit);
     ResolveCallableTypes(unit);
     RegisterBehaviors(unit);
