@@ -212,6 +212,7 @@ class SemanticAnalyzer final {
         std::pair<const core::VariableDeclarationStatement*, SemanticType>>
         _implicitDefaults;
     std::size_t _loopDepth = 0;
+    std::size_t _peekDepth = 0;
     bool _inUnsafe = false;
     bool _inZero = false;
     bool _zeroTrivialityKnown = false;

@@ -106,20 +106,6 @@ class BoundStatement : public BoundNode {
     using BoundNode::BoundNode;
 };
 
-class BoundTryExpression final : public BoundExpression {
-   public:
-    BoundTryExpression(source::SourceRange range, semantic::SemanticType type,
-                       std::unique_ptr<BoundExpression> operand)
-        : BoundExpression(range, type), _operand(std::move(operand)) {}
-    [[nodiscard]] BoundNodeKind Kind() const override {
-        return BoundNodeKind::TryExpression;
-    }
-    [[nodiscard]] const BoundExpression& Operand() const { return *_operand; }
-
-   private:
-    std::unique_ptr<BoundExpression> _operand;
-};
-
 class BoundLiteralExpression final : public BoundExpression {
    public:
     BoundLiteralExpression(source::SourceRange range,
@@ -826,6 +812,33 @@ class BoundBlockStatement final : public BoundStatement {
 
    private:
     std::vector<std::unique_ptr<BoundStatement>> _statements;
+};
+
+class BoundTryExpression final : public BoundExpression {
+   public:
+    BoundTryExpression(source::SourceRange range, semantic::SemanticType type,
+                       std::unique_ptr<BoundExpression> operand,
+                       const semantic::VariableSymbol* peekVariable = nullptr,
+                       std::unique_ptr<BoundBlockStatement> peekBody = nullptr)
+        : BoundExpression(range, type),
+          _operand(std::move(operand)),
+          _peekVariable(peekVariable),
+          _peekBody(std::move(peekBody)) {}
+    [[nodiscard]] BoundNodeKind Kind() const override {
+        return BoundNodeKind::TryExpression;
+    }
+    [[nodiscard]] const BoundExpression& Operand() const { return *_operand; }
+    [[nodiscard]] const semantic::VariableSymbol* PeekVariable() const {
+        return _peekVariable;
+    }
+    [[nodiscard]] const BoundBlockStatement* PeekBody() const {
+        return _peekBody.get();
+    }
+
+   private:
+    std::unique_ptr<BoundExpression> _operand;
+    const semantic::VariableSymbol* _peekVariable;
+    std::unique_ptr<BoundBlockStatement> _peekBody;
 };
 
 class BoundVariableDeclarationStatement final : public BoundStatement {

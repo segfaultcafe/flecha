@@ -1657,16 +1657,29 @@ class AssignmentExpression final : public Expression {
 // Ordinary returned-error propagation; distinct from async execution failure.
 class TryExpression final : public Expression {
    public:
-    TryExpression(source::SourceRange range,
-                  std::unique_ptr<Expression> operand)
-        : Expression(range), _operand(std::move(operand)) {}
+    TryExpression(
+        source::SourceRange range, std::unique_ptr<Expression> operand,
+        std::unique_ptr<VariableDeclarationStatement> peekBinding = nullptr,
+        std::unique_ptr<BlockStatement> peekBody = nullptr)
+        : Expression(range),
+          _operand(std::move(operand)),
+          _peekBinding(std::move(peekBinding)),
+          _peekBody(std::move(peekBody)) {}
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::TryExpression;
     }
     [[nodiscard]] const Expression& Operand() const { return *_operand; }
+    [[nodiscard]] const VariableDeclarationStatement* PeekBinding() const {
+        return _peekBinding.get();
+    }
+    [[nodiscard]] const BlockStatement* PeekBody() const {
+        return _peekBody.get();
+    }
 
    private:
     std::unique_ptr<Expression> _operand;
+    std::unique_ptr<VariableDeclarationStatement> _peekBinding;
+    std::unique_ptr<BlockStatement> _peekBody;
 };
 
 class AwaitExpression final : public Expression {

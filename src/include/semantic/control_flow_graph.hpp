@@ -51,6 +51,7 @@ struct FlowNode final {
     // Ordinary try returns a completed error value, not an execution failure.
     const core::TryExpression* propagationReturn = nullptr;
     const core::TryExpression* propagationDispatch = nullptr;
+    const core::TryExpression* peekInitialization = nullptr;
     // Allocated storage whose initializer is abandoned by this try return.
     std::vector<const core::CallExpression*> abandonedAllocations;
     bool asyncSuccess = true;

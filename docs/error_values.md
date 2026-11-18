@@ -118,6 +118,29 @@ first, second := try read_pair();
 array := try parse_array_string!(text);
 ```
 
+Failure-only work can be attached with `peek` without changing the success
+value of the `try` expression:
+
+```flecha
+// No error binding is introduced.
+try save() peek { increment_failure_count(); };
+
+// The exact returned error type is inferred.
+value := try parse(text) peek err { stderrln(err); };
+
+// An explicit compatible error type can widen the binding for translation.
+value := try parse(text) peek err as error { err = normalize(err); };
+```
+
+The block runs only when the operand's error is not `none`. It is an ordinary
+nested lexical scope and can read or mutate enclosing variables. If present,
+the error binding exists only in that scope and is mutable; its value when the
+block finishes is the value propagated by `try`. A `peek` block cannot contain
+`return`, propagate another `try` or `.await?`, or use loop/jump control to
+leave the block. Secondary fallible work must therefore inspect its result
+explicitly. A bare block is not a hook: `try operation() {};` is invalid, while
+the existing `try operation();` remains an immediate propagation statement.
+
 `none` means success. For `(T, error)`, success yields `T`; for
 `(A, B, ..., error)`, it yields the tuple `(A, B, ...)`. Nested tuples and errors
 inside those values are preserved. For an error-only call, success yields no

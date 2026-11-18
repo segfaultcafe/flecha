@@ -30,6 +30,8 @@ inline void WalkAst(const AstNode& input,
         case AstNodeKind::TryExpression: {
             NODE(TryExpression);
             visit(n.Operand());
+            optional(n.PeekBinding());
+            optional(n.PeekBody());
             break;
         }
         case AstNodeKind::AwaitExpression: {

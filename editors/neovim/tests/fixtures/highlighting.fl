@@ -169,3 +169,4 @@ decoration typedMeta {
 i32 application(i32 target) { return target; }
 
 value := try parse();
+try parse() peek err as error {};

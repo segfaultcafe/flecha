@@ -581,10 +581,12 @@ struct ErrorAbi final {
     std::int32_t code;
 };
 unsigned destructions = 0;
+unsigned peekObservations = 0;
 extern "C" void RecordDestroy(std::int32_t value) {
     EXPECT_EQ(value, 42);
     ++destructions;
 }
+extern "C" void RecordPeek() { ++peekObservations; }
 
 TEST(AsyncValueLoweringTests,
      OrdinaryTryReturnsCompletedErrorInsteadOfAsyncExecutionFailure) {
@@ -603,6 +605,31 @@ TEST(AsyncValueLoweringTests,
         EXPECT_EQ(result.code, codeValue);
         EXPECT_TRUE(computation.Release());
     }
+}
+
+TEST(AsyncValueLoweringTests, TryPeekRunsOnlyOnFailureAndRewritesError) {
+    llvm::sys::DynamicLibrary::AddSymbol("record_peek",
+                                         reinterpret_cast<void*>(RecordPeek));
+    Compiled code(
+        "extern void record_peek(); "
+        "error ordinary(error value) { return value; } "
+        "async error main(error value) { "
+        "try ordinary(value) peek err { record_peek(); err = none; }; "
+        "return none; }");
+    peekObservations = 0;
+    for (std::int32_t codeValue : {0, 73}) {
+        auto arguments = code.Arguments(ErrorAbi{nullptr, codeValue});
+        Computation computation;
+        ASSERT_TRUE(Computation::TryCreate(code.layout, arguments.data(),
+                                           std::pmr::get_default_resource(),
+                                           computation));
+        EXPECT_EQ(computation.Poll({{}, false}), PollResult::Ready);
+        ErrorAbi result{reinterpret_cast<void*>(1), -1};
+        EXPECT_TRUE(computation.TakeResult(&result));
+        EXPECT_EQ(result.code, 0);
+        EXPECT_TRUE(computation.Release());
+    }
+    EXPECT_EQ(peekObservations, 1u);
 }
 
 TEST(AsyncValueLoweringTests,

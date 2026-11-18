@@ -36,7 +36,7 @@ syntax keyword flechaTest test
 syntax keyword flechaConditional if else also match
 syntax keyword flechaRepeat while loop range
 syntax keyword flechaRepeat for nextgroup=flechaFieldIteration skipwhite skipnl
-syntax keyword flechaStatement return yield proceed break defer try enum structure interface build
+syntax keyword flechaStatement return yield proceed break defer try peek enum structure interface build
 syntax keyword flechaStatement module nextgroup=flechaModuleName skipwhite
 syntax match flechaNamespaceAttachment /\<under\>\_s\+namespace\>/
 syntax match flechaModuleName /\<[A-Za-z_][A-Za-z0-9_]*\>/ contained

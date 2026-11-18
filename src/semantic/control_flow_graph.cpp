@@ -141,6 +141,29 @@ class GraphBuilder final {
         return next;
     }
 
+    NodeId BuildPeekBlock(const core::TryExpression& attempt, NodeId next) {
+        const core::BlockStatement& block = *attempt.PeekBody();
+        _graph.scopeParents[&block] =
+            _scopes.empty() ? nullptr : _scopes.back();
+        _scopes.push_back(&block);
+        const NodeId end = AddNode({next});
+        next = end;
+        for (auto statement = block.Statements().rbegin();
+             statement != block.Statements().rend(); ++statement)
+            next = BuildStatement(**statement, next);
+        if (const auto* binding = attempt.PeekBinding()) {
+            const Symbol* symbol = _model.DeclaredSymbol(*binding);
+            if (symbol != nullptr) _graph.symbolScopes.emplace(symbol, &block);
+            const NodeId initialize = AddNode({next});
+            _graph.nodes[initialize].reset = symbol;
+            _graph.nodes[initialize].write = symbol;
+            _graph.nodes[initialize].peekInitialization = &attempt;
+            next = initialize;
+        }
+        _scopes.pop_back();
+        return next;
+    }
+
     static const core::Expression& Unwrap(const core::Expression& expression) {
         if (expression.Kind() == core::AstNodeKind::ParenthesizedExpression)
             return Unwrap(
@@ -618,7 +641,11 @@ class GraphBuilder final {
                     _initializingAllocations;
                 _graph.nodes[failure].propagationReturn = &attempt;
                 _graph.nodes[failure].evaluation = _tryEvaluation;
-                const NodeId dispatch = AddNode({next, failure});
+                const NodeId failureEntry =
+                    attempt.PeekBody() == nullptr
+                        ? failure
+                        : BuildPeekBlock(attempt, failure);
+                const NodeId dispatch = AddNode({next, failureEntry});
                 _graph.nodes[dispatch].propagationDispatch = &attempt;
                 return BuildExpression(attempt.Operand(), dispatch);
             }
