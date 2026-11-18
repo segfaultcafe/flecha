@@ -36,6 +36,10 @@ codex.setup({
 })
 codex._set_transport(fake_transport)
 
+local chat_list_mapping = vim.fn.maparg("<leader>ml", "n", false, true)
+assert(chat_list_mapping.rhs == "<Plug>(FlechaCodexChats)")
+assert(chat_list_mapping.desc == "List cached Codex chats for this project")
+
 local source_window = vim.api.nvim_get_current_win()
 local source_buffer = vim.api.nvim_get_current_buf()
 codex.open()
@@ -48,8 +52,8 @@ assert(vim.api.nvim_buf_get_option(state.transcript_buffer, "filetype") == "mark
 assert(vim.api.nvim_buf_get_option(state.input_buffer, "filetype") == "markdown")
 assert(vim.api.nvim_get_current_win() == state.input_window)
 assert(vim.fn.maparg("<C-S>", "n", false, true).buffer == 1)
+assert(vim.fn.maparg("<leader>ml", "n", false, true).buffer == 1)
 assert(vim.fn.exists(":FlechaCodexChats") == 2)
-assert(vim.fn.maparg("<leader>ml", "n") ~= "")
 assert(codex.info().root == vim.fn.resolve(vim.fn.getcwd()))
 assert(codex.info().root_kind == "git")
 assert(codex.info().skip_git_repo_check == false)
@@ -182,4 +186,17 @@ assert(state.transcript_window == nil)
 assert(state.input_window == nil)
 assert(vim.api.nvim_get_current_win() == source_window)
 assert(vim.api.nvim_get_current_buf() == source_buffer)
+
+original_select = vim.ui.select
+selection_count = 0
+vim.ui.select = function(items, _, on_choice)
+    selection_count = selection_count + 1
+    assert(#items == 1)
+    on_choice(nil)
+end
+local chat_list_plug = vim.fn.maparg("<Plug>(FlechaCodexChats)", "n", false, true)
+assert(type(chat_list_plug.callback) == "function")
+chat_list_plug.callback()
+vim.ui.select = original_select
+assert(selection_count == 1)
 vim.fn.delete(cache_directory, "rf")
