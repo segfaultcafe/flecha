@@ -118,7 +118,11 @@ mode to send, or press `<CR>` from normal mode. Press `q` from normal mode to
 close the panel. In the conversation pane, `i` focuses the composer and `r`
 starts a fresh chat. Press `<leader>ml` to list chats created from Neovim for
 the current project, then select one to restore its transcript and continue its
-Codex thread. The same list is available as `:FlechaCodexChats`.
+Codex thread. The mapping is available inside both Codex panes and globally, so
+history can be opened while the panel is closed. This intentionally replaces
+an existing normal-mode `<leader>ml` mapping; remap the
+`<Plug>(FlechaCodexChats)` target if you prefer another key. The same list is
+always available as `:FlechaCodexChats`.
 
 The chat runs `codex exec` from Git's resolved top-level directory, including
 when the active file was opened through a symlink. A Longbow project without a

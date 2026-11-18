@@ -530,6 +530,12 @@ local function install_buffer_mappings()
     for _, buffer in ipairs({ state.transcript_buffer, state.input_buffer }) do
         vim.keymap.set("n", "q", close_panel, vim.tbl_extend("force", common, { buffer = buffer }))
         vim.keymap.set("n", "<leader>mc", close_panel, vim.tbl_extend("force", common, { buffer = buffer }))
+        vim.keymap.set("n", "<leader>ml", function()
+            M.chats()
+        end, vim.tbl_extend("force", common, {
+            buffer = buffer,
+            desc = "List cached Codex chats",
+        }))
     end
     vim.keymap.set("n", "i", focus_input, {
         buffer = state.transcript_buffer,

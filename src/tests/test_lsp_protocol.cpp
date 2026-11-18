@@ -541,6 +541,35 @@ TEST_F(LspProtocolTests, DistinguishesSelfFromOrdinaryParameters) {
               std::string::npos);
 }
 
+TEST_F(LspProtocolTests, DistinguishesBuildSelfFromOrdinaryLocalVariables) {
+    FakeAnalyzer analyzer;
+    ProtocolServer server(analyzer);
+    Initialize(server);
+    const std::filesystem::path file = root / "main.fl";
+    const std::string uri = flecha::lsp::PathToFileUri(file);
+    const std::string text = "self value\n";
+    const std::string document =
+        "{\"textDocument\":{\"uri\":" + flecha::analyzer::json::Quote(uri);
+    ASSERT_EQ(server
+                  .Handle(Notification("textDocument/didOpen",
+                                       document + ",\"version\":1,\"text\":" +
+                                           flecha::analyzer::json::Quote(text) +
+                                           "}}"))
+                  .size(),
+              1u);
+    analyzer.semanticTokens = {
+        {{file, 0, 4}, "localVariable", true},
+        {{file, 5, 10}, "localVariable", true},
+    };
+
+    const auto tokens = server.Handle(
+        Request("2", "textDocument/semanticTokens/full", document + "}}"));
+
+    ASSERT_EQ(tokens.size(), 1u);
+    EXPECT_NE(tokens.front().find("\"data\":[0,0,4,7,1,0,5,5,2,1]"),
+              std::string::npos);
+}
+
 TEST_F(LspProtocolTests, UsesShutdownThenExitLifecycle) {
     FakeAnalyzer analyzer;
     ProtocolServer server(analyzer);

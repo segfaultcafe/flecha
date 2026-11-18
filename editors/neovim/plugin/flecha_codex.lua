@@ -44,12 +44,8 @@ vim.keymap.set("n", "<Plug>(FlechaCodexChats)", codex.chats, {
     silent = true,
     desc = "List cached Codex chats for this project",
 })
-if vim.fn.hasmapto("<Plug>(FlechaCodexChats)", "n") == 0
-    and vim.fn.maparg("<leader>ml", "n") == ""
-then
-    vim.keymap.set("n", "<leader>ml", "<Plug>(FlechaCodexChats)", {
-        remap = true,
-        silent = true,
-        desc = "List cached Codex chats for this project",
-    })
-end
+vim.keymap.set("n", "<leader>ml", "<Plug>(FlechaCodexChats)", {
+    remap = true,
+    silent = true,
+    desc = "List cached Codex chats for this project",
+})
