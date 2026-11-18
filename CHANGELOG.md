@@ -17,6 +17,10 @@
 
 ### Added
 
+- Scoped, single-threaded async execution is a v0.4 release gate. The initial
+  public boundary includes generated-frame borrow validation, a versioned
+  compiler/runtime ABI, production `async main` execution, and fail-closed
+  diagnostics for deferred interoperability forms.
 - `once func` values may be initialized, assigned, passed, or returned as
   `none`, defaulted in typed locals and zeroable aggregates, compared with
   `none` to test emptiness, and later reinitialized. Invoking an empty once

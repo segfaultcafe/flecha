@@ -179,6 +179,28 @@ typedef enum FlechaRuntimeNetworkStatus {
     FLECHA_RUNTIME_NETWORK_MESSAGE_TOO_LARGE = 16,
 } FlechaRuntimeNetworkStatus;
 
+// Versioned compiler/runtime boundary for the initial single-threaded async
+// entry point. Generated frame callbacks receive opaque frame/context/resource
+// pointers; no C++ type or implementation layout crosses this ABI.
+typedef uint32_t (*FlechaRuntimeAsyncPoll)(void* frame,
+                                           const void* poll_context);
+typedef void (*FlechaRuntimeAsyncDestroy)(void* frame);
+typedef void (*FlechaRuntimeAsyncTake)(void* frame, void* destination);
+typedef void (*FlechaRuntimeAsyncInitialize)(void* frame, void* arguments,
+                                             void* memory_resource);
+typedef enum FlechaRuntimeAsyncEntryStatus {
+    FLECHA_RUNTIME_ASYNC_ROOT_ALLOCATION_FAILED = 70,
+    FLECHA_RUNTIME_ASYNC_ROOT_EXECUTION_FAILED = 71,
+} FlechaRuntimeAsyncEntryStatus;
+
+// Drives a parameterless generated async main on one executor thread. Ready
+// returns the Flecha i32 result, or zero for void. Root allocation/execution
+// failure is reported to stderr and returns a nonzero process status.
+int32_t flecha_runtime_v1_async_main_run(
+    size_t frame_size, size_t frame_alignment, FlechaRuntimeAsyncPoll poll,
+    FlechaRuntimeAsyncDestroy destroy, FlechaRuntimeAsyncTake take,
+    FlechaRuntimeAsyncInitialize initialize, uint8_t returns_i32);
+
 // Allocates zeroed aligned storage; returns null on failure. Free accepts null.
 // Only pointers returned by this allocator may be released. The compiler tears
 // down the object before releasing storage.

@@ -16,9 +16,7 @@ std::optional<AsyncMachine> LowerAsyncMachine(
     const diagnostics::DiagnosticBag& diagnostics, std::string& error) {
     error.clear();
     for (const auto& diagnostic : diagnostics.Diagnostics())
-        if (diagnostic.severity == diagnostics::DiagnosticSeverity::Error &&
-            diagnostic.code !=
-                diagnostics::DiagnosticCode::AsyncNotImplemented) {
+        if (diagnostic.severity == diagnostics::DiagnosticSeverity::Error) {
             error =
                 "async control lowering requires successful semantic analysis";
             return std::nullopt;

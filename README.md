@@ -344,8 +344,8 @@ Makefile                Convenient build, test, and example targets
   decoration behaviors that derive interface implementations
 - [`docs/IFG/IFG_2026_0006.txt`](docs/IFG/IFG_2026_0006.txt) — accepted v0.4
   contract and completion criteria for typed decorations and behaviors
-- [`docs/IFG/IFG_2026_0007.txt`](docs/IFG/IFG_2026_0007.txt) — draft scoped,
-  single-threaded async design; not implemented or required for v0.4
+- [`docs/IFG/IFG_2026_0007.txt`](docs/IFG/IFG_2026_0007.txt) — accepted v0.4
+  scoped, single-threaded async contract and release gate
 - [`docs/async-design.md`](docs/async-design.md) — async foundation guide:
   selected syntax, task execution, high-/low-level model, and open decisions
 - [`docs/IFG/IFG_2026_0000.txt`](docs/IFG/IFG_2026_0000.txt) — the 2026 reader

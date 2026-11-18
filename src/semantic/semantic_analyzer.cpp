@@ -2198,13 +2198,10 @@ void SemanticAnalyzer::RegisterFunctions(const core::CompilationUnit& unit) {
 void SemanticAnalyzer::RegisterFunction(
     const core::FunctionDeclaration& function, bool generated) {
     SetSource(function.sourceId);
-    // Fail closed while resumable lowering and its runtime contract are under
-    // construction. Never compile an async declaration as a synchronous call.
-    if (function.IsAsync())
-        Report(diagnostics::DiagnosticCode::AsyncNotImplemented,
-               function.NameRange(),
-               "async execution is not implemented yet; this declaration "
-               "requires resumable lowering and an executor");
+    if (function.IsAsync() && function.IsExtern())
+        Report(diagnostics::DiagnosticCode::InvalidAsync, function.NameRange(),
+               "async extern functions are outside the initial "
+               "single-threaded interoperability boundary");
     if (function.HasVariadicPack()) {
         if (!function.genericParameters.empty() ||
             !function.ownerParameters.empty())
@@ -2945,15 +2942,9 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     WarnForCrashlessFunctions();
     if (!_diagnostics.HasErrors())
         AnalyzeAllocations(unit, _model, _diagnostics);
-    // Planning is available behind the execution gate, but never for a unit
-    // with semantic/borrow errors. This does not permit synchronous lowering.
-    const bool canPlanAsync = std::ranges::none_of(
-        _diagnostics.Diagnostics(), [](const auto& diagnostic) {
-            return diagnostic.severity ==
-                       diagnostics::DiagnosticSeverity::Error &&
-                   diagnostic.code !=
-                       diagnostics::DiagnosticCode::AsyncNotImplemented;
-        });
+    // Production async lowering accepts only plans published after complete
+    // semantic, ownership, allocation, and borrow validation.
+    const bool canPlanAsync = !_diagnostics.HasErrors();
     if (canPlanAsync) {
         for (const auto& symbol : _model.Symbols()) {
             if (symbol->Kind() != SymbolKind::Function) continue;
@@ -3778,6 +3769,15 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                 Report(diagnostics::DiagnosticCode::InvalidDefer,
                        expression->Range(),
                        "compiler intrinsics cannot be deferred");
+                break;
+            }
+            if (_currentFunction && _currentFunction->IsAsync() &&
+                function == nullptr) {
+                Report(diagnostics::DiagnosticCode::InvalidAsync,
+                       expression->Range(),
+                       "async functions initially support defer only for "
+                       "direct synchronous functions and resolved structure "
+                       "methods");
                 break;
             }
             std::vector<const Symbol*>& captures =

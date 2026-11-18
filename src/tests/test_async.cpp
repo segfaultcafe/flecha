@@ -45,7 +45,7 @@ const FunctionDeclaration& Function(const Analysis& analysis,
 }
 
 TEST(AsyncFrontendTests,
-     AsyncEffectPreservesCompletedResultAndBlocksSyncLowering) {
+     AsyncEffectPreservesCompletedResultAndUsesSeparateLowering) {
     Analysis result = Analyze("async i32 answer() { return 42; }");
     ASSERT_FALSE(Has(result, DiagnosticCode::UnexpectedToken));
     const auto& function = Function(result);
@@ -56,12 +56,12 @@ TEST(AsyncFrontendTests,
     EXPECT_TRUE(symbol->IsAsync());
     EXPECT_EQ(symbol->ReturnType().Kind(), SemanticTypeKind::I32);
     EXPECT_EQ(symbol->Type().Name(), "async func() => (i32)");
-    EXPECT_TRUE(Has(result, DiagnosticCode::AsyncNotImplemented));
+    EXPECT_FALSE(result.diagnostics.HasErrors());
     flecha::lowering::Lowerer lowerer;
-    EXPECT_EQ(lowerer.Lower(*result.unit, result.model, result.diagnostics),
-              nullptr);
-    DiagnosticBag empty;
-    EXPECT_EQ(lowerer.Lower(*result.unit, result.model, empty), nullptr);
+    auto lowered =
+        lowerer.Lower(*result.unit, result.model, result.diagnostics);
+    ASSERT_NE(lowered, nullptr);
+    EXPECT_TRUE(lowered->Functions().empty());
 }
 
 TEST(AsyncFrontendTests, AsyncEffectCannotBeErasedByCallableAssignment) {
@@ -140,10 +140,19 @@ TEST(AsyncFrontendTests, DiagnosesIndirectAsyncCalls) {
     EXPECT_TRUE(Has(result, DiagnosticCode::InvalidAsync));
 }
 
+TEST(AsyncFrontendTests, DiagnosesDeferredInteroperabilityBoundaries) {
+    EXPECT_TRUE(Has(Analyze("async extern i32 operation();"),
+                    DiagnosticCode::InvalidAsync));
+    EXPECT_TRUE(
+        Has(Analyze("void cleanup() {} async void main() { action := cleanup; "
+                    "defer action(); }"),
+            DiagnosticCode::InvalidAsync));
+}
+
 TEST(AsyncFrontendTests, OrdinarySynchronousDeferRemainsValidInAsyncBody) {
     Analysis result =
         Analyze("void cleanup() {} async void main() { defer cleanup(); }");
-    EXPECT_TRUE(Has(result, DiagnosticCode::AsyncNotImplemented));
+    EXPECT_FALSE(result.diagnostics.HasErrors());
     EXPECT_FALSE(Has(result, DiagnosticCode::InvalidDefer));
     EXPECT_FALSE(Has(result, DiagnosticCode::InvalidAsync));
 }
@@ -199,15 +208,12 @@ TEST(AsyncFrontendTests, LoopTransfersDrainOnlyExitedScopes) {
     }
 }
 
-// Successful frontend analysis still has one execution-gate error per async
-// declaration. Reject every other error so positive cases cannot pass
-// vacuously.
+// Reject every error so positive async cases cannot pass vacuously.
 void ExpectChecked(const Analysis& result) {
-    EXPECT_TRUE(Has(result, DiagnosticCode::AsyncNotImplemented));
     for (const auto& diagnostic : result.diagnostics.Diagnostics())
         if (diagnostic.severity == DiagnosticSeverity::Error)
-            EXPECT_EQ(diagnostic.code, DiagnosticCode::AsyncNotImplemented)
-                << diagnostic.message;
+            ADD_FAILURE() << DiagnosticCodeName(diagnostic.code) << ": "
+                          << diagnostic.message;
 }
 
 TEST(AsyncFrontendTests, CheckedOperationsHaveDistinctSemanticRecords) {

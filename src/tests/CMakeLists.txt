@@ -2156,10 +2156,11 @@ add_behavior_reflection_failure(runtime_closure FLECHA-S0081)
 add_behavior_reflection_failure(runtime_borrow_conflict FLECHA-S0029)
 add_behavior_reflection_failure(runtime_move_twice FLECHA-S0046)
 
-add_test(NAME AsyncFixtures.checked_results_remain_gated
+add_test(NAME AsyncFixtures.checked_results_execute
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async/checked.fl
+        -DEXPECTED_EXIT=126
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_checked_async.cmake)
 add_test(NAME AsyncFixtures.reject_unchecked_value
     COMMAND ${CMAKE_COMMAND}
@@ -2167,8 +2168,21 @@ add_test(NAME AsyncFixtures.reject_unchecked_value
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async/unchecked.fl
         -DEXPECTED_DIAGNOSTIC=FLECHA-S0021
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
-add_test(NAME AsyncFixtures.forwarding_remains_gated
+add_test(NAME AsyncFixtures.reject_unsupported_async_extern
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async/unsupported_extern.fl
+        -DEXPECTED_DIAGNOSTIC=FLECHA-S0090
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_single_diagnostic.cmake)
+add_test(NAME AsyncFixtures.forwarding_executes
     COMMAND ${CMAKE_COMMAND}
         -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
         -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async/forwarding.fl
+        -DEXPECTED_EXIT=42
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_checked_async.cmake)
+add_test(NAME AsyncFixtures.synchronous_foreign_interop_executes
+    COMMAND ${CMAKE_COMMAND}
+        -DFLECHA_COMPILER=$<TARGET_FILE:flecha>
+        -DFLECHA_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/async/foreign_interop.fl
+        -DEXPECTED_EXIT=42
         -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_checked_async.cmake)

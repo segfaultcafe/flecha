@@ -206,8 +206,6 @@ std::string_view DiagnosticCodeName(DiagnosticCode code) {
             return "FLECHA-S0092";
         case DiagnosticCode::InvalidSpawn:
             return "FLECHA-S0093";
-        case DiagnosticCode::AsyncNotImplemented:
-            return "FLECHA-S0089";
         case DiagnosticCode::NativeTargetUnavailable:
             return "FLECHA-C0001";
         case DiagnosticCode::ObjectEmissionFailed:

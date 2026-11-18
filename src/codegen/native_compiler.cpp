@@ -32,7 +32,9 @@
 #include <utility>
 #include <vector>
 
+#include "codegen/async_value_generator.hpp"
 #include "codegen/llvm_code_generator.hpp"
+#include "core/ast.hpp"
 
 #ifndef FLECHA_RUNTIME_LIBRARY_PATH
 #define FLECHA_RUNTIME_LIBRARY_PATH ""
@@ -282,6 +284,16 @@ bool NativeCompiler::EmitFlechaObject(const lowering::BoundProgram& program,
                     generator.Error());
     }
 
+    return EmitModule(std::move(module), objectPath);
+}
+
+bool NativeCompiler::EmitModule(std::unique_ptr<llvm::Module> module,
+                                const std::string& objectPath) {
+    if (!module) {
+        return Fail(diagnostics::DiagnosticCode::ObjectEmissionFailed,
+                    "native object emission received no LLVM module");
+    }
+
     // The target emission pass manager only performs instruction selection and
     // machine-level work. Run LLVM's target-aware scalar/vector optimization
     // pipeline first so native builds do not emit the generator's deliberately
@@ -338,6 +350,33 @@ bool NativeCompiler::EmitFlechaObject(const lowering::BoundProgram& program,
                     "failed while writing object file '" + objectPath + "'");
     }
     return true;
+}
+
+bool NativeCompiler::EmitAsyncFlechaObject(
+    const semantic::SemanticModel& model,
+    const diagnostics::DiagnosticBag& diagnosticBag,
+    const std::string& moduleName, const std::string& objectPath) {
+    _error.clear();
+    _diagnostic.reset();
+    if (_targetMachine == nullptr) {
+        return Fail(diagnostics::DiagnosticCode::NativeTargetUnavailable,
+                    "native LLVM target is not available");
+    }
+    llvm::LLVMContext context;
+    std::string generationError;
+    auto generated =
+        GenerateAsyncProgram(context, _targetMachine->createDataLayout(), model,
+                             diagnosticBag, moduleName, generationError);
+    if (!generated) {
+        return Fail(diagnostics::DiagnosticCode::ObjectEmissionFailed,
+                    std::move(generationError));
+    }
+#if LLVM_VERSION_MAJOR >= 21
+    generated->module->setTargetTriple(llvm::Triple(_targetTriple));
+#else
+    generated->module->setTargetTriple(_targetTriple);
+#endif
+    return EmitModule(std::move(generated->module), objectPath);
 }
 
 bool NativeCompiler::CompileForeignSources(
@@ -493,6 +532,57 @@ bool NativeCompiler::EmitObject(const lowering::BoundProgram& program,
     return MergeObjects(*compiler.path, objectPaths, objectPath);
 }
 
+bool NativeCompiler::EmitAsyncObject(
+    const core::CompilationUnit& unit, const semantic::SemanticModel& model,
+    const diagnostics::DiagnosticBag& diagnosticBag,
+    const std::string& moduleName, const std::string& objectPath) {
+    if (unit.foreignSources.empty())
+        return EmitAsyncFlechaObject(model, diagnosticBag, moduleName,
+                                     objectPath);
+
+    _error.clear();
+    _diagnostic.reset();
+    const LinkerSearchResult compiler = FindLinkerDriver();
+    if (!compiler.path.has_value()) {
+        return Fail(
+            diagnostics::DiagnosticCode::ForeignCompilationFailed,
+            "unable to find a native compiler for foreign source blocks; "
+            "tried: " +
+                AttemptedLinkers(compiler.attempted) + ". " +
+                PlatformToolchainHint());
+    }
+
+    std::vector<std::string> temporaryPaths;
+    ScopedFileCleanup cleanup(temporaryPaths);
+    llvm::SmallString<256> flechaObject;
+    const std::error_code temporaryError = llvm::sys::fs::createTemporaryFile(
+        "flecha-generated-async", FLECHA_OBJECT_SUFFIX, flechaObject);
+    if (temporaryError) {
+        return Fail(diagnostics::DiagnosticCode::ObjectEmissionFailed,
+                    "unable to create temporary Flecha object: " +
+                        temporaryError.message());
+    }
+    temporaryPaths.push_back(flechaObject.str().str());
+    if (!EmitAsyncFlechaObject(model, diagnosticBag, moduleName,
+                               flechaObject.str().str()))
+        return false;
+
+    std::vector<lowering::BoundForeignSource> foreignSources;
+    foreignSources.reserve(unit.foreignSources.size());
+    for (const auto& source : unit.foreignSources)
+        foreignSources.push_back(
+            {source.language == core::ForeignLanguage::C
+                 ? lowering::BoundForeignLanguage::C
+                 : lowering::BoundForeignLanguage::Assembly,
+             source.source, source.range, source.bodyLine});
+    lowering::BoundProgram foreignProgram({}, std::move(foreignSources));
+    std::vector<std::string> objectPaths{flechaObject.str().str()};
+    if (!CompileForeignSources(foreignProgram, *compiler.path, objectPaths,
+                               temporaryPaths))
+        return false;
+    return MergeObjects(*compiler.path, objectPaths, objectPath);
+}
+
 bool NativeCompiler::LinkExecutable(
     const std::string& objectPath, const std::string& outputPath,
     const std::vector<std::string>& linkInputs) {
@@ -586,7 +676,8 @@ bool NativeCompiler::BuildExecutable(
     std::vector<std::string> temporaryPaths{objectPathText};
     ScopedFileCleanup cleanup(temporaryPaths);
     if (program.ForeignSources().empty()) {
-        if (!EmitFlechaObject(program, moduleName, objectPathText)) return false;
+        if (!EmitFlechaObject(program, moduleName, objectPathText))
+            return false;
         return LinkExecutable(objectPathText, outputPath, linkInputs);
     }
 
@@ -615,6 +706,28 @@ bool NativeCompiler::BuildExecutable(
     combinedLinkInputs.insert(combinedLinkInputs.end(), linkInputs.begin(),
                               linkInputs.end());
     return LinkExecutable(objectPathText, outputPath, combinedLinkInputs);
+}
+
+bool NativeCompiler::BuildAsyncExecutable(
+    const core::CompilationUnit& unit, const semantic::SemanticModel& model,
+    const diagnostics::DiagnosticBag& diagnosticBag,
+    const std::string& moduleName, const std::string& outputPath,
+    const std::vector<std::string>& linkInputs) {
+    llvm::SmallString<256> objectPath;
+    const std::error_code temporaryError = llvm::sys::fs::createUniqueFile(
+        outputPath + ".flecha-async-%%%%%%" FLECHA_OBJECT_SUFFIX, objectPath);
+    if (temporaryError) {
+        return Fail(diagnostics::DiagnosticCode::ObjectEmissionFailed,
+                    "unable to create temporary object for '" + outputPath +
+                        "': " + temporaryError.message());
+    }
+    const std::string objectPathText = objectPath.str().str();
+    std::vector<std::string> temporaryPaths{objectPathText};
+    ScopedFileCleanup cleanup(temporaryPaths);
+    if (!EmitAsyncObject(unit, model, diagnosticBag, moduleName,
+                         objectPathText))
+        return false;
+    return LinkExecutable(objectPathText, outputPath, linkInputs);
 }
 
 }  // namespace flecha::codegen

@@ -3,28 +3,33 @@ Title: Scoped Single-Threaded Async
 Author: Flecha Project
 Type: Standards Track
 Topic: Language
-Status: Draft
+Status: Accepted
 Created: 2026-11-15
-Implementation: In Progress (private generated scoped tasks/defers; public execution gated)
-Release-Impact: None
+Target: Flecha 0.4
+Implementation: Complete
+Release-Impact: Blocker
 
 Abstract
 --------
 
-Explore scoped asynchronous tasks on one executor thread, with a general
+Specify scoped asynchronous tasks on one executor thread, with a general
 model for suspendable computations rather than an I/O-specific compiler
 feature. Retain Flecha's explicit ownership, exclusive mutable borrowing,
 and deterministic cleanup responsibilities.
 
-The agreed starting direction is scoped, single-threaded async. The syntax
-decisions below have been selected during design discussion; the IFG as a
-whole remains Draft. Selected policies below supersede earlier recommendations.
-Checked result destructuring is selected; public low-level future APIs and an
-implementation release remain undecided.
-This proposal does not block Flecha 0.4. The implementation branch reserves
-async and shoot, but diagnoses async execution until lowering is complete.
-The documentation foundation can be reviewed before v0.4 without committing
-async implementation to that release. See ../async-design.md for a short guide.
+The agreed Flecha 0.4 direction is scoped, single-threaded async. The selected
+policies below supersede earlier recommendations. Checked result destructuring,
+compiler-managed generated frames, the versioned compiler/runtime ABI, and an
+`async main` entry wrapper form the initial executable boundary. Public
+language-level low-level future APIs remain deferred until their source
+contract is accepted.
+
+Flecha 0.4 is not complete until generated-frame borrow validation, the public
+compiler/runtime ABI, production `NativeCompiler` and `async main` integration,
+end-to-end execution and diagnostic coverage, and the interoperability boundary
+are complete. The former execution gate was removed only after those criteria
+were delivered. See ../async-design.md for the implementation guide and current
+status.
 
 Decision status
 ---------------
@@ -90,14 +95,15 @@ Additional approved decisions:
 - A private C++ polling/wakeup ABI is approved as an intermediate stage only.
   Public Flecha high-/low-level interoperability remains required.
 
-Still under review:
+Deferred beyond the initial Flecha 0.4 executable boundary:
 
 - Public future/polling/wakeup APIs and explicit low-level future access.
 - Portable backends and explicit cancellation/yield APIs.
 
-Selected decisions are design inputs. They do not imply that this incomplete
-Standards Track IFG has been accepted or that executable async is supported.
-See ../async-design.md for the current implementation/deferred-work table.
+Acceptance fixes the high-level single-threaded contract and its v0.4 release
+gate. It does not imply that executable async is supported before all completion
+criteria pass. See ../async-design.md for the current
+implementation/deferred-work table.
 
 Motivation and boundary
 -----------------------
@@ -138,7 +144,7 @@ Selected high-level syntax
 Suspendable functions use an async modifier. Their written return type is the
 completed value type. Await must also represent recoverable execution failure;
 its selected surface is immediate checked destructuring. The examples below
-show the approved contract, not executable compiler support yet. Postfix .await
+show the approved contract. Postfix .await
 waits for a result and may suspend the current task; an immediately available
 result need not suspend.
 
@@ -224,8 +230,8 @@ is:
 Polling is synchronous and nonblocking. Pending requires a valid way to arrange
 another attempt when progress becomes possible; it is not a request for a busy
 loop. Completion includes the operation's ordinary result or error values.
-The private C++ prototype distinguishes these four outcomes. The exact public
-Flecha protocol remains open. No public Future, Poll,
+The runtime protocol distinguishes these four outcomes. The exact public
+Flecha source protocol remains open. No public Future, Poll,
 Context, or wake-handle type name is selected by this pseudocode.
 
 The generic progression is: running work becomes waiting, a notification makes
@@ -445,15 +451,15 @@ Open decisions requiring review include:
 - Explicit cancellation/yield APIs and interrupted operation contracts.
 - First I/O surface and portable backend requirements.
 
-The implementation must also complete resumable lowering, cleanup state,
-aggregate borrow/result tracking, analyzer integration, and executable tests.
-The private C++ runtime alone does not satisfy these requirements.
+The v0.4 implementation includes resumable lowering, cleanup state, aggregate
+borrow/result tracking, analyzer integration, and executable tests. A private
+runtime alone would not have satisfied these requirements.
 
 Compatibility
 -------------
 
-The implementation branch reserves async and shoot and carries a private C++
-runtime prototype. Await remains a contextual postfix. Existing synchronous
-execution semantics and shift/minus expressions are preserved. No public
-future/result ABI is finalized. Further syntax and API changes require review. Acceptance is distinct from
-implementation and from selection for a release.
+The implementation reserves async and shoot and carries a versioned public C
+compiler/runtime entry ABI over the private C++ executor. Await remains a
+contextual postfix. Existing synchronous execution semantics and shift/minus
+expressions are preserved. No language-level low-level future/result API is
+finalized. Further syntax and API changes require review.

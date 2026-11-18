@@ -125,7 +125,7 @@ struct AsyncFramePlan final {
     std::optional<AsyncSlotId> executionError;
 };
 
-// Called only after semantic/borrow validation (the execution gate is allowed).
+// Called only after semantic/borrow validation succeeds.
 [[nodiscard]] AsyncFramePlan BuildAsyncFramePlan(
     const core::FunctionDeclaration& function, const SemanticModel& model);
 // Structural, dataflow and lifetime verification; does not replace the borrow
