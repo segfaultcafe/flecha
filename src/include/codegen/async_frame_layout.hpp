@@ -46,5 +46,12 @@ struct AsyncConcreteFrameLayout final {
     const semantic::AsyncFramePlan& plan, const lowering::AsyncMachine& machine,
     std::string& error);
 
+// Verifies the target-layout side of the suspension borrow contract: every
+// retained value and operation has guarded, stable in-frame storage for every
+// continuation that can return Pending.
+[[nodiscard]] bool ValidateAsyncFrameLayout(
+    const semantic::AsyncFramePlan& plan, const lowering::AsyncMachine& machine,
+    const AsyncConcreteFrameLayout& layout, std::string& error);
+
 }  // namespace flecha::codegen
 #endif

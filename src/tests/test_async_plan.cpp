@@ -42,8 +42,8 @@ struct Analysis {
     void ExpectValid() const {
         for (const auto& diagnostic : diagnostics.Diagnostics())
             if (diagnostic.severity == DiagnosticSeverity::Error)
-                EXPECT_EQ(diagnostic.code, DiagnosticCode::AsyncNotImplemented)
-                    << diagnostic.message;
+                ADD_FAILURE() << DiagnosticCodeName(diagnostic.code) << ": "
+                              << diagnostic.message;
         ASSERT_NE(Plan(), nullptr);
         for (const auto& error : VerifyAsyncFramePlan(*Plan(), model))
             ADD_FAILURE() << error;
@@ -66,7 +66,7 @@ bool Contains(const std::vector<AsyncSlotId>& slots, AsyncSlotId slot) {
 const std::string answer = "async i32 answer() { return 42; } ";
 
 TEST(AsyncPlanTests,
-     SemanticAnalysisPublishesVerifiedPlansButKeepsExecutionGate) {
+     SemanticAnalysisPublishesVerifiedPlansForProductionLowering) {
     Analysis analysis(answer +
                       "async i32 main() { v, e := answer().await; if e != none "
                       "{ return 1; } return v; }");
@@ -74,11 +74,10 @@ TEST(AsyncPlanTests,
     ASSERT_NE(analysis.Plan(), nullptr);
     EXPECT_NE(analysis.Plan("answer"), nullptr);
     flecha::lowering::Lowerer lowerer;
-    EXPECT_EQ(
-        lowerer.Lower(*analysis.unit, analysis.model, analysis.diagnostics),
-        nullptr);
-    DiagnosticBag empty;
-    EXPECT_EQ(lowerer.Lower(*analysis.unit, analysis.model, empty), nullptr);
+    auto synchronous =
+        lowerer.Lower(*analysis.unit, analysis.model, analysis.diagnostics);
+    ASSERT_NE(synchronous, nullptr);
+    EXPECT_TRUE(synchronous->Functions().empty());
 }
 
 TEST(AsyncPlanTests, BothShootSpellingsHaveSuccessFailureAndNoPendingCreation) {
@@ -553,8 +552,10 @@ TEST(AsyncPlanTests, ForwardedFailureHasAnErrorTerminalAndNoCompletedValue) {
     EXPECT_NE(dump.find("forward=1"), std::string::npos);
     EXPECT_NE(dump.find("failed"), std::string::npos);
     flecha::lowering::Lowerer lowerer;
-    DiagnosticBag empty;
-    EXPECT_EQ(lowerer.Lower(*analysis.unit, analysis.model, empty), nullptr);
+    auto synchronous =
+        lowerer.Lower(*analysis.unit, analysis.model, analysis.diagnostics);
+    ASSERT_NE(synchronous, nullptr);
+    EXPECT_TRUE(synchronous->Functions().empty());
 }
 
 TEST(AsyncPlanTests, VoidAwaitsNeverAllocateCompletedValueStorage) {

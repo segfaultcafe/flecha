@@ -1,6 +1,8 @@
+#include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Program.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/TargetParser/Triple.h>
 
 #include <chrono>
 #include <cstdio>
@@ -21,6 +23,7 @@
 #include "analyzer/protocol.hpp"
 #include "analyzer/server_loop.hpp"
 #include "analyzer/transport.hpp"
+#include "codegen/async_value_generator.hpp"
 #include "codegen/llvm_code_generator.hpp"
 #include "codegen/native_compiler.hpp"
 #include "core/module_loader.hpp"
@@ -92,13 +95,13 @@ int Compile(const std::string& command, const std::string& input,
         return 1;
     }
     PrintDiagnostics(diagnostics);
+    const flecha::semantic::FunctionSymbol* entry = nullptr;
+    for (const auto& symbol : semanticModel.Symbols())
+        if (symbol->Kind() == flecha::semantic::SymbolKind::Function &&
+            symbol->Name() == "main")
+            entry = static_cast<const flecha::semantic::FunctionSymbol*>(
+                symbol.get());
     if (command == "build" || command == "test") {
-        const flecha::semantic::FunctionSymbol* entry = nullptr;
-        for (const auto& symbol : semanticModel.Symbols())
-            if (symbol->Kind() == flecha::semantic::SymbolKind::Function &&
-                symbol->Name() == "main")
-                entry = static_cast<const flecha::semantic::FunctionSymbol*>(
-                    symbol.get());
         if (!entry || !entry->ParameterTypes().empty() ||
             (entry->ReturnType().Kind() !=
                  flecha::semantic::SemanticTypeKind::I32 &&
@@ -110,13 +113,17 @@ int Compile(const std::string& command, const std::string& input,
         }
     }
     if (command == "check") return 0;
-    flecha::lowering::Lowerer lowerer;
-    auto program = lowerer.Lower(*unit, semanticModel, diagnostics);
-    if (!program) {
-        PrintDiagnostics(diagnostics);
-        return 1;
+    const bool asyncEntry = entry && entry->IsAsync();
+    std::unique_ptr<flecha::lowering::BoundProgram> program;
+    if (!asyncEntry) {
+        flecha::lowering::Lowerer lowerer;
+        program = lowerer.Lower(*unit, semanticModel, diagnostics);
+        if (!program) {
+            PrintDiagnostics(diagnostics);
+            return 1;
+        }
     }
-    if (command == "--emit-llvm") {
+    if (command == "--emit-llvm" && !asyncEntry) {
         flecha::codegen::LlvmCodeGenerator generator;
         auto module = generator.Generate(*program, input);
         if (!module) {
@@ -139,6 +146,41 @@ int Compile(const std::string& command, const std::string& input,
         return 0;
     }
     flecha::codegen::NativeCompiler compiler;
+    if (command == "--emit-llvm") {
+        if (!compiler.Ready()) {
+            if (compiler.LastDiagnostic())
+                PrintDiagnostic(*compiler.LastDiagnostic());
+            return 1;
+        }
+        llvm::LLVMContext context;
+        std::string error;
+        auto generated = flecha::codegen::GenerateAsyncProgram(
+            context, compiler.TargetDataLayout(), semanticModel, diagnostics,
+            input, error);
+        if (!generated) {
+            std::cerr << "LLVM generation failed: " << error << "\n";
+            return 1;
+        }
+#if LLVM_VERSION_MAJOR >= 21
+        generated->module->setTargetTriple(
+            llvm::Triple(compiler.TargetTriple()));
+#else
+        generated->module->setTargetTriple(compiler.TargetTriple());
+#endif
+        if (output.empty()) {
+            generated->module->print(llvm::outs(), nullptr);
+            return 0;
+        }
+        std::error_code errorCode;
+        llvm::raw_fd_ostream stream(output, errorCode);
+        if (errorCode) {
+            std::cerr << "cannot write '" << output
+                      << "': " << errorCode.message() << "\n";
+            return 1;
+        }
+        generated->module->print(stream, nullptr);
+        return 0;
+    }
     std::string executable = output;
     const bool temporaryTestExecutable = command == "test" && output.empty();
     if (temporaryTestExecutable) {
@@ -150,11 +192,19 @@ int Compile(const std::string& command, const std::string& input,
                        FLECHA_EXECUTABLE_SUFFIX))
                          .string();
     }
-    const bool success = compiler.Ready() &&
-                         (command == "--emit-object"
-                              ? compiler.EmitObject(*program, input, output)
-                              : compiler.BuildExecutable(
-                                    *program, input, executable, linkInputs));
+    const bool success =
+        compiler.Ready() &&
+        (asyncEntry
+             ? (command == "--emit-object"
+                    ? compiler.EmitAsyncObject(*unit, semanticModel,
+                                               diagnostics, input, output)
+                    : compiler.BuildAsyncExecutable(*unit, semanticModel,
+                                                    diagnostics, input,
+                                                    executable, linkInputs))
+             : (command == "--emit-object"
+                    ? compiler.EmitObject(*program, input, output)
+                    : compiler.BuildExecutable(*program, input, executable,
+                                               linkInputs)));
     if (!success && compiler.LastDiagnostic())
         PrintDiagnostic(*compiler.LastDiagnostic());
     if (!success) return 1;

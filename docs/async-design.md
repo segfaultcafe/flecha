@@ -1,14 +1,14 @@
 # Async design foundation
 
-**Implementation in progress; public async execution remains gated.** An
-internal test-only generator can execute direct awaits, scheduled scoped
-children, joins, dynamic synchronous defers, and lexical cleanup, but the CLI,
-synchronous lowering path, and `async main` entry remain disabled. This
-summarizes the selected foundation of [IFG 2026-0007](IFG/IFG_2026_0007.txt).
-The IFG remains Draft while low-level future APIs and remaining interoperability details
-are under review. Checked result destructuring, void await, and explicit failure forwarding are
-implemented in the gated frontend.
-Async is not a v0.4 release requirement.
+**Implemented for Flecha 0.4.** Generated async programs execute direct awaits,
+scheduled scoped children, joins, dynamic synchronous defers, and lexical
+cleanup through the CLI and `NativeCompiler`. A generated synchronous wrapper
+drives `async main` on the single-threaded runtime executor. This summarizes
+the accepted Flecha 0.4 contract of
+[IFG 2026-0007](IFG/IFG_2026_0007.txt). Checked result destructuring, void
+await, and explicit failure forwarding are implemented in the frontend.
+Public single-threaded execution is a v0.4 release requirement. Low-level
+language future APIs, timers, and asynchronous I/O remain separately deferred.
 
 ## Selected language operations
 
@@ -66,7 +66,7 @@ async i32 main() {
 
 Direct awaiting uses `value, err := calculate().await`; the symbolic creation
 form is `child, err := >>- calculate()`. Direct awaits and scoped child
-scheduling are executable only through the internal test entry described below.
+scheduling execute through the generated wrapper for `async main`.
 
 On failure the value binding is uninitialized. The compiler must reject access
 until the corresponding error is proven to be `none`. Fallible creation requires immediate checked destructuring. Non-void await
@@ -222,11 +222,11 @@ Every terminal outcome requires retirement of callbacks and operations that
 could access frame storage. A cancellation request alone is not retirement.
 Stale wake handles cannot address a released task or a new task reusing storage.
 
-Handwritten C++ awaitables currently exercise this protocol with synthetic
-events and recursive frame creation. Compiler-generated state machines must
-use the same protocol. A public Flecha future, poll, and wakeup API, including
-high-/low-level interoperability, remains required work; the private prototype
-is not completion of that requirement.
+Handwritten C++ awaitables and compiler-generated state machines exercise the
+same protocol with synthetic events, recursive frame creation, and scoped
+children. The v0.4 interoperability boundary permits generated async code to
+call direct synchronous Flecha and foreign functions. A language-level future,
+poll, and wakeup API remains deferred beyond that initial boundary.
 
 Notifications may represent application events, timers, I/O, or another task.
 Foreign-thread notifications must be marshalled to the owning executor thread.
@@ -254,13 +254,13 @@ remains in force. This foundation enables no shared-memory concurrency model.
 
 ## Frame and suspension plans
 
-After semantic and borrow checking succeeds (apart from the execution gate),
+After semantic and borrow checking succeeds,
 `SemanticModel::AsyncPlanFor` exposes a verified `AsyncFramePlan` for each async
 function. Units with other errors do not publish plans. `DumpAsyncFramePlan`
 provides deterministic scope, slot, continuation, liveness, and initialization
 records for compiler tests and debugging. This is an internal analysis API;
-there is no new source syntax or public runtime ABI. The plans feed the
-test-only generated-frame path described below.
+there is no new source syntax in the plan representation. The plans feed both
+the generated-frame tests and production async code generation.
 
 The plan preserves the specialized CFG's separate checked success and failure
 continuations. Operation records distinguish child creation, direct await, and
@@ -317,7 +317,7 @@ function's completed-value storage. Void awaits allocate no completed-value slot
 ## Internal resumable control lowering
 
 `LowerAsyncMachine` accepts only a verified plan published by semantic analysis,
-with no errors other than the async execution gate. It lowers continuations to
+with no errors. It lowers continuations to
 an immutable internal machine and synthesizes cancellation paths for the active
 lexical scopes. `DumpAsyncMachine` exposes the control instructions for tests.
 This API is separate from the synchronous lowerer and has no command-line switch.
@@ -340,8 +340,9 @@ are skipped. Backend callbacks must be nonthrowing and must not allocate while
 reporting failure or retiring storage; invalid outcome encodings trap as an
 internal protocol error.
 
-`GenerateAsyncValuesForTesting` adds a deliberately internal source-to-native
-binding for direct awaits and scoped children. It uses LLVM `DataLayout` to
+The generated-value path provides both a deliberately entry-free test API and
+the production `GenerateAsyncProgram` entry for direct awaits and scoped
+children. It uses LLVM `DataLayout` to
 assign target-correct byte offsets and ABI alignment for control state,
 initialization and operation guards, parameters, locals, temporaries, saved
 completed values, saved execution errors, and indirect `Computation` objects.
@@ -366,12 +367,14 @@ expressions. Generated cleanup uses runtime initialization guards and reverse
 ownership order; saved returns and pending cancellation are destroyed exactly
 once, only after retirement.
 
-This entry is not wired to `NativeCompiler`, the CLI, or synchronous lowering.
+This entry is wired to `NativeCompiler` and the CLI for a parameterless
+`async void main()` or `async i32 main()`. Synchronous lowering skips async
+declarations rather than representing suspension as ordinary bound IR.
 Generated defers currently support direct synchronous functions and resolved
 structure methods; callable-value and interface-dispatch defers remain explicit
 unsupported generator shapes alongside the existing indirect/interface call
-boundary. Public future APIs, timers/I/O, async interface/behavior dispatch, and
-production `async main` integration remain later work. Unsupported value or
+boundary. Public future APIs, timers/I/O, and async interface/behavior dispatch
+remain later work. Unsupported value or
 continuation shapes fail generation rather than silently omitting their effects
 or cleanup.
 
@@ -391,8 +394,8 @@ also covers repeated defer registrations, capture snapshots, nested LIFO order,
 break/proceed/return cleanup, move-only capture transfer, cancellation ordering,
 and defer-record allocation failure before capture effects. It only supplies
 synthetic readiness/allocation failure and observations; source
-evaluation, transfers, and cleanup are generated. Neither suite removes
-`FLECHA-S0089` or the synchronous lowering gate.
+evaluation, transfers, and cleanup are generated. Async frames remain separate
+from the ordinary synchronous lowering path.
 
 ## Implementation status
 
@@ -401,23 +404,25 @@ evaluation, transfers, and cleanup are generated. Neither suite removes
 | Parser and AST | Named async functions, postfix await, `shoot`/`>>-`, AST traversal. |
 | Semantic records | Async callable effect, scoped task type, explicit checked-result kind, value/error bindings, and void/forwarding await records; unsupported-use diagnostics. |
 | Scope analysis | Success/failure CFG paths and conditional definite assignment; inner-to-outer join/cancel-and-drain plans, forwarded-failure exits, unobserved child-failure and cross-scope jump diagnostics. |
-| Borrow analysis | Outcome-sensitive captures and argument moves, explicit join release, aggregate borrowed-result origins, and consumed-handle checks. Generated-frame/suspension validation remains. |
+| Borrow analysis | Outcome-sensitive captures and argument moves, explicit join release, aggregate borrowed-result origins, consumed-handle checks, and target-layout validation of stable retained storage across every suspension. |
 | Private runtime | FIFO executor, wake coalescing, cooperative retirement, stable frames, transactional direct/child creation, dynamic lexical child records, dynamic LIFO defer records, join watching, cancel/drain, and separate allocation failure outcome. |
 | Frame/suspension planning | Verified internal plans, conservative stable slots, initialization/move alternatives, read liveness, and suspendable scope-exit continuations, saved execution errors and distinct failed terminals; deterministic dumps and corruption tests. |
-| Resumable code generation | Internal machine lowering plus target-layout, value/operation, direct-await, child scheduling/joining, lexical child cleanup, dynamic synchronous defer storage/invocation, and guarded owner-cleanup bindings with source-to-generated-frame execution tests. Production entry integration and the public ABI remain. Async declarations still issue `FLECHA-S0089` and cannot reach synchronous lowering. |
+| Resumable code generation | Machine lowering plus target-layout, value/operation, direct-await, child scheduling/joining, lexical child cleanup, dynamic synchronous defer storage/invocation, guarded owner cleanup, a generated host entry, and production object/executable emission. |
 | Ordinary returned-error propagation | Prefix `try` implemented through CFG, borrow/allocation analysis, synchronous lowering and native code generation; supports error-only and multiple success fields. |
-| Public Flecha futures/results | Checked destructuring, void await and `.await?` implemented in the frontend; public low-level future API and executable integration remain. |
+| Public Flecha futures/results | Checked destructuring, void await and `.await?` execute through the high-level surface. A language-level low-level future API remains deferred. |
 | Tooling | VS Code and Neovim syntax highlighting; checked expression types, success-condition and failure-forwarding hover, binding navigation/occurrence tests, and an optional Neovim Codex project-chat sidebar. |
 
 Tests cover ready and delayed synthetic events, registration-time notifications,
 stale callbacks, reentrancy, cancellation, allocation failure injection, result
 consumption, checked-result control flow, move-only ownership, borrowed aggregates,
 borrowing/scope rules, and internal generated direct-await/scoped-child frames.
-The execution gate remains until entry integration, the public ABI, and
-interoperability work are validated together.
+The v0.4 gate covers generated-frame borrow validation, entry integration, the
+versioned compiler/runtime ABI, end-to-end coverage, and the initial
+interoperability boundary. Those pieces are implemented; deferred forms remain
+fail-closed.
 
 With a testing build configured, run the focused checks with
 `ctest --test-dir <build-directory> -R 'AsyncFrontendTests|AsyncRuntimeTests|AsyncPlanTests|AsyncLoweringTests|AsyncValueLoweringTests' --output-on-failure`.
 Runtime and generated-frame tests use injected allocation failures and recursive
-frames. Public end-to-end entry and unsupported-feature coverage remain required
-before enabling async execution.
+frames. Public end-to-end entry and unsupported-feature coverage exercise the
+enabled boundary before release.

@@ -372,11 +372,14 @@ class Emitter final {
 
     llvm::Value* AwaitValue(const core::AwaitExpression& await) {
         for (const semantic::AsyncState& state : _entry->plan->states)
-            if (state.checked && state.awaitOperation == &await &&
-                state.checked->value)
+            if (state.checked && state.awaitOperation == &await) {
+                const std::size_t slot = state.checked->value
+                                             ? *state.checked->value
+                                             : state.checked->error;
                 return _builder.CreateLoad(
-                    _types.Map(_entry->plan->slots[*state.checked->value].type),
-                    Slot(*state.checked->value), "await.value");
+                    _types.Map(_entry->plan->slots[slot].type), Slot(slot),
+                    state.checked->value ? "await.value" : "await.error");
+            }
         Fail("await result has no concrete value slot");
         return nullptr;
     }
@@ -1857,18 +1860,93 @@ class Emitter final {
     std::set<const semantic::FunctionSymbol*> _emittedSync;
 };
 
+bool EmitAsyncEntry(llvm::Module& module,
+                    const std::vector<FunctionEntry>& entries,
+                    const llvm::DataLayout& dataLayout, std::string& error) {
+    const FunctionEntry* main = nullptr;
+    for (const FunctionEntry& entry : entries)
+        if (entry.symbol->LinkName() == "main") {
+            if (main) {
+                error = "an executable has more than one async main";
+                return false;
+            }
+            main = &entry;
+        }
+    if (!main) {
+        error =
+            "an async executable requires async i32 main() or async void "
+            "main() in its entry module";
+        return false;
+    }
+    const SemanticTypeKind returnKind = main->symbol->ReturnType().Kind();
+    if (!main->symbol->ParameterTypes().empty() ||
+        (returnKind != SemanticTypeKind::Void &&
+         returnKind != SemanticTypeKind::I32)) {
+        error =
+            "an async executable requires async i32 main() or async void "
+            "main() in its entry module";
+        return false;
+    }
+
+    llvm::LLVMContext& context = module.getContext();
+    llvm::IRBuilder<> builder(context);
+    llvm::Type* pointer = builder.getPtrTy();
+    auto* entryType = llvm::FunctionType::get(
+        builder.getInt32Ty(), {builder.getInt32Ty(), pointer}, false);
+    llvm::Function* entry = llvm::Function::Create(
+        entryType, llvm::Function::ExternalLinkage, "main", module);
+    entry->getArg(0)->setName("argument.count");
+    entry->getArg(1)->setName("argument.values");
+    builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", entry));
+
+    auto* processArgumentsType = llvm::FunctionType::get(
+        builder.getVoidTy(), {builder.getInt32Ty(), pointer}, false);
+    builder.CreateCall(module.getOrInsertFunction(
+                           "flecha_runtime_v1_process_arguments_initialize",
+                           processArgumentsType),
+                       {entry->getArg(0), entry->getArg(1)});
+
+    llvm::Type* sizeType =
+        llvm::IntegerType::get(context, dataLayout.getPointerSizeInBits());
+    auto* runType =
+        llvm::FunctionType::get(builder.getInt32Ty(),
+                                {sizeType, sizeType, pointer, pointer, pointer,
+                                 pointer, builder.getInt8Ty()},
+                                false);
+    llvm::Function* poll =
+        module.getFunction(main->generated.name + "_frame_poll");
+    llvm::Function* destroy =
+        module.getFunction(main->generated.name + "_destroy");
+    llvm::Function* initialize =
+        module.getFunction(main->generated.name + "_initialize");
+    llvm::Constant* take =
+        llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context));
+    if (returnKind == SemanticTypeKind::I32)
+        take = module.getFunction(main->generated.name + "_take");
+    if (!poll || !destroy || !initialize ||
+        (returnKind == SemanticTypeKind::I32 && take->isNullValue())) {
+        error = "async main is missing generated frame callbacks";
+        return false;
+    }
+    builder.CreateRet(builder.CreateCall(
+        module.getOrInsertFunction("flecha_runtime_v1_async_main_run", runType),
+        {llvm::ConstantInt::get(sizeType, main->generated.frame.size),
+         llvm::ConstantInt::get(sizeType, main->generated.frame.alignment),
+         poll, destroy, take, initialize,
+         builder.getInt8(returnKind == SemanticTypeKind::I32 ? 1 : 0)}));
+    return true;
+}
+
 }  // namespace
 
-std::optional<GeneratedAsyncProgram> GenerateAsyncValuesForTesting(
+static std::optional<GeneratedAsyncProgram> GenerateAsyncValues(
     llvm::LLVMContext& context, const llvm::DataLayout& dataLayout,
     const semantic::SemanticModel& model,
     const diagnostics::DiagnosticBag& diagnostics, std::string moduleName,
-    std::string& error) {
+    std::string& error, bool emitEntry) {
     error.clear();
     for (const diagnostics::Diagnostic& diagnostic : diagnostics.Diagnostics())
-        if (diagnostic.severity == diagnostics::DiagnosticSeverity::Error &&
-            diagnostic.code !=
-                diagnostics::DiagnosticCode::AsyncNotImplemented) {
+        if (diagnostic.severity == diagnostics::DiagnosticSeverity::Error) {
             error =
                 "async value generation requires successful semantic analysis";
             return std::nullopt;
@@ -1938,6 +2016,8 @@ std::optional<GeneratedAsyncProgram> GenerateAsyncValuesForTesting(
     }
     Emitter emitter(context, dataLayout, model, *module, entries, error);
     if (!emitter.Emit()) return std::nullopt;
+    if (emitEntry && !EmitAsyncEntry(*module, entries, dataLayout, error))
+        return std::nullopt;
     std::string verification;
     llvm::raw_string_ostream output(verification);
     if (llvm::verifyModule(*module, &output)) {
@@ -1950,6 +2030,24 @@ std::optional<GeneratedAsyncProgram> GenerateAsyncValuesForTesting(
     for (FunctionEntry& entry : entries)
         result.functions.push_back(std::move(entry.generated));
     return result;
+}
+
+std::optional<GeneratedAsyncProgram> GenerateAsyncValuesForTesting(
+    llvm::LLVMContext& context, const llvm::DataLayout& dataLayout,
+    const semantic::SemanticModel& model,
+    const diagnostics::DiagnosticBag& diagnostics, std::string moduleName,
+    std::string& error) {
+    return GenerateAsyncValues(context, dataLayout, model, diagnostics,
+                               std::move(moduleName), error, false);
+}
+
+std::optional<GeneratedAsyncProgram> GenerateAsyncProgram(
+    llvm::LLVMContext& context, const llvm::DataLayout& dataLayout,
+    const semantic::SemanticModel& model,
+    const diagnostics::DiagnosticBag& diagnostics, std::string moduleName,
+    std::string& error) {
+    return GenerateAsyncValues(context, dataLayout, model, diagnostics,
+                               std::move(moduleName), error, true);
 }
 
 }  // namespace flecha::codegen

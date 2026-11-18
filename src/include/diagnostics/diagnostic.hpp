@@ -110,7 +110,6 @@ enum class DiagnosticCode {
     DuplicateBehaviorFieldKey,
     BehaviorRequirementFailed,
 
-    AsyncNotImplemented,
     InvalidAsync,
     UnawaitedAsyncCall,
     InvalidAwait,

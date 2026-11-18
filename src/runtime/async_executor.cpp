@@ -1,9 +1,12 @@
 #include "runtime/async_executor.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <exception>
 #include <limits>
 #include <new>
+
+#include "runtime/runtime_abi.h"
 
 namespace flecha::runtime::async {
 
@@ -753,5 +756,69 @@ std::uint64_t flecha_async_defer_tag(void* payload) noexcept {
 
 void flecha_async_defer_release(void* payload) noexcept {
     flecha::runtime::async::ReleaseDeferredCall(payload);
+}
+
+int32_t flecha_runtime_v1_async_main_run(
+    size_t frame_size, size_t frame_alignment, FlechaRuntimeAsyncPoll poll,
+    FlechaRuntimeAsyncDestroy destroy, FlechaRuntimeAsyncTake take,
+    FlechaRuntimeAsyncInitialize initialize, uint8_t returns_i32) {
+    using namespace flecha::runtime::async;
+    if (!frame_size || !frame_alignment ||
+        (frame_alignment & (frame_alignment - 1)) || !poll || !destroy ||
+        !initialize || (returns_i32 && !take)) {
+        std::fputs("Flecha async entry error: invalid generated frame ABI\n",
+                   stderr);
+        return FLECHA_RUNTIME_ASYNC_ROOT_EXECUTION_FAILED;
+    }
+
+    std::pmr::memory_resource* resource = std::pmr::get_default_resource();
+    void* frame = nullptr;
+    try {
+        frame = resource->allocate(frame_size, frame_alignment);
+    } catch (const std::bad_alloc&) {
+        std::fputs("Flecha async entry error: root frame allocation failed\n",
+                   stderr);
+        return FLECHA_RUNTIME_ASYNC_ROOT_ALLOCATION_FAILED;
+    }
+
+    initialize(frame, nullptr, resource);
+    Executor executor(resource);
+    PollContext context{{}, false, nullptr, nullptr, &executor};
+    uint32_t outcome = static_cast<uint32_t>(PollResult::Pending);
+    while (outcome == static_cast<uint32_t>(PollResult::Pending)) {
+        outcome = poll(frame, &context);
+        if (outcome != static_cast<uint32_t>(PollResult::Pending)) break;
+        if (executor.Step() == StepResult::Idle) {
+            std::fputs(
+                "Flecha async entry error: root task stalled without a "
+                "runnable operation\n",
+                stderr);
+            context.cancellationRequested = true;
+            do {
+                outcome = poll(frame, &context);
+            } while (outcome == static_cast<uint32_t>(PollResult::Pending) &&
+                     executor.Step() != StepResult::Idle);
+            destroy(frame);
+            resource->deallocate(frame, frame_size, frame_alignment);
+            return FLECHA_RUNTIME_ASYNC_ROOT_EXECUTION_FAILED;
+        }
+    }
+
+    int32_t status = 0;
+    if (outcome == static_cast<uint32_t>(PollResult::Ready)) {
+        if (returns_i32) take(frame, &status);
+    } else {
+        std::fputs(
+            outcome == static_cast<uint32_t>(PollResult::AllocationFailed)
+                ? "Flecha async entry error: task allocation failed\n"
+                : "Flecha async entry error: root task was cancelled\n",
+            stderr);
+        status = outcome == static_cast<uint32_t>(PollResult::AllocationFailed)
+                     ? FLECHA_RUNTIME_ASYNC_ROOT_ALLOCATION_FAILED
+                     : FLECHA_RUNTIME_ASYNC_ROOT_EXECUTION_FAILED;
+    }
+    destroy(frame);
+    resource->deallocate(frame, frame_size, frame_alignment);
+    return status;
 }
 }
