@@ -286,9 +286,8 @@ them. Additional injected parameters are postponed beyond the initial design.
 
 Test visibility is paired by basename and directory. A `<filename>_test.fl`
 module and all helpers declared within it may access module-private top-level
-declarations from the sibling `<filename>.fl` module. This privilege never
-bypasses private structure or enum members, which remain accessible only to
-methods of their exact owning type. For example:
+declarations and private structure or enum members from the sibling
+`<filename>.fl` module. For example:
 
 ```text
 math.fl       <- private declarations
@@ -299,8 +298,9 @@ The privilege does not extend to modules in another directory, unrelated
 modules in the same package, or dependency packages. Those retain normal
 visibility. Tests that exercise a package through its public API use ordinary
 imports and visibility rules. Privileged access cannot be re-exported or passed
-through another module, and the production module receives no corresponding
-access to declarations in its test module.
+through another module: runtime modules cannot import test modules, test modules
+cannot export proxy declarations, and the production module receives no
+corresponding access to declarations in its test module.
 
 The compiler diagnoses:
 

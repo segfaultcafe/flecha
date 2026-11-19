@@ -84,7 +84,8 @@ functions use `State::initial()`. The first parameter may be `&self`,
 `&const self`, `*self`, `*const self`, or the consuming value receiver `self`;
 checked-reference and unsafe-pointer rules are unchanged. Methods may be
 `private`, and exporting an enum exposes its non-private methods. Methods may
-declare explicit generic parameters. A method and variant cannot share a name.
+declare explicit generic parameters. The paired logical test module may access
+private methods. A method and variant cannot share a name.
 
 Enum initialization and destruction are compiler-defined. `init`, `zero`, and
 `tear` are reserved and cannot be declared as enum methods.

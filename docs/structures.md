@@ -33,8 +33,9 @@ void Box::set(&self, i32 value) { self->y = value; }
 The declaration ends with `;`. Fields and methods are public by default.
 `private T field;` and a `private { ... }` field group are equivalent. A private
 member is accessible only inside methods belonging to its structure, including
-access through another instance. A build block does not grant private access
-by itself. Fields and methods may share a name because field access and method
+access through another instance, or from the structure's paired logical test
+module. A build block does not grant private access by itself. Fields and
+methods may share a name because field access and method
 calls are syntactically distinct: `value.position` accesses a field, while
 `value.position()` calls a method. The same distinction applies through a
 reference or pointer: `self->position` and `self->position()`. The names `init`,

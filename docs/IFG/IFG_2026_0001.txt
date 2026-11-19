@@ -200,10 +200,11 @@ An attached source unit can therefore use:
   effective namespace; and
 - its own source-local import aliases.
 
-Attachment does not expose unmarked declarations from another logical module,
-does not widen private member access, and does not inherit imports from another
-source unit. It changes module placement, not existing declaration and member
-privacy rules.
+Ordinary attachment does not expose unmarked declarations from another logical
+module, widen private member access, or inherit imports from another source
+unit. It changes module placement, not existing declaration and member privacy
+rules. The paired-test exception below is based on logical module identity and
+therefore also applies to attached test modules.
 
 Moving a source unit into a submodule folder while preserving its effective
 namespace and canonical module identity must not change nominal type identity,
@@ -214,7 +215,9 @@ Tests and tooling
 
 Logical test pairing uses the effective namespace. An attached bar_test module
 pairs with bar in the attachment namespace and receives the same one-way test
-access as a directly located test module.
+access as a directly located test module, including access to the paired
+production module's private structure and enum members. Test modules remain
+unimportable from runtime modules and cannot export proxy declarations.
 
 Diagnostics, analyzer navigation, rename, hover, and symbol search must report
 the physical source location while using the canonical logical identity for
