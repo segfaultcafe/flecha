@@ -432,6 +432,33 @@ TEST_F(LspProtocolTests, MapsInterfaceSemanticTokensToType) {
     EXPECT_NE(tokens.front().find("\"data\":[0,10,8,6,1]"), std::string::npos);
 }
 
+TEST_F(LspProtocolTests, MarksModuleConstantsReadonly) {
+    FakeAnalyzer analyzer;
+    ProtocolServer server(analyzer);
+    Initialize(server);
+    const std::filesystem::path file = root / "main.fl";
+    const std::string uri = flecha::lsp::PathToFileUri(file);
+    const std::string text = "OFFSET OFFSET\n";
+    const std::string document =
+        "{\"textDocument\":{\"uri\":" + flecha::analyzer::json::Quote(uri);
+    ASSERT_EQ(server
+                  .Handle(Notification("textDocument/didOpen",
+                                       document + ",\"version\":1,\"text\":" +
+                                           flecha::analyzer::json::Quote(text) +
+                                           "}}"))
+                  .size(),
+              1u);
+    analyzer.semanticTokens = {{{file, 0, 6}, "moduleConstant", true},
+                               {{file, 7, 13}, "moduleConstant", false}};
+
+    const auto tokens = server.Handle(
+        Request("2", "textDocument/semanticTokens/full", document + "}}"));
+
+    ASSERT_EQ(tokens.size(), 1u);
+    EXPECT_NE(tokens.front().find("\"data\":[0,0,6,2,3,0,7,6,2,2]"),
+              std::string::npos);
+}
+
 TEST_F(LspProtocolTests, MapsDecorationKeywordsToAdvertisedKeywordTokenType) {
     FakeAnalyzer analyzer;
     ProtocolServer server(analyzer);
@@ -441,6 +468,9 @@ TEST_F(LspProtocolTests, MapsDecorationKeywordsToAdvertisedKeywordTokenType) {
     EXPECT_NE(initialized.front().find(
                   "\"tokenTypes\":[\"function\",\"parameter\",\"variable\","
                   "\"property\",\"enum\",\"struct\",\"type\",\"self\",\"keyword\"]"),
+              std::string::npos);
+    EXPECT_NE(initialized.front().find(
+                  "\"tokenModifiers\":[\"declaration\",\"readonly\"]"),
               std::string::npos);
 
     const std::filesystem::path file = root / "main.fl";

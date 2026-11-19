@@ -428,7 +428,8 @@ std::vector<std::string> ProtocolServer::Handle(std::string_view messageText) {
                 "\"semanticTokensProvider\":{\"legend\":{"
                 "\"tokenTypes\":[\"function\",\"parameter\",\"variable\","
                 "\"property\",\"enum\",\"struct\",\"type\",\"self\",\"keyword\"],"
-                "\"tokenModifiers\":[\"declaration\"]},\"full\":true}},"
+                "\"tokenModifiers\":[\"declaration\",\"readonly\"]},"
+                "\"full\":true}},"
                 "\"serverInfo\":{\"name\":\"flecha-lsp\",\"version\":" +
                 analyzer::json::Quote(compilerVersion) + "}}";
             return {SuccessResponse(*message->id, result)};
@@ -601,10 +602,12 @@ std::vector<std::string> ProtocolServer::Handle(std::string_view messageText) {
                                        : start.character;
                     if (!first) data << ',';
                     first = false;
+                    unsigned modifiers = token.isDeclaration ? 1u : 0u;
+                    if (token.kind == "moduleConstant") modifiers |= 2u;
                     data << deltaLine << ',' << deltaStart << ','
                          << end.character - start.character << ','
                          << SemanticTokenKind(token.kind, spelling) << ','
-                         << (token.isDeclaration ? 1 : 0);
+                         << modifiers;
                     previousLine = start.line;
                     previousCharacter = start.character;
                 }
