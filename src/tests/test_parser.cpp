@@ -1646,6 +1646,31 @@ TEST(ParserArrayTests, ParsesNestedTypesListsAndRepeatsWithRanges) {
         "[4; 3]");
 }
 
+TEST(ParserArrayTests, ParsesNamedTypeAndRepeatLengths) {
+    const std::string source =
+        "const usize COUNT = 3; void f() { [COUNT]u8 values = [1; COUNT]; }";
+    DiagnosticBag diagnostics;
+    std::unique_ptr<CompilationUnit> unit = ParseSource(source, diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    const auto& function = static_cast<const FunctionDeclaration&>(
+        *unit->Declarations()[1]);
+    const auto& declaration = static_cast<const VariableDeclarationStatement&>(
+        *function.Body().Statements()[0]);
+    ASSERT_NE(declaration.ExplicitType(), nullptr);
+    EXPECT_EQ(declaration.ExplicitType()->LengthName(), "COUNT");
+    EXPECT_EQ(source.substr(declaration.ExplicitType()->LengthRange().start.offset,
+                            declaration.ExplicitType()->LengthRange().Length()),
+              "COUNT");
+    const auto& repeat =
+        static_cast<const ArrayExpression&>(*declaration.Initializer());
+    EXPECT_TRUE(repeat.IsRepeat());
+    EXPECT_EQ(repeat.LengthName(), "COUNT");
+    EXPECT_EQ(source.substr(repeat.LengthRange().start.offset,
+                            repeat.LengthRange().Length()),
+              "COUNT");
+}
+
 TEST(ParserArrayTests, DistinguishesArrayTypesFromExpressionStatements) {
     DiagnosticBag diagnostics;
     std::unique_ptr<CompilationUnit> unit = ParseSource(
@@ -1658,10 +1683,10 @@ TEST(ParserArrayTests, DistinguishesArrayTypesFromExpressionStatements) {
 
 TEST(ParserArrayTests, RejectsMalformedLengthsAndInitializersWithoutHanging) {
     for (const std::string& source :
-         {"void f([-1]u8 a) {}", "void f([count]u8 a) {}",
+         {"void f([-1]u8 a) {}",
           "void f([1 + 1]u8 a) {}", "void f([:]u8 a) {}",
           "void f([18446744073709551616]u8 a) {}", "void f() { a := [1; -2]; }",
-          "void f() { a := [1; count]; }", "void f() { a := [1; 2, 3]; }",
+          "void f() { a := [1; 2, 3]; }",
           "void f() { a := [1, ; }", "void f() { a := [1, 2; }",
           "void f() { a := [1; 18446744073709551616]; }"}) {
         SCOPED_TRACE(source);

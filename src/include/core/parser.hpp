@@ -36,6 +36,11 @@ class Parser {
     [[nodiscard]] std::unique_ptr<CompilationUnit> Parse();
 
    private:
+    struct ParsedArrayLength final {
+        std::uint64_t value = 0;
+        std::string name;
+        source::SourceRange range;
+    };
     bool _headerParsed = false;
     bool _inBehaviorMethod = false;
     std::string _moduleName;
@@ -95,7 +100,7 @@ class Parser {
     std::unique_ptr<TypeNode> ParseType(bool allowOwn = false,
                                         bool allowLend = false,
                                         bool allowTupleOwners = false);
-    std::optional<std::uint64_t> ParseArrayLength();
+    std::optional<ParsedArrayLength> ParseArrayLength();
     std::unique_ptr<Expression> ParseArrayExpression();
     std::unique_ptr<Expression> ParseMatchExpression();
     std::unique_ptr<Expression> ParseAnonymousFunctionExpression();

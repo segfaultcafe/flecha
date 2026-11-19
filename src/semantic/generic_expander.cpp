@@ -808,9 +808,24 @@ class Expander {
             if (type.TypeForm() == TypeKind::Array ||
                 type.TypeForm() == TypeKind::Slice) {
                 emit(TokenType::LBracket, "[");
-                if (type.TypeForm() == TypeKind::Array)
-                    emit(TokenType::NumberLiteral,
-                         std::to_string(type.Length()));
+                if (type.TypeForm() == TypeKind::Array) {
+                    if (type.LengthName().empty()) {
+                        emit(TokenType::NumberLiteral,
+                             std::to_string(type.Length()));
+                    } else {
+                        const std::size_t separator =
+                            type.LengthName().find("::");
+                        if (separator == std::string::npos) {
+                            emit(TokenType::Identifier, type.LengthName());
+                        } else {
+                            emit(TokenType::Identifier,
+                                 type.LengthName().substr(0, separator));
+                            emit(TokenType::Scope, "::");
+                            emit(TokenType::Identifier,
+                                 type.LengthName().substr(separator + 2));
+                        }
+                    }
+                }
                 emit(TokenType::RBracket, "]");
             }
             auto child =
@@ -1473,7 +1488,8 @@ class Expander {
         } else
             result = std::make_unique<TypeNode>(
                 source.Range(), source.TypeForm(), CopyType(*source.Target()),
-                source.IsConst(), source.QualifierRange(), source.Length());
+                source.IsConst(), source.QualifierRange(), source.Length(),
+                source.LengthName(), source.LengthRange());
         for (const auto& type : source.typeArguments)
             result->typeArguments.push_back(CopyType(*type));
         result->SetContract(source.Contract());

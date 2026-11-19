@@ -27,7 +27,8 @@ std::unique_ptr<TypeNode> CloneType(const TypeNode& type) {
     else
         result = std::make_unique<TypeNode>(
             type.Range(), type.TypeForm(), CloneType(*type.Target()),
-            type.IsConst(), type.QualifierRange(), type.Length());
+            type.IsConst(), type.QualifierRange(), type.Length(),
+            type.LengthName(), type.LengthRange());
     for (const auto& argument : type.typeArguments)
         result->typeArguments.push_back(CloneType(*argument));
     result->SetContract(type.Contract());
@@ -232,7 +233,16 @@ bool Parser::ScanType(std::size_t& offset, bool& pendingGreater) const {
     }
     if (token == TokenType::LBracket) {
         ++offset;
-        if (Peek(offset).type == TokenType::NumberLiteral) ++offset;
+        if (Peek(offset).type == TokenType::NumberLiteral) {
+            ++offset;
+        } else if (Peek(offset).type == TokenType::Identifier) {
+            const std::string name = Peek(offset).value;
+            ++offset;
+            if (_importAliases.contains(name) &&
+                Peek(offset).type == TokenType::Scope &&
+                Peek(offset + 1).type == TokenType::Identifier)
+                offset += 2;
+        }
         if (Peek(offset).type != TokenType::RBracket) return false;
         ++offset;
         return ScanType(offset, pendingGreater);
@@ -521,7 +531,7 @@ std::unique_ptr<TypeNode> Parser::ParseType(bool allowOwn, bool allowLend,
                                               std::move(target), explicitConst,
                                               qualifierRange);
         }
-        const std::optional<std::uint64_t> length = ParseArrayLength();
+        const std::optional<ParsedArrayLength> length = ParseArrayLength();
         if (!length.has_value() ||
             Consume(TokenType::RBracket, "']' after array length") == nullptr)
             return nullptr;
@@ -530,7 +540,8 @@ std::unique_ptr<TypeNode> Parser::ParseType(bool allowOwn, bool allowLend,
         const source::SourceRange range{start, target->Range().end};
         return std::make_unique<TypeNode>(range, TypeKind::Array,
                                           std::move(target), explicitConst,
-                                          qualifierRange, *length);
+                                          qualifierRange, length->value,
+                                          length->name, length->range);
     }
     if (Match(TokenType::LParen)) {
         std::vector<std::unique_ptr<TypeNode>> elements;
@@ -2985,9 +2996,23 @@ std::unique_ptr<Expression> Parser::ParseAnonymousFunctionExpression() {
         explicitCaptureList);
 }
 
-std::optional<std::uint64_t> Parser::ParseArrayLength() {
-    const Token* count = Consume(TokenType::NumberLiteral,
-                                 "nonnegative integer literal array length");
+std::optional<Parser::ParsedArrayLength> Parser::ParseArrayLength() {
+    if (Check(TokenType::Identifier)) {
+        const Token& first = Advance();
+        ParsedArrayLength result{0, first.value, first.range};
+        if (_importAliases.contains(result.name) && Match(TokenType::Scope)) {
+            const Token* member = Consume(
+                TokenType::Identifier,
+                "module constant name after array-length qualifier");
+            if (member == nullptr) return std::nullopt;
+            result.name += "::" + member->value;
+            result.range.end = member->range.end;
+        }
+        return result;
+    }
+    const Token* count = Consume(
+        TokenType::NumberLiteral,
+        "nonnegative integer literal or module constant array length");
     if (count == nullptr) return std::nullopt;
     std::uint64_t length = 0;
     if (!ParseUnsignedIntegerLiteral(count->value, length)) {
@@ -2995,7 +3020,7 @@ std::optional<std::uint64_t> Parser::ParseArrayLength() {
                             count->range, "array length is too large");
         return std::nullopt;
     }
-    return length;
+    return ParsedArrayLength{length, {}, count->range};
 }
 
 std::unique_ptr<Expression> Parser::ParseArrayExpression() {
@@ -3003,16 +3028,21 @@ std::unique_ptr<Expression> Parser::ParseArrayExpression() {
     std::vector<std::unique_ptr<Expression>> elements;
     bool repeat = false;
     std::uint64_t length = 0;
+    std::string lengthName;
+    source::SourceRange lengthRange;
     if (!Check(TokenType::RBracket)) {
         for (;;) {
             std::unique_ptr<Expression> element = ParseExpression();
             if (element == nullptr) return nullptr;
             elements.push_back(std::move(element));
             if (elements.size() == 1 && Match(TokenType::SemiColon)) {
-                const std::optional<std::uint64_t> count = ParseArrayLength();
+                const std::optional<ParsedArrayLength> count =
+                    ParseArrayLength();
                 if (!count.has_value()) return nullptr;
                 repeat = true;
-                length = *count;
+                length = count->value;
+                lengthName = count->name;
+                lengthRange = count->range;
                 break;
             }
             if (!Match(TokenType::Comma) || Check(TokenType::RBracket)) break;
@@ -3023,7 +3053,7 @@ std::unique_ptr<Expression> Parser::ParseArrayExpression() {
     if (close == nullptr) return nullptr;
     return std::make_unique<ArrayExpression>(
         source::SourceRange{start, close->range.end}, std::move(elements),
-        repeat, length);
+        repeat, length, std::move(lengthName), lengthRange);
 }
 
 std::unique_ptr<Expression> Parser::ParseMatchExpression() {

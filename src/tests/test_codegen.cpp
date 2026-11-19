@@ -305,11 +305,15 @@ TEST(NativeCompilerTests, CapturesForwardedProcessArguments) {
     std::filesystem::remove(executablePath);
 }
 
-TEST(NativeCompilerTests, InlinesModuleConstantExpressions) {
+TEST(NativeCompilerTests, InlinesModuleConstantExpressionsAndArrayLengths) {
     GeneratedSource result = Generate(R"(
         const i32 BASE = 20;
         const i32 ANSWER = BASE * 2 + 2;
-        i32 main() { return ANSWER; }
+        const usize PARTS = 2;
+        i32 main() {
+            [PARTS]i32 values = [ANSWER / 2; PARTS];
+            return values[0] + values[1];
+        }
     )");
     for (const auto& diagnostic : result.diagnostics.Diagnostics())
         ADD_FAILURE() << diagnostic.message;

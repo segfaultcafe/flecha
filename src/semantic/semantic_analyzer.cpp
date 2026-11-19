@@ -19,6 +19,7 @@
 #include "semantic/allocation_checker.hpp"
 #include "semantic/async_plan.hpp"
 #include "semantic/borrow_checker.hpp"
+#include "semantic/compile_time_value.hpp"
 #include "semantic/definite_assignment.hpp"
 #include "semantic/generic_expander.hpp"
 #include "semantic/method_contract.hpp"
@@ -1320,8 +1321,69 @@ SemanticType SemanticAnalyzer::ResolveTypeSyntax(const core::TypeNode& type) {
             ? SemanticTypeKind::Reference
         : type.TypeForm() == core::TypeKind::Array ? SemanticTypeKind::Array
                                                    : SemanticTypeKind::Slice;
+    const std::optional<std::uint64_t> length =
+        type.TypeForm() == core::TypeKind::Array
+            ? ResolveArrayLength(type.Length(), type.LengthName(),
+                                 type.LengthRange())
+            : std::optional<std::uint64_t>{0};
     return SemanticType(kind, ResolveTypeSyntax(*type.Target()), type.IsConst(),
-                        type.Length());
+                        length.value_or(0));
+}
+
+std::optional<std::uint64_t> SemanticAnalyzer::ResolveArrayLength(
+    std::uint64_t literal, const std::string& name,
+    source::SourceRange range) {
+    if (name.empty()) return literal;
+    if (ReportAmbiguousImport(name, range)) return std::nullopt;
+    const Symbol* symbol = _currentScope->Lookup(name);
+    if (symbol == nullptr || symbol->Kind() != SymbolKind::ModuleConstant) {
+        if (!ReportInaccessibleImport(name, range))
+            Report(diagnostics::DiagnosticCode::InvalidArrayLength, range,
+                   "array length '" + name +
+                       "' is not an integer module constant");
+        return std::nullopt;
+    }
+    const SemanticType type = symbol->Type().WithoutConst();
+    if (!type.IsInteger()) {
+        Report(diagnostics::DiagnosticCode::InvalidArrayLength, range,
+               "array length constant '" + name +
+                   "' must have an integer type, found '" + type.Name() +
+                   "'");
+        return std::nullopt;
+    }
+    const core::ModuleConstantDeclaration* declaration =
+        _model.ModuleConstantFor(*symbol);
+    const std::optional<CompileTimeValue> value =
+        declaration ? EvaluateCompileTimeValue(declaration->Initializer(),
+                                               _model)
+                    : std::nullopt;
+    const std::uint64_t* bits =
+        value ? std::get_if<std::uint64_t>(&value->value) : nullptr;
+    if (bits == nullptr) {
+        Report(diagnostics::DiagnosticCode::InvalidArrayLength, range,
+               "array length constant '" + name +
+                   "' does not have a valid compile-time integer value");
+        return std::nullopt;
+    }
+    unsigned width = 64;
+    if (type.Kind() == SemanticTypeKind::I8 ||
+        type.Kind() == SemanticTypeKind::U8)
+        width = 8;
+    else if (type.Kind() == SemanticTypeKind::I16 ||
+             type.Kind() == SemanticTypeKind::U16)
+        width = 16;
+    else if (type.Kind() == SemanticTypeKind::I32 ||
+             type.Kind() == SemanticTypeKind::U32)
+        width = 32;
+    const bool signedType = type.Kind() >= SemanticTypeKind::I8 &&
+                            type.Kind() <= SemanticTypeKind::ISize;
+    if (signedType && (*bits & (std::uint64_t{1} << (width - 1))) != 0) {
+        Report(diagnostics::DiagnosticCode::InvalidArrayLength, range,
+               "array length constant '" + name +
+                   "' must be nonnegative");
+        return std::nullopt;
+    }
+    return *bits;
 }
 
 void SemanticAnalyzer::DeclareCallableTypes(const core::CompilationUnit& unit) {
@@ -2762,6 +2824,7 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     RegisterModuleConstants(unit);
     bindGenericAliases();
     BindImports(unit);
+    AnalyzeModuleConstants(unit);
     ResolveNominalRelations();
     // Interface tuple contracts may need the storage size of a structure.
     // Complete every structure layout before validating those contracts.
@@ -2797,7 +2860,6 @@ SemanticModel SemanticAnalyzer::Analyze(core::CompilationUnit& unit) {
     RegisterFunctions(unit);
     bindGenericAliases();
     BindImports(unit);
-    AnalyzeModuleConstants(unit);
     GenerateInitializers();
     BindImports(unit);
     if (hasBehaviors && _diagnostics.HasErrors()) return rollbackBehaviors();
@@ -4905,16 +4967,20 @@ void SemanticAnalyzer::ValidateArrayType(SemanticType type,
 
 SemanticType SemanticAnalyzer::AnalyzeArray(
     const core::ArrayExpression& expression, SemanticType expected) {
+    const std::uint64_t length =
+        ResolveArrayLength(expression.Length(), expression.LengthName(),
+                           expression.LengthRange())
+            .value_or(0);
     SemanticType element = expected.Kind() == SemanticTypeKind::Array
                                ? *expected.Target()
                                : SemanticType::Error();
     if (expected.Kind() == SemanticTypeKind::Array &&
-        expression.Length() != expected.Length())
+        length != expected.Length())
         Report(diagnostics::DiagnosticCode::ArrayInitializerCount,
                expression.Range(),
                "expected " + std::to_string(expected.Length()) +
                    " array elements, found " +
-                   std::to_string(expression.Length()));
+                   std::to_string(length));
     for (const std::unique_ptr<core::Expression>& item :
          expression.Elements()) {
         const SemanticType actual = AnalyzeExpression(*item, element);
@@ -4930,7 +4996,7 @@ SemanticType SemanticAnalyzer::AnalyzeArray(
         return SemanticType::Error();
     }
     const SemanticType result(SemanticTypeKind::Array, element, false,
-                              expression.Length());
+                              length);
     ValidateArrayType(result, expression.Range());
     return result;
 }
@@ -8491,7 +8557,7 @@ void SemanticAnalyzer::CheckTransfer(const core::Expression& expression,
         type.Kind() == SemanticTypeKind::Array) {
         const auto& array =
             static_cast<const core::ArrayExpression&>(expression);
-        if (!array.IsRepeat() || array.Length() <= 1) {
+        if (!array.IsRepeat() || type.Length() <= 1) {
             for (const auto& element : array.Elements())
                 CheckTransfer(*element, *type.Target(), consumingOwnership);
             _model._transfers.insert_or_assign(&expression,
