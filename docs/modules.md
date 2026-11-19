@@ -90,13 +90,14 @@ Directory imports select declared logical module names:
 ```flecha
 @imports
     :: root::ui::*
-    :: lib::std::containers::{array, algorithms};
+    :: lib::std::containers::{array as raw_array, algorithms};
 ```
 
 `*` discovers every logical module declared directly in the directory and does
-not recurse. Braces select module names, not declarations or filenames. A
-logical module appears once even when several files contribute to it, and a
-repeated import of the same canonical module is deduplicated.
+not recurse. Braces select module names, not declarations or filenames, and
+each selected name may use `as` to define its local namespace. A logical module
+appears once even when several files contribute to it, and a repeated import of
+the same canonical module is deduplicated.
 
 ## Overlapping same-named imports
 

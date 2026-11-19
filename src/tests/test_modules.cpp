@@ -1217,8 +1217,8 @@ TEST_F(ModuleTests, SelectedModulesKeepNamespacesAndSkipOtherFiles) {
           "module division; export i32 value() { return 22; }");
     Write("math/broken.fl", "invalid source");
     Write("main.fl",
-          "module main; @imports :: root::math::{factorial, division}; "
-          "i32 main() { return factorial::value() + division::value(); }");
+          "module main; @imports :: root::math::{factorial as fact, division}; "
+          "i32 main() { return fact::value() + division::value(); }");
     EXPECT_EQ(Check(), "");
     Write("main.fl",
           "module main; @imports :: root::math::{missing}; void main() {}");

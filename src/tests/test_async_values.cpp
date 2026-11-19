@@ -632,6 +632,25 @@ TEST(AsyncValueLoweringTests, TryPeekRunsOnlyOnFailureAndRewritesError) {
     EXPECT_EQ(peekObservations, 1u);
 }
 
+TEST(AsyncValueLoweringTests, TryPeekMayReturnFromEnclosingFunction) {
+    Compiled code(
+        "error ordinary(error value) { return value; } "
+        "async error main(error value) { "
+        "try ordinary(value) peek err { return err; }; return none; }");
+    for (std::int32_t codeValue : {0, 73}) {
+        auto arguments = code.Arguments(ErrorAbi{nullptr, codeValue});
+        Computation computation;
+        ASSERT_TRUE(Computation::TryCreate(code.layout, arguments.data(),
+                                           std::pmr::get_default_resource(),
+                                           computation));
+        EXPECT_EQ(computation.Poll({{}, false}), PollResult::Ready);
+        ErrorAbi result{reinterpret_cast<void*>(1), -1};
+        EXPECT_TRUE(computation.TakeResult(&result));
+        EXPECT_EQ(result.code, codeValue);
+        EXPECT_TRUE(computation.Release());
+    }
+}
+
 TEST(AsyncValueLoweringTests,
      MoveOnlyArgumentsResultsAndCancellationDestroyExactlyOnceAfterRetirement) {
     llvm::sys::DynamicLibrary::AddSymbol(

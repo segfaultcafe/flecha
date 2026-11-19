@@ -71,6 +71,11 @@
 
 ### Fixed
 
+- Selected module imports accept per-entry aliases, including forms such as
+  `::{errors as text_errors, strings, utf8}`.
+- `try ... peek` blocks may return from their enclosing function, allowing
+  failure branches to choose an explicit result while implicit propagation
+  remains the default when the block completes normally.
 - Private-method diagnostics now use source-level names such as
   `Box::hidden` instead of leaking internal module prefixes such as `$m1$`.
 - Borrow-origin classification now uses one recursive, cycle-safe definition

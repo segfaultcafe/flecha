@@ -2232,6 +2232,26 @@ TEST(ParserTests, ParsesModuleImportsAndExportsOnOneLineOrMultipleLines) {
     }
 }
 
+TEST(ParserTests, ParsesAliasesInsideSelectedModuleImports) {
+    DiagnosticBag diagnostics;
+    auto unit = ParseSource(
+        "module example; @imports "
+        ":: lib::std::text::{errors as text_errors, strings, utf8}; "
+        "void main() {}",
+        diagnostics);
+
+    ASSERT_FALSE(diagnostics.HasErrors());
+    ASSERT_EQ(unit->imports.size(), 3);
+    EXPECT_EQ(unit->imports[0].path,
+              (std::vector<std::string>{"lib", "std", "text", "errors"}));
+    EXPECT_EQ(unit->imports[0].alias, "text_errors");
+    EXPECT_TRUE(unit->imports[0].explicitAlias);
+    EXPECT_EQ(unit->imports[1].alias, "strings");
+    EXPECT_FALSE(unit->imports[1].explicitAlias);
+    EXPECT_EQ(unit->imports[2].alias, "utf8");
+    EXPECT_FALSE(unit->imports[2].explicitAlias);
+}
+
 TEST(ParserTests, ParsesOptionalNamespaceAttachmentBeforeImports) {
     DiagnosticBag diagnostics;
     auto unit = ParseSource(

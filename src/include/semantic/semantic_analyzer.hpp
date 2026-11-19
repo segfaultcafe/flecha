@@ -183,6 +183,16 @@ class SemanticAnalyzer final {
                 std::string message);
 
     SemanticType AnalyzeTry(const core::TryExpression& expression);
+    struct PendingTryPropagation final {
+        const core::TryExpression* expression;
+        SemanticType destination;
+        SemanticType source;
+        bool isUnsafe;
+    };
+    std::vector<PendingTryPropagation> _pendingTryPropagations;
+    void ValidateTryPropagation(const core::TryExpression& expression,
+                                SemanticType destination,
+                                SemanticType source);
     SemanticType AnalyzeAsyncOperation(const core::Expression& expression,
                                        const core::Expression& operand,
                                        bool spawn);

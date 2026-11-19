@@ -136,10 +136,12 @@ The block runs only when the operand's error is not `none`. It is an ordinary
 nested lexical scope and can read or mutate enclosing variables. If present,
 the error binding exists only in that scope and is mutable; its value when the
 block finishes is the value propagated by `try`. A `peek` block cannot contain
-`return`, propagate another `try` or `.await?`, or use loop/jump control to
-leave the block. Secondary fallible work must therefore inspect its result
-explicitly. A bare block is not a hook: `try operation() {};` is invalid, while
-the existing `try operation();` remains an immediate propagation statement.
+another propagating `try` or `.await?`, or use loop/jump control to leave the
+block. It may use `return` to exit the enclosing function with an explicit
+result; normal return-type, ownership, cleanup, and borrow validation applies.
+Secondary fallible work must therefore inspect its result explicitly. A bare
+block is not a hook: `try operation() {};` is invalid, while the existing
+`try operation();` remains an immediate propagation statement.
 
 `none` means success. For `(T, error)`, success yields `T`; for
 `(A, B, ..., error)`, it yields the tuple `(A, B, ...)`. Nested tuples and errors
