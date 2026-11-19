@@ -534,6 +534,19 @@ TEST_F(ModuleTests, SharesModuleConstantsAcrossFilesAndImportsExports) {
     EXPECT_NE(Check().find("unknown name 'constants::BASE'"),
               std::string::npos);
 }
+TEST_F(ModuleTests, UsesExportedModuleConstantsAsArrayLengths) {
+    Write("constants.fl", R"(module constants;
+        export const usize INPUT_BUFFER_SIZE = 4;
+    )");
+    Write("main.fl", R"(module main; @imports :: root::constants;
+        usize main() {
+            [constants::INPUT_BUFFER_SIZE]u8 input =
+                [1; constants::INPUT_BUFFER_SIZE];
+            return input.len();
+        }
+    )");
+    EXPECT_EQ(Check(), "");
+}
 TEST_F(ModuleTests, ModuleConstantVisibilityCannotLeakPrivateTypes) {
     Write("constants.fl", R"(module constants;
         enum State { Ready }

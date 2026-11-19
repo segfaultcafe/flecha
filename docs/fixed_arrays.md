@@ -12,13 +12,18 @@ allocate a separate heap buffer. See the runnable
 [4]u8 values = [10, 20, 30, 40];
 [4]u8 zeros = none;
 [4]u8 repeated = [7; 4];
+const usize WIDTH = 4;
+[WIDTH]u8 named = [7; WIDTH];
 inferred := [1, 2, 3]; // [3]i32
 [0]u8 empty = [];
 [2][3]u8 grid = [[1, 2, 3], [4, 5, 6]];
 ```
 
-Lengths in types and repeat initializers are nonnegative integer literals.
-Named constants and arbitrary expressions in those positions are not enabled.
+Lengths in types and repeat initializers are nonnegative integer literals or
+named integer module constants. The constant may be declared later in the
+logical module or imported from another module when it is visible in the
+current source unit. Local variables and arbitrary expressions are not enabled
+in those positions.
 Array literals allow a trailing comma. List element count must match the
 expected length exactly; missing elements are not implicitly zero-filled.
 `none` initializes the entire array recursively with defined zero values.

@@ -955,10 +955,12 @@ const [2]u8 fixed = [1, 2];
 element := &values[1];
 ```
 
-`[N]T` requires a nonnegative integer literal length. List initializers must match
-it; repeat initializers evaluate their element once. Arrays copy on assignment,
-argument passing, and return. Supported elements are scalars, raw pointers, and
-nested arrays. Reference handles and string/view elements remain unsupported.
+`[N]T` requires a nonnegative integer literal or a named integer module
+constant length. Repeat initializers accept the same length forms and evaluate
+their element once. List initializers must match the resolved length. Arrays
+copy on assignment, argument passing, and return. Supported elements are
+scalars, raw pointers, and nested arrays. Reference handles and string/view
+elements remain unsupported.
 
 `.len()` returns `usize`. Indices must be `usize`; integer literals are contextual.
 Statically known invalid indices are rejected and other indices have runtime

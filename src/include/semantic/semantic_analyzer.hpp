@@ -77,6 +77,9 @@ class SemanticAnalyzer final {
     SemanticType ResolveType(const core::TypeNode& type,
                              bool allowBorrowedTuple = false);
     SemanticType ResolveTypeSyntax(const core::TypeNode& type);
+    std::optional<std::uint64_t> ResolveArrayLength(
+        std::uint64_t literal, const std::string& name,
+        source::SourceRange range);
     void RegisterErrorTypes(const core::CompilationUnit& unit);
     void RegisterInterfaces(const core::CompilationUnit& unit);
     void RegisterEnums(const core::CompilationUnit& unit);

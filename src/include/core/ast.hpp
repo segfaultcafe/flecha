@@ -273,10 +273,14 @@ class TypeNode final : public AstNode {
 
     TypeNode(source::SourceRange range, TypeKind typeKind,
              std::unique_ptr<TypeNode> target, bool isConst = false,
-             source::SourceRange qualifierRange = {}, std::uint64_t length = 0)
+             source::SourceRange qualifierRange = {}, std::uint64_t length = 0,
+             std::string lengthName = {},
+             source::SourceRange lengthRange = {})
         : AstNode(range),
           _typeKind(typeKind),
           _length(length),
+          _lengthName(std::move(lengthName)),
+          _lengthRange(lengthRange),
           _target(std::move(target)),
           _isConst(isConst),
           _qualifierRange(qualifierRange) {
@@ -300,6 +304,10 @@ class TypeNode final : public AstNode {
     }
     [[nodiscard]] TypeKind TypeForm() const { return _typeKind; }
     [[nodiscard]] std::uint64_t Length() const { return _length; }
+    [[nodiscard]] const std::string& LengthName() const { return _lengthName; }
+    [[nodiscard]] const source::SourceRange& LengthRange() const {
+        return _lengthRange;
+    }
     [[nodiscard]] PrimitiveType Type() const {
         assert(_typeKind == TypeKind::Primitive);
         return _type;
@@ -322,6 +330,8 @@ class TypeNode final : public AstNode {
     TypeKind _typeKind;
     std::string _name;
     std::uint64_t _length = 0;
+    std::string _lengthName;
+    source::SourceRange _lengthRange;
     PrimitiveType _type = PrimitiveType::Void;
     std::unique_ptr<TypeNode> _target;
     std::vector<std::unique_ptr<TypeNode>> _elements;
@@ -1350,11 +1360,15 @@ class ArrayExpression final : public Expression {
    public:
     ArrayExpression(source::SourceRange range,
                     std::vector<std::unique_ptr<Expression>> elements,
-                    bool repeat = false, std::uint64_t length = 0)
+                    bool repeat = false, std::uint64_t length = 0,
+                    std::string lengthName = {},
+                    source::SourceRange lengthRange = {})
         : Expression(range),
           _elements(std::move(elements)),
           _repeat(repeat),
-          _length(repeat ? length : _elements.size()) {}
+          _length(repeat ? length : _elements.size()),
+          _lengthName(std::move(lengthName)),
+          _lengthRange(lengthRange) {}
     [[nodiscard]] AstNodeKind Kind() const override {
         return AstNodeKind::ArrayExpression;
     }
@@ -1364,11 +1378,17 @@ class ArrayExpression final : public Expression {
     }
     [[nodiscard]] bool IsRepeat() const { return _repeat; }
     [[nodiscard]] std::uint64_t Length() const { return _length; }
+    [[nodiscard]] const std::string& LengthName() const { return _lengthName; }
+    [[nodiscard]] const source::SourceRange& LengthRange() const {
+        return _lengthRange;
+    }
 
    private:
     std::vector<std::unique_ptr<Expression>> _elements;
     bool _repeat;
     std::uint64_t _length;
+    std::string _lengthName;
+    source::SourceRange _lengthRange;
 };
 
 class MatchArm final : public AstNode {

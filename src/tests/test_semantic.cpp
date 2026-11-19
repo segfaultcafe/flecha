@@ -4818,6 +4818,48 @@ TEST(SemanticArrayTests, InfersElementsAndPreservesLengthInTypeIdentity) {
     EXPECT_FALSE(CanExplicitlyCast(first, first));
 }
 
+TEST(SemanticArrayTests, ResolvesNamedModuleConstantLengths) {
+    Analysis analysis = Analyze(R"(
+        usize length() {
+            [INPUT_BUFFER_SIZE]u8 input = [7; INPUT_BUFFER_SIZE];
+            return input.len();
+        }
+        const usize INPUT_BUFFER_SIZE = 4;
+        structure Buffer { [INPUT_BUFFER_SIZE]u8 data; };
+    )");
+    for (const auto& diagnostic : analysis.diagnostics.Diagnostics())
+        ADD_FAILURE() << diagnostic.message;
+    ASSERT_FALSE(analysis.diagnostics.HasErrors());
+    const auto& function = static_cast<const FunctionDeclaration&>(
+        *analysis.unit->Declarations()[0]);
+    const auto& input = VariableAt(function, 0);
+    const Symbol* symbol = analysis.model.DeclaredSymbol(input);
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->Type().Name(), "[4]u8");
+    ASSERT_NE(input.Initializer(), nullptr);
+    EXPECT_EQ(analysis.model.TypeOf(*input.Initializer()).Name(), "[4]u8");
+    const auto& buffer = static_cast<const StructureDeclaration&>(
+        *analysis.unit->Declarations()[2]);
+    const Symbol* bufferSymbol = analysis.model.DeclaredSymbol(buffer);
+    ASSERT_NE(bufferSymbol, nullptr);
+    ASSERT_EQ(bufferSymbol->Type().Structure()->fields.size(), 1u);
+    EXPECT_EQ(bufferSymbol->Type().Structure()->fields[0].type.Name(),
+              "[4]u8");
+}
+
+TEST(SemanticArrayTests, RejectsInvalidNamedModuleConstantLengths) {
+    for (const std::string& source : {
+             "const bool SIZE = true; void f() { [SIZE]u8 a = none; }",
+             "const i32 SIZE = -1; void f() { [SIZE]u8 a = none; }",
+             "void f(usize size) { [size]u8 a = none; }",
+         }) {
+        SCOPED_TRACE(source);
+        const Diagnostic* diagnostic =
+            FindDiagnostic(Analyze(source), DiagnosticCode::InvalidArrayLength);
+        ASSERT_NE(diagnostic, nullptr);
+    }
+}
+
 TEST(SemanticArrayTests,
      SupportsWholeInitializationCopyReturnsAndElementWrites) {
     EXPECT_FALSE(
