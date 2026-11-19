@@ -161,6 +161,7 @@ TEST(TryFrontendTests, KeepsQuestionExclusiveToAwait) {
 TEST(TryFrontendTests, ParsesPeekFormsAndRejectsBareHookBlocks) {
     Analysis valid(R"(
         error E { Bad }
+        error Other { Mapped }
         E fail() { return E.Bad; }
         error unbound() { try fail() peek {}; return none; }
         error inferred() {
@@ -170,6 +171,20 @@ TEST(TryFrontendTests, ParsesPeekFormsAndRejectsBareHookBlocks) {
         error widened() {
             try fail() peek err as error { err = E.Bad; };
             return none;
+        }
+        Other explicit(bool handled) {
+            try fail() peek err {
+                if handled { return none; }
+                return Other.Mapped;
+            };
+            return none;
+        }
+        (&i32, Other) explicitReference(&i32 value, bool handled) <- value {
+            try fail() peek {
+                if handled { return (value, none); }
+                return (value, Other.Mapped);
+            };
+            return (value, none);
         }
     )");
     valid.ExpectValid();
@@ -191,16 +206,20 @@ TEST(TryFrontendTests, ValidatesPeekBindingAndControlFlow) {
     )");
     EXPECT_TRUE(invalidType.Has(DiagnosticCode::InvalidVariableType));
 
-    for (const std::string body : {
-             "return none;",
-             "try fail();",
-         }) {
-        Analysis escaping(
-            "error E { Bad } E fail() { return E.Bad; } "
-            "error f() { try fail() peek { " +
-            body + " }; return none; }");
-        EXPECT_TRUE(escaping.Has(DiagnosticCode::InvalidStructure));
-    }
+    Analysis incompatibleFallthrough(R"(
+        error E { Bad }
+        error Other { Mapped }
+        E fail() { return E.Bad; }
+        Other f() { try fail() peek {}; return none; }
+    )");
+    EXPECT_TRUE(incompatibleFallthrough.Has(DiagnosticCode::IncompatibleType));
+
+    Analysis propagating(R"(
+        error E { Bad }
+        E fail() { return E.Bad; }
+        error f() { try fail() peek { try fail(); }; return none; }
+    )");
+    EXPECT_TRUE(propagating.Has(DiagnosticCode::InvalidStructure));
 
     Analysis outerBreak(R"(
         error E { Bad }
@@ -369,6 +388,14 @@ TEST(TryRuntimeTests, PeekObservesEnclosingScopeAndRewritesError) {
             return none;
         }
 
+        error route(bool handled) {
+            try fail() peek err as error {
+                if handled { return none; }
+                err = Other.Mapped;
+            };
+            return none;
+        }
+
         unsafe error skip_on_success(*i32 seen) {
             try succeed() peek { *seen = 99; };
             *seen += 1;
@@ -382,6 +409,8 @@ TEST(TryRuntimeTests, PeekObservesEnclosingScopeAndRewritesError) {
             if map() != Other.Mapped { return 3; }
             seen = 0;
             if skip_on_success(&raw seen) != none or seen != 1 { return 4; }
+            if route(true) != none { return 5; }
+            if route(false) != Other.Mapped { return 6; }
             return 42;
         } }
     )",

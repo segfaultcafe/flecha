@@ -807,10 +807,10 @@ try operation() peek err as error { err = translate(err); };
 
 The binding is local to the block, inferred as the operand's error type unless
 `as` supplies a compatible error type, and its final value is propagated.
-`peek` can access enclosing lexical bindings but cannot return, propagate
-another `try` or `.await?`, or transfer control outside its block. `try` does
-not recover from crashable `!` calls. Async `.await?` separately forwards
-execution failure.
+`peek` can access enclosing lexical bindings, and `return` exits the enclosing
+function normally. It cannot propagate another `try` or `.await?`, or use
+loop/jump control to leave the block. `try` does not recover from crashable `!`
+calls. Async `.await?` separately forwards execution failure.
 See [error_values.md](docs/error_values.md) for implemented behavior and the
 compiler-private representation. The allocator example above still depends on
 future allocation APIs.
@@ -1201,10 +1201,11 @@ expose quiver types from the same quiver,
 but never module-private types.
 
 Directory imports use `root::path::*` for immediate declared logical modules or
-`root::path::{first, second}` for selected declared module names. Distinct
-same-named imports overlap under one local namespace, with collisions diagnosed
-at the member use site; explicit aliases provide isolation. Repeated imports of
-the same canonical logical module are deduplicated. See
+`root::path::{first as local_first, second}` for selected declared module names.
+Each selected module may have its own alias. Distinct same-named imports overlap
+under one local namespace, with collisions diagnosed at the member use site;
+explicit aliases provide isolation. Repeated imports of the same canonical
+logical module are deduplicated. See
 [modules](docs/modules.md), [logical module composition](docs/module_composition.md),
 and the [0.2.1 module correction](docs/release_0_2_1.md).
 

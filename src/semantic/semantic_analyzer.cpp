@@ -47,6 +47,27 @@ bool SameParameterTypes(const FunctionSymbol& left,
     return left.ParameterTypes() == right.ParameterTypes();
 }
 
+bool CanReachTryPropagation(const ControlFlowGraph& graph,
+                            const core::TryExpression& expression) {
+    std::vector<NodeId> pending;
+    for (const FlowNode& node : graph.nodes)
+        if (node.propagationDispatch == &expression &&
+            node.successors.size() >= 2)
+            pending.push_back(node.successors[1]);
+
+    std::unordered_set<NodeId> visited;
+    while (!pending.empty()) {
+        const NodeId id = pending.back();
+        pending.pop_back();
+        if (!visited.insert(id).second) continue;
+        const FlowNode& node = graph.nodes[id];
+        if (node.propagationReturn == &expression) return true;
+        pending.insert(pending.end(), node.successors.begin(),
+                       node.successors.end());
+    }
+    return false;
+}
+
 std::optional<SemanticType> PrimitiveNumericType(const std::string& name) {
     if (name == "i8") return SemanticType(SemanticTypeKind::I8);
     if (name == "i16") return SemanticType(SemanticTypeKind::I16);
@@ -3012,6 +3033,7 @@ void SemanticAnalyzer::AnalyzeFunction(
                        "immovable structure parameters must be borrowed");
     _positions.clear();
     _localStringBorrows.clear();
+    _pendingTryPropagations.clear();
     _loopDepth = 0;
     _peekDepth = 0;
     _inUnsafe = function.IsUnsafe();
@@ -3052,6 +3074,15 @@ void SemanticAnalyzer::AnalyzeFunction(
     }
     AnalyzeBlock(function.Body(), false);
     const ControlFlowGraph graph = BuildControlFlowGraph(function, _model);
+    for (const PendingTryPropagation& propagation :
+         _pendingTryPropagations) {
+        if (!CanReachTryPropagation(graph, *propagation.expression)) continue;
+        const bool previousUnsafe = _inUnsafe;
+        _inUnsafe = propagation.isUnsafe;
+        ValidateTryPropagation(*propagation.expression,
+                               propagation.destination, propagation.source);
+        _inUnsafe = previousUnsafe;
+    }
     if (function.IsAsync())
         for (const FlowNode& node : graph.nodes)
             if (node.transfer &&
@@ -3835,11 +3866,6 @@ void SemanticAnalyzer::AnalyzeStatement(const core::Statement& statement) {
                        returnStatement.Range(),
                        "return cannot leave a build block; validate before "
                        "constructing");
-            if (_peekDepth != 0)
-                Report(diagnostics::DiagnosticCode::InvalidStructure,
-                       returnStatement.Range(),
-                       "return cannot leave a try peek block; the inspected "
-                       "error is propagated when the block finishes");
             if (!IsAssignable(expected, actual) &&
                 !CanReborrow(expected, actual)) {
                 const source::SourceRange range =
@@ -4078,12 +4104,37 @@ SemanticType SemanticAnalyzer::AnalyzeTry(
         _loopDepth = previousLoopDepth;
         _currentScope = previousScope;
     }
-    if (!propagatedError.IsError() &&
-        !IsAssignable(destinationError, propagatedError))
+    if (expression.PeekBody() != nullptr)
+        _pendingTryPropagations.push_back(
+            {&expression, destination, propagatedError, _inUnsafe});
+    else
+        ValidateTryPropagation(expression, destination, propagatedError);
+    if (input.IsImmovable())
+        Report(
+            diagnostics::DiagnosticCode::NonCopyableValue, expression.Range(),
+            "try cannot extract an immovable completion from a returned tuple");
+    if (input.Kind() != SemanticTypeKind::Tuple)
+        return SemanticType(SemanticTypeKind::Void);
+    std::vector<SemanticType> values(input.Elements().begin(),
+                                     input.Elements().end() - 1);
+    if (values.size() == 1) return values.front();
+    return SemanticType(std::move(values));
+}
+
+void SemanticAnalyzer::ValidateTryPropagation(
+    const core::TryExpression& expression, SemanticType destination,
+    SemanticType source) {
+    const SemanticType destinationError =
+        destination.Kind() == SemanticTypeKind::Tuple &&
+                !destination.Elements().empty()
+            ? destination.Elements().back()
+            : destination;
+    if (!source.IsError() && !IsAssignable(destinationError, source))
         Report(diagnostics::DiagnosticCode::IncompatibleType,
                expression.Range(),
-               "cannot propagate " + propagatedError.Name() + " into " +
+               "cannot propagate " + source.Name() + " into " +
                    destinationError.Name());
+
     // The implicit return has the same defaults and effects as (none, ...,
     // error).
     const auto defaultable = [&](const auto& self, SemanticType type) -> bool {
@@ -4109,16 +4160,6 @@ SemanticType SemanticAnalyzer::AnalyzeTry(
             RecordZeroDependency(value);
             RecordCleanupEffects(value);
         }
-    if (input.IsImmovable())
-        Report(
-            diagnostics::DiagnosticCode::NonCopyableValue, expression.Range(),
-            "try cannot extract an immovable completion from a returned tuple");
-    if (input.Kind() != SemanticTypeKind::Tuple)
-        return SemanticType(SemanticTypeKind::Void);
-    std::vector<SemanticType> values(input.Elements().begin(),
-                                     input.Elements().end() - 1);
-    if (values.size() == 1) return values.front();
-    return SemanticType(std::move(values));
 }
 
 SemanticType SemanticAnalyzer::AnalyzeExpression(

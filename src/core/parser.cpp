@@ -3318,9 +3318,16 @@ void Parser::ParseHeader() {
                     Import selected = import;
                     selected.path.push_back(name->value);
                     selected.alias = name->value;
-                    selected.range.end = Current().range.start;
                     if (name->value == "root" || name->value == "lib")
                         ReportUnexpectedToken("reserved import path word");
+                    if (Match(TokenType::As)) {
+                        const Token* alias =
+                            Consume(TokenType::Identifier, "import alias");
+                        if (!alias) break;
+                        selected.alias = alias->value;
+                        selected.explicitAlias = true;
+                    }
+                    selected.range.end = Current().range.start;
                     imports.push_back(std::move(selected));
                 } while (Match(TokenType::Comma));
                 Consume(TokenType::RCurly, "'}' after selected modules");
