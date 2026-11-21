@@ -2,6 +2,7 @@ module ascii_test;
 
 @imports
     :: root::text::ascii
+    :: root::text::errors as text_errors
     :: lib::std::tests::testing
     :: lib::std::tests::asserts;
 
@@ -133,5 +134,33 @@ test ascii_case_conversion_matches_every_byte(&testing::UnitTest t) {
         t,
         uppercaseIsIdempotent,
         "ASCII uppercase conversion is idempotent"
+    );
+}
+
+test ascii_digit_conversion_matches_every_byte(&testing::UnitTest t) {
+    bool digitsMatch = true;
+    bool invalidInputsFail = true;
+
+    loop u16 code = 0; code < 256; code++ {
+        value := code.cast<u8>.cast<char>;
+        digit, conversionError := ascii::char_to_int(value);
+        if code >= 48 and code <= 57 {
+            digitsMatch = digitsMatch and conversionError == none and
+                digit == (code - 48).cast<u8>;
+        } else {
+            invalidInputsFail = invalidInputsFail and
+                conversionError == text_errors::ParseError.InvalidSyntax;
+        }
+    }
+
+    asserts::is_true(
+        t,
+        digitsMatch,
+        "ASCII digits convert to values zero through nine"
+    );
+    asserts::is_true(
+        t,
+        invalidInputsFail,
+        "non-digits across the byte range report invalid syntax"
     );
 }

@@ -7,6 +7,18 @@ Flecha's standard text modules build on the byte-oriented `string` and
 `stringv` types described in [strings](string.md). They do not change string
 indexing or length semantics: both continue to count bytes.
 
+## ASCII digit conversion
+
+The `ascii` module converts one ASCII decimal digit to its `u8` numeric value:
+
+```flecha
+digit, digitError := ascii::char_to_int('7'); // 7, none
+```
+
+Characters outside `'0'` through `'9'` return `none` with
+`ParseError.InvalidSyntax`. The helper accepts exactly one byte-oriented
+`char`; it does not parse Unicode digits or other radices.
+
 ## Numeric conversion
 
 The `strings` module provides fallible integer and floating-point conversion:

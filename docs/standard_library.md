@@ -68,7 +68,7 @@ The [library API rules](library_api_style.md) govern naming and compatibility.
 | `std::tests::fixtures` | Temporary resources and seeded test data | Temporary fixtures own cleanup responsibility and perform blocking host I/O; seeded data is deterministic; failures are explicit. | [guide](testing.md#temporary-fixtures-and-deterministic-data) | [example/test](../std/src/tests/fixtures_test.fl) |
 | `std::tests::golden` | Golden text and byte assertions | Reads/writes files synchronously, makes update mode explicit, allocates diagnostics, and returns I/O or mismatch failures. | [guide](testing.md#golden-files) | [example/test](../std/src/tests/golden_test.fl) |
 | `std::tests::testing` | Unit-test state and failure accounting | Owns test name/state, records deterministic counts, may allocate diagnostics, and exposes failures without hidden process exit. | [guide](testing.md) | [example/test](../std/src/tests/asserts_test.fl) |
-| `std::text::ascii` | ASCII classification and case conversion | Pure byte-oriented operations with no allocation, errors, blocking, locale, or platform dependence. | [guide](text.md) | [example/test](../std/src/text/ascii_test.fl) |
+| `std::text::ascii` | ASCII classification, digit conversion, and case conversion | Pure byte-oriented operations do not allocate or block; invalid digit conversion reports `ParseError.InvalidSyntax`. | [guide](text.md) | [example/test](../std/src/text/ascii_test.fl) |
 | `std::text::errors` | Text parse, format, and UTF-8 errors | Stable typed failures for conversion and validation; declaring/propagating them does not allocate or block. | [guide](text.md) | [example/test](../std/src/text/utf8_test.fl) |
 | `std::text::strings` | String building, search, trim, transform, replace, parse, and format | Views borrow input; owning transformations allocate; byte/ASCII semantics are explicit; parsing and formatting return errors. | [guide](text.md) | [example/test](../std/src/text/strings_test.fl) |
 | `std::text::utf8` | UTF-8 validation, decoding, counting, and encoding | Borrows byte-oriented strings, does not allocate, is deterministic, and reports exact malformed/truncated input errors. | [guide](text.md) | [example/test](../std/src/text/utf8_test.fl) |
@@ -1619,6 +1619,7 @@ export bool is_ascii(char value);
 export bool is_ascii_alphabetic(char value);
 export bool is_ascii_alphanumeric(char value);
 export bool is_ascii_digit(char value);
+export (u8, error) char_to_int(char value);
 export bool is_ascii_hex_digit(char value);
 export bool is_ascii_whitespace(char value);
 export bool is_ascii_control(char value);
