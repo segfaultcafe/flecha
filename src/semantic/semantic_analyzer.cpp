@@ -1265,7 +1265,7 @@ const Symbol* SemanticAnalyzer::AddSymbol(std::unique_ptr<Symbol> symbol,
                         }))
             Report(diagnostics::DiagnosticCode::DuplicateDeclaration,
                    result->DeclarationRange(),
-                   "duplicate declaration of '" + result->Name() + "'");
+                   "duplicate declaration of '" + localName + "'");
         return nullptr;
     }
     return result;
