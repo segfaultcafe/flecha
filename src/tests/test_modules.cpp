@@ -1149,6 +1149,34 @@ TEST_F(ModuleTests, RejectsDuplicateDeclarationsAndMixedModulePrivacy) {
     EXPECT_NE(Check().find("mixes ordinary and private module declarations"),
               std::string::npos);
 }
+TEST_F(ModuleTests, HidesInternalNamesInDuplicateTypeDiagnostics) {
+    Write("first.fl", "module first; export i32 value() { return 1; }");
+    Write("error_one.fl", R"(module diagnostics;
+        export error FletuiError { NotATerminal }
+    )");
+    Write("error_two.fl", R"(module diagnostics;
+        export error FletuiError { OpenFailed }
+    )");
+    Write("enum_one.fl", R"(module diagnostics;
+        export enum State { Ready }
+    )");
+    Write("enum_two.fl", R"(module diagnostics;
+        export enum State { Closed }
+    )");
+    Write("main.fl", R"(module main;
+        @imports :: root::first :: root::diagnostics;
+        void main() {}
+    )");
+
+    const std::string diagnostics = Check();
+    EXPECT_NE(diagnostics.find("duplicate declaration of 'FletuiError'"),
+              std::string::npos)
+        << diagnostics;
+    EXPECT_NE(diagnostics.find("duplicate declaration of 'State'"),
+              std::string::npos)
+        << diagnostics;
+    EXPECT_EQ(diagnostics.find("$m"), std::string::npos) << diagnostics;
+}
 TEST_F(ModuleTests, RequiresImportsBeforeDeclarationsAndRejectsWrongDirective) {
     Write("main.fl", "module main; void main() {} @imports :: root::a;");
     EXPECT_FALSE(Check().empty());
