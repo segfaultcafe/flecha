@@ -1,5 +1,7 @@
 module ascii;
 
+@imports :: root::text::errors;
+
 export bool is_ascii(char value) {
     u8 byte = value;
     return byte <= 127;
@@ -17,6 +19,17 @@ export bool is_ascii_alphanumeric(char value) {
 export bool is_ascii_digit(char value) {
     u8 byte = value;
     return byte >= 48 and byte <= 57;
+}
+
+// Converts one ASCII decimal digit to its numeric value. Other characters
+// report ParseError.InvalidSyntax.
+export (u8, error) char_to_int(char value) {
+    u8 byte = value;
+    if byte < 48 or byte > 57 {
+        return (none, errors::ParseError.InvalidSyntax);
+    }
+
+    return (byte - 48, none);
 }
 
 export bool is_ascii_hex_digit(char value) {

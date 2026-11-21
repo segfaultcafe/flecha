@@ -317,8 +317,8 @@
     },
     {
       "name": "std::text::ascii",
-      "summary": "ASCII classification and case conversion",
-      "contract": "Pure byte-oriented operations with no allocation, errors, blocking, locale, or platform dependence.",
+      "summary": "ASCII classification, digit conversion, and case conversion",
+      "contract": "Pure byte-oriented operations do not allocate or block; invalid digit conversion reports ParseError.InvalidSyntax.",
       "reference": "docs/text.md",
       "example": "std/src/text/ascii_test.fl"
     },

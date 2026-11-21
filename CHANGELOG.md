@@ -21,6 +21,8 @@
 
 ### Added
 
+- `std::text::ascii::char_to_int` converts one ASCII decimal digit to its
+  `u8` numeric value and reports `ParseError.InvalidSyntax` for non-digits.
 - Fixed-array types and repeat initializers accept visible integer module
   constants as lengths, including forward declarations and imported constants.
 - Scoped, single-threaded async execution is a v0.4 release gate. The initial
