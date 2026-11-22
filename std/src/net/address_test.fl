@@ -319,6 +319,33 @@ test ipv6_parsing_expands_compressed_addresses(&testing::UnitTest t) {
     );
 }
 
+test ipv6_parsing_accepts_embedded_ipv4_tails(&testing::UnitTest t) {
+    assert_ipv6_parses(
+        t,
+        "::ffff:192.0.2.1",
+        0, 0, 0, 0, 0, 65535, 49152, 513,
+        "an IPv4-mapped address parses"
+    );
+    assert_ipv6_parses(
+        t,
+        "::192.0.2.1",
+        0, 0, 0, 0, 0, 0, 49152, 513,
+        "an IPv4-compatible address parses"
+    );
+    assert_ipv6_parses(
+        t,
+        "2001:db8::192.0.2.1",
+        8193, 3512, 0, 0, 0, 0, 49152, 513,
+        "a compressed prefix accepts an IPv4 tail"
+    );
+    assert_ipv6_parses(
+        t,
+        "0:0:0:0:0:ffff:192.0.2.1",
+        0, 0, 0, 0, 0, 65535, 49152, 513,
+        "six explicit segments may precede an IPv4 tail"
+    );
+}
+
 test ipv6_constructors_classify_and_expose_segments(&testing::UnitTest t) {
     wildcard := address::Ipv6Address::wildcard();
     expectedWildcard :=
@@ -396,8 +423,53 @@ test ipv6_parsing_rejects_invalid_segments(&testing::UnitTest t) {
     assert_ipv6_invalid(t, "1:: ", "trailing whitespace is rejected");
     assert_ipv6_invalid(
         t,
-        "::ffff:192.0.2.1",
-        "embedded IPv4 notation is not accepted yet"
+        "::192.0.2.1:1",
+        "an IPv4 tail must occupy the final 32 bits"
+    );
+    assert_ipv6_invalid(
+        t,
+        "1:2:3:4:5:6:7:192.0.2.1",
+        "an IPv4 tail requires two available segments"
+    );
+    assert_ipv6_invalid(
+        t,
+        "1:2:3:4:5:6::192.0.2.1",
+        "compression must still omit at least one segment"
+    );
+    assert_ipv6_invalid(
+        t,
+        "::192.0.2",
+        "an IPv4 tail requires four octets"
+    );
+    assert_ipv6_invalid(
+        t,
+        "::192.0.2.1.5",
+        "an IPv4 tail rejects a fifth octet"
+    );
+    assert_ipv6_invalid(
+        t,
+        "::256.0.2.1",
+        "an IPv4 tail rejects octets above 255"
+    );
+    assert_ipv6_invalid(
+        t,
+        "::192.00.2.1",
+        "an IPv4 tail rejects leading zeroes"
+    );
+    assert_ipv6_invalid(
+        t,
+        "::192..2.1",
+        "an IPv4 tail rejects empty octets"
+    );
+    assert_ipv6_invalid(
+        t,
+        "::192.0.2.-1",
+        "an IPv4 tail rejects signs"
+    );
+    assert_ipv6_invalid(
+        t,
+        "::192.0.2.1 ",
+        "an IPv4 tail rejects whitespace"
     );
 }
 
@@ -463,6 +535,31 @@ test ipv6_formatting_round_trips_address_values(&testing::UnitTest t) {
         wildcardFormatError == none and wildcardParseError == none and
             parsedWildcard == wildcard,
         "the wildcard address round trips through text"
+    );
+}
+
+test ipv6_embedded_ipv4_formats_as_canonical_hexadecimal(
+    &testing::UnitTest t
+) {
+    assert_ipv6_formats(
+        t,
+        "::ffff:192.0.2.1",
+        "::ffff:c000:201",
+        "IPv4-mapped input formats with canonical hexadecimal segments"
+    );
+
+    parsed, parseError :=
+        address::Ipv6SocketAddress::parse("[::ffff:192.0.2.1]:443");
+    formatted, formatError := parsed.toString();
+    expectedAddress := address::Ipv6Address::fromSegments(
+        0, 0, 0, 0, 0, 65535, 49152, 513
+    );
+    asserts::is_true(
+        t,
+        parseError == none and parsed.address() == expectedAddress and
+            parsed.port() == 443 and formatError == none and
+            formatted.view() == "[::ffff:c000:201]:443",
+        "socket parsing accepts an embedded IPv4 tail and formats canonically"
     );
 }
 

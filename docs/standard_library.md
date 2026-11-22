@@ -71,7 +71,7 @@ The [library API rules](library_api_style.md) govern naming and compatibility.
 | `std::text::ascii` | ASCII classification, digit conversion, and case conversion | Pure byte-oriented operations do not allocate or block; invalid digit conversion reports ParseError.InvalidSyntax. | [guide](text.md) | [example/test](../std/src/text/ascii_test.fl) |
 | `std::text::errors` | Text parse, format, and UTF-8 errors | Stable typed failures for conversion and validation; declaring/propagating them does not allocate or block. | [guide](text.md) | [example/test](../std/src/text/utf8_test.fl) |
 | `std::text::strings` | String building, search, trim, transform, replace, parse, and format | Views borrow input; owning transformations allocate; byte/ASCII semantics are explicit; parsing and formatting return errors. | [guide](text.md) | [example/test](../std/src/text/strings_test.fl) |
-| `std::text::utf8` | UTF-8 validation, decoding, counting, and encoding | Borrows byte-oriented strings, does not allocate, is deterministic, and reports exact malformed/truncated input errors. | [guide](text.md) | [example/test](../std/src/text/utf8_test.fl) |
+| `std::text::utf8` | UTF-8 validation, boundary inspection, forward/reverse decoding, counting, and encoding | Borrows byte-oriented strings, does not allocate, is deterministic, and reports exact malformed/truncated input errors. | [guide](text.md) | [example/test](../std/src/text/utf8_test.fl) |
 | `std::time::clock` | Monotonic instants, wall timestamps, and sleep | Clock reads use host state; sleep blocks; elapsed monotonic durations are stable while wall time and precision are platform-dependent. | [guide](time.md) | [example/test](../std/src/time/clock_test.fl) |
 | `std::time::duration` | Normalized signed time durations | Value operations do not allocate or block; normalization and checked arithmetic are deterministic across targets. | [guide](time.md#duration) | [example/test](../std/src/time/duration_test.fl) |
 | `std::time::errors` | Clock, duration, and sleep errors | Stable overflow, range, and host-clock failures with no hidden fallback behavior. | [guide](time.md#errors) | [example/test](../std/src/time/clock_test.fl) |
@@ -1708,13 +1708,15 @@ void StringBuilder::clear(&self);
 <a id="std-text-utf8"></a>
 ### `std::text::utf8`
 
-UTF-8 validation, decoding, counting, and encoding.
+UTF-8 validation, boundary inspection, forward/reverse decoding, counting, and encoding.
 
 Sources: [`std/src/text/utf8.fl`](../std/src/text/utf8.fl)
 
 ```flecha
 export error validate(stringv value);
 export (u32, usize, error) decode(stringv value, usize offset);
+export bool is_boundary(stringv value, usize offset);
+export (u32, usize, error) decode_previous(stringv value, usize endOffset);
 export (usize, error) count_code_points(stringv value);
 export ([4]u8, usize, error) encode(u32 codePoint);
 ```

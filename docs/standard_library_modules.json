@@ -338,7 +338,7 @@
     },
     {
       "name": "std::text::utf8",
-      "summary": "UTF-8 validation, decoding, counting, and encoding",
+      "summary": "UTF-8 validation, boundary inspection, forward/reverse decoding, counting, and encoding",
       "contract": "Borrows byte-oriented strings, does not allocate, is deterministic, and reports exact malformed/truncated input errors.",
       "reference": "docs/text.md",
       "example": "std/src/text/utf8_test.fl"

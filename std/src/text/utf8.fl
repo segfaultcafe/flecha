@@ -95,6 +95,55 @@ export (u32, usize, error) decode(stringv value, usize offset) {
     return (none, none, errors::Utf8Error.InvalidEncoding);
 }
 
+// Reports whether offset is between UTF-8 code-point byte sequences.
+// The input need not be valid UTF-8: interior continuation bytes are not
+// boundaries, while zero, the byte length, and non-continuation bytes are.
+export bool is_boundary(stringv value, usize offset) {
+    const usize LENGTH = value.len().cast<usize>;
+    if offset > LENGTH {
+        return false;
+    }
+
+    if offset == 0 or offset == LENGTH {
+        return true;
+    }
+
+    return !is_continuation(value[offset.cast<u32>]);
+}
+
+// Decodes the code point ending at the exclusive endOffset.
+// On success, startOffset points to the first byte of that sequence.
+export (u32, usize, error) decode_previous(
+    stringv value,
+    usize endOffset
+) {
+    const usize LENGTH = value.len().cast<usize>;
+    if endOffset == 0 or endOffset > LENGTH or
+        !is_boundary(value, endOffset) {
+        return (none, none, errors::Utf8Error.InvalidOffset);
+    }
+
+    usize startOffset = endOffset - 1;
+    usize continuationCount = 0;
+    while startOffset > 0 and
+        is_continuation(value[startOffset.cast<u32>]) and
+        continuationCount < 3 {
+        startOffset--;
+        continuationCount++;
+    }
+
+    codePoint, nextOffset, decodingError := decode(value, startOffset);
+    if decodingError != none {
+        return (none, none, decodingError);
+    }
+
+    if nextOffset != endOffset {
+        return (none, none, errors::Utf8Error.InvalidEncoding);
+    }
+
+    return (codePoint, startOffset, none);
+}
+
 // Counts Unicode code points after validating the complete input.
 export (usize, error) count_code_points(stringv value) {
     usize count = 0;
