@@ -77,6 +77,32 @@ Ipv6Address Ipv6Address::fromSegments(
             return (none, errors::NetworkError.InvalidAddress);
         }
 
+        // A dotted-decimal tail occupies the final two IPv6 segments.
+        u32 tokenEnd = index;
+        bool hasDot = false;
+        while tokenEnd < text.len() and text[tokenEnd].cast<char> != ':' {
+            hasDot = hasDot or text[tokenEnd].cast<char> == '.';
+            tokenEnd++;
+        }
+
+        if hasDot {
+            if segmentCount > 6 {
+                return (none, errors::NetworkError.InvalidAddress);
+            }
+
+            firstIpv4Segment, secondIpv4Segment, validIpv4 :=
+                parse_embedded_ipv4(text, index);
+            if !validIpv4 {
+                return (none, errors::NetworkError.InvalidAddress);
+            }
+
+            segments[segmentCount] = firstIpv4Segment;
+            segments[segmentCount + 1] = secondIpv4Segment;
+            segmentCount += 2;
+            index = text.len();
+            break;
+        }
+
         u16 segment = 0;
         u32 digits = 0;
 
@@ -172,6 +198,49 @@ Ipv6Address Ipv6Address::fromSegments(
         ),
         none
     );
+}
+
+(u16, u16, bool) parse_embedded_ipv4(stringv text, u32 start) {
+    u32 packed = 0;
+    u32 component = 0;
+    u32 digits = 0;
+    u32 completedComponents = 0;
+    u32 index = start;
+
+    while index < text.len() {
+        char c = text[index].cast<char>;
+        if c >= '0' and c <= '9' {
+            if digits == 3 or (digits > 0 and component == 0) {
+                return (none, none, false);
+            }
+
+            component = component * 10 + (c.cast<u8> - 48).cast<u32>;
+            digits++;
+            if component > 255 {
+                return (none, none, false);
+            }
+        } else if c == '.' {
+            if digits == 0 or completedComponents == 3 {
+                return (none, none, false);
+            }
+
+            packed = (packed << 8) or component;
+            completedComponents++;
+            component = 0;
+            digits = 0;
+        } else {
+            return (none, none, false);
+        }
+
+        index++;
+    }
+
+    if digits == 0 or completedComponents != 3 {
+        return (none, none, false);
+    }
+
+    packed = (packed << 8) or component;
+    return ((packed >> 16).cast<u16>, packed.cast<u16>, true);
 }
 
 // Converts the IPv6 address to its canonical string representation.

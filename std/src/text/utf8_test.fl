@@ -45,6 +45,128 @@ test utf8_decodes_every_sequence_length(&testing::UnitTest t) {
     );
 }
 
+test utf8_boundaries_cover_every_sequence_width(&testing::UnitTest t) {
+    [10]u8 bytes = [
+        65,
+        194, 162,
+        226, 130, 172,
+        240, 159, 152, 128,
+    ];
+    text := strings::stringv_from_bytes(bytes[:]);
+
+    bool validBoundaries =
+        utf8::is_boundary(text, 0) and
+        utf8::is_boundary(text, 1) and
+        utf8::is_boundary(text, 3) and
+        utf8::is_boundary(text, 6) and
+        utf8::is_boundary(text, 10);
+    bool interiorsRejected =
+        !utf8::is_boundary(text, 2) and
+        !utf8::is_boundary(text, 4) and
+        !utf8::is_boundary(text, 5) and
+        !utf8::is_boundary(text, 7) and
+        !utf8::is_boundary(text, 8) and
+        !utf8::is_boundary(text, 9) and
+        !utf8::is_boundary(text, 11);
+
+    asserts::is_true(
+        t,
+        validBoundaries and interiorsRejected,
+        "UTF-8 boundaries include sequence edges but not continuation bytes"
+    );
+}
+
+test utf8_reverse_decoding_walks_forward_boundaries_backward(
+    &testing::UnitTest t
+) {
+    [10]u8 bytes = [
+        65,
+        194, 162,
+        226, 130, 172,
+        240, 159, 152, 128,
+    ];
+    text := strings::stringv_from_bytes(bytes[:]);
+
+    fourByte, fourStart, fourError := utf8::decode_previous(text, 10);
+    threeByte, threeStart, threeError :=
+        utf8::decode_previous(text, fourStart);
+    twoByte, twoStart, twoError := utf8::decode_previous(text, threeStart);
+    ascii, asciiStart, asciiError := utf8::decode_previous(text, twoStart);
+
+    asserts::is_true(
+        t,
+        fourError == none and fourByte == 128512 and fourStart == 6 and
+            threeError == none and threeByte == 8364 and threeStart == 3 and
+            twoError == none and twoByte == 162 and twoStart == 1 and
+            asciiError == none and ascii == 65 and asciiStart == 0,
+        "reverse decoding visits the same code points and boundaries"
+    );
+}
+
+test utf8_reverse_decoding_rejects_invalid_offsets(&testing::UnitTest t) {
+    [4]u8 bytes = [240, 159, 152, 128];
+    text := strings::stringv_from_bytes(bytes[:]);
+
+    _, _, emptyError := utf8::decode_previous("", 0);
+    _, _, zeroError := utf8::decode_previous(text, 0);
+    _, _, secondError := utf8::decode_previous(text, 1);
+    _, _, thirdError := utf8::decode_previous(text, 2);
+    _, _, fourthError := utf8::decode_previous(text, 3);
+    _, _, beyondError := utf8::decode_previous(text, 5);
+
+    asserts::is_true(
+        t,
+        emptyError == text_errors::Utf8Error.InvalidOffset and
+            zeroError == text_errors::Utf8Error.InvalidOffset and
+            secondError == text_errors::Utf8Error.InvalidOffset and
+            thirdError == text_errors::Utf8Error.InvalidOffset and
+            fourthError == text_errors::Utf8Error.InvalidOffset and
+            beyondError == text_errors::Utf8Error.InvalidOffset,
+        "reverse decoding requires a nonzero in-range sequence boundary"
+    );
+}
+
+test utf8_reverse_decoding_matches_forward_validation_errors(
+    &testing::UnitTest t
+) {
+    [2]u8 truncated = [226, 130];
+    [3]u8 badContinuation = [226, 40, 161];
+    [3]u8 overlong = [224, 128, 128];
+    [3]u8 surrogate = [237, 160, 128];
+    [4]u8 aboveUnicode = [244, 144, 128, 128];
+
+    _, _, truncatedError := utf8::decode_previous(
+        strings::stringv_from_bytes(truncated[:]),
+        truncated.len()
+    );
+    _, _, continuationError := utf8::decode_previous(
+        strings::stringv_from_bytes(badContinuation[:]),
+        badContinuation.len()
+    );
+    _, _, overlongError := utf8::decode_previous(
+        strings::stringv_from_bytes(overlong[:]),
+        overlong.len()
+    );
+    _, _, surrogateError := utf8::decode_previous(
+        strings::stringv_from_bytes(surrogate[:]),
+        surrogate.len()
+    );
+    _, _, aboveUnicodeError := utf8::decode_previous(
+        strings::stringv_from_bytes(aboveUnicode[:]),
+        aboveUnicode.len()
+    );
+
+    asserts::is_true(
+        t,
+        truncatedError == text_errors::Utf8Error.Truncated and
+            continuationError == text_errors::Utf8Error.InvalidEncoding and
+            overlongError == text_errors::Utf8Error.InvalidEncoding and
+            surrogateError == text_errors::Utf8Error.InvalidEncoding and
+            aboveUnicodeError == text_errors::Utf8Error.InvalidEncoding,
+        "reverse decoding preserves forward malformed-sequence errors"
+    );
+}
+
 test utf8_validates_and_counts_complete_text(&testing::UnitTest t) {
     [10]u8 bytes = [
         65,

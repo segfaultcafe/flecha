@@ -21,6 +21,10 @@
 
 ### Added
 
+- `std::net::address::Ipv6Address::parse` accepts strict dotted-decimal IPv4
+  tails and continues to emit canonical hexadecimal IPv6 text.
+- `std::text::utf8` exposes allocation-free boundary inspection and reverse
+  decoding with the same validation errors as forward decoding.
 - `std::text::ascii::char_to_int` converts one ASCII decimal digit to its
   `u8` numeric value and reports `ParseError.InvalidSyntax` for non-digits.
 - Fixed-array types and repeat initializers accept visible integer module

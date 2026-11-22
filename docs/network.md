@@ -108,15 +108,19 @@ parser does not trim whitespace and rejects signs, invalid hexadecimal digits,
 empty uncompressed segments, repeated compression, and incorrect segment
 counts with `NetworkError.InvalidAddress`.
 
-Embedded dotted-decimal IPv4 notation such as `::ffff:192.0.2.1` is not
-currently accepted. Construct the corresponding IPv6 segments explicitly when
-that representation is needed.
+The final 32 bits may use strict dotted-decimal IPv4 notation, including
+`::ffff:192.0.2.1`, `::192.0.2.1`, and `2001:db8::192.0.2.1`. The tail counts
+as two IPv6 segments and must contain exactly four canonical decimal octets
+from `0` through `255`; signs, whitespace, empty octets, and multi-digit
+leading zeroes are rejected.
 
 `toString` emits lowercase hexadecimal without leading zeroes. It compresses
 the longest run of at least two zero segments with `::`; the leftmost run wins
 when lengths tie. A single zero segment is never compressed. These rules emit
 `::` for the wildcard address and `::1` for loopback, and ensure every emitted
-string parses back to the same address.
+string parses back to the same address. Embedded IPv4 input uses the same
+canonical hexadecimal output, so `::ffff:192.0.2.1` formats as
+`::ffff:c000:201`.
 
 Formatting allocates an owning string with at most
 `MAX_IPV6_STRING_LENGTH` bytes. Allocation failure returns an empty string with

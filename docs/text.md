@@ -19,6 +19,30 @@ Characters outside `'0'` through `'9'` return `none` with
 `ParseError.InvalidSyntax`. The helper accepts exactly one byte-oriented
 `char`; it does not parse Unicode digits or other radices.
 
+## UTF-8 boundaries and reverse decoding
+
+The `utf8` module can inspect byte boundaries and decode backward without
+allocating:
+
+```flecha
+bool boundary = utf8::is_boundary(text, offset);
+codePoint, startOffset, decodingError :=
+    utf8::decode_previous(text, exclusiveEndOffset);
+```
+
+`is_boundary` accepts offsets from zero through the byte length. Zero and the
+end are boundaries; an interior offset is a boundary when its byte is not a
+UTF-8 continuation byte. It returns `false` beyond the input. This is a
+structural inspection operation and does not validate the complete string.
+
+`decode_previous` requires a nonzero, in-range boundary and returns the scalar
+value immediately before it plus that sequence's starting byte offset. Zero,
+out-of-range offsets, and offsets inside a valid sequence report
+`Utf8Error.InvalidOffset`. Truncated or malformed sequences report the same
+`Utf8Error.Truncated` or `Utf8Error.InvalidEncoding` result as forward
+`decode`. Boundary inspection and reverse decoding perform no allocation or
+host calls.
+
 ## Numeric conversion
 
 The `strings` module provides fallible integer and floating-point conversion:
