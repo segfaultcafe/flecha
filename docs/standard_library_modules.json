@@ -57,6 +57,13 @@
       "example": "std/src/encoding/base64_test.fl"
     },
     {
+      "name": "std::encoding::base64url",
+      "summary": "Strict padded and unpadded Base64url encoding",
+      "contract": "Owning results allocate; padded and unpadded spellings are explicit and strict; output is deterministic across platforms.",
+      "reference": "docs/encoding.md#base64url",
+      "example": "std/src/encoding/base64url_test.fl"
+    },
+    {
       "name": "std::encoding::binary",
       "summary": "Endian primitives, bounded readers/writers, and varints",
       "contract": "Explicitly bounded and endian-stable; growable buffers may allocate; malformed/truncated input returns typed errors without overread.",
@@ -69,6 +76,13 @@
       "contract": "Owning results allocate; decoding validates complete byte pairs; deterministic and nonblocking.",
       "reference": "docs/encoding.md#hexadecimal",
       "example": "std/src/encoding/hex_test.fl"
+    },
+    {
+      "name": "std::encoding::percent",
+      "summary": "Strict RFC 3986 percent encoding",
+      "contract": "Treats input as bytes, allocates owning results, emits uppercase escapes, and validates complete escapes before allocation.",
+      "reference": "docs/encoding.md#percent-encoding",
+      "example": "std/src/encoding/percent_test.fl"
     },
     {
       "name": "std::fmt",

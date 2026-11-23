@@ -11,6 +11,8 @@ module std;
     :: root::encoding::binary
     :: root::encoding::hex
     :: root::encoding::base64
+    :: root::encoding::base64url
+    :: root::encoding::percent
     :: root::hashing::hashing
     :: root::io::stream
     :: root::io::buffered

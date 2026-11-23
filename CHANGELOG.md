@@ -21,6 +21,10 @@
 
 ### Added
 
+- `std::encoding::base64url` provides separate strict padded and unpadded RFC
+  4648 Base64url operations with checked lengths and owning byte adapters.
+- `std::encoding::percent` provides strict byte-oriented RFC 3986 component
+  encoding with uppercase escapes and validation before allocation.
 - `std::net::address::Ipv6Address::parse` accepts strict dotted-decimal IPv4
   tails and continues to emit canonical hexadecimal IPv6 text.
 - `std::text::utf8` exposes allocation-free boundary inspection and reverse

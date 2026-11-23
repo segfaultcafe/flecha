@@ -105,3 +105,58 @@ other non-canonical encodings report `Base64Error.InvalidEncoding`.
 encoded size cannot fit in `usize`. Decoding validates the complete input
 before allocating its output. Allocation failures from the owning APIs are
 returned through their general `error` result.
+
+## Base64url
+
+The `base64url` module uses the RFC 4648 URL- and filename-safe alphabet. Its
+padded and unpadded operations are deliberately separate, so callers choose a
+single canonical spelling:
+
+```flecha
+@imports :: lib::std::encoding::base64url;
+
+padded, paddedError := base64url::encode_padded("token");
+unpadded, unpaddedError := base64url::encode_unpadded("token");
+
+decodedPadded, decodePaddedError :=
+    base64url::decode_padded(padded.view());
+decodedUnpadded, decodeUnpaddedError :=
+    base64url::decode_unpadded(unpadded.view());
+```
+
+The alphabet uses `-` and `_` instead of `+` and `/`. Padded decoding requires
+a multiple-of-four length and canonical trailing `=` bytes. Unpadded decoding
+rejects every `=` byte and lengths with a one-character final group. Both forms
+reject the standard alphabet, mixed alphabets, whitespace, misplaced or excess
+padding, and nonzero discarded bits.
+
+`padded_encoded_length`, `unpadded_encoded_length`,
+`padded_decoded_length`, and `unpadded_decoded_length` check sizes and validate
+the selected spelling. Matching `_bytes`, `_byte_to_byte`, and `_to_bytes`
+operations provide string- and byte-oriented owning results. Decoders validate
+the complete source before allocation; allocation failure returns an empty
+result with `AllocationError.OutOfMemory`.
+
+## Percent encoding
+
+The `percent` module implements generic RFC 3986 URI-component encoding. It
+leaves only `A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, and `~` literal and encodes
+every other input byte with an uppercase `%HH` escape:
+
+```flecha
+@imports :: lib::std::encoding::percent;
+
+encoded, encodeError := percent::encode("a path/+value");
+decoded, decodeError := percent::decode(encoded.view());
+```
+
+Input is byte-oriented. UTF-8 receives no special treatment, so each encoded
+byte gets its own escape. Decoding accepts either hexadecimal letter case,
+requires complete `%HH` triplets, and treats `+` as a literal plus rather than
+form-encoded space. It does not parse URLs, query pairs, IDNA, or HTML form
+encoding.
+
+`encoded_length` checks expansion overflow and `decoded_length` validates every
+escape without allocating. The `_bytes`, `_byte_to_byte`, and `_to_bytes`
+operations match the other encoding modules. Decoding validates before
+allocation, and allocation failure never exposes partial output.
