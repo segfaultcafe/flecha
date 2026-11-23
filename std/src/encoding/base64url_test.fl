@@ -1,0 +1,239 @@
+module base64url_test;
+
+@imports
+    :: root::encoding::base64url
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+void assert_padded_encoding(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    encoded, err := base64url::encode_padded(source);
+    asserts::is_true(
+        t,
+        err == none and encoded.view() == expected,
+        message
+    );
+}
+
+void assert_unpadded_encoding(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    encoded, err := base64url::encode_unpadded(source);
+    asserts::is_true(
+        t,
+        err == none and encoded.view() == expected,
+        message
+    );
+}
+
+void assert_padded_decoding(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    decoded, err := base64url::decode_padded(source);
+    asserts::is_true(
+        t,
+        err == none and decoded.view() == expected,
+        message
+    );
+}
+
+void assert_unpadded_decoding(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    decoded, err := base64url::decode_unpadded(source);
+    asserts::is_true(
+        t,
+        err == none and decoded.view() == expected,
+        message
+    );
+}
+
+void assert_invalid_padded(
+    &testing::UnitTest t,
+    stringv source,
+    stringv message
+) {
+    _, err := base64url::decode_padded_to_bytes(source);
+    asserts::is_true(
+        t,
+        err == base64url::Base64UrlError.InvalidEncoding,
+        message
+    );
+}
+
+void assert_invalid_unpadded(
+    &testing::UnitTest t,
+    stringv source,
+    stringv message
+) {
+    _, err := base64url::decode_unpadded_to_bytes(source);
+    asserts::is_true(
+        t,
+        err == base64url::Base64UrlError.InvalidEncoding,
+        message
+    );
+}
+
+test length_helpers_distinguish_padded_and_unpadded_forms(
+    &testing::UnitTest t
+) {
+    paddedOne, paddedOneError := base64url::padded_encoded_length(1);
+    unpaddedOne, unpaddedOneError := base64url::unpadded_encoded_length(1);
+    paddedTwo, paddedTwoError := base64url::padded_encoded_length(2);
+    unpaddedTwo, unpaddedTwoError := base64url::unpadded_encoded_length(2);
+    _, paddedOverflow :=
+        base64url::padded_encoded_length(usize.max_value);
+    _, unpaddedOverflow :=
+        base64url::unpadded_encoded_length(usize.max_value);
+
+    [4]u8 padded = [90, 103, 61, 61];
+    [2]u8 unpadded = [90, 103];
+    paddedDecoded, paddedDecodedError :=
+        base64url::padded_decoded_length(padded[:]);
+    unpaddedDecoded, unpaddedDecodedError :=
+        base64url::unpadded_decoded_length(unpadded[:]);
+
+    asserts::is_true(
+        t,
+        paddedOne == 4 and paddedOneError == none and
+            unpaddedOne == 2 and unpaddedOneError == none and
+            paddedTwo == 4 and paddedTwoError == none and
+            unpaddedTwo == 3 and unpaddedTwoError == none,
+        "encoded lengths make padding behavior explicit"
+    );
+    asserts::is_true(
+        t,
+        paddedOverflow == base64url::Base64UrlError.Overflow and
+            unpaddedOverflow == base64url::Base64UrlError.Overflow,
+        "both encoded length helpers detect overflow"
+    );
+    asserts::is_true(
+        t,
+        paddedDecoded == 1 and paddedDecodedError == none and
+            unpaddedDecoded == 1 and unpaddedDecodedError == none,
+        "decoded length helpers validate their selected spelling"
+    );
+}
+
+test padded_and_unpadded_encoders_match_rfc_4648_vectors(
+    &testing::UnitTest t
+) {
+    assert_padded_encoding(t, "", "", "empty padded output encodes");
+    assert_padded_encoding(t, "f", "Zg==", "f has padded output");
+    assert_padded_encoding(t, "fo", "Zm8=", "fo has padded output");
+    assert_padded_encoding(t, "foo", "Zm9v", "foo is a complete group");
+    assert_padded_encoding(t, "foob", "Zm9vYg==", "foob has padding");
+    assert_padded_encoding(t, "fooba", "Zm9vYmE=", "fooba has padding");
+    assert_padded_encoding(t, "foobar", "Zm9vYmFy", "foobar encodes");
+
+    assert_unpadded_encoding(t, "", "", "empty unpadded output encodes");
+    assert_unpadded_encoding(t, "f", "Zg", "f omits padding");
+    assert_unpadded_encoding(t, "fo", "Zm8", "fo omits padding");
+    assert_unpadded_encoding(t, "foo", "Zm9v", "foo is unchanged");
+    assert_unpadded_encoding(t, "foob", "Zm9vYg", "foob omits padding");
+    assert_unpadded_encoding(t, "fooba", "Zm9vYmE", "fooba omits padding");
+    assert_unpadded_encoding(t, "foobar", "Zm9vYmFy", "foobar encodes");
+}
+
+test padded_and_unpadded_decoders_match_rfc_4648_vectors(
+    &testing::UnitTest t
+) {
+    assert_padded_decoding(t, "", "", "empty padded input decodes");
+    assert_padded_decoding(t, "Zg==", "f", "padded f decodes");
+    assert_padded_decoding(t, "Zm8=", "fo", "padded fo decodes");
+    assert_padded_decoding(t, "Zm9v", "foo", "complete group decodes");
+    assert_unpadded_decoding(t, "", "", "empty unpadded input decodes");
+    assert_unpadded_decoding(t, "Zg", "f", "unpadded f decodes");
+    assert_unpadded_decoding(t, "Zm8", "fo", "unpadded fo decodes");
+    assert_unpadded_decoding(t, "Zm9v", "foo", "complete group decodes");
+}
+
+test url_safe_alphabet_replaces_standard_base64_digits(
+    &testing::UnitTest t
+) {
+    [3]u8 source = [251, 255, 239];
+    padded, paddedError := base64url::encode_padded_bytes(source[:]);
+    unpadded, unpaddedError := base64url::encode_unpadded_bytes(source[:]);
+    decoded, decodedError := base64url::decode_unpadded_to_bytes(
+        unpadded.view()
+    );
+
+    asserts::is_true(
+        t,
+        paddedError == none and padded.view() == "-__v" and
+            unpaddedError == none and unpadded.view() == "-__v",
+        "Base64url uses dash and underscore instead of plus and slash"
+    );
+    asserts::is_true(
+        t,
+        decodedError == none and decoded.len() == 3 and
+            decoded[0] == 251 and decoded[1] == 255 and decoded[2] == 239,
+        "URL-safe alphabet digits decode to their original bytes"
+    );
+}
+
+test byte_adapters_round_trip_every_byte(&testing::UnitTest t) {
+    [256]u8 source = none;
+    loop usize index = 0; index < source.len(); index++ {
+        source[index] = index.cast<u8>;
+    }
+
+    padded, paddedError :=
+        base64url::encode_padded_byte_to_byte(source[:]);
+    paddedDecoded, paddedDecodeError :=
+        base64url::decode_padded_from_bytes(padded[:]);
+    unpadded, unpaddedError :=
+        base64url::encode_unpadded_byte_to_byte(source[:]);
+    unpaddedDecoded, unpaddedDecodeError :=
+        base64url::decode_unpadded_from_bytes(unpadded[:]);
+
+    bool matches = paddedError == none and paddedDecodeError == none and
+        unpaddedError == none and unpaddedDecodeError == none and
+        paddedDecoded.len().cast<usize> == source.len() and
+        unpaddedDecoded.len().cast<usize> == source.len();
+    loop usize index = 0; matches and index < source.len(); index++ {
+        matches = paddedDecoded[index.cast<u32>].cast<u8> == source[index] and
+            unpaddedDecoded[index.cast<u32>].cast<u8> == source[index];
+    }
+
+    asserts::is_true(
+        t,
+        matches,
+        "string and byte adapters round-trip the complete byte domain"
+    );
+}
+
+test padded_decode_rejects_noncanonical_input(&testing::UnitTest t) {
+    assert_invalid_padded(t, "Zg", "missing padding is rejected");
+    assert_invalid_padded(t, "Zg=", "partial padding is rejected");
+    assert_invalid_padded(t, "Zg===", "excess padding is rejected");
+    assert_invalid_padded(t, "=m9v", "leading padding is rejected");
+    assert_invalid_padded(t, "Zm=v", "middle padding is rejected");
+    assert_invalid_padded(t, "Zh==", "nonzero discarded bits are rejected");
+    assert_invalid_padded(t, "+___", "standard plus is rejected");
+    assert_invalid_padded(t, "_///", "standard slash is rejected");
+    assert_invalid_padded(t, "Zm 9", "whitespace is rejected");
+}
+
+test unpadded_decode_rejects_noncanonical_input(&testing::UnitTest t) {
+    assert_invalid_unpadded(t, "A", "a one-digit tail is impossible");
+    assert_invalid_unpadded(t, "Zg==", "padding is rejected");
+    assert_invalid_unpadded(t, "Zh", "nonzero discarded bits are rejected");
+    assert_invalid_unpadded(t, "Zm9", "nonzero final two bits are rejected");
+    assert_invalid_unpadded(t, "+___", "standard plus is rejected");
+    assert_invalid_unpadded(t, "_///", "standard slash is rejected");
+    assert_invalid_unpadded(t, "Zm\n9", "whitespace is rejected");
+}

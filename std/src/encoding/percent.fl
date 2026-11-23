@@ -1,0 +1,200 @@
+module percent;
+
+@imports :: root::text::strings;
+
+// Reports percent-codec output-length and input-validation failures.
+export error PercentError {
+    // The required output length cannot be represented by usize.
+    Overflow,
+
+    // A percent escape is truncated or contains a non-hexadecimal digit.
+    InvalidEncoding,
+}
+
+// Returns the canonical RFC 3986 encoded length, or PercentError.Overflow.
+export (usize, PercentError) encoded_length([]const u8 source) {
+    return encoded_length_view(source.cast<stringv>);
+}
+
+(usize, PercentError) encoded_length_view(stringv source) {
+    usize length = 0;
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    loop usize index = 0; index < SOURCE_LENGTH; index++ {
+        usize width = 3;
+        if is_unreserved(source[index.cast<u32>].cast<u8>) {
+            width = 1;
+        }
+
+        bool overflowed = false;
+        length, overflowed = length.overflow_add(width);
+        if overflowed {
+            return (none, PercentError.Overflow);
+        }
+    }
+
+    return (length, none);
+}
+
+// Validates percent escapes and returns the decoded byte count.
+export (usize, PercentError) decoded_length([]const u8 source) {
+    return decoded_length_view(source.cast<stringv>);
+}
+
+(usize, PercentError) decoded_length_view(stringv source) {
+    usize length = 0;
+    usize index = 0;
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    while index < SOURCE_LENGTH {
+        if source[index.cast<u32>].cast<u8> == 37 {
+            if SOURCE_LENGTH - index < 3 or
+                !is_hex_digit(source[(index + 1).cast<u32>].cast<u8>) or
+                !is_hex_digit(source[(index + 2).cast<u32>].cast<u8>) {
+                return (none, PercentError.InvalidEncoding);
+            }
+            index += 3;
+        } else {
+            index++;
+        }
+
+        bool overflowed = false;
+        length, overflowed = length.overflow_add(1);
+        if overflowed {
+            return (none, PercentError.Overflow);
+        }
+    }
+
+    return (length, none);
+}
+
+// Encodes a byte string as a canonical RFC 3986 URI component.
+export (string, error) encode(stringv source) {
+    bytes, encodeError := encode_to_bytes(source);
+    if encodeError != none {
+        return (none, encodeError);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Encodes arbitrary borrowed bytes as a canonical URI component.
+export (string, error) encode_bytes([]const u8 source) {
+    return encode(source.cast<stringv>);
+}
+
+// Encodes arbitrary borrowed bytes as newly allocated percent-encoded bytes.
+export (own []u8, error) encode_byte_to_byte([]const u8 source) {
+    return encode_to_bytes(source.cast<stringv>);
+}
+
+// Encodes a byte string as newly allocated percent-encoded bytes.
+export (own []u8, error) encode_to_bytes(stringv source) {
+    const usize LENGTH, PercentError lengthError =
+        encoded_length_view(source);
+    if lengthError != none {
+        return (none, lengthError);
+    }
+
+    destination, allocationError := new<own []u8>(LENGTH);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    usize destinationIndex = 0;
+    loop u32 sourceIndex = 0; sourceIndex < source.len(); sourceIndex++ {
+        const u8 BYTE = source[sourceIndex];
+        if is_unreserved(BYTE) {
+            destination[destinationIndex] = BYTE;
+            destinationIndex++;
+        } else {
+            destination[destinationIndex] = 37;
+            destination[destinationIndex + 1] = hex_digit(BYTE >> 4);
+            destination[destinationIndex + 2] = hex_digit(BYTE & 15);
+            destinationIndex += 3;
+        }
+    }
+
+    return (destination, none);
+}
+
+// Strictly decodes percent escapes into a byte-oriented string.
+export (string, error) decode(stringv source) {
+    bytes, decodeError := decode_to_bytes(source);
+    if decodeError != none {
+        return (none, decodeError);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Strictly decodes borrowed percent-encoded bytes into a byte string.
+export (string, error) decode_from_bytes([]const u8 source) {
+    return decode(source.cast<stringv>);
+}
+
+// Strictly decodes borrowed percent-encoded bytes into newly allocated bytes.
+export (own []u8, error) decode_byte_to_byte([]const u8 source) {
+    return decode_to_bytes(source.cast<stringv>);
+}
+
+// Validates before allocating and returns the decoded bytes.
+export (own []u8, error) decode_to_bytes(stringv source) {
+    const usize LENGTH, PercentError lengthError =
+        decoded_length_view(source);
+    if lengthError != none {
+        return (none, lengthError);
+    }
+
+    destination, allocationError := new<own []u8>(LENGTH);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    usize sourceIndex = 0;
+    usize destinationIndex = 0;
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    while sourceIndex < SOURCE_LENGTH {
+        const u8 BYTE = source[sourceIndex.cast<u32>];
+        if BYTE == 37 {
+            const u8 HIGH = hex_value(source[(sourceIndex + 1).cast<u32>]);
+            const u8 LOW = hex_value(source[(sourceIndex + 2).cast<u32>]);
+            destination[destinationIndex] = (HIGH << 4) | LOW;
+            sourceIndex += 3;
+        } else {
+            destination[destinationIndex] = BYTE;
+            sourceIndex++;
+        }
+        destinationIndex++;
+    }
+
+    return (destination, none);
+}
+
+bool is_unreserved(u8 value) {
+    return (value >= 65 and value <= 90) or
+        (value >= 97 and value <= 122) or
+        (value >= 48 and value <= 57) or
+        value == 45 or value == 46 or value == 95 or value == 126;
+}
+
+u8 hex_digit(u8 value) {
+    if value < 10 {
+        return value + 48;
+    }
+    return value + 55;
+}
+
+bool is_hex_digit(u8 value) {
+    return (value >= 48 and value <= 57) or
+        (value >= 65 and value <= 70) or
+        (value >= 97 and value <= 102);
+}
+
+u8 hex_value(u8 value) {
+    if value <= 57 {
+        return value - 48;
+    }
+    if value <= 70 {
+        return value - 55;
+    }
+    return value - 87;
+}

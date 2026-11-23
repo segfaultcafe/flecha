@@ -1,0 +1,175 @@
+module percent_test;
+
+@imports
+    :: root::encoding::percent
+    :: lib::std::tests::testing
+    :: lib::std::tests::asserts;
+
+void assert_encoded(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    encoded, err := percent::encode(source);
+    asserts::is_true(
+        t,
+        err == none and encoded.view() == expected,
+        message
+    );
+}
+
+void assert_decoded(
+    &testing::UnitTest t,
+    stringv source,
+    stringv expected,
+    stringv message
+) {
+    decoded, err := percent::decode(source);
+    asserts::is_true(
+        t,
+        err == none and decoded.view() == expected,
+        message
+    );
+}
+
+void assert_invalid(
+    &testing::UnitTest t,
+    stringv source,
+    stringv message
+) {
+    _, err := percent::decode_to_bytes(source);
+    asserts::is_true(
+        t,
+        err == percent::PercentError.InvalidEncoding,
+        message
+    );
+}
+
+test length_helpers_account_for_escapes_and_validate_input(
+    &testing::UnitTest t
+) {
+    [3]u8 source = [65, 32, 47];
+    [7]u8 encoded = [65, 37, 50, 48, 37, 50, 70];
+    [2]u8 truncated = [37, 65];
+    [3]u8 invalid = [37, 71, 48];
+
+    encodedLength, encodedError := percent::encoded_length(source[:]);
+    decodedLength, decodedError := percent::decoded_length(encoded[:]);
+    _, truncatedError := percent::decoded_length(truncated[:]);
+    _, invalidError := percent::decoded_length(invalid[:]);
+
+    asserts::is_true(
+        t,
+        encodedLength == 7 and encodedError == none and
+            decodedLength == 3 and decodedError == none,
+        "length helpers count canonical escapes without allocating"
+    );
+    asserts::is_true(
+        t,
+        truncatedError == percent::PercentError.InvalidEncoding and
+            invalidError == percent::PercentError.InvalidEncoding,
+        "decoded length validates every escape"
+    );
+}
+
+test encode_preserves_only_the_rfc_3986_unreserved_set(
+    &testing::UnitTest t
+) {
+    assert_encoded(
+        t,
+        "AZaz09-._~",
+        "AZaz09-._~",
+        "the complete unreserved classes remain literal"
+    );
+    assert_encoded(
+        t,
+        " /?#+%",
+        "%20%2F%3F%23%2B%25",
+        "reserved and delimiter bytes use uppercase escapes"
+    );
+}
+
+test decode_accepts_hex_case_and_keeps_plus_literal(&testing::UnitTest t) {
+    assert_decoded(
+        t,
+        "%66%6F%6f",
+        "foo",
+        "uppercase and lowercase hexadecimal escapes decode"
+    );
+    assert_decoded(
+        t,
+        "a+b",
+        "a+b",
+        "plus is a literal byte rather than form-encoded space"
+    );
+
+    decoded, decodeError := percent::decode_to_bytes("%ff");
+    canonical, encodeError := percent::encode_byte_to_byte(decoded[:]);
+    asserts::is_true(
+        t,
+        decodeError == none and encodeError == none and
+            canonical.len() == 3 and canonical[0] == 37 and
+            canonical[1] == 70 and canonical[2] == 70,
+        "re-encoding lowercase input produces canonical uppercase output"
+    );
+}
+
+test utf8_is_encoded_as_opaque_bytes(&testing::UnitTest t) {
+    [2]u8 utf8 = [195, 169];
+    encoded, encodeError := percent::encode_byte_to_byte(utf8[:]);
+    decoded, decodeError := percent::decode_from_bytes(encoded[:]);
+    view := decoded.view();
+
+    asserts::is_true(
+        t,
+        encodeError == none and encoded.len() == 6 and
+            encoded[0] == 37 and encoded[1] == 67 and encoded[2] == 51 and
+            encoded[3] == 37 and encoded[4] == 65 and encoded[5] == 57 and
+            decodeError == none and decoded.len() == 2 and
+            view[0].cast<u8> == 195 and view[1].cast<u8> == 169,
+        "UTF-8 bytes are escaped and restored without Unicode interpretation"
+    );
+}
+
+test byte_adapters_round_trip_every_byte(&testing::UnitTest t) {
+    [256]u8 source = none;
+    loop usize index = 0; index < source.len(); index++ {
+        source[index] = index.cast<u8>;
+    }
+
+    encoded, encodeError := percent::encode_byte_to_byte(source[:]);
+    decoded, decodeError := percent::decode_byte_to_byte(encoded[:]);
+    bool matches = encodeError == none and decodeError == none and
+        decoded.len() == source.len();
+    loop usize index = 0; matches and index < source.len(); index++ {
+        matches = decoded[index] == source[index];
+    }
+
+    asserts::is_true(
+        t,
+        matches,
+        "byte adapters round-trip the complete byte domain"
+    );
+}
+
+test decode_rejects_truncated_and_nonhexadecimal_escapes(
+    &testing::UnitTest t
+) {
+    assert_invalid(t, "%", "a bare percent sign is rejected");
+    assert_invalid(t, "%A", "a one-digit escape is rejected");
+    assert_invalid(t, "%GG", "non-hexadecimal escapes are rejected");
+    assert_invalid(t, "%0g", "mixed valid and invalid digits are rejected");
+    assert_invalid(t, "ok%", "a truncated trailing escape is rejected");
+}
+
+test empty_results_are_owned_and_successful(&testing::UnitTest t) {
+    encoded, encodeError := percent::encode_to_bytes("");
+    decoded, decodeError := percent::decode_to_bytes("");
+    asserts::is_true(
+        t,
+        encodeError == none and encoded.len() == 0 and
+            decodeError == none and decoded.len() == 0,
+        "empty encoding and decoding return owned empty byte slices"
+    );
+}

@@ -1,0 +1,27 @@
+module percent_allocation_failure;
+
+@imports :: lib::std::encoding::percent;
+
+i32 main() {
+    encoded, encodeError := percent::encode_to_bytes("a b");
+    if encodeError == AllocationError.OutOfMemory {
+        if encoded.len() != 0 {
+            return 1;
+        }
+        return 42;
+    }
+    if encodeError != none or encoded.len() != 5 or
+        encoded[0] != 97 or encoded[4] != 98 {
+        return 2;
+    }
+
+    decoded, decodeError := percent::decode_to_bytes("a%20b");
+    if decodeError != AllocationError.OutOfMemory {
+        return 3;
+    }
+    if decoded.len() != 0 or encoded[0] != 97 or encoded[4] != 98 {
+        return 4;
+    }
+
+    return 42;
+}

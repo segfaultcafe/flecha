@@ -1,0 +1,27 @@
+module base64url_allocation_failure;
+
+@imports :: lib::std::encoding::base64url;
+
+i32 main() {
+    encoded, encodeError := base64url::encode_unpadded_to_bytes("foo");
+    if encodeError == AllocationError.OutOfMemory {
+        if encoded.len() != 0 {
+            return 1;
+        }
+        return 42;
+    }
+    if encodeError != none or encoded.len() != 4 or
+        encoded[0] != 90 or encoded[3] != 118 {
+        return 2;
+    }
+
+    decoded, decodeError := base64url::decode_unpadded_to_bytes("Zm9v");
+    if decodeError != AllocationError.OutOfMemory {
+        return 3;
+    }
+    if decoded.len() != 0 or encoded[0] != 90 or encoded[3] != 118 {
+        return 4;
+    }
+
+    return 42;
+}

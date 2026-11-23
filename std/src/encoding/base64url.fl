@@ -1,0 +1,386 @@
+module base64url;
+
+@imports :: root::text::strings;
+
+const u8 PADDING = 61;
+
+// Reports Base64url output-length and input-validation failures.
+export error Base64UrlError {
+    // The required output length cannot be represented by usize.
+    Overflow,
+
+    // The source is not canonical RFC 4648 Base64url in the selected form.
+    InvalidEncoding,
+}
+
+// Returns the padded RFC 4648 Base64url length, or Base64UrlError.Overflow.
+export (usize, Base64UrlError) padded_encoded_length(usize byteCount) {
+    usize groupCount = byteCount / 3;
+    bool overflowed = false;
+    if byteCount % 3 != 0 {
+        groupCount, overflowed = groupCount.overflow_add(1);
+    } also overflowed {
+        return (none, Base64UrlError.Overflow);
+    }
+
+    length, overflowed := groupCount.overflow_mul(4);
+    if overflowed {
+        return (none, Base64UrlError.Overflow);
+    }
+
+    return (length, none);
+}
+
+// Returns the unpadded RFC 4648 Base64url length, or overflow.
+export (usize, Base64UrlError) unpadded_encoded_length(usize byteCount) {
+    length, overflowed := (byteCount / 3).overflow_mul(4);
+    if overflowed {
+        return (none, Base64UrlError.Overflow);
+    }
+
+    usize remainderLength = 0;
+    if byteCount % 3 == 1 {
+        remainderLength = 2;
+    } else if byteCount % 3 == 2 {
+        remainderLength = 3;
+    }
+
+    length, overflowed = length.overflow_add(remainderLength);
+    if overflowed {
+        return (none, Base64UrlError.Overflow);
+    }
+
+    return (length, none);
+}
+
+// Validates padded Base64url and returns its decoded byte count.
+export (usize, Base64UrlError) padded_decoded_length([]const u8 source) {
+    return validated_decoded_length(source.cast<stringv>, true);
+}
+
+// Validates unpadded Base64url and returns its decoded byte count.
+export (usize, Base64UrlError) unpadded_decoded_length([]const u8 source) {
+    return validated_decoded_length(source.cast<stringv>, false);
+}
+
+// Encodes a byte string as canonical padded Base64url text.
+export (string, error) encode_padded(stringv source) {
+    bytes, encodeError := encode_owned(source, true);
+    if encodeError != none {
+        return (none, encodeError);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Encodes borrowed bytes as canonical padded Base64url text.
+export (string, error) encode_padded_bytes([]const u8 source) {
+    return encode_padded(source.cast<stringv>);
+}
+
+// Encodes borrowed bytes as newly allocated padded Base64url bytes.
+export (own []u8, error) encode_padded_byte_to_byte([]const u8 source) {
+    return encode_owned(source.cast<stringv>, true);
+}
+
+// Encodes a byte string as newly allocated padded Base64url bytes.
+export (own []u8, error) encode_padded_to_bytes(stringv source) {
+    return encode_owned(source, true);
+}
+
+// Encodes a byte string as canonical unpadded Base64url text.
+export (string, error) encode_unpadded(stringv source) {
+    bytes, encodeError := encode_owned(source, false);
+    if encodeError != none {
+        return (none, encodeError);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Encodes borrowed bytes as canonical unpadded Base64url text.
+export (string, error) encode_unpadded_bytes([]const u8 source) {
+    return encode_unpadded(source.cast<stringv>);
+}
+
+// Encodes borrowed bytes as newly allocated unpadded Base64url bytes.
+export (own []u8, error) encode_unpadded_byte_to_byte([]const u8 source) {
+    return encode_owned(source.cast<stringv>, false);
+}
+
+// Encodes a byte string as newly allocated unpadded Base64url bytes.
+export (own []u8, error) encode_unpadded_to_bytes(stringv source) {
+    return encode_owned(source, false);
+}
+
+// Strictly decodes canonical padded Base64url into a byte string.
+export (string, error) decode_padded(stringv source) {
+    bytes, decodeError := decode_owned(source, true);
+    if decodeError != none {
+        return (none, decodeError);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Strictly decodes padded Base64url bytes into a byte string.
+export (string, error) decode_padded_from_bytes([]const u8 source) {
+    return decode_padded(source.cast<stringv>);
+}
+
+// Strictly decodes padded Base64url bytes into newly allocated bytes.
+export (own []u8, error) decode_padded_byte_to_byte([]const u8 source) {
+    return decode_owned(source.cast<stringv>, true);
+}
+
+// Validates before allocating and decodes padded Base64url into bytes.
+export (own []u8, error) decode_padded_to_bytes(stringv source) {
+    return decode_owned(source, true);
+}
+
+// Strictly decodes canonical unpadded Base64url into a byte string.
+export (string, error) decode_unpadded(stringv source) {
+    bytes, decodeError := decode_owned(source, false);
+    if decodeError != none {
+        return (none, decodeError);
+    }
+
+    return strings::string_from_bytes(bytes[:]);
+}
+
+// Strictly decodes unpadded Base64url bytes into a byte string.
+export (string, error) decode_unpadded_from_bytes([]const u8 source) {
+    return decode_unpadded(source.cast<stringv>);
+}
+
+// Strictly decodes unpadded Base64url bytes into newly allocated bytes.
+export (own []u8, error) decode_unpadded_byte_to_byte([]const u8 source) {
+    return decode_owned(source.cast<stringv>, false);
+}
+
+// Validates before allocating and decodes unpadded Base64url into bytes.
+export (own []u8, error) decode_unpadded_to_bytes(stringv source) {
+    return decode_owned(source, false);
+}
+
+(own []u8, error) encode_owned(stringv source, bool padded) {
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    usize length = 0;
+    Base64UrlError lengthError = none;
+    if padded {
+        length, lengthError = padded_encoded_length(SOURCE_LENGTH);
+    } else {
+        length, lengthError = unpadded_encoded_length(SOURCE_LENGTH);
+    }
+    if lengthError != none {
+        return (none, lengthError);
+    }
+
+    destination, allocationError := new<own []u8>(length);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    usize sourceIndex = 0;
+    usize destinationIndex = 0;
+    while SOURCE_LENGTH - sourceIndex >= 3 {
+        const u8 FIRST = source[sourceIndex.cast<u32>];
+        const u8 SECOND = source[(sourceIndex + 1).cast<u32>];
+        const u8 THIRD = source[(sourceIndex + 2).cast<u32>];
+        encode_group(destination[destinationIndex:], FIRST, SECOND, THIRD);
+        sourceIndex += 3;
+        destinationIndex += 4;
+    }
+
+    const usize REMAINING = SOURCE_LENGTH - sourceIndex;
+    if REMAINING == 1 {
+        const u8 FIRST = source[sourceIndex.cast<u32>];
+        destination[destinationIndex] = digit(FIRST >> 2);
+        destination[destinationIndex + 1] = digit((FIRST & 3) << 4);
+        if padded {
+            destination[destinationIndex + 2] = PADDING;
+            destination[destinationIndex + 3] = PADDING;
+        }
+    } else if REMAINING == 2 {
+        const u8 FIRST = source[sourceIndex.cast<u32>];
+        const u8 SECOND = source[(sourceIndex + 1).cast<u32>];
+        destination[destinationIndex] = digit(FIRST >> 2);
+        destination[destinationIndex + 1] =
+            digit(((FIRST & 3) << 4) | (SECOND >> 4));
+        destination[destinationIndex + 2] = digit((SECOND & 15) << 2);
+        if padded {
+            destination[destinationIndex + 3] = PADDING;
+        }
+    }
+
+    return (destination, none);
+}
+
+(own []u8, error) decode_owned(stringv source, bool padded) {
+    const usize LENGTH, Base64UrlError lengthError =
+        validated_decoded_length(source, padded);
+    if lengthError != none {
+        return (none, lengthError);
+    }
+
+    destination, allocationError := new<own []u8>(LENGTH);
+    if allocationError != none {
+        return (none, allocationError);
+    }
+
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    usize sourceIndex = 0;
+    usize destinationIndex = 0;
+    while SOURCE_LENGTH - sourceIndex >= 4 {
+        const u8 FIRST = digit_value(source[sourceIndex.cast<u32>]);
+        const u8 SECOND =
+            digit_value(source[(sourceIndex + 1).cast<u32>]);
+        const u8 THIRD_BYTE = source[(sourceIndex + 2).cast<u32>];
+        const u8 FOURTH_BYTE = source[(sourceIndex + 3).cast<u32>];
+
+        destination[destinationIndex] = (FIRST << 2) | (SECOND >> 4);
+        destinationIndex++;
+
+        if THIRD_BYTE != PADDING {
+            const u8 THIRD = digit_value(THIRD_BYTE);
+            destination[destinationIndex] =
+                ((SECOND & 15) << 4) | (THIRD >> 2);
+            destinationIndex++;
+
+            if FOURTH_BYTE != PADDING {
+                const u8 FOURTH = digit_value(FOURTH_BYTE);
+                destination[destinationIndex] =
+                    ((THIRD & 3) << 6) | FOURTH;
+                destinationIndex++;
+            }
+        }
+
+        sourceIndex += 4;
+    }
+
+    const usize REMAINING = SOURCE_LENGTH - sourceIndex;
+    if REMAINING >= 2 {
+        const u8 FIRST = digit_value(source[sourceIndex.cast<u32>]);
+        const u8 SECOND =
+            digit_value(source[(sourceIndex + 1).cast<u32>]);
+        destination[destinationIndex] = (FIRST << 2) | (SECOND >> 4);
+        destinationIndex++;
+
+        if REMAINING == 3 {
+            const u8 THIRD =
+                digit_value(source[(sourceIndex + 2).cast<u32>]);
+            destination[destinationIndex] =
+                ((SECOND & 15) << 4) | (THIRD >> 2);
+        }
+    }
+
+    return (destination, none);
+}
+
+(usize, Base64UrlError) validated_decoded_length(
+    stringv source,
+    bool padded
+) {
+    const usize SOURCE_LENGTH = source.len().cast<usize>;
+    if SOURCE_LENGTH == 0 {
+        return (0, none);
+    }
+
+    usize padding = 0;
+    usize payloadLength = SOURCE_LENGTH;
+    if padded {
+        if SOURCE_LENGTH % 4 != 0 {
+            return (none, Base64UrlError.InvalidEncoding);
+        }
+
+        if source[(SOURCE_LENGTH - 1).cast<u32>].cast<u8> == PADDING {
+            padding = 1;
+        }
+        if source[(SOURCE_LENGTH - 2).cast<u32>].cast<u8> == PADDING {
+            padding = 2;
+        }
+        payloadLength = SOURCE_LENGTH - padding;
+    } else if SOURCE_LENGTH % 4 == 1 {
+        return (none, Base64UrlError.InvalidEncoding);
+    }
+
+    loop usize index = 0; index < payloadLength; index++ {
+        if !is_digit(source[index.cast<u32>]) {
+            return (none, Base64UrlError.InvalidEncoding);
+        }
+    }
+
+    loop usize index = payloadLength; index < SOURCE_LENGTH; index++ {
+        if !padded or source[index.cast<u32>].cast<u8> != PADDING {
+            return (none, Base64UrlError.InvalidEncoding);
+        }
+    }
+
+    const usize REMAINDER = payloadLength % 4;
+    if REMAINDER == 1 {
+        return (none, Base64UrlError.InvalidEncoding);
+    }
+
+    const u8 FINAL_DIGIT = source[(payloadLength - 1).cast<u32>];
+    if REMAINDER == 2 and (digit_value(FINAL_DIGIT) & 15) != 0 {
+        return (none, Base64UrlError.InvalidEncoding);
+    }
+    if REMAINDER == 3 and (digit_value(FINAL_DIGIT) & 3) != 0 {
+        return (none, Base64UrlError.InvalidEncoding);
+    }
+
+    usize decodedLength = (payloadLength / 4) * 3;
+    if REMAINDER == 2 {
+        decodedLength += 1;
+    } else if REMAINDER == 3 {
+        decodedLength += 2;
+    }
+
+    return (decodedLength, none);
+}
+
+void encode_group([]u8 destination, u8 first, u8 second, u8 third) {
+    destination[0] = digit(first >> 2);
+    destination[1] = digit(((first & 3) << 4) | (second >> 4));
+    destination[2] = digit(((second & 15) << 2) | (third >> 6));
+    destination[3] = digit(third & 63);
+}
+
+u8 digit(u8 value) {
+    if value < 26 {
+        return value + 65;
+    }
+    if value < 52 {
+        return value + 71;
+    }
+    if value < 62 {
+        return value - 4;
+    }
+    if value == 62 {
+        return 45;
+    }
+    return 95;
+}
+
+bool is_digit(u8 value) {
+    return (value >= 65 and value <= 90) or
+        (value >= 97 and value <= 122) or
+        (value >= 48 and value <= 57) or
+        value == 45 or value == 95;
+}
+
+u8 digit_value(u8 value) {
+    if value >= 65 and value <= 90 {
+        return value - 65;
+    }
+    if value >= 97 and value <= 122 {
+        return value - 71;
+    }
+    if value >= 48 and value <= 57 {
+        return value + 4;
+    }
+    if value == 45 {
+        return 62;
+    }
+    return 63;
+}

@@ -31,8 +31,10 @@ The [library API rules](library_api_style.md) govern naming and compatibility.
 | `std::cryptography::hmac` | Streaming and one-shot HMAC-SHA-2 | Borrows key/message bytes, returns fixed-size tags, is deterministic and nonblocking, and reports invalid state or input length. | [guide](cryptography.md#hmac) | [example/test](../std/src/cryptography/hmac_test.fl) |
 | `std::cryptography::sha2` | Streaming and one-shot SHA-256/SHA-512 | Borrows input and returns fixed-size digests; deterministic, nonblocking, and independent of host byte order. | [guide](cryptography.md) | [example/test](../std/src/cryptography/sha2_test.fl) |
 | `std::encoding::base64` | Canonical padded Base64 encoding | Owning results allocate; decoding rejects malformed or noncanonical input; output is deterministic across platforms. | [guide](encoding.md#base64) | [example/test](../std/src/encoding/base64_test.fl) |
+| `std::encoding::base64url` | Strict padded and unpadded Base64url encoding | Owning results allocate; padded and unpadded spellings are explicit and strict; output is deterministic across platforms. | [guide](encoding.md#base64url) | [example/test](../std/src/encoding/base64url_test.fl) |
 | `std::encoding::binary` | Endian primitives, bounded readers/writers, and varints | Explicitly bounded and endian-stable; growable buffers may allocate; malformed/truncated input returns typed errors without overread. | [guide](encoding.md#binary) | [example/test](../std/src/encoding/binary_reader_test.fl) |
 | `std::encoding::hex` | Canonical hexadecimal encoding | Owning results allocate; decoding validates complete byte pairs; deterministic and nonblocking. | [guide](encoding.md#hexadecimal) | [example/test](../std/src/encoding/hex_test.fl) |
+| `std::encoding::percent` | Strict RFC 3986 percent encoding | Treats input as bytes, allocates owning results, emits uppercase escapes, and validates complete escapes before allocation. | [guide](encoding.md#percent-encoding) | [example/test](../std/src/encoding/percent_test.fl) |
 | `std::fmt` | Typed formatting and console output facade | String formatting allocates and returns errors; console writes are blocking host I/O and preserve argument order. | [guide](formatting.md) | [example/test](../std/src/fmt/fmt_test.fl) |
 | `std::hashing::hashing` | Structural non-cryptographic hashing | Borrows values, performs no allocation or blocking, and is deterministic only for the documented toolchain representation; never use for cryptography. | [guide](hashing.md) | [example/test](../std/src/hashing/hashing_test.fl) |
 | `std::io::buffered` | Buffered reader and writer adapters | Owns internal buffers, may allocate, and inherits blocking and error behavior from the wrapped stream. | [guide](filesystem.md#buffered-streams) | [example/test](../std/src/io/buffered/buffered_test.fl) |
@@ -453,6 +455,45 @@ export (own []u8, error) decode_byte_to_byte([]const u8 source);
 export (own []u8, error) decode_to_bytes(stringv source);
 ```
 
+<a id="std-encoding-base64url"></a>
+### `std::encoding::base64url`
+
+Strict padded and unpadded Base64url encoding.
+
+Sources: [`std/src/encoding/base64url.fl`](../std/src/encoding/base64url.fl)
+
+```flecha
+export error Base64UrlError {
+    // The required output length cannot be represented by usize.
+    Overflow,
+
+    // The source is not canonical RFC 4648 Base64url in the selected form.
+    InvalidEncoding,
+}
+
+// Returns the padded RFC 4648 Base64url length, or Base64UrlError.Overflow.
+export (usize, Base64UrlError) padded_encoded_length(usize byteCount);
+export (usize, Base64UrlError) unpadded_encoded_length(usize byteCount);
+export (usize, Base64UrlError) padded_decoded_length([]const u8 source);
+export (usize, Base64UrlError) unpadded_decoded_length([]const u8 source);
+export (string, error) encode_padded(stringv source);
+export (string, error) encode_padded_bytes([]const u8 source);
+export (own []u8, error) encode_padded_byte_to_byte([]const u8 source);
+export (own []u8, error) encode_padded_to_bytes(stringv source);
+export (string, error) encode_unpadded(stringv source);
+export (string, error) encode_unpadded_bytes([]const u8 source);
+export (own []u8, error) encode_unpadded_byte_to_byte([]const u8 source);
+export (own []u8, error) encode_unpadded_to_bytes(stringv source);
+export (string, error) decode_padded(stringv source);
+export (string, error) decode_padded_from_bytes([]const u8 source);
+export (own []u8, error) decode_padded_byte_to_byte([]const u8 source);
+export (own []u8, error) decode_padded_to_bytes(stringv source);
+export (string, error) decode_unpadded(stringv source);
+export (string, error) decode_unpadded_from_bytes([]const u8 source);
+export (own []u8, error) decode_unpadded_byte_to_byte([]const u8 source);
+export (own []u8, error) decode_unpadded_to_bytes(stringv source);
+```
+
 <a id="std-encoding-binary"></a>
 ### `std::encoding::binary`
 
@@ -550,6 +591,35 @@ export (string, error) encode_upper(stringv source);
 export (string, error) encode_upper_bytes([]const u8 source);
 export (own []u8, error) encode_upper_byte_to_byte([]const u8 source);
 export (own []u8, error) encode_upper_to_bytes(stringv source);
+export (string, error) decode(stringv source);
+export (string, error) decode_from_bytes([]const u8 source);
+export (own []u8, error) decode_byte_to_byte([]const u8 source);
+export (own []u8, error) decode_to_bytes(stringv source);
+```
+
+<a id="std-encoding-percent"></a>
+### `std::encoding::percent`
+
+Strict RFC 3986 percent encoding.
+
+Sources: [`std/src/encoding/percent.fl`](../std/src/encoding/percent.fl)
+
+```flecha
+export error PercentError {
+    // The required output length cannot be represented by usize.
+    Overflow,
+
+    // A percent escape is truncated or contains a non-hexadecimal digit.
+    InvalidEncoding,
+}
+
+// Returns the canonical RFC 3986 encoded length, or PercentError.Overflow.
+export (usize, PercentError) encoded_length([]const u8 source);
+export (usize, PercentError) decoded_length([]const u8 source);
+export (string, error) encode(stringv source);
+export (string, error) encode_bytes([]const u8 source);
+export (own []u8, error) encode_byte_to_byte([]const u8 source);
+export (own []u8, error) encode_to_bytes(stringv source);
 export (string, error) decode(stringv source);
 export (string, error) decode_from_bytes([]const u8 source);
 export (own []u8, error) decode_byte_to_byte([]const u8 source);
