@@ -11,6 +11,7 @@ PYTHON ?= python3
 TEST_JOBS ?= 4
 TEST_BASE ?= master
 TEST_ARGS ?=
+STDLIB_TEST ?=
 VSCODE_DIR ?= editors/vscode
 VSCODE_VERIFY_DIR ?= .cache/vsix-contents
 DOCKER ?= docker
@@ -22,7 +23,8 @@ HOST_NVIM_CONFIG ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/nvim,$(HOME)/.con
 
 .DEFAULT_GOAL := build
 
-.PHONY: help configure build configure-tests build-tests test test-changed test-full test-plan test-runner-self-test test-stress \
+.PHONY: help configure build configure-tests build-tests test test-changed test-full test-plan test-runner-self-test \
+	test-stdlib test-stdlib-one test-stdlib-runtime test-stress \
 	test-stress-campaign test-hardening test-hardening-campaign \
 	test-semantic llvm-poc native-poc native-if-also native-functions \
 	native-callables native-while native-loop-control native-casts native-string-view \
@@ -38,6 +40,9 @@ help:
 	@echo "  make test-full      Build and execute every test without result caching (CI gate)"
 	@echo "  make test-plan      Explain changed-test selection without executing tests"
 	@echo "  make test-runner-self-test Validate selection, cache invalidation, and runner"
+	@echo "  make test-stdlib    Run Flecha-authored stdlib tests and verify the API reference"
+	@echo "  make test-stdlib-one Run one stdlib test source selected by STDLIB_TEST"
+	@echo "  make test-stdlib-runtime Run native/runtime stdlib fixtures through CTest"
 	@echo "  make test-stress    Run the fast deterministic compiler corpus"
 	@echo "  make test-stress-campaign Run release-qualification compiler stress"
 	@echo "  make test-hardening Run fast property and stateful hardening"
@@ -70,6 +75,7 @@ help:
 	@echo "           SANDBOX_BUILD_VERSION, HOST_NVIM_CONFIG"
 	@echo "           PERFORMANCE_BUILD_DIR, PERFORMANCE_OUTPUT_DIR"
 	@echo "           TEST_JOBS (default 4), TEST_BASE (default master), TEST_ARGS, PYTHON"
+	@echo "           STDLIB_TEST (source path for test-stdlib-one)"
 
 performance-self-test:
 	python3 tools/performance.py self-test
@@ -161,6 +167,25 @@ test-plan:
 
 test-runner-self-test:
 	$(PYTHON) -m unittest discover -s tools -p 'test_test_*.py'
+
+test-stdlib: build-tests
+	ctest --test-dir $(TEST_BUILD_DIR) --output-on-failure \
+		-R '^StandardLibraryTests\.FlechaModules$$'
+	$(PYTHON) tools/generate_std_api_reference.py --check
+
+test-stdlib-one: build-tests
+	@test -n "$(STDLIB_TEST)" || { \
+		echo "Set STDLIB_TEST to a stdlib test source, for example:"; \
+		echo "  make test-stdlib-one STDLIB_TEST=std/src/encoding/base64_test.fl"; \
+		exit 2; \
+	}
+	$(TEST_BUILD_DIR)/flecha test "$(STDLIB_TEST)" \
+		--root std/src --lib std=std/src --verbose
+
+test-stdlib-runtime: build-tests
+	ctest --test-dir $(TEST_BUILD_DIR) --parallel $(TEST_JOBS) --output-on-failure \
+		-R '^StandardLibraryTests\.' \
+		-E '^StandardLibraryTests\.FlechaModules$$'
 
 test-stress: build-tests
 	ctest --test-dir $(TEST_BUILD_DIR) --output-on-failure \
