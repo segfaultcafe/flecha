@@ -185,6 +185,8 @@ std::string_view SemanticKindName(SemanticItemKind kind) {
             return "parameter";
         case SemanticItemKind::LocalVariable:
             return "localVariable";
+        case SemanticItemKind::Self:
+            return "self";
         case SemanticItemKind::ModuleConstant:
             return "moduleConstant";
         case SemanticItemKind::ErrorType:

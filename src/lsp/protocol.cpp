@@ -159,7 +159,7 @@ int DiagnosticSeverity(std::string_view severity) {
 int CompletionKind(std::string_view kind) {
     if (kind == "function") return 3;
     if (kind == "field") return 5;
-    if (kind == "parameter" || kind == "localVariable" ||
+    if (kind == "parameter" || kind == "localVariable" || kind == "self" ||
         kind == "moduleConstant")
         return 6;
     if (kind == "structureType") return 7;
@@ -172,9 +172,7 @@ int SemanticTokenKind(std::string_view kind, std::string_view spelling = {}) {
     if (kind == "decoration" || kind == "behavior" || kind == "typeParameter")
         return 6;
     if (kind == "function") return 0;
-    if ((kind == "parameter" || kind == "localVariable") &&
-        spelling == "self")
-        return 7;
+    if (kind == "self" || (kind == "parameter" && spelling == "self")) return 7;
     if (kind == "parameter") return 1;
     if (kind == "field") return 3;
     if (kind == "enumType") return 4;

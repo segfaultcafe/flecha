@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "semantic/symbol.hpp"
@@ -21,6 +22,7 @@ enum class SemanticItemKind {
     Function,
     Parameter,
     LocalVariable,
+    Self,
     ModuleConstant,
     ErrorType,
     EnumType,
@@ -67,8 +69,7 @@ struct SemanticRename final {
 // byte offsets stored by SourceLocation; ranges are half-open.
 class SemanticQueries final {
    public:
-    explicit SemanticQueries(const semantic::SemanticModel& model)
-        : _model(model) {}
+    explicit SemanticQueries(const semantic::SemanticModel& model);
 
     [[nodiscard]] std::optional<SemanticHover> Hover(
         const std::filesystem::path& file, std::size_t offset) const;
@@ -105,8 +106,12 @@ class SemanticQueries final {
                                             bool includeExpressions) const;
     [[nodiscard]] std::vector<source::SourceRange> ReferenceRanges(
         const Match& match, bool includeDeclaration) const;
+    [[nodiscard]] bool IsBuildSelf(const semantic::Symbol& symbol) const;
+    [[nodiscard]] SemanticItemKind ItemKind(
+        const semantic::Symbol& symbol) const;
 
     const semantic::SemanticModel& _model;
+    std::unordered_set<const semantic::Symbol*> _buildSelfSymbols;
 };
 
 }  // namespace flecha::analyzer

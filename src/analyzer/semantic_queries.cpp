@@ -28,7 +28,7 @@ bool Contains(const source::SourceRange& range, std::size_t offset) {
     return range.start.offset <= offset && offset < range.end.offset;
 }
 
-SemanticItemKind ItemKind(semantic::SymbolKind kind) {
+SemanticItemKind DefaultItemKind(semantic::SymbolKind kind) {
     using semantic::SymbolKind;
     switch (kind) {
         case SymbolKind::Function:
@@ -201,6 +201,25 @@ std::vector<SemanticOccurrence> BehaviorOccurrences(
 
 }  // namespace
 
+SemanticQueries::SemanticQueries(const semantic::SemanticModel& model)
+    : _model(model) {
+    for (const auto& [declaration, symbol] : _model._declarations)
+        if (declaration->Kind() == core::AstNodeKind::BuildExpression &&
+            symbol->Kind() == semantic::SymbolKind::LocalVariable &&
+            symbol->Name() == "self")
+            _buildSelfSymbols.insert(symbol);
+}
+
+bool SemanticQueries::IsBuildSelf(const semantic::Symbol& symbol) const {
+    return _buildSelfSymbols.contains(&symbol);
+}
+
+SemanticItemKind SemanticQueries::ItemKind(
+    const semantic::Symbol& symbol) const {
+    return IsBuildSelf(symbol) ? SemanticItemKind::Self
+                               : DefaultItemKind(symbol.Kind());
+}
+
 std::optional<SemanticQueries::Match> SemanticQueries::Find(
     const std::filesystem::path& inputFile, std::size_t offset,
     bool includeExpressions) const {
@@ -218,8 +237,8 @@ std::optional<SemanticQueries::Match> SemanticQueries::Find(
         const std::string displayName(TerminalName(name));
         consider({IdentifierRange(std::move(range), name),
                   _model.SourceOrigin(symbol.DeclarationRange()), displayName,
-                  symbol.Type().Name(), ItemKind(symbol.Kind()),
-                  TargetKind::Symbol, &symbol});
+                  symbol.Type().Name(), ItemKind(symbol), TargetKind::Symbol,
+                  &symbol});
     };
 
     for (const auto& item : BehaviorOccurrences(_model)) {
@@ -273,10 +292,10 @@ std::optional<SemanticQueries::Match> SemanticQueries::Find(
         symbolMatch(type->Range(), type->Name(), *symbol);
 
     for (const auto& [declaration, symbol] : _model._declarations)
-        if (Queryable(*symbol))
+        if (Queryable(*symbol) && !IsBuildSelf(*symbol))
             consider({symbol->DeclarationRange(), symbol->DeclarationRange(),
                       DisplayName(*symbol), symbol->Type().Name(),
-                      ItemKind(symbol->Kind()), TargetKind::Symbol, symbol});
+                      ItemKind(*symbol), TargetKind::Symbol, symbol});
 
     for (const auto& [expression, field] : _model._fields)
         if (Queryable(*field))
@@ -374,7 +393,7 @@ std::vector<SemanticOccurrence> SemanticQueries::Occurrences(
         if (!Queryable(symbol)) return;
         const std::string displayName(TerminalName(name));
         add(IdentifierRange(std::move(range), name), displayName,
-            symbol.Type().Name(), ItemKind(symbol.Kind()),
+            symbol.Type().Name(), ItemKind(symbol),
             _model.SourceOrigin(symbol.DeclarationRange()));
     };
 
@@ -415,9 +434,9 @@ std::vector<SemanticOccurrence> SemanticQueries::Occurrences(
     for (const auto& [type, symbol] : _model._typeBindings)
         addSymbol(type->Range(), type->Name(), *symbol);
     for (const auto& [declaration, symbol] : _model._declarations)
-        if (Queryable(*symbol))
+        if (Queryable(*symbol) && !IsBuildSelf(*symbol))
             add(symbol->DeclarationRange(), DisplayName(*symbol),
-                symbol->Type().Name(), ItemKind(symbol->Kind()),
+                symbol->Type().Name(), ItemKind(*symbol),
                 symbol->DeclarationRange());
     for (const auto& [expression, field] : _model._fields)
         if (Queryable(*field))
@@ -552,14 +571,15 @@ std::vector<SemanticSymbol> SemanticQueries::Symbols(
             continue;
         const std::string name = DisplayName(*symbol);
         if (!needle.empty() && !Lower(name).contains(needle)) continue;
-        const SemanticItemKind kind = ItemKind(symbol->Kind());
+        if (IsBuildSelf(*symbol)) continue;
+        const SemanticItemKind kind = ItemKind(*symbol);
         const auto duplicate = std::find_if(
             result.begin(), result.end(), [&](const auto& existing) {
                 return existing.kind == kind &&
                        existing.declarationRange == symbol->DeclarationRange();
             });
         if (duplicate != result.end()) continue;
-        result.push_back({name, symbol->Type().Name(), ItemKind(symbol->Kind()),
+        result.push_back({name, symbol->Type().Name(), ItemKind(*symbol),
                           symbol->DeclarationRange()});
     }
     for (const auto& structure : _model._structures) {
