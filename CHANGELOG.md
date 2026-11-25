@@ -26,6 +26,11 @@
 
 ### Added
 
+- Standard-library contributors now have focused Make targets for all
+  Flecha-authored module tests, one selected test source, and the broader
+  native/runtime CTest fixtures. The documented workflow includes API-reference
+  verification and guidance for allocation-failure, sanitizer, full-suite, and
+  cross-platform validation.
 - `std::encoding::base64url` provides separate strict padded and unpadded RFC
   4648 Base64url operations with checked lengths and owning byte adapters.
 - `std::encoding::percent` provides strict byte-oriented RFC 3986 component
