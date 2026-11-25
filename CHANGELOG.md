@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Analyzer and LSP semantic tokens distinguish implicit `build` receivers from
+  ordinary local variables, including receivers in nested build expressions.
+
 ### Changed
 
 - A logical `_test` module may access private fields and methods of structures

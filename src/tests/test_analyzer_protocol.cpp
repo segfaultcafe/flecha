@@ -496,6 +496,46 @@ TEST_F(AnalyzerProtocolTests, ServesSemanticToolingQueries) {
     EXPECT_NE(tokens.find("\"isDeclaration\":true"), std::string::npos);
 }
 
+TEST_F(AnalyzerProtocolTests, SerializesBuildSelfAsADedicatedSemanticKind) {
+    const std::string source =
+        "module main;\n"
+        "structure Inner { i32 value; };\n"
+        "structure Outer { Inner inner; i32 value; };\n"
+        "Outer make() {\n"
+        "    i32 self = 1;\n"
+        "    i32 copy = self;\n"
+        "    return build Outer {\n"
+        "        self.value = 2;\n"
+        "        self.inner = build Inner {\n"
+        "            self.value = 3;\n"
+        "        };\n"
+        "    };\n"
+        "}\n";
+    Write("main.fl", source);
+    ProtocolServer server("test-compiler");
+    ASSERT_EQ(ErrorCode(Initialize(server)), 0);
+    const std::string path = (_root / "main.fl").generic_string();
+
+    const std::string tokens = server.Handle(
+        Request("2", "document/semanticTokens",
+                "{\"path\":" + flecha::analyzer::json::Quote(path) + "}"));
+
+    ASSERT_EQ(ErrorCode(tokens), 0) << tokens;
+    EXPECT_NE(tokens.find("\"kind\":\"localVariable\""), std::string::npos)
+        << tokens;
+    EXPECT_NE(tokens.find("\"kind\":\"self\""), std::string::npos) << tokens;
+    const std::size_t outerSelf = source.find("self.value = 2");
+    const std::size_t nestedSelf = source.find("self.value = 3");
+    EXPECT_NE(tokens.find("\"startByte\":" + std::to_string(outerSelf) +
+                          ",\"endByte\":" + std::to_string(outerSelf + 4)),
+              std::string::npos)
+        << tokens;
+    EXPECT_NE(tokens.find("\"startByte\":" + std::to_string(nestedSelf) +
+                          ",\"endByte\":" + std::to_string(nestedSelf + 4)),
+              std::string::npos)
+        << tokens;
+}
+
 TEST_F(AnalyzerProtocolTests, RejectsChangeForClosedDocument) {
     ProtocolServer server("test-compiler");
     ASSERT_EQ(ErrorCode(Initialize(server)), 0);

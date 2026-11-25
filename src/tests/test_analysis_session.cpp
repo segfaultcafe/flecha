@@ -463,6 +463,51 @@ TEST_F(AnalysisSessionTests, QueriesHoverDefinitionAndReferencesByByteOffset) {
         }));
 }
 
+TEST_F(AnalysisSessionTests,
+       DistinguishesImplicitBuildSelfFromOrdinaryLocalVariables) {
+    const std::string source =
+        "module main;\n"
+        "structure Inner { i32 value; };\n"
+        "structure Outer { Inner inner; i32 value; };\n"
+        "Outer make() {\n"
+        "    i32 self = 1;\n"
+        "    i32 copy = self;\n"
+        "    return build Outer {\n"
+        "        self.value = 2;\n"
+        "        self.inner = build Inner {\n"
+        "            self.value = 3;\n"
+        "        };\n"
+        "    };\n"
+        "}\n";
+    Write("main.fl", source);
+    AnalysisSession session(_root);
+
+    AnalysisSnapshot snapshot = session.Analyze("main.fl");
+    ASSERT_TRUE(snapshot.semanticModel);
+    ASSERT_FALSE(snapshot.HasErrors());
+
+    const auto kindAt = [&](std::size_t offset) {
+        const auto occurrence = snapshot.OccurrenceAt("main.fl", offset);
+        EXPECT_TRUE(occurrence);
+        return occurrence ? occurrence->kind : SemanticItemKind::Expression;
+    };
+    const std::size_t localDeclaration = source.find("self = 1");
+    const std::size_t localUse = source.find("self;", localDeclaration);
+    const std::size_t outerSelf = source.find("self.value = 2");
+    const std::size_t nestedSelf = source.find("self.value = 3");
+
+    EXPECT_EQ(kindAt(localDeclaration), SemanticItemKind::LocalVariable);
+    EXPECT_EQ(kindAt(localUse), SemanticItemKind::LocalVariable);
+    EXPECT_EQ(kindAt(outerSelf), SemanticItemKind::Self);
+    EXPECT_EQ(kindAt(nestedSelf), SemanticItemKind::Self);
+
+    const auto outer = snapshot.OccurrenceAt("main.fl", outerSelf);
+    const auto nested = snapshot.OccurrenceAt("main.fl", nestedSelf);
+    ASSERT_TRUE(outer);
+    ASSERT_TRUE(nested);
+    EXPECT_NE(outer->declarationRange, nested->declarationRange);
+}
+
 TEST_F(AnalysisSessionTests, ResolvesDefinitionsAcrossImportedFiles) {
     const std::string dependency =
         "module dependency;\nexport i32 value() { return 42; }\n";
