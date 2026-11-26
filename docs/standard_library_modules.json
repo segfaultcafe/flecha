@@ -65,7 +65,7 @@
     },
     {
       "name": "std::encoding::binary",
-      "summary": "Endian primitives, bounded readers/writers, and varints",
+      "summary": "Endian primitives, bounded readers/writers, and unsigned or ZigZag signed varints",
       "contract": "Explicitly bounded and endian-stable; growable buffers may allocate; malformed/truncated input returns typed errors without overread.",
       "reference": "docs/encoding.md#binary",
       "example": "std/src/encoding/binary_reader_test.fl"

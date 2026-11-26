@@ -190,3 +190,223 @@ test buffer_grows_and_appends_varints(&testing::UnitTest t) {
         "Buffer grows and preserves canonical encodings"
     );
 }
+
+test zigzag_conversion_matches_published_wire_values(&testing::UnitTest t) {
+    asserts::is_true(
+        t,
+        binary::zigzag_encode<i32>(0) == 0 and
+            binary::zigzag_encode<i32>(-1) == 1 and
+            binary::zigzag_encode<i32>(1) == 2 and
+            binary::zigzag_encode<i32>(-2) == 3 and
+            binary::zigzag_encode<i32>(2147483647) == 4294967294 and
+            binary::zigzag_encode<i32>(i32.min_value) == 4294967295,
+        "ZigZag encoding matches the Protocol Buffers mapping"
+    );
+
+    minimum, minimumError :=
+        binary::zigzag_decode<i64>(u64.max_value);
+    maximum, maximumError :=
+        binary::zigzag_decode<i64>(u64.max_value - 1);
+    _, overflowError := binary::zigzag_decode<i8>(256);
+    asserts::is_true(
+        t,
+        minimum == i64.min_value and minimumError == none and
+            maximum == i64.max_value and maximumError == none and
+            overflowError == binary::BinaryError.Overflow,
+        "ZigZag decoding covers signed bounds and rejects wider values"
+    );
+}
+
+test signed_encoded_lengths_follow_zigzag_boundaries(&testing::UnitTest t) {
+    asserts::is_true(
+        t,
+        binary::signed_varint_length<i8>(0) == 1 and
+            binary::signed_varint_length<i8>(-1) == 1 and
+            binary::signed_varint_length<i8>(63) == 1 and
+            binary::signed_varint_length<i8>(-64) == 1 and
+            binary::signed_varint_length<i8>(64) == 2 and
+            binary::signed_varint_length<i8>(-65) == 2 and
+            binary::signed_varint_length<i32>(i32.min_value) == 5 and
+            binary::signed_varint_length<i64>(i64.min_value) == 10,
+        "signed lengths follow ZigZag base-128 boundaries"
+    );
+}
+
+test signed_varints_match_canonical_cross_language_vectors(
+    &testing::UnitTest t
+) {
+    [10]u8 storage = none;
+
+    minimumWritten, minimumWriteError :=
+        binary::write_signed_varint<i32>(storage[:], i32.min_value);
+    minimumValue, minimumRead, minimumReadError :=
+        binary::read_signed_varint<i32>(storage[:minimumWritten]);
+    bool minimumBytes = storage[0] == 255 and storage[1] == 255 and
+        storage[2] == 255 and storage[3] == 255 and storage[4] == 15;
+
+    maximumWritten, maximumWriteError :=
+        binary::write_signed_varint<i32>(storage[:], i32.max_value);
+    maximumValue, maximumRead, maximumReadError :=
+        binary::read_signed_varint<i32>(storage[:maximumWritten]);
+    bool maximumBytes = storage[0] == 254 and storage[1] == 255 and
+        storage[2] == 255 and storage[3] == 255 and storage[4] == 15;
+
+    asserts::is_true(
+        t,
+        minimumWritten == 5 and minimumRead == 5 and minimumBytes and
+            minimumValue == i32.min_value and minimumWriteError == none and
+            minimumReadError == none and maximumWritten == 5 and
+            maximumRead == 5 and maximumBytes and
+            maximumValue == i32.max_value and maximumWriteError == none and
+            maximumReadError == none,
+        "signed i32 bounds use canonical Protocol Buffers ZigZag bytes"
+    );
+}
+
+test signed_varints_round_trip_the_complete_i8_domain(
+    &testing::UnitTest t
+) {
+    [2]u8 storage = none;
+    i32 candidate = i8.min_value.cast<i32>;
+    bool matches = true;
+
+    while candidate <= i8.max_value.cast<i32> {
+        const i8 ORIGINAL = candidate.cast<i8>;
+        written, writeError :=
+            binary::write_signed_varint<i8>(storage[:], ORIGINAL);
+        decoded, consumed, readError :=
+            binary::read_signed_varint<i8>(storage[:written]);
+        matches = matches and writeError == none and readError == none and
+            consumed == written and decoded == ORIGINAL;
+        candidate++;
+    }
+
+    asserts::is_true(
+        t,
+        matches,
+        "every i8 value round trips through its matching unsigned wire width"
+    );
+}
+
+test signed_varints_round_trip_wider_boundaries(&testing::UnitTest t) {
+    [10]u8 storage = none;
+    bool matches = true;
+
+    i16MinimumWritten, i16MinimumWriteError :=
+        binary::write_signed_varint<i16>(storage[:], i16.min_value);
+    i16Minimum, i16MinimumRead, i16MinimumReadError :=
+        binary::read_signed_varint<i16>(storage[:i16MinimumWritten]);
+    matches = matches and i16Minimum == i16.min_value and
+        i16MinimumWritten == 3 and i16MinimumRead == 3 and
+        i16MinimumWriteError == none and i16MinimumReadError == none;
+
+    i16MaximumWritten, i16MaximumWriteError :=
+        binary::write_signed_varint<i16>(storage[:], i16.max_value);
+    i16Maximum, i16MaximumRead, i16MaximumReadError :=
+        binary::read_signed_varint<i16>(storage[:i16MaximumWritten]);
+    matches = matches and i16Maximum == i16.max_value and
+        i16MaximumWritten == 3 and i16MaximumRead == 3 and
+        i16MaximumWriteError == none and i16MaximumReadError == none;
+
+    i64MinimumWritten, i64MinimumWriteError :=
+        binary::write_signed_varint<i64>(storage[:], i64.min_value);
+    i64Minimum, i64MinimumRead, i64MinimumReadError :=
+        binary::read_signed_varint<i64>(storage[:i64MinimumWritten]);
+    matches = matches and i64Minimum == i64.min_value and
+        i64MinimumWritten == 10 and i64MinimumRead == 10 and
+        i64MinimumWriteError == none and i64MinimumReadError == none;
+
+    i64MaximumWritten, i64MaximumWriteError :=
+        binary::write_signed_varint<i64>(storage[:], i64.max_value);
+    i64Maximum, i64MaximumRead, i64MaximumReadError :=
+        binary::read_signed_varint<i64>(storage[:i64MaximumWritten]);
+    matches = matches and i64Maximum == i64.max_value and
+        i64MaximumWritten == 10 and i64MaximumRead == 10 and
+        i64MaximumWriteError == none and i64MaximumReadError == none;
+
+    asserts::is_true(
+        t,
+        matches,
+        "signed i16 and i64 bounds round trip canonically"
+    );
+}
+
+test signed_varint_failures_are_transactional(&testing::UnitTest t) {
+    [1]u8 shortDestination = [170];
+    missing, writeError := binary::write_signed_varint<i16>(
+        shortDestination[:],
+        i16.min_value
+    );
+    asserts::is_true(
+        t,
+        missing == 0 and writeError == binary::BinaryError.InsufficientSpace and
+            shortDestination[0] == 170,
+        "a failed signed write leaves its destination unchanged"
+    );
+
+    [1]u8 truncated = [128];
+    _, truncatedCount, truncatedError :=
+        binary::read_signed_varint<i8>(truncated[:]);
+    [2]u8 overflow = [128, 2];
+    _, overflowCount, overflowError :=
+        binary::read_signed_varint<i8>(overflow[:]);
+    [2]u8 redundant = [129, 0];
+    _, redundantCount, redundantError :=
+        binary::read_signed_varint<i8>(redundant[:]);
+    asserts::is_true(
+        t,
+        truncatedCount == 0 and
+            truncatedError == binary::BinaryError.UnexpectedEnd and
+            overflowCount == 0 and overflowError == binary::BinaryError.Overflow and
+            redundantCount == 0 and
+            redundantError == binary::BinaryError.InvalidEncoding,
+        "signed reads reject truncated, overflowing, and redundant encodings"
+    );
+}
+
+test signed_cursor_operations_preserve_positions_on_failure(
+    &testing::UnitTest t
+) {
+    [4]u8 destination = [170; 4];
+
+    writer := binary::Writer::init(destination[:]);
+    firstWrite := writer.writeSignedVarint<i16>(-300);
+    secondWrite := writer.writeSignedVarint<i64>(i64.min_value);
+    asserts::is_true(
+        t,
+        firstWrite == none and
+            secondWrite == binary::BinaryError.InsufficientSpace and
+            writer.position() == 2,
+        "Writer advances only after a complete signed varint"
+    );
+
+    reader := binary::Reader::init(destination[:2]);
+    value, firstRead := reader.readSignedVarint<i16>();
+    missing, secondRead := reader.readSignedVarint<i8>();
+    asserts::is_true(
+        t,
+        value == -300 and firstRead == none and missing == 0 and
+            secondRead == binary::BinaryError.UnexpectedEnd and
+            reader.position() == 2,
+        "Reader advances only after a complete signed varint"
+    );
+}
+
+test buffer_grows_and_appends_signed_varints(&testing::UnitTest t) {
+    value, allocationError := buffer::Buffer::withCapacity(1);
+    if allocationError != none {
+        asserts::is_true(t, false, "the setup Buffer is constructed");
+        return;
+    }
+
+    firstError := binary::append_signed_varint<i8>(&value, -1);
+    secondError := binary::append_signed_varint<i32>(&value, i32.min_value);
+    bytes := value.bytes();
+    asserts::is_true(
+        t,
+        firstError == none and secondError == none and bytes.len() == 6 and
+            bytes[0] == 1 and bytes[1] == 255 and bytes[2] == 255 and
+            bytes[3] == 255 and bytes[4] == 255 and bytes[5] == 15,
+        "Buffer grows and appends canonical signed varints"
+    );
+}

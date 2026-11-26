@@ -32,7 +32,7 @@ The [library API rules](library_api_style.md) govern naming and compatibility.
 | `std::cryptography::sha2` | Streaming and one-shot SHA-256/SHA-512 | Borrows input and returns fixed-size digests; deterministic, nonblocking, and independent of host byte order. | [guide](cryptography.md) | [example/test](../std/src/cryptography/sha2_test.fl) |
 | `std::encoding::base64` | Canonical padded Base64 encoding | Owning results allocate; decoding rejects malformed or noncanonical input; output is deterministic across platforms. | [guide](encoding.md#base64) | [example/test](../std/src/encoding/base64_test.fl) |
 | `std::encoding::base64url` | Strict padded and unpadded Base64url encoding | Owning results allocate; padded and unpadded spellings are explicit and strict; output is deterministic across platforms. | [guide](encoding.md#base64url) | [example/test](../std/src/encoding/base64url_test.fl) |
-| `std::encoding::binary` | Endian primitives, bounded readers/writers, and varints | Explicitly bounded and endian-stable; growable buffers may allocate; malformed/truncated input returns typed errors without overread. | [guide](encoding.md#binary) | [example/test](../std/src/encoding/binary_reader_test.fl) |
+| `std::encoding::binary` | Endian primitives, bounded readers/writers, and unsigned or ZigZag signed varints | Explicitly bounded and endian-stable; growable buffers may allocate; malformed/truncated input returns typed errors without overread. | [guide](encoding.md#binary) | [example/test](../std/src/encoding/binary_reader_test.fl) |
 | `std::encoding::hex` | Canonical hexadecimal encoding | Owning results allocate; decoding validates complete byte pairs; deterministic and nonblocking. | [guide](encoding.md#hexadecimal) | [example/test](../std/src/encoding/hex_test.fl) |
 | `std::encoding::percent` | Strict RFC 3986 percent encoding | Treats input as bytes, allocates owning results, emits uppercase escapes, and validates complete escapes before allocation. | [guide](encoding.md#percent-encoding) | [example/test](../std/src/encoding/percent_test.fl) |
 | `std::fmt` | Typed formatting and console output facade | String formatting allocates and returns errors; console writes are blocking host I/O and preserve argument order. | [guide](formatting.md) | [example/test](../std/src/fmt/fmt_test.fl) |
@@ -497,7 +497,7 @@ export (own []u8, error) decode_unpadded_to_bytes(stringv source);
 <a id="std-encoding-binary"></a>
 ### `std::encoding::binary`
 
-Endian primitives, bounded readers/writers, and varints.
+Endian primitives, bounded readers/writers, and unsigned or ZigZag signed varints.
 
 Sources: [`std/src/encoding/binary.fl`](../std/src/encoding/binary.fl), [`std/src/encoding/binary_buffer.fl`](../std/src/encoding/binary_buffer.fl), [`std/src/encoding/binary_reader.fl`](../std/src/encoding/binary_reader.fl), [`std/src/encoding/binary_varint.fl`](../std/src/encoding/binary_varint.fl), [`std/src/encoding/binary_writer.fl`](../std/src/encoding/binary_writer.fl)
 
@@ -523,6 +523,12 @@ export typeset fixed_unsigned_integer {
     u32,
     u64,
 };
+export typeset fixed_signed_integer {
+    i8,
+    i16,
+    i32,
+    i64,
+};
 export (T, BinaryError) read_little<T: fixed_unsigned_integer>([]const u8 source);
 export (T, BinaryError) read_big<T: fixed_unsigned_integer>([]const u8 source);
 export BinaryError write_little<T: fixed_unsigned_integer>([]u8 destination, T value);
@@ -530,11 +536,17 @@ export BinaryError write_big<T: fixed_unsigned_integer>([]u8 destination, T valu
 export error append_little<T: fixed_unsigned_integer>(&buffer::Buffer destination, T value);
 export error append_big<T: fixed_unsigned_integer>(&buffer::Buffer destination, T value);
 export error append_varint<T: fixed_unsigned_integer>(&buffer::Buffer destination, T value);
+export error append_signed_varint<T: fixed_signed_integer>(&buffer::Buffer destination, T value);
 export structure Reader {
 };
 export usize varint_length<T: fixed_unsigned_integer>(T value);
 export (usize, BinaryError) write_varint<T: fixed_unsigned_integer >([]u8 destination, T value);
 export (T, usize, BinaryError) read_varint<T: fixed_unsigned_integer >([]const u8 source);
+export u64 zigzag_encode<T: fixed_signed_integer>(T value);
+export (T, BinaryError) zigzag_decode<T: fixed_signed_integer>(u64 value);
+export usize signed_varint_length<T: fixed_signed_integer>(T value);
+export (usize, BinaryError) write_signed_varint<T: fixed_signed_integer >([]u8 destination, T value);
+export (T, usize, BinaryError) read_signed_varint<T: fixed_signed_integer >([]const u8 source);
 export structure Writer {
 };
 

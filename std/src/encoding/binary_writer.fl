@@ -151,3 +151,20 @@ BinaryError Writer::writeVarint<
     self->position = self->position + byteCount;
     return none;
 }
+
+// Writes one canonical ZigZag variable-width integer and advances.
+// Failure leaves the writer unchanged.
+BinaryError Writer::writeSignedVarint<
+    T: fixed_signed_integer
+>(&self, T value) {
+    byteCount, err := write_signed_varint<T>(
+        self->destination[self->position:],
+        value
+    );
+    if err != none {
+        return err;
+    }
+
+    self->position = self->position + byteCount;
+    return none;
+}

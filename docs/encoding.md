@@ -20,9 +20,11 @@ writeError := binary::write_big<u64>(destination, value64);
 
 reader := binary::Reader::init(source);
 next, nextError := reader.readVarint<u32>();
+delta, deltaError := reader.readSignedVarint<i32>();
 
 writer := binary::Writer::init(destination);
 appendError := writer.writeLittle<u16>(4660);
+signedError := writer.writeSignedVarint<i64>(-42);
 ```
 
 `read_little`, `read_big`, `write_little`, and `write_big` accept the exported
@@ -33,6 +35,16 @@ excluded because its target-dependent width cannot define canonical data.
 `varint_length` returns the encoded width. Truncated input, values outside the
 target width, and redundant encodings report `BinaryError` without consuming a
 cursor or partially modifying a destination.
+
+`zigzag_encode` and `zigzag_decode` map `i8`, `i16`, `i32`, and `i64` through
+the unsigned width corresponding to each signed type. The
+`signed_varint_length`, `read_signed_varint`, and `write_signed_varint`
+operations then use that mapping with canonical unsigned base-128 bytes. This
+is the Protocol Buffers ZigZag mapping: `0`, `-1`, `1`, and `-2` encode as
+unsigned values `0`, `1`, `2`, and `3`. Decoding rejects a canonical unsigned
+value that exceeds the matching signed type's wire width. Truncated,
+overflowing, and redundant encodings preserve the same transactional behavior
+as unsigned varints. `isize` is excluded because its width is target-dependent.
 
 `Reader` borrows an immutable source and `Writer` borrows a mutable
 destination. Their read and write operations are transactional: failure leaves
@@ -45,6 +57,7 @@ than adding format-specific methods to the raw Buffer:
 binary::append_little<u32>(&buffer, value);
 binary::append_big<u64>(&buffer, wide);
 binary::append_varint<u32>(&buffer, count);
+binary::append_signed_varint<i32>(&buffer, delta);
 ```
 
 ## Hexadecimal
