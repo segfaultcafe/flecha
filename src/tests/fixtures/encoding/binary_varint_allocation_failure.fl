@@ -1,0 +1,30 @@
+module binary_varint_allocation_failure;
+
+@imports
+    :: lib::std::bytes::buffer
+    :: lib::std::encoding::binary;
+
+i32 main() {
+    value, createError := buffer::Buffer::withCapacity(1);
+    if createError == AllocationError.OutOfMemory {
+        return 42;
+    }
+    if createError != none {
+        return 1;
+    }
+
+    initialError := binary::append_signed_varint<i8>(&value, -1);
+    if initialError != none or value.len() != 1 or value.bytes()[0] != 1 {
+        return 2;
+    }
+
+    appendError := binary::append_signed_varint<i64>(&value, i64.min_value);
+    if appendError != AllocationError.OutOfMemory {
+        return 3;
+    }
+    if value.len() != 1 or value.bytes()[0] != 1 {
+        return 4;
+    }
+
+    return 42;
+}

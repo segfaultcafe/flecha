@@ -596,7 +596,7 @@ set_tests_properties(StandardLibraryTests.FlechaModules PROPERTIES
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/std
 )
 
-foreach(codec IN ITEMS base64url percent)
+foreach(codec IN ITEMS base64url binary_varint percent)
     foreach(fail_call RANGE 1 2)
         add_test(NAME StandardLibraryTests.Encoding.${codec}_allocation_failure_${fail_call}
             COMMAND ${CMAKE_COMMAND}

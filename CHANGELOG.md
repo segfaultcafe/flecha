@@ -26,6 +26,8 @@
 
 ### Added
 
+- `std::encoding::binary` supports canonical ZigZag signed varints for `i8`,
+  `i16`, `i32`, and `i64`, including slice, cursor, and growable-buffer APIs.
 - Standard-library contributors now have focused Make targets for all
   Flecha-authored module tests, one selected test source, and the broader
   native/runtime CTest fixtures. The documented workflow includes API-reference

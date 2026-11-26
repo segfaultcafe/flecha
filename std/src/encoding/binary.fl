@@ -25,6 +25,14 @@ export typeset fixed_unsigned_integer {
     u64,
 };
 
+// Contains fixed-width signed types supported by ZigZag varint encoders.
+export typeset fixed_signed_integer {
+    i8,
+    i16,
+    i32,
+    i64,
+};
+
 // Reads one fixed-width integer from a little-endian byte prefix.
 export (T, BinaryError) read_little<T: fixed_unsigned_integer>(
     []const u8 source

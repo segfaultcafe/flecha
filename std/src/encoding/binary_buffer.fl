@@ -47,3 +47,17 @@ export error append_varint<T: fixed_unsigned_integer>(
 
     return destination->write(encoded[:written]);
 }
+
+// Appends one canonical ZigZag variable-width integer without partial output.
+export error append_signed_varint<T: fixed_signed_integer>(
+    &buffer::Buffer destination,
+    T value
+) {
+    [10]u8 encoded = none;
+    written, writeError := write_signed_varint<T>(encoded[:], value);
+    if writeError != none {
+        return writeError;
+    }
+
+    return destination->write(encoded[:written]);
+}

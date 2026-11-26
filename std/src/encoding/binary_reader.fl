@@ -113,6 +113,21 @@ bool Reader::empty(&const self) {
     return (value, none);
 }
 
+// Reads and advances past one canonical ZigZag variable-width integer.
+// Failure leaves the position unchanged.
+(T, BinaryError) Reader::readSignedVarint<
+    T: fixed_signed_integer
+>(&self) {
+    value, byteCount, err :=
+        read_signed_varint<T>(self->source[self->position:]);
+    if err != none {
+        return (none, err);
+    }
+
+    self->position = self->position + byteCount;
+    return (value, none);
+}
+
 // Returns the next byte without advancing.
 (u8, BinaryError) Reader::peekByte(&const self) {
     if self->empty() {
