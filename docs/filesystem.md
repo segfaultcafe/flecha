@@ -163,6 +163,29 @@ moved, or closed while that borrow remains live. An adapter neither owns nor
 closes the file, and a writer does not flush automatically; callers retain
 responsibility for flushing and closing after the adapter's final use.
 
+### Bounded whole-stream reads
+
+`stream::read_all(reader, maximum)` collects an arbitrary `Readable` into an
+owning `bytes::buffer::Buffer`. The explicit maximum is required; there is no
+unbounded overload. The operation may block according to its reader and treats
+a successful zero-byte read as end of input. It reads in bounded stack-backed
+chunks and allocates only as collected bytes require more capacity.
+
+Success returns every byte before end of input. When a read reports bytes and
+an error together, those bytes are appended before the same error is returned.
+An allocation failure or unrepresentable growth reports
+`AllocationError.OutOfMemory` and returns the valid prefix stored before the
+failed growth. When the buffer reaches `maximum`, one additional byte is read
+to distinguish an exact-length stream from a larger one. Observing that byte
+reports `IoError.TooLarge`; the returned buffer still contains exactly the
+bounded prefix, while the probe byte has been consumed from the reader. A
+reader that reports more bytes than the supplied destination reports
+`IoError.ReadFailed` without treating the impossible count as initialized data.
+
+The returned `Buffer` owns its allocation on success and failure. Destruction
+releases that allocation exactly once. The operation does not interpret text,
+close the reader, expose uninitialized capacity, or make platform host calls.
+
 ### Temporary files
 
 Temporary files are part of `lib::std::io::file`; there is no separate `temp`

@@ -26,6 +26,8 @@
 
 ### Added
 
+- `std::io::stream::read_all` collects an arbitrary reader into an owning byte
+  buffer with an explicit size limit and valid partial results on failure.
 - `std::encoding::binary` supports canonical ZigZag signed varints for `i8`,
   `i16`, `i32`, and `i64`, including slice, cursor, and growable-buffer APIs.
 - Standard-library contributors now have focused Make targets for all

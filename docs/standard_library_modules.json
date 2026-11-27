@@ -142,8 +142,8 @@
     },
     {
       "name": "std::io::stream",
-      "summary": "Readable/writable interfaces, adapters, and stream copying",
-      "contract": "Interface references borrow endpoint storage; adapters preserve borrow lifetimes, and copying may block according to its endpoints.",
+      "summary": "Readable/writable interfaces, adapters, bounded collection, and stream copying",
+      "contract": "Interface references borrow endpoint storage; adapters preserve borrow lifetimes; bounded collection owns valid partial results; operations may block according to their endpoints.",
       "reference": "docs/filesystem.md#file-streams",
       "example": "std/src/io/stream/stream_test.fl"
     },

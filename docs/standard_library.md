@@ -43,7 +43,7 @@ The [library API rules](library_api_style.md) govern naming and compatibility.
 | `std::io::filesystem` | Whole-file and filesystem operations | Reads allocate owning results; operations block and can vary with host permissions/filesystem semantics; errors are explicit. | [guide](filesystem.md) | [example/test](../std/src/io/filesystem/filesystem_test.fl) |
 | `std::io::path` | Lexical POSIX and Windows path manipulation | Lexical operations do not touch the filesystem; owning results may allocate; flavor selection makes platform rules explicit. | [guide](path.md) | [example/test](../std/src/io/path/path_test.fl) |
 | `std::io::stdio` | Standard input, output, and error streams | Borrows written data, may allocate for line reads, blocks on host streams, and returns I/O or parse failures. | [guide](filesystem.md#standard-output-and-error) | [example/test](../std/src/io/stdio/stdio_test.fl) |
-| `std::io::stream` | Readable/writable interfaces, adapters, and stream copying | Interface references borrow endpoint storage; adapters preserve borrow lifetimes, and copying may block according to its endpoints. | [guide](filesystem.md#file-streams) | [example/test](../std/src/io/stream/stream_test.fl) |
+| `std::io::stream` | Readable/writable interfaces, adapters, bounded collection, and stream copying | Interface references borrow endpoint storage; adapters preserve borrow lifetimes; bounded collection owns valid partial results; operations may block according to their endpoints. | [guide](filesystem.md#file-streams) | [example/test](../std/src/io/stream/stream_test.fl) |
 | `std::math::bits` | Unsigned bit counting, rotation, reversal, and rounding | Pure, nonallocating, nonblocking, deterministic operations with checked overflow where a result may be unrepresentable. | [guide](math.md#bit-operations) | [example/test](../std/src/math/bits_test.fl) |
 | `std::math::errors` | Arithmetic error family | Stable overflow and invalid-arithmetic variants; no allocation, blocking, or platform state. | [guide](math.md#checked-arithmetic) | [example/test](../std/src/math/integer_test.fl) |
 | `std::math::float` | Floating-point classification | Pure and nonallocating; follows IEEE classification for supported target floats and is deterministic for the same bit pattern. | [guide](math.md#floating-point-classification) | [example/test](../std/src/math/float_test.fl) |
@@ -955,7 +955,7 @@ stream::Writer StandardError::writer(&const self);
 <a id="std-io-stream"></a>
 ### `std::io::stream`
 
-Readable/writable interfaces, adapters, and stream copying.
+Readable/writable interfaces, adapters, bounded collection, and stream copying.
 
 Sources: [`std/src/io/stream/readable.fl`](../std/src/io/stream/readable.fl), [`std/src/io/stream/reader.fl`](../std/src/io/stream/reader.fl), [`std/src/io/stream/stream.fl`](../std/src/io/stream/stream.fl), [`std/src/io/stream/writable.fl`](../std/src/io/stream/writable.fl), [`std/src/io/stream/writer.fl`](../std/src/io/stream/writer.fl)
 
@@ -967,6 +967,7 @@ export interface Readable {
 export func Read([]u8 destination) => (usize, error);
 export structure Reader << Readable {
 };
+export (buffer::Buffer, error) read_all(&Readable reader, usize maximum);
 export (usize, error) copy(&Readable reader, &Writable writer, []u8 buffer);
 export interface Writable {
     (usize, error) write(&self, []const u8 source) virtual;

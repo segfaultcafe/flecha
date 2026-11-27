@@ -107,6 +107,8 @@ set(stateful_tests
     StandardLibraryTests.EnvironmentAllocationFailure
     StandardLibraryTests.BufferedIo.reader_allocation_failure
     StandardLibraryTests.BufferedIo.writer_allocation_failure
+    StandardLibraryTests.Stream.read_all_allocation_failure_1
+    StandardLibraryTests.Stream.read_all_allocation_failure_2
     StandardLibraryTests.Path.join_allocation_failure
     StandardLibraryTests.Path.normalize_allocation_failure_1
     StandardLibraryTests.Path.normalize_allocation_failure_2
