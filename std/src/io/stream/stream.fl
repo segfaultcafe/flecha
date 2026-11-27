@@ -1,7 +1,63 @@
 module stream;
 under namespace root::io;
 
-@imports :: root::io::errors;
+@imports
+    :: root::bytes::buffer
+    :: root::io::errors;
+
+const usize READ_ALL_CHUNK_CAPACITY = 4096;
+
+// Collects bytes through EOF without storing more than maximum bytes.
+// The returned Buffer contains every byte accepted before a read, limit, or
+// allocation error. A source byte beyond maximum reports IoError.TooLarge;
+// allocation or capacity failure reports AllocationError.OutOfMemory.
+export (buffer::Buffer, error) read_all(
+    &Readable reader,
+    usize maximum
+) {
+    buffer::Buffer output = none;
+    [READ_ALL_CHUNK_CAPACITY]u8 scratch = none;
+
+    while output.len() < maximum {
+        usize request = maximum - output.len();
+        if request > scratch.len() {
+            request = scratch.len();
+        }
+
+        bytesRead, readError := reader->read(scratch[:request]);
+        if bytesRead > request {
+            return (output, errors::IoError.ReadFailed);
+        }
+
+        if bytesRead > 0 {
+            appendError := output.write(scratch[:bytesRead]);
+            if appendError != none {
+                return (output, appendError);
+            }
+        }
+
+        if readError != none {
+            return (output, readError);
+        }
+        if bytesRead == 0 {
+            return (output, none);
+        }
+    }
+
+    [1]u8 probe = none;
+    bytesRead, readError := reader->read(probe[:]);
+    if bytesRead > probe.len() {
+        return (output, errors::IoError.ReadFailed);
+    }
+    if bytesRead > 0 {
+        return (output, errors::IoError.TooLarge);
+    }
+    if readError != none {
+        return (output, readError);
+    }
+
+    return (output, none);
+}
 
 // Copies bytes until end of input, returning the count written and any error.
 // The caller-provided buffer must be nonempty.

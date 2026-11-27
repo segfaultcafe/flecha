@@ -1,0 +1,46 @@
+module read_all_allocation_failure;
+
+@imports
+    :: lib::std::io::stream;
+
+i32 main() {
+    [9]u8 source = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    usize position = 0;
+    reader := stream::Reader::init(
+        [&const source, &position](destination) => {
+            usize count = destination.len();
+            if count > 8 {
+                count = 8;
+            }
+
+            usize remaining = source.len() - position;
+            if count > remaining {
+                count = remaining;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[index] = source[position + index];
+            }
+
+            position = position + count;
+            return (count, none);
+        }
+    );
+
+    result, readError := stream::read_all(&reader, source.len());
+    if readError != AllocationError.OutOfMemory {
+        return 1;
+    }
+    if result.len() != 0 and result.len() != 8 {
+        return 2;
+    }
+
+    bytes := result.bytes();
+    loop usize index = 0; index < bytes.len(); index++ {
+        if bytes[index] != source[index] {
+            return 3;
+        }
+    }
+
+    return 42;
+}

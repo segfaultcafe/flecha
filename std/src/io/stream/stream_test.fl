@@ -229,6 +229,175 @@ test write_all_handles_empty_and_invalid_operations(&testing::UnitTest t) {
     );
 }
 
+test read_all_collects_short_reads_through_end_of_input(
+    &testing::UnitTest t
+) {
+    [5]u8 source = [10, 20, 30, 40, 50];
+    usize position = 0;
+    reader := stream::Reader::init(
+        [&const source, &position](destination) => {
+            usize count = destination.len();
+            if count > 2 {
+                count = 2;
+            }
+
+            usize remaining = source.len() - position;
+            if count > remaining {
+                count = remaining;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[index] = source[position + index];
+            }
+
+            position = position + count;
+            return (count, none);
+        }
+    );
+
+    result, err := stream::read_all(&reader, 8);
+    asserts::is_true(t, err == none, "read_all accepts short reads");
+    asserts::is_true(t, result.len() == 5, "read_all stops at EOF");
+    bytes := result.bytes();
+    asserts::is_true(
+        t,
+        bytes[0] == 10 and bytes[1] == 20 and bytes[2] == 30 and
+            bytes[3] == 40 and bytes[4] == 50,
+        "read_all preserves byte order"
+    );
+}
+
+test read_all_accepts_empty_and_exact_limit_streams(&testing::UnitTest t) {
+    usize emptyCalls = 0;
+    emptyReader := stream::Reader::init(
+        [&emptyCalls](destination) => {
+            emptyCalls++;
+            return (none, none);
+        }
+    );
+
+    empty, emptyError := stream::read_all(&emptyReader, 0);
+    asserts::is_true(
+        t,
+        emptyError == none and empty.empty(),
+        "an empty stream satisfies a zero limit"
+    );
+    asserts::is_true(t, emptyCalls == 1, "a zero limit probes for one byte");
+
+    [3]u8 source = [1, 2, 3];
+    usize position = 0;
+    reader := stream::Reader::init(
+        [&const source, &position](destination) => {
+            usize remaining = source.len() - position;
+            usize count = destination.len();
+            if count > remaining {
+                count = remaining;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[index] = source[position + index];
+            }
+
+            position = position + count;
+            return (count, none);
+        }
+    );
+
+    exact, exactError := stream::read_all(&reader, source.len());
+    asserts::is_true(t, exactError == none, "an exact limit succeeds at EOF");
+    asserts::is_true(
+        t,
+        exact.len() == 3 and exact.bytes()[2] == 3,
+        "an exact limit returns every byte"
+    );
+}
+
+test read_all_returns_the_bounded_prefix_on_limit_failure(
+    &testing::UnitTest t
+) {
+    [3]u8 source = [7, 8, 9];
+    usize position = 0;
+    reader := stream::Reader::init(
+        [&const source, &position](destination) => {
+            usize remaining = source.len() - position;
+            usize count = destination.len();
+            if count > remaining {
+                count = remaining;
+            }
+
+            loop usize index = 0; index < count; index++ {
+                destination[index] = source[position + index];
+            }
+
+            position = position + count;
+            return (count, none);
+        }
+    );
+
+    result, err := stream::read_all(&reader, 2);
+    asserts::is_true(
+        t,
+        err == errors::IoError.TooLarge,
+        "read_all reports a byte beyond the limit"
+    );
+    bytes := result.bytes();
+    asserts::is_true(
+        t,
+        bytes.len() == 2 and bytes[0] == 7 and bytes[1] == 8,
+        "limit failure returns the complete bounded prefix"
+    );
+    asserts::is_true(
+        t,
+        position == 3,
+        "limit detection consumes only the one-byte probe"
+    );
+}
+
+test read_all_preserves_progress_returned_with_a_read_error(
+    &testing::UnitTest t
+) {
+    reader := stream::Reader::init(
+        [](destination) => {
+            destination[0] = 21;
+            destination[1] = 22;
+            return (2, errors::IoError.ReadFailed);
+        }
+    );
+
+    result, err := stream::read_all(&reader, 4);
+    asserts::is_true(
+        t,
+        err == errors::IoError.ReadFailed,
+        "read_all preserves the source error"
+    );
+    bytes := result.bytes();
+    asserts::is_true(
+        t,
+        bytes.len() == 2 and bytes[0] == 21 and bytes[1] == 22,
+        "read_all returns bytes produced with the source error"
+    );
+}
+
+test read_all_rejects_hostile_reader_counts(&testing::UnitTest t) {
+    reader := stream::Reader::init(
+        [](destination) => {
+            return (destination.len() + 1, none);
+        }
+    );
+
+    result, err := stream::read_all(&reader, usize.max_value);
+    asserts::is_true(
+        t,
+        err == errors::IoError.ReadFailed,
+        "read_all rejects a count beyond its supplied destination"
+    );
+    asserts::is_true(
+        t,
+        result.empty(),
+        "a hostile count cannot initialize result bytes"
+    );
+}
+
 test copy_moves_bytes_across_partial_streams(&testing::UnitTest t) {
     [5]u8 source = [10, 20, 30, 40, 50];
     usize readPosition = 0;
